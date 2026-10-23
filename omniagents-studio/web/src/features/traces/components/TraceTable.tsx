@@ -93,16 +93,16 @@ export function TraceTable({ traces, onTraceSelect, selectedTraceId }: TraceTabl
                 >
                   <td className="px-4 py-3">
                     <div className="flex items-start gap-2">
-                      <MessageSquare className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-0.5" />
-                      <span className="text-sm text-foreground/90 break-words line-clamp-2">
+                      <MessageSquare className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
+                      <span className="text-sm text-foreground/90 wrap-break-word line-clamp-2">
                         {input || <span className="text-muted-foreground italic">No input</span>}
                       </span>
                     </div>
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-start gap-2">
-                      <ArrowRight className="w-4 h-4 text-muted-foreground flex-shrink-0 mt-0.5" />
-                      <span className="text-sm text-foreground/90 break-words line-clamp-2">
+                      <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
+                      <span className="text-sm text-foreground/90 wrap-break-word line-clamp-2">
                         {output || <span className="text-muted-foreground italic">No output</span>}
                       </span>
                     </div>

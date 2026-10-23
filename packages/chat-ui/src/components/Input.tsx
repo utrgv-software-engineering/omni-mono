@@ -266,10 +266,6 @@ export function Input({
     [setFiles]
   );
 
-  const openFilePicker = useCallback(() => {
-    fileInputRef.current?.click();
-  }, []);
-
   const handleFilesSelected = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const list = e.target.files ? Array.from(e.target.files) : [];

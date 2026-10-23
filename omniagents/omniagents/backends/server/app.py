@@ -678,10 +678,12 @@ def build_app(
         realtime_endpoint = JsonRpcEndpoint(realtime_service)
         realtime_endpoint.register_route(app, "/ws/realtime", dependencies=[auth_dep])
     else:
-        # Add a fallback route that gracefully rejects connections when realtime is disabled
-        # This prevents StaticFiles from catching the WebSocket request and crashing
+        # Realtime is off: say so with a close code. Closing before accepting
+        # would reach the browser as an HTTP 403 (close code 1006), which
+        # clients treat as transient and retry; 4404 is permanent.
         async def _realtime_disabled(websocket: WebSocket):
-            await websocket.close(code=4404)  # Custom code: feature not available
+            await websocket.accept()
+            await websocket.close(code=4404)
 
         app.add_api_websocket_route(
             "/ws/realtime", _realtime_disabled, dependencies=[auth_dep]
@@ -690,6 +692,8 @@ def build_app(
     async def _terminal_route(websocket: WebSocket):
         terminal_manager = getattr(service, "terminal_manager", None)
         if terminal_manager is None:
+            # Accept first, so the client receives the permanent 4404.
+            await websocket.accept()
             await websocket.close(code=4404)
             return
 

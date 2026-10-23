@@ -200,122 +200,44 @@ export interface AnalysisData {
   categories?: string[]
 }
 
-export interface PlaygroundToolDefinition {
-  name: string
-  description: string
-  schema?: Record<string, JsonValue> | null
-  strict?: boolean | null
-}
-
-export type ModelSettingFieldType = 'number' | 'integer' | 'enum' | 'boolean'
-
-export interface ModelSettingDefinition {
-  key: string
-  label: string
-  type: ModelSettingFieldType
-  min?: number
-  max?: number
-  step?: number
-  options?: string[]
-}
-
-export interface PlaygroundGuardrailDefinition {
-  name: string
-  label: string
-}
-
-export interface PlaygroundGuardrailMetadata {
-  input: PlaygroundGuardrailDefinition[]
-  output: PlaygroundGuardrailDefinition[]
-  default_input?: string[]
-  default_output?: string[]
-}
-
-export interface PlaygroundStructuredOutputOption {
-  value: string
-  label: string
-}
-
-export interface PlaygroundStructuredOutputMetadata {
-  default_type: string
-  default_label: string
-  default_strict: boolean
-  default_schema?: Record<string, JsonValue> | null
-  options: PlaygroundStructuredOutputOption[]
-}
-
-export interface PlaygroundSafeAgentOptions {
-  skip_approvals?: boolean
-  halt_on_rejection?: boolean
-  safe_tool_names?: string[]
-  safe_tool_patterns?: string[]
-}
-
-export interface PlaygroundSafeDefaults {
-  use_safe_agent: boolean
-  options?: PlaygroundSafeAgentOptions
-}
-
-export interface PlaygroundMetadata {
-  available: boolean
-  project_name?: string
-  entry_agent?: string
-  agent_key?: string
-  agent_label?: string
-  default_model?: string
-  default_instructions?: string
-  default_tools?: string[]
-  tools?: PlaygroundToolDefinition[]
-  requires_model_input?: boolean
-  playground_ws_url?: string
-  model_settings_schema?: ModelSettingDefinition[]
-  default_model_settings?: Record<string, number | string | boolean>
-  guardrails?: PlaygroundGuardrailMetadata
-  safe_defaults?: PlaygroundSafeDefaults
-  structured_output?: PlaygroundStructuredOutputMetadata
-}
-
-export interface PlaygroundSessionResponse {
-  session_id: string
-}
-
-export interface AgentUpdatePayload {
-  model: string
-  instructions?: string
-  tools: string[]
-  model_settings?: Record<string, number | string | boolean>
-  use_safe_agent: boolean
-  safe_agent_options?: PlaygroundSafeAgentOptions
-  guardrails?: {
-    input?: string[]
-    output?: string[]
-  }
-  output_type?: string | null
-  output_type_strict?: boolean
-  output_schema?: Record<string, JsonValue> | null
-}
-
-export interface AgentCreatePayload {
-  name: string
-  model?: string
-}
-
-export interface AgentCreateResponse {
-  agent: AgentSummary
-  metadata: PlaygroundMetadata
-}
-
-export interface AgentDeleteResponse {
-  deleted: string
-}
-
 export interface AgentSummary {
   key: string
   name: string | null
   label: string
   description: string
-  model: string
   is_entry: boolean
+}
+
+/** What a run of an agent is given, as its runtime resolves it
+ * (`GET /api/agents/<key>`, from `AgentService.describe_agent`). */
+export interface AgentDescription {
+  name: string
+  label: string
+  description: string
+  model: { name: string | null; settings: Record<string, JsonValue> }
+  instructions: { text: string; dynamic: boolean; error: string | null }
+  tools: Array<{
+    name: string
+    description: string
+    kind: string
+    /** `always` asks first; `conditional` decides per call; `never` runs. */
+    approval: 'always' | 'conditional' | 'never'
+    parameters: Record<string, JsonValue> | null
+  }>
+  handoffs: Array<{ name: string; tool: string | null; description: string }>
+  agent_tools: Array<{ name: string; agent: string; description: string; max_turns: number | null }>
+  capabilities: string[]
+  mcp_servers: Array<{ name: string; type: string }>
+  skills: Array<{ name: string; description: string; error?: string }>
+  server_functions: Array<{ name: string; description: string }>
+  policy: {
+    approvals: 'enforced' | 'safe_agent' | 'none'
+    skip_approvals: boolean
+    safe_tool_names: string[]
+    safe_tool_patterns: string[]
+    max_turns: number | null
+    compaction: Record<string, JsonValue> | null
+  }
 }
 
 export interface EvaluationDimensionValue {

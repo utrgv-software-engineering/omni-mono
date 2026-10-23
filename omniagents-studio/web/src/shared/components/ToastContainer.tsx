@@ -34,7 +34,7 @@ export function ToastContainer() {
         return (
           <div
             key={toast.id}
-            className={`pointer-events-auto rounded-lg border px-4 py-3 shadow-lg backdrop-blur ${container}`}
+            className={`pointer-events-auto rounded-lg border px-4 py-3 shadow-lg backdrop-blur-sm ${container}`}
           >
             <div className="flex items-start gap-3">
               <div className={`mt-1 h-2 w-2 rounded-full ${indicator}`} />

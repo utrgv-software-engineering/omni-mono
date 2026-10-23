@@ -1,7 +1,6 @@
 import '@/renderer/styles/tailwind.css';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/space-grotesk';
-import '@xterm/xterm/css/xterm.css';
 import '@/renderer/features/Toast/ipc-toast-listener';
 import '@/renderer/features/Toast/status-toast-listener';
 

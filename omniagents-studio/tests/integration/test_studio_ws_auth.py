@@ -10,13 +10,13 @@ Mirror of ``test_server_auth.py`` for the Studio server: every
 * The legacy ``?token=`` query parameter is rejected unless
   ``OMNIAGENTS_LEGACY_QUERY_AUTH=1`` (documented migration path).
 * Auth failures close with 4401 — a terminal code, no retry.
-* The playground dispatch runs every request through
-  ``AgentService.authorize_rpc`` (method classification + ownership).
+* Each agent's runtime (``/api/agents/<key>/runtime``) is the real
+  omniagents server: the same credentials reach it, and its dispatch runs
+  every request through ``AgentService.authorize_rpc``.
 """
 
 import shutil
 import time
-from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -25,7 +25,8 @@ from starlette.websockets import WebSocketDisconnect
 
 from omniagents.core.project.runtime import build_spec_from_project, load_project
 from omniagents.rpc.auth import WS_CLOSE_UNAUTHENTICATED
-from omniagents_studio.api import _guardrail_keys, create_api_app
+from omniagents.rpc.generated.gui_v2 import GUI_PROTOCOL_VERSION
+from omniagents_studio.api import create_api_app
 
 AUTH_HEADER = {"Authorization": "Bearer studio-secret"}
 
@@ -221,7 +222,7 @@ def test_token_absent_from_logs(auth_client, caplog, capsys):
 
 
 @pytest.fixture
-def playground_resources(tmp_path):
+def project_resources(tmp_path):
     fixture_root = (
         Path(__file__).resolve().parent.parent / "fixtures" / "studio" / "basic_project"
     )
@@ -229,101 +230,111 @@ def playground_resources(tmp_path):
     shutil.copytree(fixture_root, destination)
     manifest_path = destination / "project.yml"
     context = load_project(str(manifest_path))
-    agent_specs = {
-        key: build_spec_from_project(context, key) for key in context.agents_map.keys()
-    }
-    base_spec = agent_specs[context.entrypoint]
     return {
         "project_name": context.product.slug,
-        "tool_registry": context.tool_registry,
-        "guardrails_registry": context.guardrails_registry,
-        "agent_specs": agent_specs,
+        "agent_specs": {
+            key: build_spec_from_project(context, key)
+            for key in context.agents_map.keys()
+        },
         "entry_agent_key": context.entrypoint,
         "manifest_path": str(manifest_path),
-        "base_spec": base_spec,
-        "default_model_settings": base_spec.model_settings or {},
-        "default_safe_agent": bool(getattr(base_spec, "use_safe_agent", False)),
-        "default_safe_agent_options": (
-            asdict(base_spec.safe_agent_options) if base_spec.safe_agent_options else {}
-        ),
-        "default_guardrails": {
-            "input": _guardrail_keys(
-                getattr(base_spec, "input_guardrails", None),
-                context.guardrails_registry.get("input", {}),
-            ),
-            "output": _guardrail_keys(
-                getattr(base_spec, "output_guardrails", None),
-                context.guardrails_registry.get("output", {}),
-            ),
-        },
     }
 
 
 @pytest.fixture
-def playground_auth_client(monkeypatch, playground_resources):
+def runtime_auth_client(monkeypatch, project_resources):
     app, client = _build_client(
         monkeypatch,
-        default_project="auth-playground",
-        playground_resources=playground_resources,
+        default_project="auth-runtime",
+        project_resources=project_resources,
     )
     try:
-        yield client
+        yield client, project_resources["entry_agent_key"]
     finally:
         client.close()
 
 
-def _create_playground_session(client) -> str:
+def _initialize(ws) -> dict:
+    ws.send_json(
+        {
+            "jsonrpc": "2.0",
+            "id": "init",
+            "method": "initialize",
+            "params": {
+                "protocol_version": GUI_PROTOCOL_VERSION,
+                "identity": {"name": "studio-tests", "version": "0.0.0"},
+                "platform": {"os": "linux", "arch": "x86_64"},
+                "capabilities": {
+                    "realtime": False,
+                    "mcp_apps": False,
+                    "client_functions": False,
+                    "approvals": True,
+                    "artifacts": False,
+                    "replay": True,
+                    "terminal": False,
+                    "experimental_operations": [],
+                    "disabled_notifications": [],
+                },
+            },
+        }
+    )
+    while True:
+        message = ws.receive_json()
+        if message.get("id") == "init":
+            break
+    ws.send_json({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+    return message
+
+
+def test_agent_runtime_ws_rejects_missing_credentials(runtime_auth_client):
+    client, agent = runtime_auth_client
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with client.websocket_connect(f"/api/agents/{agent}/runtime/ws"):
+            pass
+    assert exc.value.code == WS_CLOSE_UNAUTHENTICATED
+
+
+def test_agent_runtime_ws_rejects_query_token_by_default(runtime_auth_client):
+    client, agent = runtime_auth_client
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with client.websocket_connect(
+            f"/api/agents/{agent}/runtime/ws?token=studio-secret"
+        ):
+            pass
+    assert exc.value.code == WS_CLOSE_UNAUTHENTICATED
+
+
+def test_agent_runtime_ticket_requires_studio_credentials(runtime_auth_client):
+    client, agent = runtime_auth_client
+    response = client.post(f"/api/agents/{agent}/runtime/auth/ws-ticket")
+    assert response.status_code == 401
+
+
+def test_agent_runtime_is_the_real_gui_endpoint(runtime_auth_client):
+    """A ticket from the runtime's own endpoint opens its /ws, which is the
+    real GUI endpoint: nothing is served before the initialize handshake,
+    and only GUI protocol methods are served after it."""
+    client, agent = runtime_auth_client
     response = client.post(
-        "/api/playground/session",
-        json={"model": "gpt-4o", "instructions": "auth test", "tools": []},
-        headers=AUTH_HEADER,
+        f"/api/agents/{agent}/runtime/auth/ws-ticket", headers=AUTH_HEADER
     )
     assert response.status_code == 200
-    return response.json()["session_id"]
-
-
-def test_playground_ws_rejects_missing_credentials(playground_auth_client):
-    session_id = _create_playground_session(playground_auth_client)
-    with pytest.raises(WebSocketDisconnect) as exc:
-        with playground_auth_client.websocket_connect(
-            f"/api/playground/ws?session_id={session_id}"
-        ):
-            pass
-    assert exc.value.code == WS_CLOSE_UNAUTHENTICATED
-
-
-def test_playground_ws_rejects_query_token_by_default(playground_auth_client):
-    session_id = _create_playground_session(playground_auth_client)
-    with pytest.raises(WebSocketDisconnect) as exc:
-        with playground_auth_client.websocket_connect(
-            f"/api/playground/ws?session_id={session_id}&token=studio-secret"
-        ):
-            pass
-    assert exc.value.code == WS_CLOSE_UNAUTHENTICATED
-
-
-def test_playground_ws_ticket_flow_and_rpc_authorization(playground_auth_client):
-    """Ticket-authenticated playground connections are authorized per-RPC.
-
-    ``get_agent_info`` (classified globally safe) succeeds, while
-    ``disable_tool`` (global-mutating: affects every principal) is denied
-    with ``-32014`` in enforced mode — proof that
-    ``AgentService.authorize_rpc`` and the method classification run at
-    the playground dispatch site.
-    """
-    client = playground_auth_client
-    session_id = _create_playground_session(client)
-    ticket = _mint(client)
+    ticket = response.json()["ticket"]
 
     with client.websocket_connect(
-        f"/api/playground/ws?session_id={session_id}&ticket={ticket}"
+        f"/api/agents/{agent}/runtime/ws?ticket={ticket}"
     ) as ws:
+        ws.send_json(
+            {"jsonrpc": "2.0", "id": 0, "method": "get_agent_info", "params": {}}
+        )
+        assert ws.receive_json()["error"]["code"] == -32010
+        initialized = _initialize(ws)
+        assert initialized["result"]["protocol_version"] == GUI_PROTOCOL_VERSION
         ws.send_json(
             {"jsonrpc": "2.0", "id": 1, "method": "get_agent_info", "params": {}}
         )
         reply = ws.receive_json()
-        assert reply["id"] == 1
-        assert "result" in reply
+        assert reply["id"] == 1 and "result" in reply
 
         ws.send_json(
             {
@@ -333,7 +344,14 @@ def test_playground_ws_ticket_flow_and_rpc_authorization(playground_auth_client)
                 "params": {"tool_name": "greet_tool"},
             }
         )
-        denial = ws.receive_json()
-        assert denial["id"] == 2
-        assert denial["error"]["code"] == -32014
-        assert denial["error"]["data"]["kind"] == "authorization_denied"
+        refusal = ws.receive_json()
+        assert refusal["id"] == 2
+        assert refusal["error"]["code"] == -32013
+
+
+def test_unknown_agent_runtime_is_not_found(runtime_auth_client):
+    client, _ = runtime_auth_client
+    response = client.post(
+        "/api/agents/nobody/runtime/auth/ws-ticket", headers=AUTH_HEADER
+    )
+    assert response.status_code == 404

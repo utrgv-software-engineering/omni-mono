@@ -590,12 +590,12 @@ function DatasetsPanel({
                                   <div className="flex items-center gap-1.5">
                                     <span>{scenario.name}</span>
                                     {scenario.type === 'synthetic' ? (
-                                      <span className="rounded bg-violet-500/10 px-1 py-0.5 text-[9px] font-medium text-violet-600 dark:text-violet-400">syn</span>
+                                      <span className="rounded-sm bg-violet-500/10 px-1 py-0.5 text-[9px] font-medium text-violet-600 dark:text-violet-400">syn</span>
                                     ) : scenario.prompts && scenario.prompts.length > 0 ? (
-                                      <span className="rounded bg-blue-500/10 px-1 py-0.5 text-[9px] font-medium text-blue-600 dark:text-blue-400">multi</span>
+                                      <span className="rounded-sm bg-blue-500/10 px-1 py-0.5 text-[9px] font-medium text-blue-600 dark:text-blue-400">multi</span>
                                     ) : null}
                                     {scenario.fixture ? (
-                                      <span className="rounded bg-emerald-500/10 px-1 py-0.5 text-[9px] font-medium text-emerald-600 dark:text-emerald-400">{scenario.fixture}</span>
+                                      <span className="rounded-sm bg-emerald-500/10 px-1 py-0.5 text-[9px] font-medium text-emerald-600 dark:text-emerald-400">{scenario.fixture}</span>
                                     ) : null}
                                   </div>
                                 </td>
@@ -1612,9 +1612,9 @@ function ScenarioSetDetail({
                     </span>
                     <span>{formatTimestamp(activeRun.status.updated_at)}</span>
                   </div>
-                  <div className="mt-1 h-2 w-full rounded bg-muted">
+                  <div className="mt-1 h-2 w-full rounded-sm bg-muted">
                     <div
-                      className="h-2 rounded bg-muted-foreground transition-all"
+                      className="h-2 rounded-sm bg-muted-foreground transition-all"
                       style={{ width: `${progressPercent}%` }}
                     />
                   </div>
@@ -1660,7 +1660,7 @@ function ScenarioSetDetail({
                   </div>
                 )}
                 {activeRun.status.error ? (
-                  <div className="rounded border border-destructive/60 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                  <div className="rounded-sm border border-destructive/60 bg-destructive/10 px-3 py-2 text-xs text-destructive">
                     {activeRun.status.error}
                   </div>
                 ) : null}
@@ -2035,7 +2035,7 @@ function ScenarioSetDetail({
                   value={runSelect}
                   onChange={(event) => setRunSelect(event.target.value)}
                   placeholder="e.g. tag:dev  ·  name:icl_*  ·  id:foo,tag:smoke"
-                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono outline-none focus:ring-2 focus:ring-primary/40"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono outline-hidden focus:ring-2 focus:ring-primary/40"
                 />
                 <p className="mt-1 text-xs text-muted-foreground">
                   Same grammar as <code className="font-mono">--select</code> on the CLI: comma-separated, supports <code>id:</code>, <code>name:</code>, <code>tag:</code>, <code>measure:</code>.
@@ -2046,7 +2046,7 @@ function ScenarioSetDetail({
                 <select
                   value={runAgent}
                   onChange={(event) => setRunAgent(event.target.value)}
-                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                 >
                   <option value="">Use project entrypoint</option>
                   {agentsList.map((agent) => (
@@ -2064,7 +2064,7 @@ function ScenarioSetDetail({
                   value={runMaxTurns}
                   onChange={(event) => setRunMaxTurns(event.target.value)}
                   placeholder="Use project default"
-                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                 />
               </div>
               <label className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -2072,7 +2072,7 @@ function ScenarioSetDetail({
                   type="checkbox"
                   checked={runIncludeHistory}
                   onChange={(event) => setRunIncludeHistory(event.target.checked)}
-                  className="h-4 w-4 rounded border-border text-primary focus:ring-primary/50"
+                  className="h-4 w-4 rounded-sm border-border text-primary focus:ring-primary/50"
                 />
                 Include conversation history in the saved runs file
               </label>
@@ -2135,7 +2135,7 @@ function ScenarioSetDetail({
                   <select
                     value={availableFailureCategories.length > 0 ? splitCategory : ''}
                     onChange={(event) => handleSplitCategoryChange(event.target.value)}
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                     disabled={splitScenario.isPending || availableFailureCategories.length === 0}
                   >
                     {availableFailureCategories.length === 0 ? (
@@ -2166,7 +2166,7 @@ function ScenarioSetDetail({
                     min={0}
                     value={splitTrain}
                     onChange={(event) => setSplitTrain(event.target.value)}
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                     disabled={splitScenario.isPending}
                   />
                 </div>
@@ -2178,7 +2178,7 @@ function ScenarioSetDetail({
                     min={0}
                     value={splitDev}
                     onChange={(event) => setSplitDev(event.target.value)}
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                     disabled={splitScenario.isPending}
                   />
                 </div>
@@ -2190,7 +2190,7 @@ function ScenarioSetDetail({
                     min={0}
                     value={splitTest}
                     onChange={(event) => setSplitTest(event.target.value)}
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                     disabled={splitScenario.isPending}
                   />
                 </div>
@@ -2202,7 +2202,7 @@ function ScenarioSetDetail({
                     type="number"
                     value={splitSeed}
                     onChange={(event) => setSplitSeed(event.target.value)}
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                     disabled={splitScenario.isPending}
                   />
                 </div>
@@ -2215,7 +2215,7 @@ function ScenarioSetDetail({
                     value={splitNegativesRatio}
                     onChange={(event) => setSplitNegativesRatio(event.target.value)}
                     placeholder="Auto"
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                     disabled={splitScenario.isPending}
                   />
                 </div>
@@ -2282,7 +2282,7 @@ function ScenarioSetDetail({
                     value={formState.name}
                     onChange={(event) => setFormState((prev) => ({ ...prev, name: event.target.value }))}
                     placeholder="scenario_name"
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                   />
                 </div>
                 <div>
@@ -2291,7 +2291,7 @@ function ScenarioSetDetail({
                     value={formState.id}
                     onChange={(event) => setFormState((prev) => ({ ...prev, id: event.target.value }))}
                     placeholder="unique-id"
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                   />
                 </div>
               </div>
@@ -2301,7 +2301,7 @@ function ScenarioSetDetail({
                   value={formState.prompt}
                   onChange={(event) => setFormState((prev) => ({ ...prev, prompt: event.target.value }))}
                   rows={6}
-                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                 />
               </div>
               <div>
@@ -2311,7 +2311,7 @@ function ScenarioSetDetail({
                   onChange={(event) => setFormState((prev) => ({ ...prev, dimensionsText: event.target.value }))}
                   rows={4}
                   placeholder='{"audience": "students"}'
-                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                 />
                 <p className="mt-1 text-xs text-muted-foreground">Provide a JSON object. Leave empty to remove dimensions.</p>
               </div>
@@ -2800,7 +2800,7 @@ function DimensionsPanel({ projectName }: { projectName?: string | null }) {
                     value={form.name}
                     onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
                     placeholder="location_ambiguity"
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                   />
                 </div>
                 <div>
@@ -2809,7 +2809,7 @@ function DimensionsPanel({ projectName }: { projectName?: string | null }) {
                     value={form.label}
                     onChange={(e) => setForm((prev) => ({ ...prev, label: e.target.value }))}
                     placeholder="Location Ambiguity"
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                   />
                 </div>
               </div>
@@ -2819,7 +2819,7 @@ function DimensionsPanel({ projectName }: { projectName?: string | null }) {
                   value={form.description}
                   onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
                   rows={3}
-                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                 />
               </div>
               <div className="space-y-4">
@@ -2844,7 +2844,7 @@ function DimensionsPanel({ projectName }: { projectName?: string | null }) {
                             value={value.name}
                             onChange={(e) => handleValueChange(index, 'name', e.target.value)}
                             placeholder="ambiguous"
-                            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                           />
                         </div>
                         <div className="md:col-span-1">
@@ -2853,7 +2853,7 @@ function DimensionsPanel({ projectName }: { projectName?: string | null }) {
                             value={value.label || ''}
                             onChange={(e) => handleValueChange(index, 'label', e.target.value)}
                             placeholder="Ambiguous"
-                            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                           />
                         </div>
                         <div className="md:col-span-1">
@@ -2861,7 +2861,7 @@ function DimensionsPanel({ projectName }: { projectName?: string | null }) {
                           <input
                             value={value.description || ''}
                             onChange={(e) => handleValueChange(index, 'description', e.target.value)}
-                            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                           />
                         </div>
                       </div>
@@ -2871,7 +2871,7 @@ function DimensionsPanel({ projectName }: { projectName?: string | null }) {
                           value={value.examplesText}
                           onChange={(e) => handleValueChange(index, 'examplesText', e.target.value)}
                           rows={3}
-                          className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                          className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                         />
                       </div>
                       <div className="mt-3 flex justify-end">
@@ -3424,8 +3424,8 @@ function JudgesPanel({ projectName }: { projectName?: string | null }) {
                   </span>
                   <span>{formatTimestamp(optimizationStatus?.updated_at)}</span>
                 </div>
-                <div className="mt-1 h-2 w-full rounded bg-muted">
-                  <div className="h-2 rounded bg-muted-foreground transition-all" style={{ width: `${optimizationPercent}%` }} />
+                <div className="mt-1 h-2 w-full rounded-sm bg-muted">
+                  <div className="h-2 rounded-sm bg-muted-foreground transition-all" style={{ width: `${optimizationPercent}%` }} />
                 </div>
               </div>
               <div className="text-xs text-muted-foreground">
@@ -3549,7 +3549,7 @@ function JudgesPanel({ projectName }: { projectName?: string | null }) {
                       })
                     }}
                     placeholder="Quality Judge"
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                   />
                 </div>
                 <div>
@@ -3557,7 +3557,7 @@ function JudgesPanel({ projectName }: { projectName?: string | null }) {
                   <select
                     value={form.failureCategory}
                     onChange={(event) => setForm((prev) => ({ ...prev, failureCategory: event.target.value }))}
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                   >
                     <option value="">Select failure category</option>
                     {failureCategoryOptions.map((option) => (
@@ -3577,7 +3577,7 @@ function JudgesPanel({ projectName }: { projectName?: string | null }) {
                       value={form.model}
                       onChange={(event) => setForm((prev) => ({ ...prev, model: event.target.value }))}
                       placeholder="gpt-4.1-mini"
-                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                     />
                   </div>
                   <div>
@@ -3586,7 +3586,7 @@ function JudgesPanel({ projectName }: { projectName?: string | null }) {
                       value={form.agentLabel}
                       onChange={(event) => setForm((prev) => ({ ...prev, agentLabel: event.target.value }))}
                       placeholder="Quality Judge"
-                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                     />
                   </div>
                   <div>
@@ -3595,7 +3595,7 @@ function JudgesPanel({ projectName }: { projectName?: string | null }) {
                       value={form.agentName}
                       onChange={(event) => setForm((prev) => ({ ...prev, agentName: event.target.value }))}
                       placeholder="quality_judge"
-                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                     />
                   </div>
                   <div>
@@ -3603,7 +3603,7 @@ function JudgesPanel({ projectName }: { projectName?: string | null }) {
                     <select
                       value={form.source}
                       onChange={(event) => setForm((prev) => ({ ...prev, source: event.target.value }))}
-                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                     >
                       <option value="final_assistant_text">Assistant output</option>
                       <option value="history">Conversation history</option>
@@ -3614,7 +3614,7 @@ function JudgesPanel({ projectName }: { projectName?: string | null }) {
                     <select
                       value={form.failureCategory}
                       onChange={(event) => setForm((prev) => ({ ...prev, failureCategory: event.target.value }))}
-                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                     >
                       <option value="">Select failure category</option>
                       {failureCategoryOptions.map((option) => (
@@ -3632,7 +3632,7 @@ function JudgesPanel({ projectName }: { projectName?: string | null }) {
                       value={form.instructions}
                       onChange={(event) => setForm((prev) => ({ ...prev, instructions: event.target.value }))}
                       rows={6}
-                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                     />
                   </div>
                   <div>
@@ -3641,7 +3641,7 @@ function JudgesPanel({ projectName }: { projectName?: string | null }) {
                       value={form.template}
                       onChange={(event) => setForm((prev) => ({ ...prev, template: event.target.value }))}
                       rows={6}
-                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                     />
                   </div>
                 </div>
@@ -3698,7 +3698,7 @@ function JudgesPanel({ projectName }: { projectName?: string | null }) {
                   value={optimizeForm.datasetKey}
                   onChange={(event) => setOptimizeForm((prev) => ({ ...prev, datasetKey: event.target.value }))}
                   disabled={datasetOptions.length === 0 || isStartingOptimization}
-                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40 disabled:opacity-50"
                 >
                   <option value="">Select dataset</option>
                   {datasetOptions.map((option) => (
@@ -3721,7 +3721,7 @@ function JudgesPanel({ projectName }: { projectName?: string | null }) {
                     min={1}
                     step={1}
                     placeholder="100"
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                   />
                   <div className="mt-1 text-xs text-muted-foreground">Maximum evaluation calls during optimization.</div>
                 </div>
@@ -3733,7 +3733,7 @@ function JudgesPanel({ projectName }: { projectName?: string | null }) {
                     type="number"
                     step={1}
                     placeholder="0"
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                   />
                   <div className="mt-1 text-xs text-muted-foreground">Optional. Controls reproducibility.</div>
                 </div>
@@ -3843,8 +3843,8 @@ function SuiteRunDetail({ jobId, status, onBack, onDismiss, onNavigateToLogs, pr
                   </span>
                   <span>{formatTimestamp(status?.started_at) || 'pending'}</span>
                 </div>
-                <div className="mt-1 h-2 w-full rounded bg-muted">
-                  <div className="h-2 rounded bg-muted-foreground transition-all" style={{ width: `${percent}%` }} />
+                <div className="mt-1 h-2 w-full rounded-sm bg-muted">
+                  <div className="h-2 rounded-sm bg-muted-foreground transition-all" style={{ width: `${percent}%` }} />
                 </div>
               </div>
               <div className="text-xs text-muted-foreground">
@@ -3871,12 +3871,12 @@ function SuiteRunDetail({ jobId, status, onBack, onDismiss, onNavigateToLogs, pr
                 <div className="text-xs text-muted-foreground">Finished {formatTimestamp(status.finished_at)}</div>
               ) : null}
               {status?.error ? (
-                <div className="rounded border border-destructive/60 bg-destructive/10 px-3 py-2 text-xs text-destructive">{status.error}</div>
+                <div className="rounded-sm border border-destructive/60 bg-destructive/10 px-3 py-2 text-xs text-destructive">{status.error}</div>
               ) : null}
               {status?.warnings && status.warnings.length > 0 ? (
                 <div className="space-y-1">
                   {status.warnings.map((warning, idx) => (
-                    <div key={idx} className="rounded border border-amber-500/60 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                    <div key={idx} className="rounded-sm border border-amber-500/60 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
                       ⚠️ {warning}
                     </div>
                   ))}
@@ -4246,7 +4246,7 @@ function CategoriesPanel({ projectName }: { projectName?: string | null }) {
                     type="text"
                     value={nameInput}
                     onChange={(event) => setNameInput(event.target.value)}
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden transition-colors focus:border-primary"
                     placeholder="e.g. Policy violation"
                     disabled={createCategory.isPending}
                   />
@@ -4256,7 +4256,7 @@ function CategoriesPanel({ projectName }: { projectName?: string | null }) {
                   <textarea
                     value={descriptionInput}
                     onChange={(event) => setDescriptionInput(event.target.value)}
-                    className="h-24 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary"
+                    className="h-24 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden transition-colors focus:border-primary"
                     placeholder="Optional guidance for reviewers"
                     disabled={createCategory.isPending}
                   />
@@ -4275,7 +4275,7 @@ function CategoriesPanel({ projectName }: { projectName?: string | null }) {
                             type="checkbox"
                             checked={selectedMeasures.includes(measure.name)}
                             onChange={() => toggleSelectedMeasure(measure.name)}
-                            className="mt-1 h-3.5 w-3.5 rounded border-border"
+                            className="mt-1 h-3.5 w-3.5 rounded-sm border-border"
                             disabled={createCategory.isPending}
                           />
                           <span>
@@ -4346,7 +4346,7 @@ function CategoriesPanel({ projectName }: { projectName?: string | null }) {
                   <textarea
                     value={editDescription}
                     onChange={(event) => setEditDescription(event.target.value)}
-                    className="h-24 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary disabled:opacity-50"
+                    className="h-24 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden transition-colors focus:border-primary disabled:opacity-50"
                     placeholder="Optional guidance for reviewers"
                     disabled={updateCategory.isPending}
                   />
@@ -4365,7 +4365,7 @@ function CategoriesPanel({ projectName }: { projectName?: string | null }) {
                             type="checkbox"
                             checked={editMeasures.includes(measure.name)}
                             onChange={() => toggleEditMeasure(measure.name)}
-                            className="mt-1 h-3.5 w-3.5 rounded border-border"
+                            className="mt-1 h-3.5 w-3.5 rounded-sm border-border"
                             disabled={updateCategory.isPending}
                           />
                           <span>
@@ -4710,7 +4710,7 @@ function MeasuresPanel({ projectName }: { projectName?: string | null }) {
                     type="text"
                     value={formName}
                     onChange={(event) => setFormName(event.target.value)}
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary disabled:opacity-50"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden transition-colors focus:border-primary disabled:opacity-50"
                     placeholder="e.g. ambiguous_location_check"
                     disabled={isSaving || isEditing}
                   />
@@ -4721,7 +4721,7 @@ function MeasuresPanel({ projectName }: { projectName?: string | null }) {
                     type="text"
                     value={formLabel}
                     onChange={(event) => setFormLabel(event.target.value)}
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary disabled:opacity-50"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden transition-colors focus:border-primary disabled:opacity-50"
                     placeholder="Optional display label"
                     disabled={isSaving}
                   />
@@ -4731,7 +4731,7 @@ function MeasuresPanel({ projectName }: { projectName?: string | null }) {
                   <textarea
                     value={formDescription}
                     onChange={(event) => setFormDescription(event.target.value)}
-                    className="h-24 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-primary disabled:opacity-50"
+                    className="h-24 w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden transition-colors focus:border-primary disabled:opacity-50"
                     placeholder="Optional guidance for reviewers"
                     disabled={isSaving}
                   />
@@ -4742,7 +4742,7 @@ function MeasuresPanel({ projectName }: { projectName?: string | null }) {
                       type="checkbox"
                       checked={formCreateStub}
                       onChange={(event) => setFormCreateStub(event.target.checked)}
-                      className="h-3.5 w-3.5 rounded border-border"
+                      className="h-3.5 w-3.5 rounded-sm border-border"
                       disabled={isSaving}
                     />
                     <span>Create stub in measures.py</span>
@@ -5513,8 +5513,8 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
                   </span>
                   <span>{formatTimestamp(suiteStatus?.updated_at)}</span>
                 </div>
-                <div className="mt-1 h-2 w-full rounded bg-muted">
-                  <div className="h-2 rounded bg-muted-foreground transition-all" style={{ width: `${suitePercent}%` }} />
+                <div className="mt-1 h-2 w-full rounded-sm bg-muted">
+                  <div className="h-2 rounded-sm bg-muted-foreground transition-all" style={{ width: `${suitePercent}%` }} />
                 </div>
               </div>
               {suiteStatus?.summary ? (
@@ -5593,8 +5593,8 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
                   </span>
                   <span>{formatTimestamp(generationStatus?.updated_at)}</span>
                 </div>
-                <div className="mt-1 h-2 w-full rounded bg-muted">
-                  <div className="h-2 rounded bg-muted-foreground transition-all" style={{ width: `${generationPercent}%` }} />
+                <div className="mt-1 h-2 w-full rounded-sm bg-muted">
+                  <div className="h-2 rounded-sm bg-muted-foreground transition-all" style={{ width: `${generationPercent}%` }} />
                 </div>
               </div>
               <div className="text-xs text-muted-foreground">
@@ -5618,7 +5618,7 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
                 </div>
               ) : null}
               {generationStatus?.error ? (
-                <div className="rounded border border-destructive/60 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                <div className="rounded-sm border border-destructive/60 bg-destructive/10 px-3 py-2 text-xs text-destructive">
                   {generationStatus.error}
                 </div>
               ) : null}
@@ -5809,7 +5809,7 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
                   value={suiteName}
                   onChange={(event) => setSuiteName(event.target.value)}
                   placeholder="compliance_suite"
-                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                 />
               </div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -5818,7 +5818,7 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
                   <select
                     value={suiteAgent}
                     onChange={(event) => setSuiteAgent(event.target.value)}
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                   >
                     <option value="">Use project entrypoint</option>
                     {suiteAgentsList.map((agent) => (
@@ -5834,7 +5834,7 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
                     value={suiteOutputPath}
                     onChange={(event) => setSuiteOutputPath(event.target.value)}
                     placeholder="artifacts/eval/compliance/run_results.json"
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                   />
                 </div>
               </div>
@@ -5845,7 +5845,7 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
                     value={suiteSelect}
                     onChange={(event) => setSuiteSelect(event.target.value)}
                     placeholder="Tag expression"
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                   />
                 </div>
                 <div>
@@ -5854,7 +5854,7 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
                     value={suiteExclude}
                     onChange={(event) => setSuiteExclude(event.target.value)}
                     placeholder="Exclude expression"
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                   />
                 </div>
               </div>
@@ -5863,7 +5863,7 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
                   type="checkbox"
                   checked={suiteIncludeUnmeasured}
                   onChange={(event) => setSuiteIncludeUnmeasured(event.target.checked)}
-                  className="h-4 w-4 rounded border-border text-primary focus:ring-primary/50"
+                  className="h-4 w-4 rounded-sm border-border text-primary focus:ring-primary/50"
                 />
                 Include scenarios without measures
               </label>
@@ -5915,7 +5915,7 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
                   value={generateName}
                   onChange={(event) => setGenerateName(event.target.value)}
                   placeholder="synthetic_support"
-                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                 />
               </div>
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -5927,7 +5927,7 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
                     value={generateCount}
                     onChange={(event) => setGenerateCount(event.target.value)}
                     placeholder="Use project default"
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                   />
                 </div>
                 <div>
@@ -5937,7 +5937,7 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
                     value={generateSeed}
                     onChange={(event) => setGenerateSeed(event.target.value)}
                     placeholder="Optional"
-                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-hidden focus:ring-2 focus:ring-primary/40"
                   />
                 </div>
               </div>
@@ -6031,7 +6031,7 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
                                         return next
                                       })
                                     }
-                                    className="h-4 w-4 rounded border-border text-primary focus:ring-primary/50"
+                                    className="h-4 w-4 rounded-sm border-border text-primary focus:ring-primary/50"
                                   />
                                   <span>{value.label || valueName}</span>
                                 </label>
@@ -6343,7 +6343,7 @@ function ResultsPanel({
                                 </span>
                                 <span className="text-sm font-medium">{scenario.scenario_name}</span>
                                 {scenario.type === 'synthetic' && (
-                                  <span className="rounded bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-400">
+                                  <span className="rounded-sm bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-600 dark:text-violet-400">
                                     synthetic
                                   </span>
                                 )}
@@ -6386,7 +6386,7 @@ function ResultsPanel({
                             )}
 
                             {scenario.error && (
-                              <div className="mt-2 text-xs text-red-600 dark:text-red-400 bg-red-500/10 px-2 py-1 rounded">
+                              <div className="mt-2 text-xs text-red-600 dark:text-red-400 bg-red-500/10 px-2 py-1 rounded-sm">
                                 {scenario.error.message}
                               </div>
                             )}

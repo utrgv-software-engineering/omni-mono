@@ -25,16 +25,16 @@ export function MarkdownMessage({ content, variant = 'assistant', className }: M
   [content])
 
   const variantClass = variant === 'user'
-    ? 'prose-invert prose-p:text-white prose-headings:text-white prose-strong:text-white prose-em:text-white prose-a:text-blue-200 hover:prose-a:text-blue-100 prose-li:text-white prose-blockquote:text-white/90 prose-code:text-white prose-code:bg-blue-500/30 prose-pre:bg-blue-600/20 prose-pre:border-blue-200/40 [&_.katex]:text-white'
+    ? 'prose-invert prose-p:text-white prose-headings:text-white prose-strong:text-white prose-em:text-white prose-a:text-blue-200 prose-a:hover:text-blue-100 prose-li:text-white prose-blockquote:text-white/90 prose-code:text-white prose-code:bg-blue-500/30 prose-pre:bg-blue-600/20 prose-pre:border-blue-200/40 [&_.katex]:text-white'
     : variant === 'system'
-      ? 'dark:prose-invert prose-strong:text-muted-foreground prose-headings:text-muted-foreground prose-em:text-muted-foreground prose-a:text-blue-500 hover:prose-a:underline'
-      : 'dark:prose-invert prose-strong:text-foreground prose-headings:text-foreground prose-em:text-foreground prose-a:text-blue-500 hover:prose-a:underline'
+      ? 'dark:prose-invert prose-strong:text-muted-foreground prose-headings:text-muted-foreground prose-em:text-muted-foreground prose-a:text-blue-500 prose-a:hover:underline'
+      : 'dark:prose-invert prose-strong:text-foreground prose-headings:text-foreground prose-em:text-foreground prose-a:text-blue-500 prose-a:hover:underline'
 
   return (
     <div
       className={cn(
         'prose prose-sm max-w-none',
-        'prose-p:whitespace-pre-wrap prose-p:break-words prose-p:my-1 prose-p:first:mt-0 prose-p:last:mb-0 prose-p:leading-relaxed',
+        'prose-p:whitespace-pre-wrap prose-p:wrap-break-word prose-p:my-1 first:prose-p:mt-0 last:prose-p:mb-0 prose-p:leading-relaxed',
         'prose-pre:my-3 prose-pre:rounded-lg prose-pre:border prose-pre:border-border prose-pre:bg-background prose-pre:px-3 prose-pre:py-2 prose-pre:overflow-x-auto dark:prose-pre:bg-muted/30 dark:prose-pre:border-muted/60',
         'prose-code:text-sm prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded-md prose-code:bg-background prose-code:text-foreground dark:prose-code:bg-muted/30 dark:prose-code:text-foreground',
         'prose-code:before:content-none prose-code:after:content-none',

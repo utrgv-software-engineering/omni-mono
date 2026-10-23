@@ -1,8 +1,9 @@
-import { createTerminalStore, type TerminalStore } from '@omniagents/chat-ui/terminal/terminal-store';
-import type { UiConfig } from '@omniagents/chat-ui/ui-config';
 import type { RPCClient } from '@omniagents/client/rpc/client';
 import { createRuntimeTerminal, TerminalStream } from '@omniagents/client/rpc/terminal';
 import { withConnectTicket } from '@omniagents/client/rpc/ws-ticket';
+
+import type { UiConfig } from '../ui-config';
+import { createTerminalStore, type TerminalStore } from './terminal-store';
 
 type Listeners = {
   output(scope: string, id: string, data: string): void;
@@ -10,10 +11,12 @@ type Listeners = {
 };
 
 /**
- * Terminals for the web UI, scoped by chat session. The page holds each
- * shell's socket, so a reload closes its terminals.
+ * Terminals for a browser page (the omniagents web UI, Studio), scoped by
+ * chat session: the page dials each shell's socket on the runtime itself,
+ * so a reload closes its terminals. The desktop routes them through its
+ * main process instead.
  */
-export function createWebTerminals(client: RPCClient, config: UiConfig): TerminalStore {
+export function createBrowserTerminals(client: RPCClient, config: UiConfig): TerminalStore {
   const streams = new Map<string, { scope: string; stream: TerminalStream }>();
   const listeners = new Set<Listeners>();
 

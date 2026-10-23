@@ -1,0 +1,5 @@
+/* xterm.css paints the viewport black, and xterm 6 never repaints it from
+   the theme: the terminal's background is the theme's (--xterm-bg). */
+.xterm .xterm-viewport {
+  background-color: transparent;
+}

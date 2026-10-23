@@ -52,7 +52,7 @@ export function EvaluationHeader({ activeTab, onTabChange, onBack, projectName, 
                 onClick={() => onTabChange(tab.key)}
                 className={cn(
                   'px-3 py-1 text-xs font-medium rounded-md transition-colors',
-                  activeTab === tab.key ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                  activeTab === tab.key ? 'bg-background shadow-xs' : 'text-muted-foreground hover:text-foreground'
                 )}
               >
                 {tab.label}

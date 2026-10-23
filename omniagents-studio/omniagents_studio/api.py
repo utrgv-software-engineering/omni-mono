@@ -10,19 +10,13 @@ import logging
 import os
 import shutil
 import sqlite3
-import tempfile
 import uuid
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Literal, Set
 
-try:
-    from typing_extensions import NotRequired, TypedDict  # type: ignore
-except ImportError:  # pragma: no cover - Python 3.12+
-    from typing import NotRequired, TypedDict  # type: ignore
-
-from dataclasses import replace, asdict, dataclass
+from dataclasses import dataclass
 
 from fastapi import (
     FastAPI,
@@ -38,20 +32,17 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 from starlette.types import Scope
-from starlette.datastructures import URL
 
 import yaml
 
 from pydantic import BaseModel, Field
-from omniagents.execution import AgentHostResources
 
 from omniagents.core.paths import (
     get_sessions_db_path,
     get_sessions_dir,
     get_traces_dir,
 )
-from omniagents.core.agents.service import AgentService
-from omniagents.core.agents.specs import AgentSpec, SafeAgentOptions
+from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.providers.auth.base import AuthProvider
 from omniagents.core.providers.auth.none import NoneAuthProvider
 from omniagents.core.providers.auth.token import TokenAuthProvider
@@ -61,9 +52,6 @@ from omniagents.rpc.auth import (
     ConnectionAuthenticator,
     legacy_query_auth_enabled,
 )
-from omniagents.rpc.server import JsonRpcChannel, JsonRpcEndpoint
-from omniagents.rpc.transport.websocket import ServerWebSocketTransport
-from omniagents.rpc.transport import TransportClosedError
 from omniagents.core.project.runtime import (
     load_project,
     build_spec_from_project,
@@ -94,12 +82,11 @@ from omniagents.core.evaluation.registry import _MEASURES as _REGISTERED_MEASURE
 from omniagents.core.project.apply import apply_agent_instructions
 from omniagents.core.project.scaffold import (
     scaffold_judge,
-    scaffold_agent,
-    delete_agent,
 )
-from omniagents.core.utils.fs import remove_tree
 
 from omniagents.core.tracing.storage import SQLiteStorage
+
+from .agent_runtimes import AgentRuntimes
 
 try:
     from agents.agent_output import AgentOutputSchema  # type: ignore
@@ -619,375 +606,6 @@ def _utc_now() -> str:
     return _isoformat_utc(datetime.now(timezone.utc))
 
 
-def _canonical_output_type_key(output_type: Any) -> str:
-    if output_type is None:
-        return "none"
-    if output_type is str:
-        return "string"
-    if output_type is dict:
-        return "dict"
-    if output_type is list:
-        return "list"
-    if output_type is bool:
-        return "boolean"
-    if output_type is int:
-        return "integer"
-    if output_type is float:
-        return "float"
-    return "custom"
-
-
-def _output_type_label(key: str, fallback: Any = None) -> str:
-    if key in STRUCTURED_OUTPUT_LABELS:
-        return STRUCTURED_OUTPUT_LABELS[key]
-    if key == "string":
-        return "String"
-    if key == "custom" and fallback is not None:
-        try:
-            return getattr(fallback, "__name__", "Custom schema") or "Custom schema"
-        except Exception:
-            return "Custom schema"
-    return key.replace("_", " ").title()
-
-
-def _resolve_output_type_override(value: Optional[str]) -> Optional[str]:
-    if value is None:
-        return None
-    normalized = value.strip().lower()
-    if not normalized:
-        return None
-    if normalized == "default":
-        return None
-    return normalized
-
-
-def _map_output_type_key_to_python(key: str, *, fallback: Any) -> Any:
-    if not key:
-        return fallback
-    mapped = STRUCTURED_OUTPUT_TYPE_MAP.get(key)
-    if key in ("none", "plain_text"):
-        return None
-    if mapped is not None:
-        return mapped
-    return fallback
-
-
-def _structured_output_options(default_label: str) -> List[Dict[str, str]]:
-    base_options = [
-        {"value": "default", "label": f"Project default ({default_label})"},
-        {"value": "none", "label": STRUCTURED_OUTPUT_LABELS["none"]},
-        {"value": "dict", "label": STRUCTURED_OUTPUT_LABELS["dict"]},
-        {"value": "list", "label": STRUCTURED_OUTPUT_LABELS["list"]},
-        {"value": "boolean", "label": STRUCTURED_OUTPUT_LABELS["boolean"]},
-        {"value": "integer", "label": STRUCTURED_OUTPUT_LABELS["integer"]},
-        {"value": "float", "label": STRUCTURED_OUTPUT_LABELS["float"]},
-    ]
-    return base_options
-
-
-def _guardrail_keys(
-    active_guardrails: Optional[List[Any]], registry: Dict[str, Any]
-) -> List[str]:
-    if not active_guardrails:
-        return []
-    keys: List[str] = []
-    for guardrail in active_guardrails:
-        matched: Optional[str] = None
-        for candidate_key, candidate in registry.items():
-            if candidate is guardrail:
-                matched = str(candidate_key)
-                break
-            candidate_name = None
-            guardrail_name = None
-            if hasattr(candidate, "get_name"):
-                try:
-                    candidate_name = candidate.get_name()
-                except Exception:
-                    candidate_name = None
-            if hasattr(guardrail, "get_name"):
-                try:
-                    guardrail_name = guardrail.get_name()
-                except Exception:
-                    guardrail_name = None
-            if candidate_name and guardrail_name and candidate_name == guardrail_name:
-                matched = str(candidate_key)
-                break
-        if matched:
-            keys.append(matched)
-        else:
-            if hasattr(guardrail, "get_name"):
-                try:
-                    fallback = guardrail.get_name()
-                    if fallback:
-                        keys.append(str(fallback))
-                except Exception:
-                    pass
-    return keys
-
-
-def _default_tool_names(spec: AgentSpec) -> List[str]:
-    names: List[str] = []
-    for tool in getattr(spec, "available_tools", []) or []:
-        name = getattr(tool, "name", None)
-        if name:
-            names.append(str(name))
-    return names
-
-
-def _safe_options_dict(spec: AgentSpec) -> Dict[str, Any]:
-    if spec.safe_agent_options:
-        return asdict(spec.safe_agent_options)
-    return {}
-
-
-def _resolve_agent_spec(
-    resources: Dict[str, Any], agent_key: Optional[str]
-) -> Optional[AgentSpec]:
-    if agent_key:
-        specs = resources.get("agent_specs") or {}
-        return specs.get(agent_key)
-    return resources.get("base_spec")
-
-
-def _compute_playground_ws_url(request: Request) -> str:
-    forwarded_proto = request.headers.get("x-forwarded-proto")
-    forwarded_host = request.headers.get("x-forwarded-host")
-    forwarded_port = request.headers.get("x-forwarded-port")
-
-    http_url = URL(str(request.url_for("playground_ws")))
-
-    scheme = (
-        forwarded_proto.split(",")[0].strip() if forwarded_proto else http_url.scheme
-    )
-
-    host = http_url.hostname or http_url.host
-    port = http_url.port
-
-    if forwarded_host:
-        host_value = forwarded_host.split(",")[0].strip()
-        if host_value:
-            if ":" in host_value:
-                host_part, _, port_part = host_value.partition(":")
-                host = host_part or host
-                try:
-                    port = int(port_part)
-                except ValueError:
-                    pass
-            else:
-                host = host_value or host
-
-    if forwarded_port:
-        port_value = forwarded_port.split(",")[0].strip()
-        try:
-            port = int(port_value)
-        except ValueError:
-            pass
-
-    ws_scheme = "wss" if scheme == "https" else "ws"
-    ws_url = http_url.replace(scheme=ws_scheme)
-
-    if host:
-        ws_url = ws_url.replace(hostname=host)
-    ws_url = ws_url.replace(port=port)
-
-    return str(ws_url)
-
-
-def _build_metadata_response(
-    spec: AgentSpec,
-    resources: Dict[str, Any],
-    request: Request,
-    *,
-    agent_key: Optional[str],
-) -> Dict[str, Any]:
-    tool_registry: Dict[str, Any] = resources.get("tool_registry", {})
-    guardrails_registry: Dict[str, Any] = resources.get(
-        "guardrails_registry", {"input": {}, "output": {}}
-    )
-    project_name = (
-        resources.get("project_name") or request.app.state.default_project or "default"
-    )
-
-    tools_payload: List[Dict[str, Any]] = []
-    for key, tool in tool_registry.items():
-        tool_name = getattr(tool, "name", None) or key
-        schema = getattr(tool, "params_json_schema", None)
-        if schema is not None:
-            try:
-                json.dumps(schema)
-            except TypeError:
-                schema = json.loads(json.dumps(schema, default=str))
-        tools_payload.append(
-            {
-                "name": tool_name,
-                "description": getattr(tool, "description", "") or "",
-                "schema": schema,
-                "strict": getattr(tool, "strict_json_schema", None),
-            }
-        )
-    tools_payload.sort(key=lambda item: item["name"].lower())
-
-    instructions_text = ""
-    supplier = getattr(spec, "get_agent_instructions", None)
-    if callable(supplier):
-        try:
-            instructions_text = supplier() or ""
-        except Exception:
-            instructions_text = ""
-
-    default_output_key = _canonical_output_type_key(getattr(spec, "output_type", None))
-    default_output_label = _output_type_label(
-        default_output_key, getattr(spec, "output_type", None)
-    )
-    default_output_schema = _structured_output_schema(
-        getattr(spec, "output_type", None), getattr(spec, "output_type_strict", True)
-    )
-
-    ws_url = _compute_playground_ws_url(request)
-
-    input_guardrails = guardrails_registry.get("input", {})
-    output_guardrails = guardrails_registry.get("output", {})
-
-    input_guardrails_payload: List[Dict[str, Any]] = []
-    for key, guardrail in input_guardrails.items():
-        label = _guardrail_name(guardrail) or key
-        input_guardrails_payload.append({"name": key, "label": label})
-    input_guardrails_payload.sort(key=lambda item: item["label"].lower())
-
-    output_guardrails_payload: List[Dict[str, Any]] = []
-    for key, guardrail in output_guardrails.items():
-        label = _guardrail_name(guardrail) or key
-        output_guardrails_payload.append({"name": key, "label": label})
-    output_guardrails_payload.sort(key=lambda item: item["label"].lower())
-
-    default_guardrails = {
-        "input": _guardrail_keys(
-            getattr(spec, "input_guardrails", None), input_guardrails
-        ),
-        "output": _guardrail_keys(
-            getattr(spec, "output_guardrails", None), output_guardrails
-        ),
-    }
-
-    safe_defaults = {
-        "use_safe_agent": bool(getattr(spec, "use_safe_agent", False)),
-        "options": _safe_options_dict(spec),
-    }
-
-    return {
-        "available": True,
-        "project_name": project_name,
-        "entry_agent": spec.name,
-        "agent_key": agent_key,
-        "agent_label": getattr(spec, "label", None) or spec.name or agent_key,
-        "default_model": spec.model_name or "",
-        "default_instructions": instructions_text,
-        "default_tools": _default_tool_names(spec),
-        "tools": tools_payload,
-        "requires_model_input": True,
-        "playground_ws_url": ws_url,
-        "model_settings_schema": MODEL_SETTING_SCHEMA,
-        "default_model_settings": spec.model_settings or {},
-        "structured_output": {
-            "default_type": default_output_key,
-            "default_label": default_output_label,
-            "default_strict": bool(getattr(spec, "output_type_strict", True)),
-            "default_schema": default_output_schema,
-            "options": _structured_output_options(default_output_label),
-        },
-        "guardrails": {
-            "input": input_guardrails_payload,
-            "output": output_guardrails_payload,
-            "default_input": default_guardrails["input"],
-            "default_output": default_guardrails["output"],
-        },
-        "safe_defaults": safe_defaults,
-    }
-
-
-def _structured_output_schema(
-    output_type: Any, strict: bool
-) -> Optional[Dict[str, Any]]:
-    if AgentOutputSchema is None:
-        return None
-    if output_type is None:
-        return None
-    try:
-        wrapper = AgentOutputSchema(output_type, strict_json_schema=strict)
-        if wrapper.is_plain_text():
-            return None
-        return wrapper.json_schema()
-    except Exception:
-        return None
-
-
-def _build_type_from_schema(schema: Dict[str, Any], agent_name: str) -> Optional[type]:
-    if not isinstance(schema, dict):
-        return None
-    schema_type = schema.get("type")
-    if schema_type and str(schema_type).lower() not in ("object", "dict", "dictionary"):
-        return None
-    properties = schema.get("properties")
-    if not isinstance(properties, dict) or not properties:
-        return None
-    required_raw = schema.get("required")
-    required_names = (
-        {str(item) for item in required_raw if isinstance(item, str)}
-        if isinstance(required_raw, list)
-        else set()
-    )
-
-    annotations: Dict[str, Any] = {}
-    for key, value in properties.items():
-        if not isinstance(key, str) or not key:
-            continue
-        if not isinstance(value, dict):
-            continue
-        json_type = str(value.get("type") or "string").lower()
-        mapped = STRUCTURED_OUTPUT_TYPE_MAP.get(json_type)
-        if mapped is None:
-            if json_type in ("object", "dict", "dictionary"):
-                mapped = dict
-            elif json_type in ("array", "list"):
-                mapped = list
-            else:
-                mapped = str
-        if key in required_names:
-            annotations[key] = mapped
-        else:
-            try:
-                annotations[key] = NotRequired[mapped]  # type: ignore[index]
-            except Exception:
-                annotations[key] = mapped
-
-    if not annotations:
-        return dict
-
-    safe_name = (
-        "".join(ch for ch in (agent_name or "Playground") if ch.isalnum())
-        or "Playground"
-    )
-    type_name = f"{safe_name}StructuredOutput"
-    try:
-        return TypedDict(type_name, annotations)  # type: ignore[arg-type]
-    except Exception:
-        return dict
-
-
-def _guardrail_name(value: Any) -> Optional[str]:
-    if value is None:
-        return None
-    if hasattr(value, "get_name"):
-        try:
-            extracted = value.get_name()
-            if extracted:
-                return str(extracted)
-        except Exception:
-            return None
-    name = getattr(value, "name", None)
-    return str(name) if name else None
-
-
 class StorageManager:
     """Manages multiple storage instances for different projects"""
 
@@ -1026,107 +644,6 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
-
-
-class PlaygroundSessionStore:
-    """In-memory store of playground session configs.
-
-    Each session also owns a sandbox tempdir, allocated on first
-    ``upsert`` and surfaced as ``config["__playground_workspace_root"]``.
-    The websocket handler passes that path as ``default_host_workspace_root``
-    on the per-session ``AgentService``, so playground agents that have
-    builtin filesystem tools (file_tools, bash, etc.) resolve relative
-    paths against the sandbox instead of:
-
-      * raising ``WorkspaceRootRequiredError`` under strict mode (the
-        framework refuses to silently use the studio server's cwd), or
-      * silently writing to wherever the studio server happened to be
-        launched from (the bug strict mode was added to catch).
-
-    Studio operators are the only ones interacting with the playground;
-    qualifying for a default like ink/web/launcher do, but isolated
-    per-session so two playground tabs don't trample each other.
-    """
-
-    def __init__(self):
-        self._sessions: Dict[str, Dict[str, Any]] = {}
-        self._lock = asyncio.Lock()
-
-    async def upsert(self, session_id: Optional[str], config: Dict[str, Any]) -> str:
-        async with self._lock:
-            key = session_id or uuid.uuid4().hex
-            existing = self._sessions.get(key)
-            payload = dict(config)
-            # Every update moves updated_at forward, even within one tick
-            # of a coarse clock (Windows).
-            now = datetime.now(timezone.utc)
-            if existing and existing.get("updated_at"):
-                previous = datetime.fromisoformat(
-                    str(existing["updated_at"]).replace("Z", "+00:00")
-                )
-                now = max(now, previous + timedelta(microseconds=1))
-            payload["updated_at"] = _isoformat_utc(now)
-            # Preserve the per-session sandbox tempdir across config
-            # updates (the client may upsert the same session_id multiple
-            # times to change instructions, tools, etc. — the workspace
-            # stays put).
-            if existing and existing.get("__playground_workspace_root"):
-                payload["__playground_workspace_root"] = existing[
-                    "__playground_workspace_root"
-                ]
-            else:
-                payload["__playground_workspace_root"] = tempfile.mkdtemp(
-                    prefix=f"omniagents_studio_playground_{key[:8]}_"
-                )
-            self._sessions[key] = payload
-            return key
-
-    async def get(self, session_id: str) -> Optional[Dict[str, Any]]:
-        async with self._lock:
-            entry = self._sessions.get(session_id)
-            return dict(entry) if entry else None
-
-    async def delete(self, session_id: str) -> None:
-        async with self._lock:
-            entry = self._sessions.pop(session_id, None)
-        # Best-effort cleanup outside the lock — slow filesystem ops
-        # shouldn't block other session operations.
-        if entry:
-            ws_root = entry.get("__playground_workspace_root")
-            if isinstance(ws_root, str) and ws_root:
-                remove_tree(ws_root, ignore_errors=True)
-
-
-class PlaygroundSessionRequest(BaseModel):
-    model: str
-    instructions: Optional[str] = None
-    tools: Optional[List[str]] = None
-    model_settings: Optional[Dict[str, Any]] = None
-    use_safe_agent: Optional[bool] = None
-    safe_agent_options: Optional[Dict[str, Any]] = None
-    guardrails: Optional[Dict[str, List[str]]] = None
-    output_type: Optional[str] = None
-    output_type_strict: Optional[bool] = None
-    output_schema: Optional[Dict[str, Any]] = None
-    session_id: Optional[str] = None
-
-
-class AgentUpdatePayload(BaseModel):
-    model: str
-    instructions: Optional[str] = None
-    tools: List[str] = Field(default_factory=list)
-    model_settings: Optional[Dict[str, Any]] = None
-    use_safe_agent: bool = False
-    safe_agent_options: Optional[Dict[str, Any]] = None
-    guardrails: Optional[Dict[str, List[str]]] = None
-    output_type: Optional[str] = None
-    output_type_strict: Optional[bool] = None
-    output_schema: Optional[Dict[str, Any]] = None
-
-
-class AgentCreatePayload(BaseModel):
-    name: str
-    model: Optional[str] = None
 
 
 class DimensionValueModel(BaseModel):
@@ -2487,167 +2004,12 @@ class EvaluationResultsDetailResponse(BaseModel):
     workflow_name: Optional[str] = None
 
 
-def build_playground_spec(
-    base_spec: AgentSpec,
-    tool_registry: Dict[str, Any],
-    guardrails_registry: Optional[Dict[str, Any]],
-    config: Dict[str, Any],
-    *,
-    session_label: Optional[str] = None,
-) -> AgentSpec:
-    instructions_override = (
-        config.get("instructions") if "instructions" in config else None
-    )
-    base_instructions_supplier = getattr(base_spec, "get_agent_instructions", None)
-
-    def _instructions_supplier() -> str:
-        if instructions_override is not None:
-            return instructions_override
-        if callable(base_instructions_supplier):
-            try:
-                return base_instructions_supplier()
-            except Exception:
-                return ""
-        return ""
-
-    if "tools" in config:
-        selected_tool_names = config.get("tools") or []
-        selected_tools = [
-            tool_registry[name] for name in selected_tool_names if name in tool_registry
-        ]
-    else:
-        selected_tools = getattr(base_spec, "available_tools", None)
-
-    base_model_settings = dict(base_spec.model_settings or {})
-    model_settings = dict(base_model_settings)
-    incoming_model_settings = config.get("model_settings")
-    if isinstance(incoming_model_settings, dict):
-        overrides = {
-            k: v for k, v in incoming_model_settings.items() if v not in (None, "")
-        }
-        if overrides:
-            model_settings = {**base_model_settings, **overrides}
-
-    use_safe_agent = (
-        base_spec.use_safe_agent
-        if config.get("use_safe_agent") is None
-        else bool(config.get("use_safe_agent"))
-    )
-
-    base_output_type = getattr(base_spec, "output_type", None)
-    base_output_type_strict = getattr(base_spec, "output_type_strict", True)
-    output_type_override = config.get("output_type")
-    normalized_output_key = (
-        _resolve_output_type_override(output_type_override)
-        if isinstance(output_type_override, str)
-        else None
-    )
-    schema_override = config.get("output_schema")
-    custom_output_type = (
-        _build_type_from_schema(schema_override, base_spec.name or "Playground")
-        if isinstance(schema_override, dict)
-        else None
-    )
-    resolved_output_type = base_output_type
-    if normalized_output_key is not None:
-        resolved_output_type = _map_output_type_key_to_python(
-            normalized_output_key, fallback=base_output_type
-        )
-        if normalized_output_key in ("string", "str"):
-            resolved_output_type = str
-    if custom_output_type is not None:
-        resolved_output_type = custom_output_type
-    output_type_strict = base_output_type_strict
-    if "output_type_strict" in config:
-        try:
-            output_type_strict = bool(config["output_type_strict"])
-        except Exception:
-            output_type_strict = base_output_type_strict
-
-    safe_options_dict = {}
-    if base_spec.safe_agent_options:
-        safe_options_dict = asdict(base_spec.safe_agent_options)
-    else:
-        safe_options_dict = asdict(SafeAgentOptions())
-    incoming_safe_options = config.get("safe_agent_options") or {}
-    if isinstance(incoming_safe_options, dict):
-        for key in ("skip_approvals", "halt_on_rejection"):
-            if key in incoming_safe_options:
-                safe_options_dict[key] = bool(incoming_safe_options[key])
-        if "safe_tool_names" in incoming_safe_options and isinstance(
-            incoming_safe_options["safe_tool_names"], list
-        ):
-            safe_options_dict["safe_tool_names"] = [
-                str(item)
-                for item in incoming_safe_options["safe_tool_names"]
-                if isinstance(item, str)
-            ]
-        if "safe_tool_patterns" in incoming_safe_options and isinstance(
-            incoming_safe_options["safe_tool_patterns"], list
-        ):
-            safe_options_dict["safe_tool_patterns"] = [
-                str(item)
-                for item in incoming_safe_options["safe_tool_patterns"]
-                if isinstance(item, str)
-            ]
-    safe_agent_options = SafeAgentOptions(**safe_options_dict)
-
-    guardrails_config = config.get("guardrails") or {}
-    guardrail_registry_input = (guardrails_registry or {}).get("input", {})
-    guardrail_registry_output = (guardrails_registry or {}).get("output", {})
-
-    def _resolve_guardrails(
-        names: Optional[List[str]],
-        registry: Dict[str, Any],
-        fallback: Optional[List[Any]],
-    ) -> List[Any]:
-        if not isinstance(names, list):
-            return list(fallback or [])
-        resolved = [registry.get(name) for name in names if name in registry]
-        return [item for item in resolved if item]
-
-    selected_input_guardrails = _resolve_guardrails(
-        guardrails_config.get("input"),
-        guardrail_registry_input,
-        getattr(base_spec, "input_guardrails", None),
-    )
-    selected_output_guardrails = _resolve_guardrails(
-        guardrails_config.get("output"),
-        guardrail_registry_output,
-        getattr(base_spec, "output_guardrails", None),
-    )
-
-    tracing_cfg = dict(base_spec.tracing_config or {})
-    tracing_cfg["workflow_name"] = session_label or "playground"
-
-    spec = replace(
-        base_spec,
-        name=f"{base_spec.name}_playground" if base_spec.name else "playground_agent",
-        welcome_text=base_spec.welcome_text,
-        get_agent_instructions=_instructions_supplier,
-        agent_slug="playground",
-        available_tools=selected_tools,
-        model_name=config.get("model") or base_spec.model_name,
-        model_settings=model_settings or None,
-        use_safe_agent=use_safe_agent,
-        safe_agent_options=safe_agent_options,
-        output_type=resolved_output_type,
-        output_type_strict=output_type_strict,
-        input_guardrails=selected_input_guardrails,
-        output_guardrails=selected_output_guardrails,
-        tracing_config=tracing_cfg,
-    )
-
-    spec.build_agent = None
-    return spec
-
-
 def create_api_app(
     storage: Optional[SQLiteStorage] = None,
     default_project: Optional[str] = None,
     *,
     dev_server_url: Optional[str] = None,
-    playground_resources: Optional[Dict[str, Any]] = None,
+    project_resources: Optional[Dict[str, Any]] = None,
     auth_token: Optional[str] = None,
 ):
     app = FastAPI()
@@ -2744,25 +2106,23 @@ def create_api_app(
         storage_manager.storages[project_name] = storage
         initial_project = project_name
     app.state.default_project = initial_project
-    resources = dict(playground_resources or {})
+    resources = dict(project_resources or {})
     if default_project and not resources.get("project_name"):
         resources["project_name"] = default_project
-    if "tool_registry" not in resources:
-        resources["tool_registry"] = {}
-    if "guardrails_registry" not in resources:
-        resources["guardrails_registry"] = {"input": {}, "output": {}}
-    if "default_guardrails" not in resources:
-        resources["default_guardrails"] = {"input": [], "output": []}
-    if "default_safe_agent_options" not in resources:
-        resources["default_safe_agent_options"] = {}
-    if "default_model_settings" not in resources:
-        resources["default_model_settings"] = {}
-    if "agent_specs" not in resources:
-        resources["agent_specs"] = {}
-    if "entry_agent_key" not in resources:
-        resources["entry_agent_key"] = None
-    app.state.playground_resources = resources
-    app.state.playground_session_store = PlaygroundSessionStore()
+    resources.setdefault("agent_specs", {})
+    resources.setdefault("entry_agent_key", None)
+    app.state.project_resources = resources
+    manifest_hint = resources.get("manifest_path")
+    agent_runtimes = AgentRuntimes(
+        resources["agent_specs"],
+        workspace_root=(
+            str(Path(manifest_hint).expanduser().resolve().parent)
+            if manifest_hint
+            else None
+        ),
+        auth_token=expected_auth_token,
+    )
+    app.state.agent_runtimes = agent_runtimes
     app.state.scenario_run_manager = ScenarioRunManager()
     app.state.suite_run_manager = SuiteRunManager()
     app.state.scenario_generation_manager = ScenarioGenerationManager()
@@ -2830,7 +2190,7 @@ def create_api_app(
 
     @app.get("/api/studio/project")
     async def get_studio_project():
-        resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+        resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
         manifest_hint = resources.get("manifest_path")
         project_name = (
             resources.get("project_name") or app.state.default_project or None
@@ -2849,75 +2209,13 @@ def create_api_app(
         }
 
     def _get_manifest_path() -> Path:
-        resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+        resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
         manifest_hint = resources.get("manifest_path")
         if manifest_hint:
             manifest_path = Path(manifest_hint).expanduser().resolve()
             if manifest_path.is_file():
                 return manifest_path
         raise HTTPException(status_code=404, detail="Project manifest not available")
-
-    def _reload_playground_resources(
-        ctx, manifest_path: Path
-    ) -> Tuple[Dict[str, Any], Dict[str, AgentSpec]]:
-        agent_specs: Dict[str, AgentSpec] = {}
-        base_spec = build_spec_from_project(ctx)
-        for key in sorted(ctx.agents_map.keys()):
-            if key == ctx.entrypoint:
-                agent_specs[key] = base_spec
-            else:
-                try:
-                    agent_specs[key] = build_spec_from_project(ctx, key)
-                except Exception:
-                    continue
-        resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
-        updated_resources = dict(resources or {})
-        project_name = (
-            ctx.product.slug
-            or resources.get("project_name")
-            or app.state.default_project
-        )
-        updated_resources["project_name"] = project_name
-        updated_resources["tool_registry"] = ctx.tool_registry
-        updated_resources["guardrails_registry"] = ctx.guardrails_registry
-        updated_resources["agent_specs"] = agent_specs
-        updated_resources["entry_agent_key"] = ctx.entrypoint
-        updated_resources["manifest_path"] = str(manifest_path)
-        base_reference = agent_specs.get(ctx.entrypoint)
-        if not base_reference and agent_specs:
-            base_reference = next(iter(agent_specs.values()))
-        if base_reference:
-            updated_resources["base_spec"] = base_reference
-            updated_resources["default_model_settings"] = (
-                base_reference.model_settings or {}
-            )
-            updated_resources["default_safe_agent"] = bool(
-                getattr(base_reference, "use_safe_agent", False)
-            )
-            if base_reference.safe_agent_options:
-                updated_resources["default_safe_agent_options"] = asdict(
-                    base_reference.safe_agent_options
-                )
-            else:
-                updated_resources["default_safe_agent_options"] = {}
-            updated_resources["default_guardrails"] = {
-                "input": _guardrail_keys(
-                    getattr(base_reference, "input_guardrails", None),
-                    ctx.guardrails_registry.get("input", {}),
-                ),
-                "output": _guardrail_keys(
-                    getattr(base_reference, "output_guardrails", None),
-                    ctx.guardrails_registry.get("output", {}),
-                ),
-            }
-        else:
-            updated_resources["base_spec"] = None
-            updated_resources["default_model_settings"] = {}
-            updated_resources["default_safe_agent"] = False
-            updated_resources["default_safe_agent_options"] = {}
-            updated_resources["default_guardrails"] = {"input": [], "output": []}
-        app.state.playground_resources = updated_resources
-        return updated_resources, agent_specs
 
     def _serialize_dimensions_payload(
         dimensions: List[EvaluationDimensionModel],
@@ -4216,7 +3514,7 @@ def create_api_app(
         try:
             manifest_path = _get_manifest_path()
             dimensions = _load_dimensions(manifest_path)
-            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             return {"project": project_name, "dimensions": dimensions}
         except HTTPException:
@@ -4592,7 +3890,7 @@ def create_api_app(
                     status_code=422, detail="Provide a scenario set name or output_path"
                 )
             manifest_path = _get_manifest_path()
-            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             manager: ScenarioGenerationManager = app.state.scenario_generation_manager
             job = await manager.create_job(project_name, payload)
@@ -4625,7 +3923,7 @@ def create_api_app(
         try:
             manifest_path = _get_manifest_path()
             serialized = _persist_dimensions(manifest_path, payload.dimensions)
-            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             return {"project": project_name, "dimensions": serialized}
         except HTTPException:
@@ -4638,7 +3936,7 @@ def create_api_app(
         try:
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
-            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             golden_sets = _load_golden_sets(ctx)
             generated_sets = _load_artifact_sets(ctx, "generated")
@@ -4659,7 +3957,7 @@ def create_api_app(
         try:
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
-            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             datasets = _discover_dataset_entries(ctx)
             payload = EvaluationDatasetsResponse(
@@ -4676,7 +3974,7 @@ def create_api_app(
         try:
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
-            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             judges = _load_judge_models(ctx)
             payload = EvaluationJudgesResponse(project=project_name, judges=judges)
@@ -4712,7 +4010,7 @@ def create_api_app(
             source_value = (
                 payload.source or "final_assistant_text"
             ).strip() or "final_assistant_text"
-            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             failure_category_value = (payload.failure_category or "").strip() or None
             try:
@@ -4801,7 +4099,7 @@ def create_api_app(
                 raise HTTPException(status_code=422, detail="Judge key is required")
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
-            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             found = _find_judge_entry(ctx, key_value)
             if not found:
@@ -4867,7 +4165,7 @@ def create_api_app(
                 raise HTTPException(status_code=422, detail="Judge key is required")
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
-            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             found = _find_judge_entry(ctx, key_value)
             if not found:
@@ -4907,7 +4205,7 @@ def create_api_app(
                 )
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
-            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             found = _find_judge_entry(ctx, judge_key)
             if not found:
@@ -5005,7 +4303,7 @@ def create_api_app(
                 )
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
-            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             try:
                 resolve_agent(ctx, agent_key)
@@ -5085,7 +4383,7 @@ def create_api_app(
         try:
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
-            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             target_path = Path(path).expanduser().resolve(strict=False)
             datasets = _discover_dataset_entries(ctx)
@@ -5306,7 +4604,7 @@ def create_api_app(
                 encoding="utf-8",
             )
 
-            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             golden_sets = _load_golden_sets(ctx)
             promoted_entry = ScenarioEntryModel(
@@ -5352,7 +4650,7 @@ def create_api_app(
             file_path = Path(scenario_set.path)
             if not file_path.is_file():
                 raise HTTPException(status_code=404, detail="Scenario file not found")
-            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             if isinstance(project_name, str):
                 project_name = project_name.strip() or None
@@ -5450,7 +4748,7 @@ def create_api_app(
                 raise HTTPException(
                     status_code=500, detail="Failed to locate created dataset"
                 )
-            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             response = ScenarioSplitResponse(
                 project=str(project_name) if project_name else None,
@@ -5489,7 +4787,7 @@ def create_api_app(
                         pass
             refreshed_ctx = load_project(str(manifest_path))
             datasets = _discover_dataset_entries(refreshed_ctx)
-            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             response = EvaluationDatasetDeleteResponse(
                 project=str(project_name) if project_name else None, datasets=datasets
@@ -5528,7 +4826,7 @@ def create_api_app(
                     except Exception:
                         pass
             ctx_updated = load_project(str(manifest_path))
-            resources = getattr(app.state, "playground_resources", {})
+            resources = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             response = ScenarioSetDeleteResponseModel(
                 project=str(project_name) if project_name else None,
@@ -5814,7 +5112,7 @@ def create_api_app(
             resolved_agent = (payload.agent or "").strip() or None
             if resolved_agent is None:
                 resolved_agent = (
-                    getattr(app.state, "playground_resources", {}) or {}
+                    getattr(app.state, "project_resources", {}) or {}
                 ).get("entry_agent_key")
 
             # Save results using structured storage
@@ -5930,7 +5228,7 @@ def create_api_app(
             agent_value = (payload.agent or "").strip()
             payload.agent = agent_value or None
             manifest_path = _get_manifest_path()
-            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             manager: SuiteRunManager = app.state.suite_run_manager
             job = await manager.create_job(project_name, payload)
@@ -5988,7 +5286,7 @@ def create_api_app(
             results_dir, run_id = _resolve_runs_output_path(
                 manifest_path, file_path, payload.output_path
             )
-            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             manager: ScenarioRunManager = app.state.scenario_run_manager
             job = await manager.create_job(project_name, payload, len(scenarios))
@@ -6078,7 +5376,7 @@ def create_api_app(
                         )
             entries.append(new_entry)
             _write_scenarios_file(file_path, entries)
-            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             updated_set = _get_scenario_set_by_path(ctx, payload.kind, target_path)
             return {"project": project_name, "set": updated_set.model_dump()}
@@ -6154,7 +5452,7 @@ def create_api_app(
                     )
             entries[idx] = updated_entry
             _write_scenarios_file(file_path, entries)
-            resources = getattr(app.state, "playground_resources", {})
+            resources = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             updated_set = _get_scenario_set_by_path(ctx, payload.kind, target_path)
             return {"project": project_name, "set": updated_set.model_dump()}
@@ -6184,7 +5482,7 @@ def create_api_app(
             idx, _ = located
             entries.pop(idx)
             _write_scenarios_file(file_path, entries)
-            resources = getattr(app.state, "playground_resources", {})
+            resources = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             updated_set = _get_scenario_set_by_path(ctx, payload.kind, target_path)
             return {"project": project_name, "set": updated_set.model_dump()}
@@ -6193,58 +5491,9 @@ def create_api_app(
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc))
 
-    @app.get("/api/playground/metadata")
-    async def get_playground_metadata(request: Request):
-        resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
-        base_spec: AgentSpec = resources.get("base_spec") if resources else None
-        if not base_spec:
-            return {"available": False}
-        entry_key = resources.get("entry_agent_key")
-        return _build_metadata_response(
-            base_spec, resources, request, agent_key=entry_key
-        )
-
-    @app.post("/api/agents")
-    async def create_agent(payload: AgentCreatePayload, request: Request):
-        name_value = payload.name.strip() if isinstance(payload.name, str) else ""
-        if not name_value:
-            raise HTTPException(status_code=422, detail="Agent name is required")
-        model_value = payload.model.strip() if isinstance(payload.model, str) else None
-        manifest_path = _get_manifest_path()
-        try:
-            _, _, sanitized = scaffold_agent(
-                str(manifest_path), name_value, model=model_value or "gpt-4.1"
-            )
-        except FileExistsError:
-            raise HTTPException(status_code=409, detail="Agent already exists")
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc))
-        refreshed_ctx = load_project(str(manifest_path))
-        updated_resources, agent_specs = _reload_playground_resources(
-            refreshed_ctx, manifest_path
-        )
-        spec = agent_specs.get(sanitized)
-        if not spec:
-            raise HTTPException(
-                status_code=500, detail="Agent metadata unavailable after creation"
-            )
-        entry_key = updated_resources.get("entry_agent_key")
-        summary = {
-            "key": sanitized,
-            "name": spec.name,
-            "label": spec.label or spec.name or sanitized,
-            "description": spec.description or "",
-            "model": spec.model_name or "",
-            "is_entry": sanitized == entry_key,
-        }
-        metadata = _build_metadata_response(
-            spec, updated_resources, request, agent_key=sanitized
-        )
-        return {"agent": summary, "metadata": metadata}
-
     @app.get("/api/agents")
     async def list_agents():
-        resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+        resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
         specs: Dict[str, AgentSpec] = resources.get("agent_specs") or {}
         if not specs:
             return {"agents": []}
@@ -6257,7 +5506,6 @@ def create_api_app(
                     "name": spec.name,
                     "label": spec.label or spec.name or key,
                     "description": spec.description or "",
-                    "model": spec.model_name or "",
                     "is_entry": key == entry_key,
                 }
             )
@@ -6270,368 +5518,26 @@ def create_api_app(
         agents_payload.sort(key=_sort_key)
         return {"agents": agents_payload}
 
-    @app.get("/api/agents/{agent_key}/metadata")
-    async def get_agent_metadata(agent_key: str, request: Request):
-        resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
-        spec = _resolve_agent_spec(resources, agent_key)
-        if not spec:
+    @app.get("/api/agents/{agent_key}")
+    async def describe_agent(agent_key: str):
+        """What a run of the agent is given, from its runtime: the built
+        agent's model, tools and rendered instructions, its subagents,
+        capabilities, skills and approval policy."""
+        try:
+            described = await agent_runtimes.describe(agent_key)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Could not build agent '{agent_key}': {exc}",
+            ) from exc
+        if described is None:
             raise HTTPException(
                 status_code=404, detail=f"Agent '{agent_key}' not found"
             )
-        return _build_metadata_response(spec, resources, request, agent_key=agent_key)
+        return described
 
-    @app.put("/api/agents/{agent_key}")
-    async def update_agent(
-        agent_key: str, payload: AgentUpdatePayload, request: Request
-    ):
-        try:
-            manifest_path = _get_manifest_path()
-            ctx = load_project(str(manifest_path))
-            agent_path = ctx.agents_map.get(agent_key)
-            if not agent_path:
-                raise HTTPException(
-                    status_code=404, detail=f"Agent '{agent_key}' not found"
-                )
-            try:
-                raw_config = (
-                    yaml.safe_load(agent_path.read_text(encoding="utf-8")) or {}
-                )
-            except Exception:
-                raw_config = {}
-            if not isinstance(raw_config, dict):
-                raw_config = {}
-            model_value = str(payload.model or "").strip()
-            if not model_value:
-                raise HTTPException(status_code=422, detail="Model name is required")
-            raw_config["model"] = model_value
-            instructions_text = payload.instructions or ""
-            instructions_file = raw_config.get("instructions_file")
-            if isinstance(instructions_file, str) and instructions_file.strip():
-                instructions_path = Path(instructions_file)
-                if not instructions_path.is_absolute():
-                    instructions_path = (
-                        agent_path.parent / instructions_path
-                    ).resolve()
-                instructions_path.parent.mkdir(parents=True, exist_ok=True)
-                instructions_path.write_text(instructions_text, encoding="utf-8")
-            else:
-                if instructions_text:
-                    raw_config["instructions"] = instructions_text
-                else:
-                    raw_config.pop("instructions", None)
-            seen_tools: Set[str] = set()
-            tools_list: List[str] = []
-            for tool_name in payload.tools or []:
-                if not isinstance(tool_name, str):
-                    continue
-                name = tool_name.strip()
-                if not name or name in seen_tools:
-                    continue
-                seen_tools.add(name)
-                tools_list.append(name)
-            raw_config["tools"] = tools_list
-            if payload.model_settings:
-                filtered_settings: Dict[str, Any] = {}
-                for key, value in payload.model_settings.items():
-                    if value is None:
-                        continue
-                    key_str = str(key).strip()
-                    if not key_str:
-                        continue
-                    filtered_settings[key_str] = value
-                if filtered_settings:
-                    raw_config["model_settings"] = filtered_settings
-                else:
-                    raw_config.pop("model_settings", None)
-            else:
-                raw_config.pop("model_settings", None)
-            raw_config["use_safe_agent"] = bool(payload.use_safe_agent)
-            safe_options_input = payload.safe_agent_options or {}
-            sanitized_safe_options: Dict[str, Any] = {}
-            sanitized_safe_options["skip_approvals"] = bool(
-                safe_options_input.get("skip_approvals", False)
-            )
-            sanitized_safe_options["halt_on_rejection"] = bool(
-                safe_options_input.get("halt_on_rejection", True)
-            )
-            tool_set = set(tools_list)
-            names_raw = (
-                safe_options_input.get("safe_tool_names")
-                if isinstance(safe_options_input.get("safe_tool_names"), list)
-                else []
-            )
-            safe_tool_names: List[str] = []
-            seen_safe_names: Set[str] = set()
-            for name in names_raw:
-                if not isinstance(name, str):
-                    continue
-                trimmed = name.strip()
-                if not trimmed or trimmed not in tool_set or trimmed in seen_safe_names:
-                    continue
-                seen_safe_names.add(trimmed)
-                safe_tool_names.append(trimmed)
-            sanitized_safe_options["safe_tool_names"] = safe_tool_names
-            patterns_raw = (
-                safe_options_input.get("safe_tool_patterns")
-                if isinstance(safe_options_input.get("safe_tool_patterns"), list)
-                else []
-            )
-            patterns_clean: List[str] = []
-            for pattern in patterns_raw:
-                if not isinstance(pattern, str):
-                    continue
-                trimmed = pattern.strip()
-                if trimmed and trimmed not in patterns_clean:
-                    patterns_clean.append(trimmed)
-            sanitized_safe_options["safe_tool_patterns"] = patterns_clean
-            if (
-                payload.use_safe_agent
-                or sanitized_safe_options["safe_tool_names"]
-                or sanitized_safe_options["safe_tool_patterns"]
-                or sanitized_safe_options["skip_approvals"]
-                or not sanitized_safe_options["halt_on_rejection"]
-            ):
-                raw_config["safe_agent_options"] = sanitized_safe_options
-            else:
-                raw_config.pop("safe_agent_options", None)
-            guardrails_input = payload.guardrails or {}
-            input_guardrails = (
-                guardrails_input.get("input")
-                if isinstance(guardrails_input.get("input"), list)
-                else []
-            )
-            output_guardrails = (
-                guardrails_input.get("output")
-                if isinstance(guardrails_input.get("output"), list)
-                else []
-            )
-            input_values: List[str] = []
-            seen_input: Set[str] = set()
-            for item in input_guardrails:
-                if not isinstance(item, str):
-                    continue
-                trimmed = item.strip()
-                if not trimmed or trimmed in seen_input:
-                    continue
-                seen_input.add(trimmed)
-                input_values.append(trimmed)
-            output_values: List[str] = []
-            seen_output: Set[str] = set()
-            for item in output_guardrails:
-                if not isinstance(item, str):
-                    continue
-                trimmed = item.strip()
-                if not trimmed or trimmed in seen_output:
-                    continue
-                seen_output.add(trimmed)
-                output_values.append(trimmed)
-            raw_config["input_guardrails"] = input_values
-            raw_config["output_guardrails"] = output_values
-            output_type_value = payload.output_type
-            if output_type_value is None or output_type_value == "default":
-                raw_config.pop("output_type", None)
-                raw_config.pop("output_type_strict", None)
-                raw_config.pop("output_schema", None)
-            elif output_type_value == "none":
-                raw_config["output_type"] = None
-                raw_config.pop("output_schema", None)
-                raw_config.pop("output_type_strict", None)
-            else:
-                raw_config["output_type"] = output_type_value
-                if payload.output_type_strict is not None:
-                    raw_config["output_type_strict"] = bool(payload.output_type_strict)
-                else:
-                    raw_config.pop("output_type_strict", None)
-                if (
-                    output_type_value in {"dict", "dictionary"}
-                    and payload.output_schema
-                ):
-                    raw_config["output_schema"] = payload.output_schema
-                else:
-                    raw_config.pop("output_schema", None)
-            _write_yaml_file(agent_path, raw_config)
-            refreshed_ctx = load_project(str(manifest_path))
-            updated_resources, agent_specs = _reload_playground_resources(
-                refreshed_ctx, manifest_path
-            )
-            spec = agent_specs.get(agent_key)
-            if not spec:
-                raise HTTPException(
-                    status_code=500, detail="Agent metadata unavailable after update"
-                )
-            return _build_metadata_response(
-                spec, updated_resources, request, agent_key=agent_key
-            )
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc))
-
-    @app.delete("/api/agents/{agent_key}")
-    async def remove_agent(agent_key: str):
-        manifest_path = _get_manifest_path()
-        try:
-            delete_agent(str(manifest_path), agent_key)
-        except FileNotFoundError:
-            raise HTTPException(
-                status_code=404, detail=f"Agent '{agent_key}' not found"
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc))
-        refreshed_ctx = load_project(str(manifest_path))
-        _reload_playground_resources(refreshed_ctx, manifest_path)
-        return {"deleted": agent_key}
-
-    async def _configure_session(
-        agent_key: Optional[str], payload: PlaygroundSessionRequest
-    ) -> Dict[str, str]:
-        resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
-        spec = _resolve_agent_spec(resources, agent_key)
-        if not spec:
-            if agent_key:
-                raise HTTPException(
-                    status_code=404, detail=f"Agent '{agent_key}' not found"
-                )
-            raise HTTPException(status_code=400, detail="Playground is not available")
-
-        payload_data = payload.model_dump(exclude_unset=True)
-
-        model_name = (payload.model or "").strip()
-        if not model_name:
-            raise HTTPException(status_code=422, detail="Model name is required")
-
-        tool_registry: Dict[str, Any] = resources.get("tool_registry", {})
-        guardrails_registry: Dict[str, Any] = resources.get(
-            "guardrails_registry", {"input": {}, "output": {}}
-        )
-        tools_value = payload_data.get("tools")
-        unknown_tools = [
-            name for name in (tools_value or []) if name not in tool_registry
-        ]
-        if unknown_tools:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unknown tools: {', '.join(sorted(unknown_tools))}",
-            )
-
-        store: PlaygroundSessionStore = app.state.playground_session_store
-        config: Dict[str, Any] = {"model": model_name}
-
-        if "instructions" in payload_data:
-            config["instructions"] = str(payload_data.get("instructions") or "")
-
-        if tools_value is not None:
-            config["tools"] = tools_value or []
-
-        if isinstance(payload.model_settings, dict):
-            sanitized_settings = {
-                k: v for k, v in payload.model_settings.items() if v not in (None, "")
-            }
-            if sanitized_settings:
-                config["model_settings"] = sanitized_settings
-
-        if payload.use_safe_agent is not None:
-            config["use_safe_agent"] = bool(payload.use_safe_agent)
-
-        if (
-            isinstance(payload.safe_agent_options, dict)
-            and "safe_agent_options" in payload_data
-        ):
-            safe_options: Dict[str, Any] = {}
-            for key in ("skip_approvals", "halt_on_rejection"):
-                if key in payload.safe_agent_options:
-                    safe_options[key] = bool(payload.safe_agent_options[key])
-            if "safe_tool_names" in payload.safe_agent_options and isinstance(
-                payload.safe_agent_options["safe_tool_names"], list
-            ):
-                safe_options["safe_tool_names"] = [
-                    name
-                    for name in payload.safe_agent_options["safe_tool_names"]
-                    if isinstance(name, str) and name in tool_registry
-                ]
-            if "safe_tool_patterns" in payload.safe_agent_options and isinstance(
-                payload.safe_agent_options["safe_tool_patterns"], list
-            ):
-                safe_options["safe_tool_patterns"] = [
-                    pattern
-                    for pattern in payload.safe_agent_options["safe_tool_patterns"]
-                    if isinstance(pattern, str) and pattern
-                ]
-            config["safe_agent_options"] = safe_options
-
-        if isinstance(payload.guardrails, dict) and "guardrails" in payload_data:
-            guardrails_config: Dict[str, List[str]] = {}
-            input_registry = guardrails_registry.get("input", {})
-            output_registry = guardrails_registry.get("output", {})
-            input_names = payload.guardrails.get("input")
-            if isinstance(input_names, list):
-                guardrails_config["input"] = [
-                    name
-                    for name in input_names
-                    if isinstance(name, str) and name in input_registry
-                ]
-            output_names = payload.guardrails.get("output")
-            if isinstance(output_names, list):
-                guardrails_config["output"] = [
-                    name
-                    for name in output_names
-                    if isinstance(name, str) and name in output_registry
-                ]
-            if guardrails_config:
-                config["guardrails"] = guardrails_config
-
-        normalized_for_schema: Optional[str] = None
-        if "output_type" in payload_data:
-            raw_output_type = payload_data.get("output_type")
-            if raw_output_type is not None:
-                normalized = _resolve_output_type_override(str(raw_output_type))
-                if normalized is None:
-                    config.pop("output_type", None)
-                elif normalized in STRUCTURED_OUTPUT_TYPE_MAP:
-                    config["output_type"] = normalized
-                    normalized_for_schema = normalized
-                else:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Unsupported output_type '{raw_output_type}'",
-                    )
-        if "output_type_strict" in payload_data:
-            raw_strict = payload_data.get("output_type_strict")
-            if raw_strict is not None:
-                config["output_type_strict"] = bool(raw_strict)
-
-        if "output_schema" in payload_data:
-            raw_schema = payload_data.get("output_schema")
-            if raw_schema is not None:
-                if not isinstance(raw_schema, dict):
-                    raise HTTPException(
-                        status_code=400, detail="output_schema must be a JSON object"
-                    )
-                if normalized_for_schema not in (None, "dict", "dictionary", "object"):
-                    raise HTTPException(
-                        status_code=400,
-                        detail="output_schema requires output_type 'dict'",
-                    )
-                config["output_schema"] = raw_schema
-
-        session_label = "playground" if not agent_key else f"agent:{agent_key}"
-        config["__agent_key"] = agent_key
-        config["__session_label"] = session_label
-
-        session_id = await store.upsert(payload.session_id, config)
-        return {"session_id": session_id}
-
-    @app.post("/api/playground/session")
-    async def configure_playground_session(payload: PlaygroundSessionRequest):
-        return await _configure_session(None, payload)
-
-    @app.post("/api/agents/{agent_key}/session")
-    async def configure_agent_session(
-        agent_key: str, payload: PlaygroundSessionRequest
-    ):
-        return await _configure_session(agent_key, payload)
+    # Each agent's real runtime (ws, terminals, tickets) for the Playground.
+    app.mount("/api/agents/{agent_key}/runtime", agent_runtimes)
 
     @app.get("/api/conversations")
     async def get_conversations(
@@ -7668,7 +6574,7 @@ def create_api_app(
         try:
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
-            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             measures_payload = _assemble_measures(ctx, manifest_path)
             response = EvaluationMeasuresResponse(
@@ -7692,7 +6598,7 @@ def create_api_app(
                 )
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
-            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             measures_meta, target_file, data, evaluation_cfg, has_eval_section = (
                 _load_measures_metadata(ctx, manifest_path)
@@ -7743,7 +6649,7 @@ def create_api_app(
                 raise HTTPException(status_code=422, detail="Measure name is required")
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
-            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             measures_meta, target_file, data, evaluation_cfg, has_eval_section = (
                 _load_measures_metadata(ctx, manifest_path)
@@ -7790,7 +6696,7 @@ def create_api_app(
                 raise HTTPException(status_code=422, detail="Measure name is required")
             manifest_path = _get_manifest_path()
             ctx = load_project(str(manifest_path))
-            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
             measures_meta, target_file, data, evaluation_cfg, has_eval_section = (
                 _load_measures_metadata(ctx, manifest_path)
@@ -7904,7 +6810,7 @@ def create_api_app(
         """List all available result runs with summaries."""
         try:
             manifest_path = _get_manifest_path()
-            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
 
             results: List[EvaluationRunSummaryModel] = []
@@ -7952,7 +6858,7 @@ def create_api_app(
             if not results_path.is_file():
                 raise HTTPException(status_code=404, detail="Results file not found")
 
-            resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
+            resources: Dict[str, Any] = getattr(app.state, "project_resources", {})
             project_name = resources.get("project_name") or app.state.default_project
 
             summary, scenarios = _parse_results_file(results_path)
@@ -8215,103 +7121,6 @@ def create_api_app(
         except WebSocketDisconnect:
             manager.disconnect(websocket)
 
-    @app.websocket("/api/playground/ws")
-    async def playground_ws(websocket: WebSocket):
-        logger.debug(
-            "[playground] incoming websocket request %s",
-            {
-                key: value
-                for key, value in websocket.query_params.multi_items()
-                # Never log credentials (one-time tickets, legacy tokens).
-                if key not in ("token", "ticket")
-            },
-        )
-        await _require_ws_auth(websocket)
-        resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
-        session_id = websocket.query_params.get("session_id")
-        if not session_id:
-            logger.debug("[playground] closing websocket: session_id missing")
-            await websocket.close(code=4400)
-            return
-
-        store: PlaygroundSessionStore = app.state.playground_session_store
-        config = await store.get(session_id)
-        if not config:
-            logger.debug(
-                "[playground] closing websocket: session config missing for %s",
-                session_id,
-            )
-            await websocket.close(code=4404)
-            return
-
-        agent_key = config.get("__agent_key")
-        spec = _resolve_agent_spec(resources, agent_key)
-        if not spec:
-            logger.debug(
-                "[playground] closing websocket: spec missing for agent %s", agent_key
-            )
-            await websocket.close(code=4404)
-            return
-        session_label = config.get("__session_label") or (
-            "playground" if not agent_key else f"agent:{agent_key}"
-        )
-
-        try:
-            spec = build_playground_spec(
-                spec,
-                resources.get("tool_registry", {}),
-                resources.get("guardrails_registry", {}),
-                config,
-                session_label=session_label,
-            )
-        except Exception as exc:
-            logger.exception("[playground] failed to build spec")
-            await websocket.close(code=1011, reason=str(exc))
-            return
-
-        service = AgentService(
-            spec,
-            AgentHostResources.create(f"playground-{uuid.uuid4().hex}"),
-        )
-        # The playground authorizes under the same policy the deployment's
-        # auth provider implies: enforced (ownership + method
-        # classification) when principals are distinguishable, permissive
-        # in single-user/no-auth mode.
-        service.authorization_policy = connection_authenticator.authorization_policy
-        transport = ServerWebSocketTransport(websocket)
-        # Dispatch through JsonRpcEndpoint's message processor instead of a
-        # hand-rolled getattr() loop so every request runs through
-        # ``AgentService.authorize_rpc`` (resource ownership + global-method
-        # classification) before it executes — exactly like /ws on the
-        # agent server. No ``gui_handshake``/``allowed_methods``: the
-        # playground client predates the GUI handshake, and enabling strict
-        # request/result model validation is a protocol change beyond this
-        # authorization fix.
-        endpoint = JsonRpcEndpoint(service)
-
-        try:
-            logger.debug("[playground] accepting websocket for session %s", session_id)
-            await transport.connect()
-            channel = JsonRpcChannel(transport)
-            channel.principal = getattr(websocket.state, "principal", None)
-            service.channel = channel
-            while transport.is_connected():
-                try:
-                    data = await transport.receive_json()
-                except TransportClosedError:
-                    break
-                except WebSocketDisconnect:
-                    break
-
-                try:
-                    await endpoint._process_message(channel, data)
-                except Exception:
-                    logger.exception("[playground] failed processing message")
-                    break
-        finally:
-            logger.debug("[playground] websocket closed for session %s", session_id)
-            await transport.disconnect()
-
     if dev_server_url:
         dev_base = dev_server_url.rstrip("/")
 
@@ -8328,11 +7137,10 @@ def create_api_app(
             return RedirectResponse(target, status_code=307)
 
     else:
-        # Serve static files in production
-        # Prefer the packaged build; fall back to a local web build in a checkout
+        # A checkout's own web build, else the bundle a wheel ships.
         candidate_dirs = [
-            Path(__file__).parent / "static",
             Path(__file__).resolve().parents[1] / "web" / "dist",
+            Path(__file__).parent / "static",
         ]
         for static_dir in candidate_dirs:
             if static_dir.exists():

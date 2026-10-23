@@ -464,10 +464,10 @@ class LayeredConfigStore:
         without a manifest the installed product identity applies.
         """
         if self.manifest_path is not None and self.manifest_path.is_file():
-            from omniagents.core.project.runtime import _manifest_product
+            from omniagents.core.project.runtime import manifest_product
 
             proj = _read_yaml_doc(self.manifest_path)
-            return _manifest_product(proj, self.manifest_path.parent).config_dir_name
+            return manifest_product(proj, self.manifest_path.parent).config_dir_name
         from omniagents.core.product import product_info
 
         return product_info().config_dir_name

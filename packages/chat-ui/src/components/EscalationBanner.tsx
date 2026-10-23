@@ -1,5 +1,4 @@
 import type { EscalationInfo } from '@omniagents/client/session/panel-types';
-import React from 'react';
 
 type Props = {
   escalation: EscalationInfo | null;

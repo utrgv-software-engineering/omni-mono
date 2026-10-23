@@ -78,7 +78,7 @@ export type ClientToolCallHandler = (
   args: Record<string, unknown>
 ) => Promise<{ ok: boolean; result?: Record<string, unknown>; error?: Record<string, unknown> }>;
 
-type AppProps = {
+export type AppProps = {
   sessionId?: string;
   /** Explicit execution identity. Never inferred from the conversation id. */
   executionTarget?: ExecutionTarget;
@@ -289,7 +289,6 @@ function SessionView({
     loadSession,
     approvalDecided,
     stageContext,
-    clearStagedContext,
   } = machine;
 
   useEffect(() => {

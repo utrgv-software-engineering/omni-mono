@@ -157,14 +157,14 @@ export function Timeline({ spans, onSpanSelect, selectedSpan }: TimelineProps) {
           {/* Left section with name */}
           <div className="flex items-center min-w-[280px] max-w-[350px]" style={{ paddingLeft: `${depth * 24 + 12}px` }}>
             {/* Expand/Collapse */}
-            <div className="w-5 mr-2 flex-shrink-0">
+            <div className="w-5 mr-2 shrink-0">
               {hasChildren && (
                 <button
                   onClick={(e) => {
                     e.stopPropagation()
                     toggleCollapse(span.span_id)
                   }}
-                  className="p-0.5 hover:bg-muted rounded"
+                  className="p-0.5 hover:bg-muted rounded-sm"
                 >
                   {isCollapsed ? (
                     <ChevronRight className="w-3 h-3" />
@@ -176,7 +176,7 @@ export function Timeline({ spans, onSpanSelect, selectedSpan }: TimelineProps) {
             </div>
             
             {/* Icon */}
-            <div className="mr-2 text-muted-foreground flex-shrink-0" style={{ color: getSpanColor(span.span_type) }}>
+            <div className="mr-2 text-muted-foreground shrink-0" style={{ color: getSpanColor(span.span_type) }}>
               {icon}
             </div>
             
@@ -186,7 +186,7 @@ export function Timeline({ spans, onSpanSelect, selectedSpan }: TimelineProps) {
                 {span.span_name || span.span_type}
               </span>
               {span.error && (
-                <AlertCircle className="w-3 h-3 text-destructive flex-shrink-0" />
+                <AlertCircle className="w-3 h-3 text-destructive shrink-0" />
               )}
             </div>
           </div>
@@ -198,13 +198,13 @@ export function Timeline({ spans, onSpanSelect, selectedSpan }: TimelineProps) {
           
           {/* Timeline visualization - maintains relative positioning */}
           <div className="flex-1 pr-4">
-            <div className="relative h-5 bg-muted/5 rounded-sm">
+            <div className="relative h-5 bg-muted/5 rounded-xs">
               <div
-                className="absolute h-full rounded-sm transition-all"
+                className="absolute h-full rounded-xs transition-all"
                 style={{
                   left: `${offset}%`,
                   width: `${Math.max(width, 2)}%`,
-                  backgroundColor: span.error ? 'hsl(var(--destructive))' : getSpanColor(span.span_type),
+                  backgroundColor: span.error ? 'var(--destructive)' : getSpanColor(span.span_type),
                   opacity: 0.8
                 }}
               />
@@ -254,7 +254,7 @@ export function Timeline({ spans, onSpanSelect, selectedSpan }: TimelineProps) {
           <div className="flex items-center gap-3">
             <button
               onClick={copyTraceData}
-              className="flex items-center gap-1 px-2 py-1 text-xs rounded hover:bg-muted transition-colors"
+              className="flex items-center gap-1 px-2 py-1 text-xs rounded-sm hover:bg-muted transition-colors"
               title="Copy trace data to clipboard"
             >
               {copied ? (

@@ -20,22 +20,18 @@ export type UiConfig = {
   wsRealtimeUrl: string;
   wsOrigin: string;
   httpBaseUrl: string;
-  proxyPrefix: string | null;
+  /** Where the runtime is mounted on its host: '' on its own port,
+   * `/proxy/<name>` behind the desktop's proxy, a mount path inside another
+   * server (Studio). */
+  basePath: string;
   resolvePath: (path: string) => string;
 };
 
 const UiConfigContext = createContext<UiConfig | null>(null);
 
-const getProxyPrefix = (pathname: string): string | null => {
-  if (!pathname.startsWith('/proxy/')) {
-    return null;
-  }
-  const parts = pathname.split('/').filter(Boolean); // ['proxy', <name>, ...]
-  if (parts.length < 2) {
-    return null;
-  }
-  return `/proxy/${parts[1]}`;
-};
+/** The base URL names the runtime's directory: everything up to its last
+ * `/`, so `/proxy/chat/` and `/proxy/chat/index.html` are both `/proxy/chat`. */
+const basePathOf = (pathname: string): string => pathname.slice(0, pathname.lastIndexOf('/'));
 
 const buildWsUrl = (url: URL, path: string): string => {
   const proto = url.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -43,7 +39,7 @@ const buildWsUrl = (url: URL, path: string): string => {
 };
 
 export const resolveUiConfig = (connection: AgentRuntimeConnection): UiConfig => {
-  // Downstream (wsBaseUrl, wsRealtimeUrl, httpBaseUrl, proxyPrefix) all
+  // Downstream (wsBaseUrl, wsRealtimeUrl, httpBaseUrl, basePath) all
   // derive from url.host, so this one resolution decides every URL the RPC
   // client, realtime voice and terminals use.
   const url = new URL(connection.baseUrl, window.location.href);
@@ -55,13 +51,9 @@ export const resolveUiConfig = (connection: AgentRuntimeConnection): UiConfig =>
   const debug = /^(1|true|yes)$/i.test(String(searchParams.get('debug') || ''));
   const minimal = searchParams.get('minimal') === 'true';
   const session = searchParams.get('session') || undefined;
-  const proxyPrefix = getProxyPrefix(url.pathname);
-  const resolvePath = (path: string) => {
-    if (!proxyPrefix || path.startsWith('/proxy/')) {
-      return path;
-    }
-    return `${proxyPrefix}${path}`;
-  };
+  const basePath = basePathOf(url.pathname);
+  // Server-reported paths (`/ws/terminal`) are relative to the runtime.
+  const resolvePath = (path: string) => (path.startsWith(`${basePath}/`) ? path : `${basePath}${path}`);
   const httpBaseUrl = `${url.protocol}//${url.host}`;
   const wsOrigin = buildWsUrl(url, '');
   const wsBaseUrl = `${wsOrigin}${resolvePath('/ws')}`;
@@ -78,7 +70,7 @@ export const resolveUiConfig = (connection: AgentRuntimeConnection): UiConfig =>
     wsRealtimeUrl,
     wsOrigin,
     httpBaseUrl,
-    proxyPrefix,
+    basePath,
     resolvePath,
   };
 };

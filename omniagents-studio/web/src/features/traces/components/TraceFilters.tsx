@@ -47,12 +47,12 @@ export function TraceFilters() {
       
       {/* Filters */}
       <div className="flex items-center gap-2 mt-2">
-        <button className="flex items-center gap-1 px-2 py-1 text-xs border border-border rounded hover:bg-muted/50">
+        <button className="flex items-center gap-1 px-2 py-1 text-xs border border-border rounded-sm hover:bg-muted/50">
           <Filter className="w-3 h-3" />
           Filters
         </button>
         {filters.hasErrors && (
-          <span className="flex items-center gap-1 px-2 py-1 text-xs bg-destructive/10 text-destructive rounded">
+          <span className="flex items-center gap-1 px-2 py-1 text-xs bg-destructive/10 text-destructive rounded-sm">
             <AlertCircle className="w-3 h-3" />
             Errors Only
           </span>

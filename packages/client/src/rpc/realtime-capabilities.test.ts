@@ -5,8 +5,8 @@ import { probeRealtimeCapabilities } from './realtime-capabilities';
 const fake = vi.hoisted(() => ({ connect: vi.fn(), disconnect: vi.fn(), capabilities: vi.fn(), created: vi.fn() }));
 vi.mock('./realtime', () => ({
   RealtimeRPCClient: class {
-    constructor() {
-      fake.created();
+    constructor(...args: unknown[]) {
+      fake.created(...args);
     }
     connect = fake.connect;
     disconnect = fake.disconnect;
@@ -60,3 +60,13 @@ it.each(['connect', 'capabilities'] as const)(
     expect(fake.disconnect).toHaveBeenCalledOnce();
   }
 );
+
+it('dials once: a refused probe is an answer, not a reason to retry', async () => {
+  await probeRealtimeCapabilities('ws://test', undefined, new AbortController().signal);
+  expect(fake.created).toHaveBeenCalledWith(
+    'ws://test',
+    undefined,
+    false,
+    expect.objectContaining({ reconnectMaxAttempts: 1 })
+  );
+});

@@ -3,7 +3,6 @@ import type { RunDiffFile, RunDiffItem } from '@omniagents/client/transcript/cha
 import { Button } from '@omniagents/ui/button';
 import { cn } from '@omniagents/ui/cn';
 import { FileDiffIcon } from 'lucide-react';
-import React from 'react';
 
 /** The card stays scannable in the transcript: files beyond this fold into
  *  a "+N more files" row, and the Review app shows the full record. */

@@ -1,103 +1,86 @@
-import { useCallback, useEffect, useState } from 'react'
+import { uuidv4 } from '@omniagents/client/util/uuid'
+import { useQuery } from '@tanstack/react-query'
+import { lazy, Suspense, useCallback, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { StudioPage } from '../../shared/components/StudioPage'
+
+import { api } from '../../lib/api'
 import { PlaygroundHeader } from '../../shared/components/PlaygroundHeader'
-import { PlaygroundView, type PlaygroundContext } from '../../features/playground/PlaygroundView'
-import { ROUTES, QUERY_PARAMS } from '../routes'
+import { StudioPage } from '../../shared/components/StudioPage'
+import type { AgentSummary } from '../../types'
+import { QUERY_PARAMS, ROUTES } from '../routes'
 
-const normalizeParam = (value: string | null) => {
-  if (!value) {
-    return null
-  }
-  const trimmed = value.trim()
-  return trimmed.length > 0 ? trimmed : null
-}
+// The chat UI is most of Studio's code; only the Playground loads it.
+const PlaygroundChat = lazy(() =>
+  import('../../features/playground/PlaygroundChat').then((module) => ({ default: module.PlaygroundChat })),
+)
 
+/** Chat with a project agent through its real runtime. The address names
+ * the agent and the conversation, so a reload or a link reopens both. */
 export function PlaygroundPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
-  const [context, setContext] = useState<PlaygroundContext>({
-    projectName: '',
-    sessionId: '',
-    statusMessage: '',
-    agentKey: null,
-    agentLabel: '',
+  const { data, isLoading, isError } = useQuery<{ agents: AgentSummary[] }>({
+    queryKey: ['agents', 'list'],
+    queryFn: () => api.getAgents(),
+    staleTime: 5 * 60 * 1000,
   })
+  const agents = data?.agents ?? []
+  const requested = searchParams.get(QUERY_PARAMS.agent)
+  const agentKey =
+    agents.find((agent) => agent.key === requested)?.key ??
+    agents.find((agent) => agent.is_entry)?.key ??
+    agents[0]?.key ??
+    null
+  const sessionId = searchParams.get(QUERY_PARAMS.session)
 
-  const projectParam = normalizeParam(searchParams.get(QUERY_PARAMS.project))
-  const sessionParam = normalizeParam(searchParams.get(QUERY_PARAMS.session))
-
-  useEffect(() => {
-    const nextProject = projectParam ?? ''
-    const nextSession = sessionParam ?? ''
-    setContext((prev) => {
-      if (prev.projectName === nextProject && prev.sessionId === nextSession) {
-        return prev
-      }
-      return { ...prev, projectName: nextProject, sessionId: nextSession }
-    })
-  }, [projectParam, sessionParam])
-
-  const updateSearch = useCallback(
-    (updates: Record<string, string | null>, options?: { replace?: boolean }) => {
+  const show = useCallback(
+    (agent: string, session: string, replace = false) => {
       const next = new URLSearchParams(searchParams)
-      let changed = false
-      for (const [key, value] of Object.entries(updates)) {
-        const current = next.get(key)
-        if (value === null) {
-          if (current !== null) {
-            next.delete(key)
-            changed = true
-          }
-        } else if (current !== value) {
-          next.set(key, value)
-          changed = true
-        }
-      }
-      if (changed) {
-        setSearchParams(next, { replace: options?.replace ?? false })
-      }
+      next.set(QUERY_PARAMS.agent, agent)
+      next.set(QUERY_PARAMS.session, session)
+      setSearchParams(next, { replace })
     },
     [searchParams, setSearchParams],
   )
 
-  const handleContextUpdate = useCallback(
-    (next: PlaygroundContext) => {
-      setContext((prev) => ({ ...prev, ...next }))
-
-      const desiredProject = normalizeParam(next.projectName) ?? null
-      const desiredSession = normalizeParam(next.sessionId) ?? null
-
-      const updates: Record<string, string | null> = {}
-      const currentProject = projectParam ?? null
-      const currentSession = sessionParam ?? null
-
-      if ((currentProject ?? null) !== (desiredProject ?? null)) {
-        updates[QUERY_PARAMS.project] = desiredProject
-      }
-      if ((currentSession ?? null) !== (desiredSession ?? null)) {
-        updates[QUERY_PARAMS.session] = desiredSession
-      }
-
-      if (Object.keys(updates).length > 0) {
-        updateSearch(updates)
-      }
-    },
-    [projectParam, sessionParam, updateSearch],
-  )
-
-  const handleBack = useCallback(() => {
-    updateSearch({ [QUERY_PARAMS.project]: null, [QUERY_PARAMS.session]: null }, { replace: true })
-    navigate(ROUTES.home)
-  }, [navigate, updateSearch])
+  // Every Playground view has an agent and a conversation id from the start.
+  useEffect(() => {
+    if (agentKey && (requested !== agentKey || !sessionId)) {
+      show(agentKey, sessionId ?? uuidv4(), true)
+    }
+  }, [agentKey, requested, sessionId, show])
 
   return (
     <StudioPage
       section="playground"
-      header={<PlaygroundHeader onBack={handleBack} projectName={context.projectName} />}
+      header={
+        <PlaygroundHeader
+          onBack={() => navigate(ROUTES.home)}
+          agents={agents}
+          agentKey={agentKey}
+          onSelectAgent={(key) => show(key, uuidv4())}
+        />
+      }
       disableSidebar
     >
-      <PlaygroundView onUpdateContext={handleContextUpdate} />
+      {isLoading ? (
+        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Loading agents…</div>
+      ) : isError ? (
+        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Unable to load agents.</div>
+      ) : !agentKey ? (
+        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+          Launch Studio from a project to chat with its agents.
+        </div>
+      ) : sessionId ? (
+        <Suspense fallback={null}>
+          <PlaygroundChat
+            key={agentKey}
+            agentKey={agentKey}
+            sessionId={sessionId}
+            onSessionChange={(id) => show(agentKey, id ?? uuidv4())}
+          />
+        </Suspense>
+      ) : null}
     </StudioPage>
   )
 }

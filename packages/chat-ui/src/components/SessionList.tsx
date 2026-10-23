@@ -1,7 +1,6 @@
 import { formatRelativeTime, generateSessionTitle } from '@omniagents/chat-ui/lib/utils';
 import { Button } from '@omniagents/ui/button';
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from '@omniagents/ui/item';
-import React from 'react';
 
 export type SessionItem = {
   id: string;

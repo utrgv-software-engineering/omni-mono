@@ -7,7 +7,6 @@ import os
 import subprocess
 import time
 import urllib.request
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, Optional
 from urllib.error import HTTPError, URLError
@@ -88,111 +87,29 @@ def serve(
                     "✨ Studio will create databases as traces are recorded or when --project is provided."
                 )
 
-    playground_resources = None
+    project_resources = None
     if manifest_path:
         try:
             project_context = load_project(manifest_path)
-            base_spec = build_spec_from_project(project_context)
-            tool_registry = project_context.tool_registry or {}
-            default_tool_names: list[str] = []
-            try:
-                default_tool_names = [
-                    getattr(t, "name")
-                    for t in base_spec.available_tools
-                    if getattr(t, "name", None)
-                ]
-            except Exception:
-                default_tool_names = []
-            guardrails_registry = project_context.guardrails_registry or {
-                "input": {},
-                "output": {},
-            }
-
-            def _guardrail_keys(active_guardrails, registry):
-                keys: list[str] = []
-                for guardrail in active_guardrails or []:
-                    matched = None
-                    for key, candidate in registry.items():
-                        if candidate is guardrail:
-                            matched = key
-                            break
-                        candidate_name = None
-                        if hasattr(candidate, "get_name"):
-                            try:
-                                candidate_name = candidate.get_name()
-                            except Exception:
-                                candidate_name = None
-                        guardrail_name = None
-                        if hasattr(guardrail, "get_name"):
-                            try:
-                                guardrail_name = guardrail.get_name()
-                            except Exception:
-                                guardrail_name = None
-                        if (
-                            candidate_name
-                            and guardrail_name
-                            and candidate_name == guardrail_name
-                        ):
-                            matched = key
-                            break
-                    if matched:
-                        keys.append(str(matched))
-                    else:
-                        if hasattr(guardrail, "get_name"):
-                            try:
-                                fallback = guardrail.get_name()
-                                if fallback:
-                                    keys.append(str(fallback))
-                            except Exception:
-                                pass
-                return keys
-
             agent_specs: Dict[str, Any] = {}
             for agent_key in sorted(project_context.agents_map.keys()):
-                if agent_key == project_context.entrypoint:
-                    agent_specs[agent_key] = base_spec
-                else:
-                    try:
-                        agent_specs[agent_key] = build_spec_from_project(
-                            project_context, agent_key
-                        )
-                    except Exception as agent_exc:
-                        logger.warning(
-                            "Unable to load agent '%s' for Playground: %s",
-                            agent_key,
-                            agent_exc,
-                        )
-
-            playground_resources = {
+                try:
+                    agent_specs[agent_key] = build_spec_from_project(
+                        project_context, agent_key
+                    )
+                except Exception as agent_exc:
+                    logger.warning(
+                        "Unable to load agent '%s': %s", agent_key, agent_exc
+                    )
+            project_resources = {
                 "project_name": project or project_context.product.slug,
-                "tool_registry": tool_registry,
-                "guardrails_registry": guardrails_registry,
-                "base_spec": base_spec,
-                "default_tools": default_tool_names,
                 "manifest_path": manifest_path,
-                "default_model_settings": base_spec.model_settings or {},
-                "default_safe_agent": bool(base_spec.use_safe_agent),
-                "default_safe_agent_options": (
-                    asdict(base_spec.safe_agent_options)
-                    if base_spec.safe_agent_options
-                    else {}
-                ),
-                "default_guardrails": {
-                    "input": _guardrail_keys(
-                        getattr(base_spec, "input_guardrails", None),
-                        guardrails_registry.get("input", {}),
-                    ),
-                    "output": _guardrail_keys(
-                        getattr(base_spec, "output_guardrails", None),
-                        guardrails_registry.get("output", {}),
-                    ),
-                },
                 "agent_specs": agent_specs,
                 "entry_agent_key": project_context.entrypoint,
             }
         except Exception as exc:
-            logger.warning("Unable to load project manifest for Playground: %s", exc)
-            playground_resources = None
+            logger.warning("Unable to load project manifest: %s", exc)
+            project_resources = None
 
     if dev:
         fallback_host = host or "127.0.0.1"
@@ -254,7 +171,7 @@ def serve(
         storage,
         default_project=active_project,
         dev_server_url=dev_server_url,
-        playground_resources=playground_resources,
+        project_resources=project_resources,
         auth_token=auth_token,
     )
 

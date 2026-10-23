@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
+import { applyTheme as applySharedTheme } from '@omniagents/ui/themes'
 import { ThemeContext, type Theme, type ThemeContextValue, type ThemePreference } from './context'
 const STORAGE_KEY = 'omniagents-studio-theme'
 
@@ -37,13 +38,14 @@ const writeStoredPreference = (preference: ThemePreference) => {
   }
 }
 
+/** Light and dark are the shared design system's Teams themes, the
+ * desktop app's defaults. */
 const applyTheme = (theme: Theme) => {
   if (typeof document === 'undefined') {
     return
   }
-  const root = document.documentElement
-  root.classList.toggle('dark', theme === 'dark')
-  root.style.setProperty('color-scheme', theme)
+  applySharedTheme(theme === 'dark' ? 'teams-dark' : 'teams-light')
+  document.documentElement.style.setProperty('color-scheme', theme)
 }
 
 const resolveTheme = (preference: ThemePreference): Theme => {

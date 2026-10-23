@@ -148,7 +148,9 @@
 
   /* XTerm consumes the same intentional semantic palette instead of a second
      converted theme contract. */
-  --xterm-bg: transparent;
+  /* The surface the terminal sits on. Not "transparent": xterm parses it
+     through a canvas, rejects the non-opaque result and paints black. */
+  --xterm-bg: var(--background);
   --xterm-fg: var(--foreground);
   --xterm-black: var(--foreground);
   --xterm-bright-black: var(--muted-foreground);

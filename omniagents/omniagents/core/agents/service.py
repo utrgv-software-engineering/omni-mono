@@ -467,7 +467,6 @@ def reset_current_service(token: contextvars.Token) -> None:
     _current_service.reset(token)
 
 
-
 #: How long run_end waits for a stopped run's session release (deferred by a
 #: still-running fenced operation) before telling clients anyway.
 RUN_RELEASE_WAIT_SECONDS = 30.0
@@ -1453,6 +1452,34 @@ class AgentService(RpcMethodsBase):
         run_spec.sandbox_run_config = run_config
         return run_spec
 
+    def _runtime_context(self, sess: Session) -> Any:
+        """The run context a run of *sess* is given.
+
+        When a build_context factory exists it is always called, so dynamic
+        template variables (skills, date, etc.) are generated; session-level
+        context and variables are merged into its input and its output.
+        """
+        if self.spec.build_context:
+            factory_vars = dict(self.spec.variables or {})
+            if hasattr(sess, "variables") and isinstance(sess.variables, dict):
+                factory_vars.update(sess.variables)
+            # Also pull workspace_root from sess.context if set
+            if hasattr(sess, "context") and isinstance(sess.context, dict):
+                for k, v in sess.context.items():
+                    factory_vars.setdefault(k, v)
+            runtime_context = self.spec.build_context(factory_vars)
+            # Merge any extra session context keys the factory didn't produce
+            if hasattr(sess, "context") and isinstance(sess.context, dict):
+                if isinstance(runtime_context, dict):
+                    for k, v in sess.context.items():
+                        runtime_context.setdefault(k, v)
+            return runtime_context
+        if hasattr(sess, "context") and sess.context is not None:
+            return sess.context
+        if hasattr(sess, "variables") and sess.variables is not None:
+            return sess.variables
+        return self.spec.context
+
     async def _build_agent_for_session(
         self,
         session: Session,
@@ -1461,10 +1488,13 @@ class AgentService(RpcMethodsBase):
         spec: AgentSpec | None = None,
         environment_lease: EnvironmentLease | None = None,
         mcp_holds: list | None = None,
+        start_mcp: bool = True,
     ) -> Any:
         """The session's agent for a run. With ``mcp_holds`` (a list), the
         MCP servers it's built with are held (their tokens appended) until
-        the caller releases them: a run holds them to its end."""
+        the caller releases them: a run holds them to its end. Without
+        ``start_mcp`` the agent is built with no MCP servers, which are
+        processes a description must not start."""
         build_spec = spec or self.spec
         stub_app = SimpleNamespace(
             spec=build_spec,
@@ -1479,8 +1509,12 @@ class AgentService(RpcMethodsBase):
 
         # Use session-scoped MCP servers (managed by dedicated task)
         holds: list = []
-        active_servers = await self._ensure_session_mcp_servers(
-            session, environment_lease, hold=holds
+        active_servers = (
+            await self._ensure_session_mcp_servers(
+                session, environment_lease, hold=holds
+            )
+            if start_mcp
+            else []
         )
 
         setattr(stub_app, "mcp_servers", active_servers)
@@ -4325,31 +4359,7 @@ class AgentService(RpcMethodsBase):
             current_task = asyncio.current_task()
             run_name = current_task.get_name() if current_task else None
 
-            # Resolve runtime context once
-            # When a build_context factory exists, always call it so that
-            # dynamic template variables (skills, date, etc.) are generated.
-            # Merge any session-level context/variables into the factory input.
-            if self.spec.build_context:
-                # Determine the variables to pass to the factory
-                factory_vars = dict(self.spec.variables or {})
-                if hasattr(sess, "variables") and isinstance(sess.variables, dict):
-                    factory_vars.update(sess.variables)
-                # Also pull workspace_root from sess.context if set
-                if hasattr(sess, "context") and isinstance(sess.context, dict):
-                    for k, v in sess.context.items():
-                        factory_vars.setdefault(k, v)
-                runtime_context = self.spec.build_context(factory_vars)
-                # Merge any extra session context keys the factory didn't produce
-                if hasattr(sess, "context") and isinstance(sess.context, dict):
-                    if isinstance(runtime_context, dict):
-                        for k, v in sess.context.items():
-                            runtime_context.setdefault(k, v)
-            elif hasattr(sess, "context") and sess.context is not None:
-                runtime_context = sess.context
-            elif hasattr(sess, "variables") and sess.variables is not None:
-                runtime_context = sess.variables
-            else:
-                runtime_context = self.spec.context
+            runtime_context = self._runtime_context(sess)
 
             # Retry policy (env configurable)
             max_retries = int(os.getenv("OMNIAGENTS_RETRY_MAX", "3"))
@@ -6191,6 +6201,115 @@ class AgentService(RpcMethodsBase):
             pass
         _debug_rpc("get_agent_info", info)
         return info
+
+    async def describe_agent(self, workspace_root: str | None = None) -> dict:
+        """What a run of this agent works with, resolved as a run resolves it.
+
+        The agent is built exactly as for a run (capability tools, the model
+        resolver, approval predicates) on a throwaway session that is never
+        stored, and its instructions are rendered against the context a run
+        in *workspace_root* is given. MCP servers are described from their
+        configuration rather than started. Operator tools (Studio) show this
+        so what they display is what runs. Not an RPC.
+        """
+        from omniagents.core.agents import description
+
+        manager = self._session_manager
+        session = Session(
+            getattr(manager, "_project_slug", None),
+            getattr(manager, "_agent_slug", None),
+        )
+        if workspace_root:
+            session.context = {"workspace_root": workspace_root}
+        agent = await self._build_agent_for_session(
+            session, None, spec=self._spec_for_environment(None), start_mcp=False
+        )
+        spec = self.spec
+        agent_tools = [
+            *(getattr(spec, "agent_tool_configs", None) or []),
+        ]
+        agent_tool_names = {
+            config.tool_name or description.subagent_name(config)
+            for config in agent_tools
+        }
+        opts = spec.safe_agent_options
+        security = spec.security_config or {}
+        enforced = security.get("safety_mode") == "enforced"
+        skills: list[dict] = []
+        if "skills.list" in self._server_functions:
+            from omniagents.core.skills import (
+                discover_skill_dirs,
+                merge_skill_dirs,
+                read_properties,
+                skill_roots,
+            )
+
+            for skill_dir in merge_skill_dirs(
+                discover_skill_dirs(skill_roots(workspace_root))
+            ):
+                try:
+                    props = read_properties(skill_dir)
+                    skills.append(
+                        {"name": props.name, "description": props.description}
+                    )
+                except Exception as exc:
+                    skills.append(
+                        {"name": skill_dir.name, "description": "", "error": str(exc)}
+                    )
+        return {
+            "name": spec.name,
+            "label": getattr(spec, "label", None) or spec.name,
+            "description": getattr(spec, "description", None) or "",
+            "model": {
+                "name": description.model_name(agent),
+                "settings": description.model_settings(agent),
+            },
+            "instructions": await description.instructions(
+                agent, self._runtime_context(session)
+            ),
+            "tools": description.tools(agent, agent_tool_names),
+            "handoffs": description.handoffs(agent),
+            "agent_tools": [
+                {
+                    "name": config.tool_name or description.subagent_name(config),
+                    "agent": description.subagent_name(config),
+                    "description": config.tool_description or "",
+                    "max_turns": config.max_turns,
+                }
+                for config in agent_tools
+            ],
+            "capabilities": sorted(
+                str(getattr(cap, "capability_name", "") or type(cap).__name__)
+                for cap in (getattr(spec, "resolved_capabilities", None) or [])
+            ),
+            "mcp_servers": [
+                {"name": server.name, "type": server.type}
+                for server in (getattr(spec, "mcp_servers", None) or [])
+            ],
+            "skills": sorted(skills, key=lambda skill: skill["name"].lower()),
+            "server_functions": sorted(
+                (
+                    {"name": name, "description": meta.get("description") or ""}
+                    for name, meta in self._server_functions.items()
+                ),
+                key=lambda entry: entry["name"],
+            ),
+            "policy": {
+                "approvals": (
+                    "enforced"
+                    if enforced
+                    else "safe_agent" if spec.use_safe_agent else "none"
+                ),
+                "skip_approvals": bool(getattr(opts, "skip_approvals", False))
+                and not enforced,
+                "safe_tool_names": list(getattr(opts, "safe_tool_names", None) or []),
+                "safe_tool_patterns": list(
+                    getattr(opts, "safe_tool_patterns", None) or []
+                ),
+                "max_turns": spec.max_turns,
+                "compaction": spec.session_compaction_config,
+            },
+        }
 
     async def agent_host_register_workspace(
         self,

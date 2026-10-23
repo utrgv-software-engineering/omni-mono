@@ -6,14 +6,8 @@ import type {
   Conversation,
   FailureCategory,
   AnalysisData,
-  PlaygroundMetadata,
-  PlaygroundSessionResponse,
-  PlaygroundSafeAgentOptions,
-  AgentUpdatePayload,
+  AgentDescription,
   AgentSummary,
-  AgentCreatePayload,
-  AgentCreateResponse,
-  AgentDeleteResponse,
   EvaluationDimension,
   EvaluationDimensionsResponse,
   StudioProjectMetadata,
@@ -52,7 +46,6 @@ import type {
   EvaluationMeasureDeleteResponse,
   EvaluationResultsListResponse,
   EvaluationResultsDetailResponse,
-  JsonValue,
 } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_URL || `${window.location.origin}/api`
@@ -84,23 +77,6 @@ export function splitBaseAndToken(rawBase: string): { base: string; token: strin
   } catch {
     return { base: rawBase, token: null }
   }
-}
-
-export interface PlaygroundSessionPayload {
-  model: string
-  instructions?: string
-  tools?: string[]
-  model_settings?: Record<string, number | string | boolean>
-  use_safe_agent?: boolean
-  safe_agent_options?: PlaygroundSafeAgentOptions
-  guardrails?: {
-    input?: string[]
-    output?: string[]
-  }
-  output_type?: string
-  output_type_strict?: boolean
-  output_schema?: Record<string, JsonValue>
-  session_id?: string
 }
 
 export class ApiClient {
@@ -376,37 +352,21 @@ export class ApiClient {
     })
   }
 
-  async getPlaygroundMetadata(): Promise<PlaygroundMetadata> {
-    return this.fetch('/playground/metadata')
-  }
-
   async getAgents(): Promise<{ agents: AgentSummary[] }> {
     return this.fetch('/agents')
   }
 
-  async getAgentMetadata(agentKey: string): Promise<PlaygroundMetadata> {
-    return this.fetch(`/agents/${agentKey}/metadata`)
+  /** What a run of the agent is given, from its runtime. */
+  async describeAgent(agentKey: string): Promise<AgentDescription> {
+    return this.fetch(`/agents/${encodeURIComponent(agentKey)}`)
   }
 
-  async updateAgent(agentKey: string, payload: AgentUpdatePayload): Promise<PlaygroundMetadata> {
-    return this.fetch(`/agents/${agentKey}`, {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    })
-  }
-
-  async createAgent(payload: AgentCreatePayload): Promise<AgentCreateResponse> {
-    return this.fetch('/agents', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    })
-  }
-
-  async deleteAgent(agentKey: string): Promise<AgentDeleteResponse> {
-    const encoded = encodeURIComponent(agentKey)
-    return this.fetch(`/agents/${encoded}`, {
-      method: 'DELETE',
-    })
+  /** Where the agent's real runtime is mounted, and the credential that
+   * reaches it: the shared chat UI dials its `ws` there. */
+  agentRuntime(agentKey: string): { baseUrl: string; authToken?: string } {
+    const base = this.resolveApiBase()
+    base.pathname = `${base.pathname.replace(/\/$/, '')}/agents/${encodeURIComponent(agentKey)}/runtime/`
+    return { baseUrl: base.toString(), authToken: this.authToken ?? undefined }
   }
 
   async getEvaluationDimensions(): Promise<EvaluationDimensionsResponse> {
@@ -600,20 +560,6 @@ export class ApiClient {
     return this.fetch(`/evaluation/results/detail?${searchParams.toString()}`)
   }
 
-  async createPlaygroundSession(payload: PlaygroundSessionPayload): Promise<PlaygroundSessionResponse> {
-    return this.fetch('/playground/session', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    })
-  }
-
-  async createAgentSession(agentKey: string, payload: PlaygroundSessionPayload): Promise<PlaygroundSessionResponse> {
-    return this.fetch(`/agents/${agentKey}/session`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    })
-  }
-
   createWebSocket(): Promise<WebSocket> {
     return this.openWebSocket('/ws/traces')
   }
@@ -638,40 +584,6 @@ export class ApiClient {
     return this.openWebSocket(`/evaluation/agents/optimize/${jobId}/ws`)
   }
 
-  async createPlaygroundWebSocket(sessionId: string, explicitBase?: string, agentKey?: string): Promise<WebSocket> {
-    const params: Record<string, string> = { session_id: sessionId }
-    if (agentKey) {
-      params.agent = agentKey
-    }
-
-    if (explicitBase) {
-      // The server-computed playground URL (metadata.playground_ws_url).
-      // Mint the connect ticket against the same host the socket dials.
-      const resolved = new URL(explicitBase)
-      const httpProtocol =
-        resolved.protocol === 'wss:' ? 'https:' : resolved.protocol === 'ws:' ? 'http:' : resolved.protocol
-      const basePath = resolved.pathname.replace(/\/playground\/ws\/?$/, '') || '/api'
-      const ticket = await this.mintWsTicket(`${httpProtocol}//${resolved.host}${basePath}`)
-      resolved.searchParams.delete('token')
-      if (ticket) {
-        resolved.searchParams.set('ticket', ticket)
-      }
-      Object.entries(params).forEach(([key, value]) => {
-        resolved.searchParams.set(key, value)
-      })
-      const urlStr = resolved.toString()
-      if (typeof window !== 'undefined' && window.console) {
-        console.debug('[playground] websocket url', urlStr)
-      }
-      return new WebSocket(urlStr)
-    }
-
-    const ws = await this.openWebSocket('/playground/ws', params)
-    if (typeof window !== 'undefined' && window.console) {
-      console.debug('[playground] websocket url', ws.url)
-    }
-    return ws
-  }
 }
 
 export const api = new ApiClient()

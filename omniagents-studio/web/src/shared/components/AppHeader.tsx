@@ -181,7 +181,7 @@ export function AppHeader({
               <select
                 value={selectedProject || ''}
                 onChange={(e) => onProjectChange?.(e.target.value || null)}
-                className="px-2 py-1 text-xs bg-muted/50 border-0 rounded-md outline-none focus:bg-muted cursor-pointer"
+                className="px-2 py-1 text-xs bg-muted/50 border-0 rounded-md outline-hidden focus:bg-muted cursor-pointer"
               >
                 <option value="">Project</option>
                 {projects.map((p) => (
@@ -191,7 +191,7 @@ export function AppHeader({
               <select
                 value={selectedWorkflow || ''}
                 onChange={(e) => onWorkflowChange?.(e.target.value || null)}
-                className="px-2 py-1 text-xs bg-muted/50 border-0 rounded-md outline-none focus:bg-muted cursor-pointer"
+                className="px-2 py-1 text-xs bg-muted/50 border-0 rounded-md outline-hidden focus:bg-muted cursor-pointer"
                 disabled={!workflows.length}
               >
                 <option value="">Workflow</option>
@@ -210,9 +210,9 @@ export function AppHeader({
                 <button
                   onClick={() => onViewModeChange('review')}
                   className={cn(
-                    "px-4 py-1.5 text-sm font-medium rounded transition-colors",
+                    "px-4 py-1.5 text-sm font-medium rounded-sm transition-colors",
                     viewMode === 'review'
-                      ? 'bg-background shadow-sm' 
+                      ? 'bg-background shadow-xs' 
                       : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
@@ -221,9 +221,9 @@ export function AppHeader({
                 <button
                   onClick={() => onViewModeChange('debug')}
                   className={cn(
-                    "px-4 py-1.5 text-sm font-medium rounded transition-colors",
+                    "px-4 py-1.5 text-sm font-medium rounded-sm transition-colors",
                     viewMode === 'debug'
-                      ? 'bg-background shadow-sm' 
+                      ? 'bg-background shadow-xs' 
                       : 'text-muted-foreground hover:text-foreground'
                   )}
                 >

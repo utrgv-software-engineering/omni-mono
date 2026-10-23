@@ -4,16 +4,10 @@ import { ThemeToggle } from './ThemeToggle'
 interface AgentHeaderProps {
   onBack: () => void
   agentLabel?: string
-  projectName?: string
-  statusMessage?: string
 }
 
-export function AgentHeader({ onBack, agentLabel, projectName, statusMessage }: AgentHeaderProps) {
-  const subtitle = statusMessage && statusMessage.trim().length > 0
-    ? statusMessage
-    : projectName
-      ? `Project: ${projectName}`
-      : 'Configure agent settings and run sessions'
+export function AgentHeader({ onBack, agentLabel }: AgentHeaderProps) {
+  const subtitle = 'What this agent runs with'
 
   return (
     <div className="border-b border-border bg-background">

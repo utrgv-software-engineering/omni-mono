@@ -296,39 +296,39 @@ export function LogsPage() {
         )}
         {viewContent}
         {showShortcutsBar && (
-          <div className="fixed bottom-0 left-0 right-0 bg-background/95 backdrop-blur border-t border-border px-4 py-2.5 flex items-center justify-center gap-3 text-xs z-50">
+          <div className="fixed bottom-0 left-0 right-0 bg-background/95 backdrop-blur-sm border-t border-border px-4 py-2.5 flex items-center justify-center gap-3 text-xs z-50">
             <div className="flex items-center gap-1.5">
-              <kbd className="px-1.5 py-0.5 bg-muted border border-border rounded text-foreground font-mono">↑↓</kbd>
+              <kbd className="px-1.5 py-0.5 bg-muted border border-border rounded-sm text-foreground font-mono">↑↓</kbd>
               <span className="text-muted-foreground">Navigate List</span>
             </div>
             <span className="text-border">•</span>
             <div className="flex items-center gap-1.5">
-              <kbd className="px-1.5 py-0.5 bg-muted border border-border rounded text-foreground font-mono">Enter</kbd>
+              <kbd className="px-1.5 py-0.5 bg-muted border border-border rounded-sm text-foreground font-mono">Enter</kbd>
               <span className="text-muted-foreground">Select</span>
             </div>
             <span className="text-border">•</span>
             <div className="flex items-center gap-1.5">
-              <kbd className="px-1.5 py-0.5 bg-muted border border-border rounded text-foreground font-mono">1</kbd>
+              <kbd className="px-1.5 py-0.5 bg-muted border border-border rounded-sm text-foreground font-mono">1</kbd>
               <span className="text-muted-foreground">Good</span>
             </div>
             <span className="text-border">•</span>
             <div className="flex items-center gap-1.5">
-              <kbd className="px-1.5 py-0.5 bg-muted border border-border rounded text-foreground font-mono">2</kbd>
+              <kbd className="px-1.5 py-0.5 bg-muted border border-border rounded-sm text-foreground font-mono">2</kbd>
               <span className="text-muted-foreground">Bad</span>
             </div>
             <span className="text-border">•</span>
             <div className="flex items-center gap-1.5">
-              <kbd className="px-1.5 py-0.5 bg-muted border border-border rounded text-foreground font-mono">N</kbd>
+              <kbd className="px-1.5 py-0.5 bg-muted border border-border rounded-sm text-foreground font-mono">N</kbd>
               <span className="text-muted-foreground">Notes</span>
             </div>
             <span className="text-border">•</span>
             <div className="flex items-center gap-1.5">
-              <kbd className="px-1.5 py-0.5 bg-muted border border-border rounded text-foreground font-mono">← →</kbd>
+              <kbd className="px-1.5 py-0.5 bg-muted border border-border rounded-sm text-foreground font-mono">← →</kbd>
               <span className="text-muted-foreground">Previous/Next</span>
             </div>
             <span className="text-border">•</span>
             <div className="flex items-center gap-1.5">
-              <kbd className="px-1.5 py-0.5 bg-muted border border-border rounded text-foreground font-mono">E</kbd>
+              <kbd className="px-1.5 py-0.5 bg-muted border border-border rounded-sm text-foreground font-mono">E</kbd>
               <span className="text-muted-foreground">Expand Tools</span>
             </div>
           </div>

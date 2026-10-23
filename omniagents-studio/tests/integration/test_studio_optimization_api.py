@@ -32,14 +32,11 @@ def studio_optimization_env(tmp_path):
     manifest_path = project_dir / "project.yml"
     ctx = load_project(str(manifest_path))
     base_spec = build_spec_from_project(ctx)
-    resources = app.state.playground_resources
+    resources = app.state.project_resources
     resources["manifest_path"] = str(manifest_path)
     resources["project_name"] = "demo"
-    resources["base_spec"] = base_spec
     resources["agent_specs"] = {ctx.entrypoint: base_spec}
     resources["entry_agent_key"] = ctx.entrypoint
-    resources["tool_registry"] = ctx.tool_registry
-    resources["guardrails_registry"] = ctx.guardrails_registry
     client_ctx = TestClient(app)
     client = client_ctx.__enter__()
     try:

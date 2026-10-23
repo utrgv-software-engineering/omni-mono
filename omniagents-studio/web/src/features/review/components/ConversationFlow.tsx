@@ -770,7 +770,7 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
           )}
         >
           <div className="flex items-start gap-2">
-            <div className="flex-shrink-0 mt-1">
+            <div className="shrink-0 mt-1">
               {isUser ? (
                 <User className="w-4 h-4" />
               ) : isSystem ? (
@@ -819,7 +819,7 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
                 e.stopPropagation()
                 toggleFunctionExpand(item.spanId)
               }}
-              className="p-1 hover:bg-muted rounded"
+              className="p-1 hover:bg-muted rounded-sm"
             >
               {isExpanded ? (
                 <ChevronDown className="w-4 h-4" />
@@ -834,7 +834,7 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
               {item.input && (
                 <div>
                   <div className="text-xs text-muted-foreground mb-1">Input:</div>
-                  <pre className="text-xs bg-muted p-2 rounded overflow-x-auto">
+                  <pre className="text-xs bg-muted p-2 rounded-sm overflow-x-auto">
                     {typeof item.input === 'object' ? JSON.stringify(item.input, null, 2) : item.input}
                   </pre>
                 </div>
@@ -842,7 +842,7 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
               {item.output && (
                 <div>
                   <div className="text-xs text-muted-foreground mb-1">Output:</div>
-                  <pre className="text-xs bg-muted p-2 rounded overflow-x-auto">
+                  <pre className="text-xs bg-muted p-2 rounded-sm overflow-x-auto">
                     {typeof item.output === 'object' ? JSON.stringify(item.output, null, 2) : item.output}
                   </pre>
                 </div>
@@ -867,7 +867,7 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
       <div
         className="flex w-full mb-4 justify-center"
       >
-        <div className="px-4 py-2 bg-gradient-to-r from-blue-500/10 to-purple-500/10 border border-border rounded-full">
+        <div className="px-4 py-2 bg-linear-to-r from-blue-500/10 to-purple-500/10 border border-border rounded-full">
           <div className="flex items-center gap-2 text-sm">
             <Bot className="w-4 h-4" />
             <span>{item.from}</span>
@@ -959,7 +959,7 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
                 type="checkbox"
                 checked={showSystemMessages}
                 onChange={(e) => setShowSystemMessages(e.target.checked)}
-                className="rounded border-input accent-blue-500 dark:accent-blue-600"
+                className="rounded-sm border-input accent-blue-500 dark:accent-blue-600"
               />
               Show system messages
             </label>
@@ -968,7 +968,7 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
                 type="checkbox"
                 checked={showMetadata}
                 onChange={(e) => setShowMetadata(e.target.checked)}
-                className="rounded border-input accent-blue-500 dark:accent-blue-600"
+                className="rounded-sm border-input accent-blue-500 dark:accent-blue-600"
               />
               Show metadata
             </label>
@@ -1007,7 +1007,7 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
       {/* Conversation */}
       <div 
         ref={conversationRef}
-        className="flex-1 overflow-y-auto p-4 focus:outline-none" 
+        className="flex-1 overflow-y-auto p-4 focus:outline-hidden" 
         tabIndex={0}
       >
         <div key={traceId} className="max-w-4xl mx-auto">
@@ -1086,7 +1086,7 @@ function TraceMetadataBlock({ metadata }: { metadata?: unknown }) {
       <div className="w-full border rounded-lg bg-card">
         <div className="p-3">
           <div className="text-xs text-muted-foreground mb-2">Trace metadata</div>
-          <pre className="text-xs bg-muted p-2 rounded overflow-x-auto">
+          <pre className="text-xs bg-muted p-2 rounded-sm overflow-x-auto">
             {typeof parsed === 'object' ? JSON.stringify(parsed, null, 2) : String(parsed)}
           </pre>
         </div>

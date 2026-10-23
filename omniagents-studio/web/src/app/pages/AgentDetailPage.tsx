@@ -1,63 +1,27 @@
-import { useCallback, useState } from 'react'
+import { useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { StudioPage } from '../../shared/components/StudioPage'
-import { AgentHeader } from '../../shared/components/AgentHeader'
-import { AgentsView } from '../../features/agents/AgentsView'
-import type { PlaygroundContext } from '../../features/playground/PlaygroundView'
-import { ROUTES } from '../routes'
-import { buildRoutePath } from '../../lib/routing'
 
-const initialContext: PlaygroundContext = {
-  projectName: '',
-  sessionId: '',
-  statusMessage: '',
-  agentKey: null,
-  agentLabel: '',
-}
+import { AgentsView } from '../../features/agents/AgentsView'
+import { buildRoutePath } from '../../lib/routing'
+import { AgentHeader } from '../../shared/components/AgentHeader'
+import { StudioPage } from '../../shared/components/StudioPage'
+import { useChatWithAgent } from './useChatWithAgent'
+import { ROUTES } from '../routes'
 
 export function AgentDetailPage() {
   const params = useParams()
   const navigate = useNavigate()
+  const chat = useChatWithAgent()
   const agentKey = params.agentKey ?? ''
-  const [agentContext, setAgentContext] = useState<PlaygroundContext>(initialContext)
-
-  const handleBack = useCallback(() => {
-    setAgentContext(initialContext)
-    navigate(ROUTES.agents)
-  }, [navigate, setAgentContext])
-
-  const handleSelectAgent = useCallback(
-    (nextAgentKey: string) => {
-      navigate(buildRoutePath('agentDetail', { pathParams: { agentKey: nextAgentKey } }))
-    },
-    [navigate],
-  )
-
-  const handleUpdateContext = useCallback((next: PlaygroundContext) => {
-    setAgentContext((prev) => ({ ...prev, ...next }))
-  }, [])
-
-  const headerLabel = agentContext.agentLabel && agentContext.agentLabel.trim().length > 0
-    ? agentContext.agentLabel
-    : agentKey || 'Agent'
+  const handleBack = useCallback(() => navigate(ROUTES.agents), [navigate])
 
   return (
-    <StudioPage
-      section="agents"
-      header={
-        <AgentHeader
-          onBack={handleBack}
-          agentLabel={headerLabel}
-          projectName={agentContext.projectName}
-          statusMessage={agentContext.statusMessage}
-        />
-      }
-    >
+    <StudioPage section="agents" header={<AgentHeader onBack={handleBack} agentLabel={agentKey || 'Agent'} />}>
       <AgentsView
         selectedAgent={agentKey}
-        onSelectAgent={handleSelectAgent}
+        onSelectAgent={(next) => navigate(buildRoutePath('agentDetail', { pathParams: { agentKey: next } }))}
         onClearAgent={handleBack}
-        onUpdateContext={handleUpdateContext}
+        onChat={chat}
       />
     </StudioPage>
   )

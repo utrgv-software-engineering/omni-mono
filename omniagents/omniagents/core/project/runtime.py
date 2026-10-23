@@ -106,7 +106,7 @@ def _validate_agent_name(expected_key: str, yaml_name: Any, path: Path) -> str:
     return yaml_name
 
 
-def _manifest_product(proj: Dict[str, Any], base_dir: Path) -> ProductInfo:
+def manifest_product(proj: Dict[str, Any], base_dir: Path) -> ProductInfo:
     """The manifest's product identity — the project's one name.
 
     The ``product:`` section resolved with all conventions applied; when
@@ -222,13 +222,13 @@ def load_project(
     proj, _applied_overlays = _apply_project_overlays(
         proj,
         overlays,
-        config_dir_name=_manifest_product(proj, base_dir).config_dir_name,
+        config_dir_name=manifest_product(proj, base_dir).config_dir_name,
     )
 
     # The project's resolved product identity (post-overlay). This is
     # the project identity: every place the loader/runtime historically
     # read a top-level `name:` now derives from it.
-    product = _manifest_product(proj, base_dir)
+    product = manifest_product(proj, base_dir)
 
     # Install the manifest's product identity (`product:` section) as the
     # process-wide default. A prior explicit

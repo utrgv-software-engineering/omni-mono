@@ -12,7 +12,6 @@ from omniagents_studio.api import (
     JudgeOptimizationDatasetPayload,
     JudgeOptimizationManager,
     JudgeOptimizationRequest,
-    PlaygroundSessionStore,
     ScenarioGenerationManager,
     ScenarioGenerationRequest,
     ScenarioRunManager,
@@ -520,49 +519,3 @@ def test_polling_routes_return_consistent_snapshots():
         assert agent_status["project"] == project
         assert agent_status["log_path"] == "/tmp/agent.log"
         assert agent_status["eta_seconds"] == 0.0
-
-
-@pytest.mark.asyncio
-async def test_playground_session_store_is_thread_safe():
-    store = PlaygroundSessionStore()
-    session_id = await store.upsert(None, {"model": "gpt"})
-    first = await store.get(session_id)
-    assert first is not None
-    assert first["model"] == "gpt"
-    original_updated_at = first["updated_at"]
-    first["model"] = "mutated"
-    second = await store.get(session_id)
-    assert second["model"] == "gpt"
-    await store.upsert(session_id, {"model": "gpt-4"})
-    third = await store.get(session_id)
-    assert third["model"] == "gpt-4"
-    assert third["updated_at"] != original_updated_at
-    results = await asyncio.gather(
-        store.upsert(session_id, {"model": "gpt-4o"}),
-        store.upsert(session_id, {"model": "gpt-4o-mini"}),
-    )
-    assert all(result == session_id for result in results)
-    final = await store.get(session_id)
-    assert final["model"] in {"gpt-4o", "gpt-4o-mini"}
-    await store.delete(session_id)
-    assert await store.get(session_id) is None
-
-
-@pytest.mark.asyncio
-async def test_playground_session_store_supports_multiple_event_loops():
-    store = PlaygroundSessionStore()
-    session_id = await store.upsert(None, {"model": "base"})
-
-    async def other_loop():
-        await store.upsert(session_id, {"model": "remote"})
-        data = await store.get(session_id)
-        return data["model"]
-
-    def run_in_thread():
-        return asyncio.run(other_loop())
-
-    loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(None, run_in_thread)
-    assert result == "remote"
-    final = await store.get(session_id)
-    assert final["model"] == "remote"

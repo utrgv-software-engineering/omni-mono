@@ -232,8 +232,6 @@ export class RealtimeVoiceController {
   /** Every scheduled source lands here; the bus is what reaches the sink. */
   private playbackBus: GainNode | null = null;
   private playbackAnalyser: AnalyserNode | null = null;
-  /** Legacy sink (see setupAudio): only when AudioContext.setSinkId is missing. */
-  private playbackDest: MediaStreamAudioDestinationNode | null = null;
   private audioOutEl: HTMLAudioElement | null = null;
   private activeSources = new Set<AudioBufferSourceNode>();
   private scheduledEnd = 0;
@@ -568,7 +566,6 @@ export class RealtimeVoiceController {
       try {
         const dest = ctx.createMediaStreamDestination();
         bus.connect(dest);
-        this.playbackDest = dest;
         const el = new Audio();
         el.srcObject = dest.stream;
         el.play().catch(() => {});
@@ -578,7 +575,6 @@ export class RealtimeVoiceController {
           setSink.call(el, prefs.outputDeviceId).catch(() => {});
         }
       } catch {
-        this.playbackDest = null;
         bus.connect(ctx.destination);
       }
     }
@@ -732,7 +728,6 @@ export class RealtimeVoiceController {
       this.audioOutEl.srcObject = null;
       this.audioOutEl = null;
     }
-    this.playbackDest = null;
     if (this.playbackBus) {
       try {
         this.playbackBus.disconnect();

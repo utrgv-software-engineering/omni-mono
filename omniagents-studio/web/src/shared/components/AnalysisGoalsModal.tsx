@@ -227,7 +227,7 @@ export function AnalysisGoalsModal({ isOpen, onClose }: AnalysisGoalsModalProps)
                 onChange={(e) => setTracesRequired(parseInt(e.target.value) || 0)}
                 disabled={selectedMode !== 'custom'}
                 className={cn(
-                  "w-full px-2 py-1.5 text-sm border rounded-md focus:outline-none",
+                  "w-full px-2 py-1.5 text-sm border rounded-md focus:outline-hidden",
                   selectedMode === 'custom' 
                     ? "bg-background focus:ring-2 focus:ring-primary" 
                     : "bg-muted/50 cursor-not-allowed"
@@ -254,7 +254,7 @@ export function AnalysisGoalsModal({ isOpen, onClose }: AnalysisGoalsModalProps)
                 onChange={(e) => setBadTracesRequired(parseInt(e.target.value) || 0)}
                 disabled={selectedMode !== 'custom'}
                 className={cn(
-                  "w-full px-2 py-1.5 text-sm border rounded-md focus:outline-none",
+                  "w-full px-2 py-1.5 text-sm border rounded-md focus:outline-hidden",
                   selectedMode === 'custom' 
                     ? "bg-background focus:ring-2 focus:ring-primary" 
                     : "bg-muted/50 cursor-not-allowed"
@@ -283,7 +283,7 @@ export function AnalysisGoalsModal({ isOpen, onClose }: AnalysisGoalsModalProps)
                 onChange={(e) => setBadTracesRequiringNotes(parseInt(e.target.value) || 0)}
                 disabled={selectedMode !== 'custom'}
                 className={cn(
-                  "w-full px-2 py-1.5 text-sm border rounded-md focus:outline-none",
+                  "w-full px-2 py-1.5 text-sm border rounded-md focus:outline-hidden",
                   selectedMode === 'custom' 
                     ? "bg-background focus:ring-2 focus:ring-primary" 
                     : "bg-muted/50 cursor-not-allowed"
@@ -310,7 +310,7 @@ export function AnalysisGoalsModal({ isOpen, onClose }: AnalysisGoalsModalProps)
                 onChange={(e) => setBadTracesRequiringCategories(parseInt(e.target.value) || 0)}
                 disabled={selectedMode !== 'custom'}
                 className={cn(
-                  "w-full px-2 py-1.5 text-sm border rounded-md focus:outline-none",
+                  "w-full px-2 py-1.5 text-sm border rounded-md focus:outline-hidden",
                   selectedMode === 'custom' 
                     ? "bg-background focus:ring-2 focus:ring-primary" 
                     : "bg-muted/50 cursor-not-allowed"

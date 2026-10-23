@@ -1,7 +1,9 @@
 # OmniAgents Studio
 
 A local web UI for OmniAgents projects: browse the traces OmniAgents records,
-review and annotate conversations, try agents in a Playground, and run
+review and annotate conversations, see what each agent runs with, chat with
+agents in a Playground (the shared OmniAgents chat UI against the agent's real
+runtime), and run
 evaluation workflows (dimensions, scenario sets, measures, judges, suites,
 optimization).
 
@@ -32,10 +34,11 @@ dev server from `web/` alongside the API (needs Node/npm).
 ```bash
 cd omniagents-studio
 ../.venv/bin/pytest -n auto      # Python tests
-cd web && npm ci && npm run lint && npx vitest run && npm run build
-make assets                      # rebuild omniagents_studio/static from web/
+(cd .. && npm ci)                # the web app is an npm workspace of the monorepo
+cd web && npm run lint && npx vitest run && npm run build
+make assets                      # the bundle a wheel ships, in omniagents_studio/static
 ```
 
-Layout: `omniagents_studio/api.py` (FastAPI app), `server.py` (serve/export),
-`cli.py`, `static/` (built UI, committed), `web/` (React sources), `docs/`
-(design notes).
+Layout: `omniagents_studio/api.py` (FastAPI app), `agent_runtimes.py` (each
+agent's real runtime, mounted at `/api/agents/<key>/runtime`), `server.py`
+(serve/export), `cli.py`, `web/` (React sources), `docs/` (design notes).

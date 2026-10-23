@@ -269,7 +269,7 @@ export function AnalysisPanel() {
   return (
     <div className="h-full flex flex-col overflow-hidden">
       {/* Header */}
-      <div className="flex-shrink-0 border-b border-border p-3">
+      <div className="shrink-0 border-b border-border p-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Target className="w-4 h-4 text-blue-500" />
@@ -353,7 +353,7 @@ export function AnalysisPanel() {
             : "Rate the conversation quality first to enable notes..."
           }
           className={cn(
-            "w-full h-24 p-3 text-sm border rounded-lg resize-none focus:outline-none",
+            "w-full h-24 p-3 text-sm border rounded-lg resize-none focus:outline-hidden",
             isAnalyzed 
               ? "bg-muted/30 border-input focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400" 
               : "bg-muted/10 border-border opacity-50 cursor-not-allowed"
@@ -382,7 +382,7 @@ export function AnalysisPanel() {
             <div
               key={category.id}
               className={cn(
-                "flex items-start gap-2 p-2 rounded group",
+                "flex items-start gap-2 p-2 rounded-sm group",
                 localAnalysis.judgment === 'unacceptable' && stats.unacceptable >= analysisGoals.badTracesRequiringCategories
                   ? "hover:bg-muted/50"
                   : ""
@@ -403,7 +403,7 @@ export function AnalysisPanel() {
                   checked={localAnalysis.categories?.includes(category.id) || false}
                   onChange={() => handleCategoryToggle(category.id)}
                   disabled={localAnalysis.judgment !== 'unacceptable' || stats.unacceptable < analysisGoals.badTracesRequiringCategories}
-                  className="mt-0.5 rounded border-border text-primary focus:ring-primary disabled:cursor-not-allowed"
+                  className="mt-0.5 rounded-sm border-border text-primary focus:ring-primary disabled:cursor-not-allowed"
                 />
                 <div className="flex-1">
                   <div className="text-sm font-medium">{category.name}</div>
@@ -424,7 +424,7 @@ export function AnalysisPanel() {
                     name: category.name,
                     usageCount: category.usageCount || 0
                   })}
-                  className="p-1 hover:bg-destructive/10 rounded transition-colors"
+                  className="p-1 hover:bg-destructive/10 rounded-sm transition-colors"
                   title="Delete category"
                 >
                   <Trash2 className="w-3 h-3 text-destructive" />
@@ -458,13 +458,13 @@ export function AnalysisPanel() {
                   placeholder="Category name (required)"
                   value={newCategoryName}
                   onChange={(e) => setNewCategoryName(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+                  className="w-full px-3 py-2 text-sm border rounded-lg bg-background focus:outline-hidden focus:ring-2 focus:ring-primary"
                 />
                 <textarea
                   placeholder="Description (optional)"
                   value={newCategoryDescription}
                   onChange={(e) => setNewCategoryDescription(e.target.value)}
-                  className="w-full mt-2 px-3 py-2 text-sm border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary resize-none h-16"
+                  className="w-full mt-2 px-3 py-2 text-sm border rounded-lg bg-background focus:outline-hidden focus:ring-2 focus:ring-primary resize-none h-16"
                 />
                 {categoryError && (
                   <div className="mt-2 text-xs text-red-500">{categoryError}</div>
@@ -496,7 +496,7 @@ export function AnalysisPanel() {
       </div>
       
       {/* Analysis Goals Progress - Fixed at bottom */}
-      <div className="flex-shrink-0 border-t border-border bg-muted/30 p-3">
+      <div className="shrink-0 border-t border-border bg-muted/30 p-3">
         <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
           Analysis Goals
         </div>

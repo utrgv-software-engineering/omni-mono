@@ -46,7 +46,7 @@ export function SpanInspector({ span }: SpanInspectorProps) {
       {span.span_name && (
         <div>
           <div className="text-xs text-muted-foreground mb-1">Name</div>
-          <div className="text-sm font-mono bg-muted/50 p-2 rounded">
+          <div className="text-sm font-mono bg-muted/50 p-2 rounded-sm">
             {span.span_name}
           </div>
         </div>
@@ -56,12 +56,12 @@ export function SpanInspector({ span }: SpanInspectorProps) {
       <div>
         <div className="text-xs text-muted-foreground mb-1">Span ID</div>
         <div className="flex items-center gap-2">
-          <span className="text-xs font-mono bg-muted/50 px-2 py-1 rounded flex-1 truncate">
+          <span className="text-xs font-mono bg-muted/50 px-2 py-1 rounded-sm flex-1 truncate">
             {span.span_id}
           </span>
           <button
             onClick={() => copyToClipboard(span.span_id)}
-            className="p-1 hover:bg-muted rounded"
+            className="p-1 hover:bg-muted rounded-sm"
           >
             <Copy className="w-3 h-3" />
           </button>
@@ -97,7 +97,7 @@ export function SpanInspector({ span }: SpanInspectorProps) {
       {span.span_type === 'generation' && span.data?.span_data?.usage && (
         <div>
           <div className="text-xs text-muted-foreground mb-1">Token Usage</div>
-          <div className="bg-muted/50 p-2 rounded space-y-1 text-sm">
+          <div className="bg-muted/50 p-2 rounded-sm space-y-1 text-sm">
             <div>Input: {span.data.span_data.usage.input_tokens || 0}</div>
             <div>Output: {span.data.span_data.usage.output_tokens || 0}</div>
             <div>Total: {span.data.span_data.usage.total_tokens || 0}</div>
@@ -108,7 +108,7 @@ export function SpanInspector({ span }: SpanInspectorProps) {
       {span.span_type === 'function' && span.data?.span_data && (
         <div>
           <div className="text-xs text-muted-foreground mb-1">Function</div>
-          <div className="bg-muted/50 p-2 rounded text-sm font-mono">
+          <div className="bg-muted/50 p-2 rounded-sm text-sm font-mono">
             {span.data.span_data.name || 'Unknown'}
           </div>
         </div>
@@ -119,10 +119,10 @@ export function SpanInspector({ span }: SpanInspectorProps) {
           {span.data.span_data.tools && span.data.span_data.tools.length > 0 && (
             <div>
               <div className="text-xs text-muted-foreground mb-1">Available Tools</div>
-              <div className="bg-muted/50 p-2 rounded">
+              <div className="bg-muted/50 p-2 rounded-sm">
                 <div className="flex flex-wrap gap-1">
                   {span.data.span_data.tools.map((tool: string, idx: number) => (
-                    <span key={idx} className="px-2 py-1 bg-background rounded text-xs font-mono">
+                    <span key={idx} className="px-2 py-1 bg-background rounded-sm text-xs font-mono">
                       {tool}
                     </span>
                   ))}
@@ -134,10 +134,10 @@ export function SpanInspector({ span }: SpanInspectorProps) {
           {span.data.span_data.handoffs && span.data.span_data.handoffs.length > 0 && (
             <div>
               <div className="text-xs text-muted-foreground mb-1">Handoffs</div>
-              <div className="bg-muted/50 p-2 rounded">
+              <div className="bg-muted/50 p-2 rounded-sm">
                 <div className="flex flex-wrap gap-1">
                   {span.data.span_data.handoffs.map((handoff: string, idx: number) => (
-                    <span key={idx} className="px-2 py-1 bg-background rounded text-xs font-mono">
+                    <span key={idx} className="px-2 py-1 bg-background rounded-sm text-xs font-mono">
                       {handoff}
                     </span>
                   ))}
@@ -149,7 +149,7 @@ export function SpanInspector({ span }: SpanInspectorProps) {
           {span.data.span_data.output_type && (
             <div>
               <div className="text-xs text-muted-foreground mb-1">Output Type</div>
-              <div className="bg-muted/50 p-2 rounded text-sm font-mono">
+              <div className="bg-muted/50 p-2 rounded-sm text-sm font-mono">
                 {span.data.span_data.output_type}
               </div>
             </div>
@@ -165,13 +165,13 @@ export function SpanInspector({ span }: SpanInspectorProps) {
         <span className="text-xs text-muted-foreground">Raw Data</span>
         <button
           onClick={() => copyToClipboard(JSON.stringify(span.data, null, 2))}
-          className="flex items-center gap-1 px-2 py-1 text-xs hover:bg-muted rounded"
+          className="flex items-center gap-1 px-2 py-1 text-xs hover:bg-muted rounded-sm"
         >
           <Copy className="w-3 h-3" />
           Copy
         </button>
       </div>
-      <pre className="text-xs font-mono bg-muted/50 p-3 rounded overflow-auto">
+      <pre className="text-xs font-mono bg-muted/50 p-3 rounded-sm overflow-auto">
         {JSON.stringify(span.data, null, 2)}
       </pre>
     </div>
@@ -185,7 +185,7 @@ export function SpanInspector({ span }: SpanInspectorProps) {
             <AlertCircle className="w-4 h-4" />
             <span className="font-medium">Error Details</span>
           </div>
-          <pre className="text-xs font-mono bg-destructive/10 text-destructive p-3 rounded overflow-auto">
+          <pre className="text-xs font-mono bg-destructive/10 text-destructive p-3 rounded-sm overflow-auto">
             {JSON.stringify(span.error, null, 2)}
           </pre>
         </div>

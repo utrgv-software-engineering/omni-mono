@@ -220,7 +220,7 @@ export function useChatBoot(opts: UseChatBootOptions) {
           let cancelled = false;
           chatSession
             .loadSession(input.sessionId)
-            .then(async (resolvedId) => {
+            .then(async () => {
               if (cancelled) {
                 return;
               }

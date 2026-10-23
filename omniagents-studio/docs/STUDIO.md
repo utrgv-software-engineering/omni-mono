@@ -7,24 +7,33 @@ OmniAgents Studio is the local-first experience for inspecting runs, traces, and
 - **Package layout**: Studio is its own package, `omniagents-studio/` in the omni-mono repository (Python package `omniagents_studio`), depending on `omniagents`. The FastAPI app is `omniagents_studio/api.py`, the built UI ships in `omniagents_studio/static/`, and the React sources live in `web/`. Trace *recording* is not part of Studio: `omniagents.core.tracing.local` (the `studio` tracing provider) writes the databases Studio reads.
 - **CLI entry point**: `omniagents-studio serve` runs the server; `omniagents-studio export` and `omniagents-studio show` cover export and project inspection.
 - **Storage unification**: Both OmniAgents session logs and Studio trace archives now live under `~/.omniagents/` (configurable via `OMNIAGENTS_HOME`). Session history is stored at `~/.omniagents/sessions/sessions.db`, while Studio traces and analysis databases are stored under `~/.omniagents/traces/` (one SQLite file per project). The server now creates an empty database when a project is specified, so Studio can launch before any traces exist. This alignment avoids scattering data across ad-hoc locations and prepares the ground for additional Studio features.
-- **Manifest discovery**: Run from a project directory (or pass `--project path/to/project.yml`) and Studio loads the manifest for the Playground, Agents and Evaluation views.
+- **Manifest discovery**: Run from a project directory (or pass `--project path/to/project.yml`) and Studio loads the manifest for the Playground, Agents and Evaluation views. The trace project is the manifest's `tracing.project`, else its product slug, which a manifest without a `product:` section takes from its directory name.
 - **UI branding checkpoint**: The React static bundle now carries OmniAgents Studio naming, with broader navigation and visual updates scheduled for a subsequent iteration.
 
 ## Development Workflow
 
-- `omniagents-studio serve --dev` runs the API and Vite dev server together, redirecting the CLI URL to the live-reloading frontend at `http://127.0.0.1:5173`. Production builds serve the compiled assets under `omniagents_studio/static`.
+- `omniagents-studio serve --dev` runs the API and Vite dev server together, redirecting the CLI URL to the live-reloading frontend at `http://127.0.0.1:5173`. Otherwise Studio serves a checkout's `web/dist`, or the bundle a wheel ships in `omniagents_studio/static` (built by `make assets`, never committed).
+- The web app is an npm workspace of the monorepo and uses the shared packages: `@omniagents/ui` (design system and themes) and `@omniagents/chat-ui` (the chat column the desktop app and the omniagents web UI show).
 
-## Playground UI Enhancements
+## Agents and the Playground
 
-- Added an “Advanced parameters” drawer in the Playground that exposes the model settings supported by `AgentSpec.model_settings` (temperature, top_p, max tokens, etc.). Values sync with manifest defaults and persist with each session configuration.
-- SafeAgent options (enable/disable, skip approvals, halt on rejection, safe tool allow-list/patterns) are surfaced in the UI and sent with the session payload, making it easy to trial safer tool execution flows.
-- Input and output guardrails discovered from the project can now be toggled directly in the Playground, allowing experiments with different guardrail combinations without editing YAML.
-- Added a “Reset chat” control that clears the current conversation transcript without touching the active agent configuration, letting users resume quickly after experiments.
+Studio does not re-read agent YAML to decide what an agent is. For every
+project agent it hosts the real omniagents runtime — the server
+`omniagents run` starts, built by `build_app` — at
+`/api/agents/<key>/runtime` (`omniagents_studio/agent_runtimes.py`), with the
+project directory as its workspace.
 
-## Agent Configuration Editing
-
-- The Agents view now exposes the full workbench experience for per-agent defaults and includes a “Save defaults” action. Saving writes the updated model, tools, guardrails, SafeAgent settings, and structured-output schema back to the agent’s YAML (and instructions file when present) with automatic backups.
-- Backend persistence reloads the project manifest after every save so the in-memory `playground_resources` stay in sync, keeping the Agents list and Playground defaults fresh without a manual restart.
+- **Agents** (`GET /api/agents/<key>`) shows what a run of the agent is given,
+  from `AgentService.describe_agent`: the model after the resolver, the tools
+  a run's agent carries (capability tools included) with their approval
+  behavior, the instructions rendered for the workspace, subagents,
+  capabilities, MCP servers, skills, commands and the approval policy. It is
+  read-only: agents are edited in their files, and no endpoint writes them.
+- **Playground** embeds the shared chat UI against that runtime: the full GUI
+  protocol (approvals, questions, queued messages, attachments, slash
+  commands, terminals, reconnect and replay), and conversations land in the
+  canonical conversation store like every other client's. The address names
+  the agent and the conversation (`?agent=<key>&session=<id>`).
 
 ## Lifecycle Coverage
 
@@ -32,7 +41,7 @@ OmniAgents Studio is the local-first experience for inspecting runs, traces, and
 
 - Create an AI agent
   - CLI: `omniagents new` or `omniagents generate agent` scaffolds projects and agent YAML.
-  - Studio: Lacks agent creation; users must scaffold before opening Studio.
+  - Studio: Agents are created and edited in their files; Studio shows what the runtime resolves.
 - Configure dimensions
   - CLI: Update `evaluations/evaluation.yml` directly or run `omniagents generate eval quickstart` for starter content.
   - Studio: Dimensions tab offers full CRUD persisted back to `evaluation.yml`.

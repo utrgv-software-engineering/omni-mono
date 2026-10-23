@@ -49,8 +49,8 @@ jobs:
       - name: Python tests
         run: pytest -n auto
       - name: Install web dependencies
-        working-directory: omniagents-studio/web
-        run: npm ci
+        working-directory: .
+        run: npm ci --include-workspace-root -w omniagents-studio-web
       - name: Lint web
         working-directory: omniagents-studio/web
         run: npm run lint

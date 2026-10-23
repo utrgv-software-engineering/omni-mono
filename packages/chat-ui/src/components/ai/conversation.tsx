@@ -1,4 +1,3 @@
-import type { UIMessage } from '@omniagents/chat-ui/ai-types';
 import { Button } from '@omniagents/ui/button';
 import { cn } from '@omniagents/ui/cn';
 import { ArrowDownIcon } from 'lucide-react';
@@ -51,15 +50,4 @@ export const ConversationScrollButton = ({ className, ...props }: ConversationSc
       </Button>
     )
   );
-};
-
-const getMessageText = (message: UIMessage): string =>
-  message.parts
-    .filter((part): part is Extract<typeof part, { type: 'text' }> => part.type === 'text')
-    .map((part) => part.text)
-    .join('');
-
-const defaultFormatMessage = (message: UIMessage): string => {
-  const roleLabel = message.role.charAt(0).toUpperCase() + message.role.slice(1);
-  return `**${roleLabel}:** ${getMessageText(message)}`;
 };

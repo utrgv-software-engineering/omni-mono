@@ -25,7 +25,7 @@ export function AgentsHeader({ onBack, projectName }: AgentsHeaderProps) {
             <div>
               <div className="text-sm font-semibold">Agents</div>
               <div className="text-xs text-muted-foreground">
-                {projectName ? `Project: ${projectName}` : 'Select an agent to configure'}
+                {projectName ? `Project: ${projectName}` : 'What each agent runs with'}
               </div>
             </div>
           </div>

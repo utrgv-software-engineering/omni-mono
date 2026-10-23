@@ -150,7 +150,7 @@ export function LogsHeader({
             <select
               value={selectedProject || ''}
               onChange={(event) => onProjectChange?.(event.target.value || null)}
-              className="hidden sm:block px-2 py-1 text-xs bg-muted/50 border border-border rounded-md outline-none focus:bg-muted"
+              className="hidden sm:block px-2 py-1 text-xs bg-muted/50 border border-border rounded-md outline-hidden focus:bg-muted"
             >
               <option value="">Project</option>
               {projects.map((project) => (
@@ -162,8 +162,8 @@ export function LogsHeader({
                 <button
                   onClick={() => onViewModeChange('review')}
                   className={cn(
-                    'px-3 py-1 text-xs font-medium rounded transition-colors',
-                    viewMode === 'review' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                    'px-3 py-1 text-xs font-medium rounded-sm transition-colors',
+                    viewMode === 'review' ? 'bg-background shadow-xs' : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
                   Review
@@ -171,8 +171,8 @@ export function LogsHeader({
                 <button
                   onClick={() => onViewModeChange('debug')}
                   className={cn(
-                    'px-3 py-1 text-xs font-medium rounded transition-colors',
-                    viewMode === 'debug' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground'
+                    'px-3 py-1 text-xs font-medium rounded-sm transition-colors',
+                    viewMode === 'debug' ? 'bg-background shadow-xs' : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
                   Debug

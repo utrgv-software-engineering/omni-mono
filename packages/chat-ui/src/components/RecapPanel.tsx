@@ -2,7 +2,6 @@ import type { RecapInfo } from '@omniagents/client/session/panel-types';
 import { Button } from '@omniagents/ui/button';
 import { Card } from '@omniagents/ui/card';
 import { ScrollArea } from '@omniagents/ui/scroll-area';
-import React from 'react';
 
 type Props = {
   recap: RecapInfo | null;

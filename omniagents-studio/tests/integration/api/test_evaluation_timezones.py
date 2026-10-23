@@ -10,7 +10,7 @@ AUTH_HEADER = {"Authorization": "Bearer secret"}
 
 
 def _project_dir(studio_api_env) -> Path:
-    manifest = studio_api_env.app.state.playground_resources["manifest_path"]
+    manifest = studio_api_env.app.state.project_resources["manifest_path"]
     return Path(manifest).parent
 
 

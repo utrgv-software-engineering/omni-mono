@@ -113,22 +113,11 @@ describe('ApiClient credential handling', () => {
     expect(FakeWebSocket.instances).toHaveLength(0)
   })
 
-  it('mints a ticket for the explicit playground base and strips token params', async () => {
+  it('points an agent runtime at its mount and hands the token over as data, never in the URL', () => {
     const client = makeClient('http://studio.test:7860/api?token=sekrit')
-    fetchMock.mockResolvedValue(jsonResponse({ ticket: 'pg-ticket', expires_in: 60 }))
-
-    const ws = (await client.createPlaygroundWebSocket(
-      'sess-1',
-      'ws://other.test:7860/api/playground/ws',
-      'agent-a'
-    )) as unknown as FakeWebSocket
-
-    const [mintUrl] = fetchMock.mock.calls[0]
-    expect(mintUrl).toBe('http://other.test:7860/api/auth/ws-ticket')
-    const url = new URL(ws.url)
-    expect(url.searchParams.get('ticket')).toBe('pg-ticket')
-    expect(url.searchParams.get('session_id')).toBe('sess-1')
-    expect(url.searchParams.get('agent')).toBe('agent-a')
-    expect(url.searchParams.get('token')).toBeNull()
+    const runtime = client.agentRuntime('main agent')
+    expect(runtime.baseUrl).toBe('http://studio.test:7860/api/agents/main%20agent/runtime/')
+    expect(runtime.authToken).toBe('sekrit')
+    expect(makeClient('/api').agentRuntime('main').baseUrl).toBe(`${window.location.origin}/api/agents/main/runtime/`)
   })
 })

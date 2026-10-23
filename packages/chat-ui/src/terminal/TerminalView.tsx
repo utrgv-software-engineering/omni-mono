@@ -1,3 +1,5 @@
+import '@xterm/xterm/css/xterm.css';
+import './terminal.css';
 import type { TerminalState } from '@omniagents/chat-ui/terminal/terminal-store';
 import { useXTermTheme } from '@omniagents/chat-ui/terminal/use-xterm-theme';
 import { debounce } from 'es-toolkit/compat';

@@ -2,7 +2,6 @@ import type { GoalSnapshot } from '@omniagents/client/session/panel-types';
 import { truncateOneLine } from '@omniagents/client/util/text';
 import { Button } from '@omniagents/ui/button';
 import { Card } from '@omniagents/ui/card';
-import React from 'react';
 
 // Server payload from omni-code's /goal autopilot loop (server_functions/goal.py).
 // snapshot=null means no goal is set on this session (panel renders nothing).

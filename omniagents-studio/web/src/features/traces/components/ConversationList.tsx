@@ -177,7 +177,7 @@ export function ConversationList({
         <input
           type="text"
           placeholder="Search conversations..."
-          className="w-full px-3 py-2 text-sm bg-muted/50 rounded-md outline-none focus:bg-muted"
+          className="w-full px-3 py-2 text-sm bg-muted/50 rounded-md outline-hidden focus:bg-muted"
           value={searchQuery}
           onChange={(e) => useTraceStore.getState().setSearchQuery(e.target.value)}
         />
@@ -200,14 +200,14 @@ export function ConversationList({
               <button
                 key={f}
                 onClick={() => setActiveFilter(f)}
-                className={`px-2 py-1 text-xs rounded border ${activeFilter === f ? 'bg-background border-border font-medium' : 'bg-muted/40 border-border hover:bg-muted'}`}
+                className={`px-2 py-1 text-xs rounded-sm border ${activeFilter === f ? 'bg-background border-border font-medium' : 'bg-muted/40 border-border hover:bg-muted'}`}
               >
                 {f === 'bad-no-notes' ? 'Needs notes' : f.charAt(0).toUpperCase() + f.slice(1)}
               </button>
             ))}
             <button
               onClick={() => updateFilters({ hasErrors: !filters.hasErrors })}
-              className={`inline-flex items-center gap-1 px-2 py-1 text-xs rounded border ${filters.hasErrors ? 'bg-destructive/10 border-destructive/40 text-destructive font-medium' : 'bg-muted/40 border-border hover:bg-muted'}`}
+              className={`inline-flex items-center gap-1 px-2 py-1 text-xs rounded-sm border ${filters.hasErrors ? 'bg-destructive/10 border-destructive/40 text-destructive font-medium' : 'bg-muted/40 border-border hover:bg-muted'}`}
               aria-pressed={filters.hasErrors}
               title={filters.hasErrors ? 'Showing errors only' : 'Show errors only'}
             >
@@ -226,7 +226,7 @@ export function ConversationList({
                 <select
                   value={selectedWorkflow ?? ''}
                   onChange={(e) => onWorkflowChange(e.target.value || null)}
-                  className="px-2 py-1 text-xs bg-muted/40 rounded border border-border outline-none focus:bg-muted"
+                  className="px-2 py-1 text-xs bg-muted/40 rounded-sm border border-border outline-hidden focus:bg-muted"
                 >
                   <option value="">All</option>
                   {workflows.map(w => (
@@ -241,7 +241,7 @@ export function ConversationList({
                 <select
                   value={selectedAgent ?? ''}
                   onChange={(e) => setSelectedAgent(e.target.value || null)}
-                  className="px-2 py-1 text-xs bg-muted/40 rounded border border-border outline-none focus:bg-muted"
+                  className="px-2 py-1 text-xs bg-muted/40 rounded-sm border border-border outline-hidden focus:bg-muted"
                 >
                   <option value="">All</option>
                   {projectAgents.map(a => (
@@ -291,7 +291,7 @@ export function ConversationList({
                         {dim.values.map(v => {
                           const checked = selected.includes(v.name)
                           return (
-                            <label key={v.name} className="inline-flex items-center gap-1 px-1.5 py-1 text-[11px] rounded border cursor-pointer select-none bg-muted/30 border-border hover:bg-muted">
+                            <label key={v.name} className="inline-flex items-center gap-1 px-1.5 py-1 text-[11px] rounded-sm border cursor-pointer select-none bg-muted/30 border-border hover:bg-muted">
                               <input
                                 type="checkbox"
                                 checked={checked}
@@ -303,7 +303,7 @@ export function ConversationList({
                                     : [...currForDim, v.name]
                                   updateFilters({ syntheticDims: { ...curr, [dim.name]: nextForDim } })
                                 }}
-                                className="h-3 w-3 rounded border-input"
+                                className="h-3 w-3 rounded-sm border-input"
                               />
                               <span className="truncate">{v.label}</span>
                             </label>
@@ -339,7 +339,7 @@ export function ConversationList({
                 <button
                   key={conversation.group_id}
                   ref={el => { itemRefs.current[index] = el }}
-                  className={`w-full text-left p-3 rounded-lg transition-colors border outline-none focus:outline-none ${
+                  className={`w-full text-left p-3 rounded-lg transition-colors border outline-hidden focus:outline-hidden ${
                     isSelected 
                       ? 'bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800' 
                       : isFocused
@@ -359,17 +359,17 @@ export function ConversationList({
                           {conversation.first_input || conversation.workflow_name || 'No input'}
                         </div>
                         <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                          <MessageSquare className="w-3 h-3 flex-shrink-0" />
+                          <MessageSquare className="w-3 h-3 shrink-0" />
                           <span>{conversation.trace_count} trace{conversation.trace_count !== 1 ? 's' : ''} • {timeAgo}</span>
                         </div>
                         {conversation.session?.user_id && (
                           <div className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground truncate">
-                            <User className="w-3 h-3 flex-shrink-0" />
+                            <User className="w-3 h-3 shrink-0" />
                             <span className="truncate">{conversation.session.user_id}</span>
                           </div>
                         )}
                       </div>
-                      <div className="flex items-center gap-1 flex-shrink-0">
+                      <div className="flex items-center gap-1 shrink-0">
                         {conversation.session?.hold && (
                           <span title="Legal hold">
                             <Lock className="w-3.5 h-3.5 text-amber-500" />

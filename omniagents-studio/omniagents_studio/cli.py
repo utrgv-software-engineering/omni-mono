@@ -21,7 +21,8 @@ def resolve_project(
     ``value`` may be a project name, a ``project.yml`` path, or a directory
     holding one. With no value, a ``project.yml`` in the working directory
     is used. The trace project is the manifest's ``tracing.project``, else
-    its product slug (the framework's tracing convention).
+    its product slug (the framework's tracing convention), which a manifest
+    without a ``product:`` section takes from its directory name.
     """
 
     def load_from_manifest(manifest: Path) -> Optional[str]:
@@ -29,18 +30,14 @@ def resolve_project(
             data = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
         except Exception:
             return None
+        if not isinstance(data, dict):
+            return None
         tracing_project = (data.get("tracing") or {}).get("project")
         if isinstance(tracing_project, str) and tracing_project.strip():
             return tracing_project.strip()
-        product_section = data.get("product")
-        if product_section is not None:
-            try:
-                from omniagents.core.product import product_info_from_mapping
+        from omniagents.core.project.runtime import manifest_product
 
-                return product_info_from_mapping(product_section).slug
-            except Exception:
-                return None
-        return None
+        return manifest_product(data, manifest.parent).slug
 
     if value:
         looks_like_path = any(
