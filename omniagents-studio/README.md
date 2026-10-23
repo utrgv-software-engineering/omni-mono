@@ -1,11 +1,11 @@
 # OmniAgents Studio
 
-A local web UI for OmniAgents projects: browse the traces OmniAgents records,
-review and annotate conversations, see what each agent runs with, chat with
+A local web UI for OmniAgents projects: review and annotate every
+conversation the project's agents had (from the conversation store, with run
+timing from traces when tracing is on), see what each agent runs with, chat with
 agents in a Playground (the shared OmniAgents chat UI against the agent's real
-runtime), and run
-evaluation workflows (dimensions, scenario sets, measures, judges, suites,
-optimization).
+runtime), and run evaluation workflows (dimensions, scenario sets, measures,
+judges, suites, optimization).
 
 Studio only reads and writes what OmniAgents already keeps on disk. Traces are
 recorded by `omniagents` itself when a project turns them on

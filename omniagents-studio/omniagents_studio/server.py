@@ -167,7 +167,7 @@ def serve(
 
         print(f"🛠️  Studio web dev server running at {dev_server_url}")
 
-    app, _ = create_api_app(
+    app = create_api_app(
         storage,
         default_project=active_project,
         dev_server_url=dev_server_url,

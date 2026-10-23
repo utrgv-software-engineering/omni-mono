@@ -397,6 +397,19 @@ def test_run_scenario_traces_and_records_agent_error(monkeypatch, tmp_path):
         trace_calls.append({"name": name, "group_id": group_id, "metadata": metadata})
         yield
 
+    annotations = []
+
+    class FakeConversations:
+        def __init__(self, project_slug, agent_slug):
+            self.slugs = (project_slug, agent_slug)
+
+        def update_thread(self, thread_id, *, can_access, metadata):
+            annotations.append((self.slugs, thread_id, metadata))
+
+    monkeypatch.setattr(
+        "omniagents.core.conversation.service.ConversationService", FakeConversations
+    )
+
     scenario = {
         "id": "scenario-id",
         "name": "ScenarioOne",
@@ -443,6 +456,10 @@ def test_run_scenario_traces_and_records_agent_error(monkeypatch, tmp_path):
     assert trace_calls[0]["metadata"]["omniagents"]["synthetic"]["selection"][
         "mapping"
     ] == {"tone": "serious"}
+    # The run's conversation records what the run was, like its trace.
+    assert annotations == [
+        (("proj", "agent"), "sess-123", trace_calls[0]["metadata"]),
+    ]
 
 
 def test_run_evaluation_with_studio_tracing(monkeypatch, tmp_path):

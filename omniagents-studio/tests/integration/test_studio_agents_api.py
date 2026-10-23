@@ -24,7 +24,7 @@ def client(tmp_path, monkeypatch):
     project = tmp_path / "project"
     shutil.copytree(fixture_root, project)
     context = load_project(str(project / "project.yml"))
-    app, _ = create_api_app(
+    app = create_api_app(
         default_project="agents",
         project_resources={
             "project_name": context.product.slug,

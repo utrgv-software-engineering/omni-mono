@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, MoreVertical, Trash2, Download, AlertTriangle, Copy, Settings, ScrollText } from 'lucide-react'
-import { useTraceStore } from '../../features/traces/store/traceStore'
+import { useReviewStore } from '../../features/review/reviewStore'
 import { cn } from '../../lib/utils'
 import { AnalysisGoalsModal } from './AnalysisGoalsModal'
 import { ThemeToggle } from './ThemeToggle'
 
 interface LogsHeaderProps {
-  viewMode?: 'debug' | 'review'
-  onViewModeChange?: (mode: 'debug' | 'review') => void
+  viewMode?: 'review' | 'timing'
+  onViewModeChange?: (mode: 'review' | 'timing') => void
   showViewToggle?: boolean
   showBackButton?: boolean
   onBack?: () => void
@@ -27,7 +27,7 @@ export function LogsHeader({
   selectedProject = null,
   onProjectChange,
 }: LogsHeaderProps) {
-  const { setSelectedConversation, setSelectedTrace, conversationAnalysis, failureCategories } = useTraceStore()
+  const { setSelectedReviewKey, conversationAnalysis, failureCategories } = useReviewStore()
   const queryClient = useQueryClient()
   const [showSettingsMenu, setShowSettingsMenu] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
@@ -63,8 +63,7 @@ export function LogsHeader({
         throw new Error('Failed to delete project')
       }
 
-      setSelectedConversation(null)
-      setSelectedTrace(null)
+      setSelectedReviewKey(null)
       onProjectChange?.(null)
       await queryClient.invalidateQueries()
     } catch (error) {
@@ -84,7 +83,7 @@ export function LogsHeader({
       })
 
       return {
-        group_id,
+        review_key: group_id,
         marked_for_analysis: analysis.markedForAnalysis || false,
         judgment: analysis.judgment || '',
         notes: analysis.notes || '',
@@ -141,7 +140,7 @@ export function LogsHeader({
               <div className="flex flex-col">
                 <span className="text-sm font-semibold">Logs</span>
                 <span className="text-xs text-muted-foreground">
-                  {selectedProject ? `Project: ${selectedProject}` : 'Review traces and debug runs'}
+                  {selectedProject ? `Project: ${selectedProject}` : 'Review conversations'}
                 </span>
               </div>
             </div>
@@ -169,13 +168,13 @@ export function LogsHeader({
                   Review
                 </button>
                 <button
-                  onClick={() => onViewModeChange('debug')}
+                  onClick={() => onViewModeChange('timing')}
                   className={cn(
                     'px-3 py-1 text-xs font-medium rounded-sm transition-colors',
-                    viewMode === 'debug' ? 'bg-background shadow-xs' : 'text-muted-foreground hover:text-foreground'
+                    viewMode === 'timing' ? 'bg-background shadow-xs' : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
-                  Debug
+                  Timing
                 </button>
               </div>
             )}

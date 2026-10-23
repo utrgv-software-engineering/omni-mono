@@ -18,6 +18,7 @@ class ContextClient {
   readonly actor = { subscribe: () => ({ unsubscribe: () => {} }) };
   readonly onResyncRequired = () => () => {};
   connectionState: RPCConnectionState = 'disconnected';
+  readonly connect = vi.fn(() => Promise.resolve());
   readonly disconnect = vi.fn();
   readonly dispose = vi.fn(() => this.disconnect());
   readonly eventHandlers = new Map<keyof RpcNotificationMap, Set<(payload: never) => void>>();
@@ -65,6 +66,18 @@ describe('RPCClientProvider', () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+  });
+
+  it('dials its connection, so any consumer can use it before a chat boots', () => {
+    const fake = new ContextClient();
+    act(() => {
+      root.render(
+        <RPCClientProvider createClient={() => fake as unknown as RPCClient}>
+          <span />
+        </RPCClientProvider>
+      );
+    });
+    expect(fake.connect).toHaveBeenCalled();
   });
 
   it('exposes the connection-scoped client', () => {

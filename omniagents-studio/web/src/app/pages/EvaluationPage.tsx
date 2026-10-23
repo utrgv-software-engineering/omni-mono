@@ -72,21 +72,14 @@ export function EvaluationPage() {
     navigate(ROUTES.home)
   }, [navigate])
 
-  const handleNavigateToLogs = useCallback(
-    (projectName: string | null, workflowName: string | null, conversationId?: string | null) => {
-      const trimmedProject = projectName?.trim()
-      if (!trimmedProject) {
-        navigate(ROUTES.logs)
-        return
-      }
-      const trimmedWorkflow = workflowName?.trim()
-      const trimmedConversation = conversationId?.trim()
+  /** Review a run: the conversation it ran in, with the agent it ran. */
+  const handleOpenConversation = useCallback(
+    (agentKey: string | null, threadId: string) => {
       navigate(
         buildRoutePath('logs', {
           query: {
-            [QUERY_PARAMS.project]: trimmedProject,
-            [QUERY_PARAMS.workflow]: trimmedWorkflow ?? null,
-            [QUERY_PARAMS.conversation]: trimmedConversation ?? null,
+            [QUERY_PARAMS.agent]: agentKey,
+            [QUERY_PARAMS.thread]: threadId,
           },
         }),
       )
@@ -115,7 +108,7 @@ export function EvaluationPage() {
         projectName={projectName}
         isAvailable={evaluationAvailable && !studioProjectError}
         isLoadingMetadata={studioProjectLoading}
-        onNavigateToLogs={handleNavigateToLogs}
+        onOpenConversation={handleOpenConversation}
       />
     </StudioPage>
   )

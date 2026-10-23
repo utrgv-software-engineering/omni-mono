@@ -33,7 +33,7 @@ def studio_api_env(tmp_path: Path):
         "agent_specs": {ctx.entrypoint: build_spec_from_project(ctx)},
         "entry_agent_key": ctx.entrypoint,
     }
-    app, _ = create_api_app(
+    app = create_api_app(
         storage=storage,
         default_project="demo",
         project_resources=app_resources,

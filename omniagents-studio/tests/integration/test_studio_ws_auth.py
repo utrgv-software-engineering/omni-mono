@@ -44,7 +44,7 @@ def _build_client(monkeypatch, *, legacy: bool = False, **kwargs):
         monkeypatch.setenv("OMNIAGENTS_LEGACY_QUERY_AUTH", "1")
     else:
         monkeypatch.delenv("OMNIAGENTS_LEGACY_QUERY_AUTH", raising=False)
-    app, _ = create_api_app(auth_token="studio-secret", **kwargs)
+    app = create_api_app(auth_token="studio-secret", **kwargs)
     return app, TestClient(app)
 
 
@@ -86,42 +86,45 @@ def _mint(client) -> str:
 
 
 # ---------------------------------------------------------------------------
-# /api/ws/traces — representative always-available Studio surface
+# A representative Studio socket: a job stream for a job that does not exist.
+# Authentication runs first, so the close code says how the dial fared:
+# 4401 unauthenticated, 4404 authenticated (and no such job).
 # ---------------------------------------------------------------------------
 
+SOCKET = "/api/evaluation/suite/run/no-such-job/ws"
 
-def test_traces_ws_rejects_missing_credentials(auth_client):
+
+def _dial(client, url: str = SOCKET, **kwargs) -> int:
     with pytest.raises(WebSocketDisconnect) as exc:
-        with auth_client.websocket_connect("/api/ws/traces"):
+        with client.websocket_connect(url, **kwargs):
             pass
-    assert exc.value.code == WS_CLOSE_UNAUTHENTICATED
+    return exc.value.code
 
 
-def test_traces_ws_rejects_wrong_header(auth_client):
-    with pytest.raises(WebSocketDisconnect) as exc:
-        with auth_client.websocket_connect(
-            "/api/ws/traces", headers={"Authorization": "Bearer wrong"}
-        ):
-            pass
-    assert exc.value.code == WS_CLOSE_UNAUTHENTICATED
+def test_socket_rejects_missing_credentials(auth_client):
+    assert _dial(auth_client) == WS_CLOSE_UNAUTHENTICATED
 
 
-def test_traces_ws_accepts_authorization_header(auth_client):
-    with auth_client.websocket_connect("/api/ws/traces", headers=AUTH_HEADER):
-        pass
+def test_socket_rejects_wrong_header(auth_client):
+    assert (
+        _dial(auth_client, headers={"Authorization": "Bearer wrong"})
+        == WS_CLOSE_UNAUTHENTICATED
+    )
 
 
-def test_traces_ws_rejects_query_token_by_default(auth_client):
+def test_socket_accepts_authorization_header(auth_client):
+    assert _dial(auth_client, headers=AUTH_HEADER) == 4404
+
+
+def test_socket_rejects_query_token_by_default(auth_client):
     """The legacy ?token= transport is off unless explicitly re-enabled."""
-    with pytest.raises(WebSocketDisconnect) as exc:
-        with auth_client.websocket_connect("/api/ws/traces?token=studio-secret"):
-            pass
-    assert exc.value.code == WS_CLOSE_UNAUTHENTICATED
+    assert (
+        _dial(auth_client, f"{SOCKET}?token=studio-secret") == WS_CLOSE_UNAUTHENTICATED
+    )
 
 
-def test_traces_ws_accepts_query_token_in_legacy_mode(legacy_auth_client):
-    with legacy_auth_client.websocket_connect("/api/ws/traces?token=studio-secret"):
-        pass
+def test_socket_accepts_query_token_in_legacy_mode(legacy_auth_client):
+    assert _dial(legacy_auth_client, f"{SOCKET}?token=studio-secret") == 4404
 
 
 # ---------------------------------------------------------------------------
@@ -139,19 +142,14 @@ def test_ticket_endpoint_requires_authentication(auth_client):
     )
 
 
-def test_ticket_flow_dials_traces_ws(auth_client):
-    with auth_client.websocket_connect(f"/api/ws/traces?ticket={_mint(auth_client)}"):
-        pass
+def test_ticket_flow_dials_a_socket(auth_client):
+    assert _dial(auth_client, f"{SOCKET}?ticket={_mint(auth_client)}") == 4404
 
 
 def test_ticket_is_single_use(auth_client):
     ticket = _mint(auth_client)
-    with auth_client.websocket_connect(f"/api/ws/traces?ticket={ticket}"):
-        pass
-    with pytest.raises(WebSocketDisconnect) as exc:
-        with auth_client.websocket_connect(f"/api/ws/traces?ticket={ticket}"):
-            pass
-    assert exc.value.code == WS_CLOSE_UNAUTHENTICATED
+    assert _dial(auth_client, f"{SOCKET}?ticket={ticket}") == 4404
+    assert _dial(auth_client, f"{SOCKET}?ticket={ticket}") == WS_CLOSE_UNAUTHENTICATED
 
 
 def test_expired_ticket_rejected(auth_app_and_client):
@@ -159,17 +157,11 @@ def test_expired_ticket_rejected(auth_app_and_client):
     ticket = _mint(client)
     broker = app.state.connection_authenticator.ticket_broker
     broker._pending[ticket].expires_at = time.monotonic() - 1
-    with pytest.raises(WebSocketDisconnect) as exc:
-        with client.websocket_connect(f"/api/ws/traces?ticket={ticket}"):
-            pass
-    assert exc.value.code == WS_CLOSE_UNAUTHENTICATED
+    assert _dial(client, f"{SOCKET}?ticket={ticket}") == WS_CLOSE_UNAUTHENTICATED
 
 
 def test_invalid_ticket_rejected(auth_client):
-    with pytest.raises(WebSocketDisconnect) as exc:
-        with auth_client.websocket_connect("/api/ws/traces?ticket=forged"):
-            pass
-    assert exc.value.code == WS_CLOSE_UNAUTHENTICATED
+    assert _dial(auth_client, f"{SOCKET}?ticket=forged") == WS_CLOSE_UNAUTHENTICATED
 
 
 # ---------------------------------------------------------------------------
@@ -207,9 +199,7 @@ def test_token_absent_from_logs(auth_client, caplog, capsys):
     import logging
 
     with caplog.at_level(logging.DEBUG):
-        ticket = _mint(auth_client)
-        with auth_client.websocket_connect(f"/api/ws/traces?ticket={ticket}"):
-            pass
+        assert _dial(auth_client, f"{SOCKET}?ticket={_mint(auth_client)}") == 4404
     assert "studio-secret" not in caplog.text
     captured = capsys.readouterr()
     assert "studio-secret" not in captured.out
@@ -217,7 +207,7 @@ def test_token_absent_from_logs(auth_client, caplog, capsys):
 
 
 # ---------------------------------------------------------------------------
-# Playground: authentication + authorize_rpc at the dispatch site
+# Agent runtimes: the same credentials reach each agent's real server
 # ---------------------------------------------------------------------------
 
 

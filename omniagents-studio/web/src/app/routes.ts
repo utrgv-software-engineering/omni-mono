@@ -16,6 +16,7 @@ export const QUERY_PARAMS = {
   tab: 'tab',
   session: 'session',
   agent: 'agent',
+  thread: 'thread',
 } as const
 
 export type RouteKey = keyof typeof ROUTES

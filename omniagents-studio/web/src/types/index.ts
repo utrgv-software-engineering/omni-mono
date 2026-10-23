@@ -148,22 +148,6 @@ export interface TraceWithSpans {
   spans: Span[]
 }
 
-export interface StatsOverview {
-  total_traces: number
-  total_spans: number
-  error_rate: number
-  avg_duration: number
-  spans_by_type: Record<SpanType, number>
-}
-
-export interface SearchFilters {
-  search?: string
-  spanTypes?: SpanType[]
-  hasErrors?: boolean
-  dateRange?: [Date, Date] | null
-  project?: string
-}
-
 export interface ConversationSession {
   session_id: string
   agent_slug: string | null
@@ -766,6 +750,8 @@ export interface EvaluationScenarioResult {
   measures: EvaluationMeasureResult[]
   error: { type: string; message: string } | null
   group_id: string | null
+  /** The conversation the scenario ran in (its canonical thread). */
+  session_id: string | null
 }
 
 export interface EvaluationMeasureAggregate {
@@ -797,4 +783,6 @@ export interface EvaluationResultsDetailResponse {
   summary: { total: number; passed: number; failed: number }
   scenarios: EvaluationScenarioResult[]
   workflow_name: string | null
+  /** The project agent the run evaluated. */
+  agent: string | null
 }

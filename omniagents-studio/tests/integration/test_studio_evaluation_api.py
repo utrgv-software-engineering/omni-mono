@@ -103,7 +103,7 @@ def studio_environment(tmp_path):
     storage_path = tmp_path / "storage" / "demo.db"
     storage_path.parent.mkdir(parents=True, exist_ok=True)
     storage = SQLiteStorage(str(storage_path))
-    app, _ = create_api_app(storage=storage, default_project="demo")
+    app = create_api_app(storage=storage, default_project="demo")
     manifest_path = project_dir / "project.yml"
     ctx = load_project(str(manifest_path))
     base_spec = build_spec_from_project(ctx)

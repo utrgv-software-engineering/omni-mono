@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { X, AlertCircle, Zap, Database, Settings2 } from 'lucide-react'
-import { useTraceStore } from '../../features/traces/store/traceStore'
+import { useReviewStore } from '../../features/review/reviewStore'
 import { cn } from '../../lib/utils'
 
 interface AnalysisGoalsModalProps {
@@ -42,7 +42,7 @@ const PRESET_CONFIGS = {
 }
 
 export function AnalysisGoalsModal({ isOpen, onClose }: AnalysisGoalsModalProps) {
-  const { analysisGoals, setAnalysisGoals } = useTraceStore()
+  const { analysisGoals, setAnalysisGoals } = useReviewStore()
   
   const [selectedMode, setSelectedMode] = useState<PresetMode>('custom')
   const [tracesRequired, setTracesRequired] = useState(analysisGoals.tracesRequired)

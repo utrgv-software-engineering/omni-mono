@@ -45,7 +45,7 @@ import type {
   AgentSummary,
   JsonValue,
 } from '../../types'
-import { useTraceStore } from '../traces/store/traceStore'
+import { useReviewStore } from '../review/reviewStore'
 import { useToastStore } from '../../stores/toastStore'
 
 type EvaluationTab = 'scenarios' | 'datasets' | 'dimensions' | 'judges' | 'categories' | 'measures' | 'results'
@@ -56,7 +56,8 @@ interface EvaluationViewProps {
   projectName?: string | null
   isAvailable: boolean
   isLoadingMetadata: boolean
-  onNavigateToLogs?: (projectName: string | null, workflowName: string | null, conversationId?: string | null) => void
+  /** Review a run in Logs: the conversation it ran in, with its agent. */
+  onOpenConversation?: (agentKey: string | null, threadId: string) => void
 }
 
 const DEFAULT_JUDGE_INSTRUCTIONS = `AI Agent Information
@@ -149,17 +150,14 @@ Assistant message:
 function DatasetsPanel({
   projectName,
   onTabChange,
-  onNavigateToLogs: _onNavigateToLogs,
   focusRequest,
   onFocusConsumed,
 }: {
   projectName?: string | null
   onTabChange: (tab: EvaluationTab) => void
-  onNavigateToLogs?: (projectName: string | null, workflowName: string | null) => void
   focusRequest?: DatasetFocusRequest | null
   onFocusConsumed?: () => void
 }) {
-  void _onNavigateToLogs
   const { data, isLoading, isError, refetch, isFetching } = useEvaluationDatasets(true)
   const queryClient = useQueryClient()
   const datasets = useMemo(() => data?.datasets ?? [], [data])
@@ -812,24 +810,6 @@ function formatTimestamp(value?: string | null): string {
   return date.toLocaleString()
 }
 
-function extractWorkflowFromMetadata(metadata?: Record<string, JsonValue> | null): string | null {
-  if (!metadata || typeof metadata !== 'object') {
-    return null
-  }
-  const direct = metadata.workflow_run
-  if (typeof direct === 'string' && direct.trim()) {
-    return direct.trim()
-  }
-  const manifest = metadata.manifest
-  if (manifest && typeof manifest === 'object' && !Array.isArray(manifest)) {
-    const manifestRun = manifest.workflow_run || manifest.workflow || manifest.workflow_name || manifest.workflowName
-    if (typeof manifestRun === 'string' && manifestRun.trim()) {
-      return manifestRun.trim()
-    }
-  }
-  return null
-}
-
 interface ScenarioSetDetailProps {
   set: EvaluationScenarioSet
   onBack: () => void
@@ -843,7 +823,6 @@ interface ScenarioSetDetailProps {
   onRunTriggerConsumed?: () => void
   splitTrigger?: ScenarioSplitTrigger | null
   onSplitTriggerConsumed?: () => void
-  onViewRun?: (workflowName: string) => void
   onDeleteSet?: (set: EvaluationScenarioSet) => void
   isDeletingSet?: boolean
   onSplitSuccess?: (response: EvaluationScenarioSplitResponse) => void
@@ -873,7 +852,6 @@ function ScenarioSetDetail({
   onRunTriggerConsumed,
   splitTrigger,
   onSplitTriggerConsumed,
-  onViewRun,
   onDeleteSet,
   isDeletingSet,
   onSplitSuccess,
@@ -937,10 +915,6 @@ function ScenarioSetDetail({
     activeRunRef.current = activeRun
   }, [activeRun])
 
-  const workflowFromMetadata = extractWorkflowFromMetadata(set.metadata)
-  const runWorkflowNameRaw = activeRun?.status?.workflow_name
-  const runWorkflowName = typeof runWorkflowNameRaw === 'string' && runWorkflowNameRaw.trim().length > 0 ? runWorkflowNameRaw.trim() : null
-  const effectiveWorkflowName = runWorkflowName || workflowFromMetadata
   const totalScenarios = set.scenarios.length
   const labeledCount = useMemo(
     () => set.scenarios.filter((scenario) => Array.isArray(scenario.failure_categories) && scenario.failure_categories.length > 0).length,
@@ -1529,16 +1503,6 @@ function ScenarioSetDetail({
             {totalScenarios > 0 ? ` • ${labeledCount} labeled` : ''}
             {analyzedCount > 0 ? ` • ${analyzedCount} annotated` : ''}
           </div>
-          {effectiveWorkflowName && onViewRun ? (
-            <button
-              type="button"
-              onClick={() => onViewRun(effectiveWorkflowName)}
-              className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-              View Run
-            </button>
-          ) : null}
           {set.kind !== 'golden' ? (
             <button
               type="button"
@@ -1647,16 +1611,6 @@ function ScenarioSetDetail({
                       <BarChart3 className="h-3.5 w-3.5" />
                       View Results
                     </button>
-                    {activeRun.status.workflow_name && onViewRun && (
-                      <button
-                        type="button"
-                        onClick={() => onViewRun(activeRun.status!.workflow_name!)}
-                        className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                        View Traces
-                      </button>
-                    )}
                   </div>
                 )}
                 {activeRun.status.error ? (
@@ -2975,7 +2929,7 @@ function JudgesPanel({ projectName }: { projectName?: string | null }) {
   const [editingJudge, setEditingJudge] = useState<EvaluationJudge | null>(null)
   const [form, setForm] = useState<JudgeFormState>(defaultJudgeForm)
   const [formError, setFormError] = useState<string | null>(null)
-  const { failureCategories, loadFailureCategories, selectedProject: selectedProjectFromStore } = useTraceStore()
+  const { failureCategories, loadFailureCategories, selectedProject: selectedProjectFromStore } = useReviewStore()
   const { data: scenariosData } = useEvaluationScenarios(true)
   const { data: datasetsData } = useEvaluationDatasets(true)
   const datasets = useMemo(() => datasetsData?.datasets ?? [], [datasetsData])
@@ -3771,11 +3725,9 @@ interface SuiteRunDetailProps {
   status: EvaluationSuiteRunStatus | null
   onBack: () => void
   onDismiss: () => void
-  onNavigateToLogs?: (projectName: string | null, workflowName: string | null) => void
-  projectName?: string | null
 }
 
-function SuiteRunDetail({ jobId, status, onBack, onDismiss, onNavigateToLogs, projectName }: SuiteRunDetailProps) {
+function SuiteRunDetail({ jobId, status, onBack, onDismiss }: SuiteRunDetailProps) {
   const state = status?.state ?? 'pending'
   const total = status?.total ?? 0
   const completed = status?.completed ?? 0
@@ -3806,16 +3758,6 @@ function SuiteRunDetail({ jobId, status, onBack, onDismiss, onNavigateToLogs, pr
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {workflowName && onNavigateToLogs ? (
-            <button
-              type="button"
-              onClick={() => onNavigateToLogs(projectName ?? null, workflowName)}
-              className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-              View Traces
-            </button>
-          ) : null}
           <button
             type="button"
             onClick={onDismiss}
@@ -3919,8 +3861,8 @@ function SuiteRunDetail({ jobId, status, onBack, onDismiss, onNavigateToLogs, pr
 
 function CategoriesPanel({ projectName }: { projectName?: string | null }) {
   const queryClient = useQueryClient()
-  const selectedProject = useTraceStore((state) => state.selectedProject)
-  const loadFailureCategories = useTraceStore((state) => state.loadFailureCategories)
+  const selectedProject = useReviewStore((state) => state.selectedProject)
+  const loadFailureCategories = useReviewStore((state) => state.loadFailureCategories)
   const resolvedProject = projectName ?? selectedProject ?? null
   const [isFormOpen, setIsFormOpen] = useState(false)
   const [nameInput, setNameInput] = useState('')
@@ -4777,7 +4719,7 @@ function MeasuresPanel({ projectName }: { projectName?: string | null }) {
   )
 }
 
-function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChange, onDatasetFocus }: { projectName?: string | null; isAvailable: boolean; onNavigateToLogs?: (projectName: string | null, workflowName: string | null, conversationId?: string | null) => void; onTabChange: (tab: EvaluationTab) => void; onDatasetFocus?: (focus: DatasetFocusRequest) => void }) {
+function ScenariosPanel({ projectName, isAvailable, onTabChange, onDatasetFocus }: { projectName?: string | null; isAvailable: boolean; onTabChange: (tab: EvaluationTab) => void; onDatasetFocus?: (focus: DatasetFocusRequest) => void }) {
   const queryClient = useQueryClient()
   const pushToast = useToastStore((state) => state.pushToast)
   const { data, isLoading, isError, refetch, isFetching } = useEvaluationScenarios(isAvailable)
@@ -5293,8 +5235,6 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
         status={activeSuiteRun.status ?? null}
         onBack={() => setShowSuiteDetail(false)}
         onDismiss={handleDismissSuiteRun}
-        onNavigateToLogs={onNavigateToLogs}
-        projectName={projectName ?? null}
       />
     )
   }
@@ -5408,17 +5348,6 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
     deleteSet.mutate({ kind: set.kind, set_path: set.path })
   }
 
-  const handleViewRun = (workflow: string) => {
-    if (!workflow) {
-      return
-    }
-    const normalized = workflow.trim()
-    if (!normalized) {
-      return
-    }
-    onNavigateToLogs?.(projectName ?? null, normalized)
-  }
-
   if (selectedSet) {
     const canPromote = selectedSet.kind === 'generated' || selectedSet.kind === 'annotated'
     return (
@@ -5440,7 +5369,6 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
         onRunTriggerConsumed={() => setRunTrigger(null)}
         splitTrigger={splitTrigger}
         onSplitTriggerConsumed={() => setSplitTrigger(null)}
-        onViewRun={handleViewRun}
         onDeleteSet={handleDeleteSet}
         isDeletingSet={deleteSet.isPending}
         onSplitSuccess={handleSplitSuccess}
@@ -5645,7 +5573,6 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
                   </div>
                 ) : (
                   section.sets.map((set) => {
-                    const workflowName = extractWorkflowFromMetadata(set.metadata)
                     const labeledFromMetadata =
                       typeof set.metadata?.labeled_count === 'number' ? set.metadata.labeled_count : null
                     const analysisFromMetadata =
@@ -5736,16 +5663,6 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
                           >
                             View Set
                           </button>
-                          {workflowName && onNavigateToLogs ? (
-                            <button
-                              type="button"
-                              onClick={() => onNavigateToLogs(projectName ?? null, workflowName)}
-                              className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
-                            >
-                              <ExternalLink className="h-3.5 w-3.5" />
-                              View Run
-                            </button>
-                          ) : null}
                           <button
                             type="button"
                             onClick={() => handleRunSet(set)}
@@ -6076,10 +5993,10 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
 
 function ResultsPanel({
   projectName,
-  onNavigateToLogs,
+  onOpenConversation,
 }: {
   projectName?: string | null
-  onNavigateToLogs?: (projectName: string | null, workflowName: string | null, conversationId?: string | null) => void
+  onOpenConversation?: (agentKey: string | null, threadId: string) => void
 }) {
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [lastViewedTime] = useState<number>(() => Date.now())
@@ -6250,17 +6167,6 @@ function ResultsPanel({
                       </div>
                     ) : detailData ? (
                       <div className="space-y-2">
-                        {/* View Traces Button */}
-                        {detailData.workflow_name && (
-                          <button
-                            type="button"
-                            onClick={() => onNavigateToLogs?.(resolvedProjectName, detailData.workflow_name)}
-                            className="inline-flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline mb-2"
-                          >
-                            <ExternalLink className="h-3 w-3" />
-                            View all traces for this run
-                          </button>
-                        )}
 
                         {/* Per-measure summary cards (system-internal "_*" measures hidden) */}
                         {(() => {
@@ -6352,14 +6258,14 @@ function ResultsPanel({
                                 <span className="text-xs text-muted-foreground">
                                   {scenario.measures.length} measure{scenario.measures.length !== 1 ? 's' : ''}
                                 </span>
-                                {scenario.group_id && (
+                                {scenario.session_id && (
                                   <button
                                     type="button"
-                                    onClick={() => onNavigateToLogs?.(resolvedProjectName, detailData.workflow_name, scenario.group_id)}
-                                    className="inline-flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                                    onClick={() => onOpenConversation?.(detailData.agent, scenario.session_id!)}
+                                    className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
                                   >
                                     <ExternalLink className="h-3 w-3" />
-                                    View Trace
+                                    Open conversation
                                   </button>
                                 )}
                               </div>
@@ -6405,7 +6311,7 @@ function ResultsPanel({
   )
 }
 
-export function EvaluationView({ activeTab, onTabChange, projectName, isAvailable, isLoadingMetadata, onNavigateToLogs }: EvaluationViewProps) {
+export function EvaluationView({ activeTab, onTabChange, projectName, isAvailable, isLoadingMetadata, onOpenConversation }: EvaluationViewProps) {
   const [pendingDatasetFocus, setPendingDatasetFocus] = useState<DatasetFocusRequest | null>(null)
   if (isLoadingMetadata) {
     return (
@@ -6430,7 +6336,6 @@ export function EvaluationView({ activeTab, onTabChange, projectName, isAvailabl
       <ScenariosPanel
         projectName={projectName}
         isAvailable={isAvailable}
-        onNavigateToLogs={onNavigateToLogs}
         onTabChange={onTabChange}
         onDatasetFocus={(focus) => setPendingDatasetFocus(focus)}
       />
@@ -6442,7 +6347,6 @@ export function EvaluationView({ activeTab, onTabChange, projectName, isAvailabl
       <DatasetsPanel
         projectName={projectName}
         onTabChange={onTabChange}
-        onNavigateToLogs={onNavigateToLogs}
         focusRequest={pendingDatasetFocus}
         onFocusConsumed={() => setPendingDatasetFocus(null)}
       />
@@ -6466,7 +6370,7 @@ export function EvaluationView({ activeTab, onTabChange, projectName, isAvailabl
   }
 
   if (activeTab === 'results') {
-    return <ResultsPanel projectName={projectName} onNavigateToLogs={onNavigateToLogs} />
+    return <ResultsPanel projectName={projectName} onOpenConversation={onOpenConversation} />
   }
 
   return (

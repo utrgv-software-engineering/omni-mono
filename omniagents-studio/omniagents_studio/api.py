@@ -9,7 +9,6 @@ import json
 import logging
 import os
 import shutil
-import sqlite3
 import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -38,8 +37,6 @@ import yaml
 from pydantic import BaseModel, Field
 
 from omniagents.core.paths import (
-    get_sessions_db_path,
-    get_sessions_dir,
     get_traces_dir,
 )
 from omniagents.core.agents.specs import AgentSpec
@@ -126,294 +123,7 @@ def _expand_env_template(value: str) -> str:
     return re.sub(pattern, replacer, value)
 
 
-def _fetch_first_user_input(conn, trace_id):
-    """Pull the first user message from a trace's earliest response/generation span."""
-    if not trace_id:
-        return None
-    cursor = conn.execute(
-        """
-        SELECT data FROM spans
-        WHERE trace_id = ? AND span_type IN ('response', 'generation')
-        ORDER BY sequence_number
-        LIMIT 1
-        """,
-        (trace_id,),
-    )
-    row = cursor.fetchone()
-    if not row:
-        return None
-    try:
-        raw = row["data"]
-        full_span = json.loads(raw) if isinstance(raw, str) else (raw or {})
-        input_msgs = full_span.get("span_data", {}).get("input") or []
-        for msg in input_msgs:
-            if isinstance(msg, dict) and msg.get("role") == "user":
-                return msg.get("content", "") or None
-    except Exception:
-        return None
-    return None
-
-
-def _filter_groups_by_dim(conn, group_ids, dim_map):
-    """Return the subset of group_ids whose any trace's metadata satisfies the dim filter."""
-    if not group_ids or not dim_map:
-        return set(group_ids)
-    placeholders = ",".join("?" * len(group_ids))
-    cursor = conn.execute(
-        f"""
-        SELECT COALESCE(group_id, trace_id) AS gkey, metadata
-        FROM traces
-        WHERE COALESCE(group_id, trace_id) IN ({placeholders})
-        """,
-        group_ids,
-    )
-    matching: set = set()
-    for row in cursor:
-        gkey = row["gkey"]
-        if gkey in matching:
-            continue
-        md = row["metadata"]
-        try:
-            meta = json.loads(md) if isinstance(md, str) else (md or {})
-        except Exception:
-            meta = {}
-        mapping = (
-            meta.get("omniagents", {})
-            .get("synthetic", {})
-            .get("selection", {})
-            .get("mapping", {})
-        )
-        if all(mapping.get(k) in allowed for k, allowed in dim_map.items()):
-            matching.add(gkey)
-    return matching
-
-
 _SESSION_LOC_CACHE: Dict[str, Tuple[float, List[Tuple[Path, str]]]] = {}
-_SESSION_LOC_CACHE_LOCK = __import__("threading").Lock()
-_SESSION_LOC_CACHE_TTL_SECONDS = 30.0
-
-
-def _compute_session_db_locations(
-    trace_project: str, *, sample_size: int = 500
-) -> List[Tuple[Path, str]]:
-    """Return ``(sessions.db path, agent_slug)`` for every agent that has
-    sessions referenced by this trace project.
-
-    Fast path: if a directly-named ``~/.omniagents/sessions/{trace_project}/``
-    dir exists with agent sub-dirs, use that (covers the common case where
-    trace project name equals the runtime's session project slug).
-
-    Fallback: pull the most recent ``sample_size`` ``session_*`` group_ids
-    from the trace DB and probe every ``sessions.db`` (across all session
-    project dirs) for a hit. Matching at the **agent dir** level, not the
-    project dir level, so unrelated agents that happen to share a session
-    project root aren't pulled in.
-    """
-    sessions_root = get_sessions_dir()
-    if not sessions_root.exists():
-        return []
-
-    direct = get_sessions_db_path(trace_project, "default").parent.parent
-    if direct.exists():
-        out: List[Tuple[Path, str]] = []
-        for agent_dir in sorted(direct.iterdir(), key=lambda p: p.name.lower()):
-            if not agent_dir.is_dir():
-                continue
-            db_path = agent_dir / "sessions.db"
-            if db_path.exists():
-                out.append((db_path, agent_dir.name))
-        if out:
-            return out
-
-    trace_db_path = get_traces_dir() / f"{trace_project}.db"
-    if not trace_db_path.exists():
-        return []
-    try:
-        conn = sqlite3.connect(f"file:{trace_db_path}?mode=ro", uri=True)
-    except sqlite3.OperationalError:
-        return []
-    try:
-        rows = conn.execute(
-            "SELECT DISTINCT group_id FROM traces "
-            "WHERE group_id LIKE 'session_%' "
-            "ORDER BY created_at DESC LIMIT ?",
-            (sample_size,),
-        ).fetchall()
-    except sqlite3.Error:
-        return []
-    finally:
-        conn.close()
-
-    sample_ids = [r[0][len("session_") :] for r in rows if r and r[0]]
-    if not sample_ids:
-        return []
-
-    probe_ids = sample_ids[:200]
-    placeholders = ",".join("?" for _ in probe_ids)
-    probe_sql = f"SELECT 1 FROM sessions WHERE session_id IN ({placeholders}) LIMIT 1"
-
-    matches: List[Tuple[Path, str]] = []
-    seen_keys: Set[Tuple[str, str]] = set()
-    for proj_dir in sorted(sessions_root.iterdir(), key=lambda p: p.name.lower()):
-        if not proj_dir.is_dir():
-            continue
-        for agent_dir in sorted(proj_dir.iterdir(), key=lambda p: p.name.lower()):
-            if not agent_dir.is_dir():
-                continue
-            db_path = agent_dir / "sessions.db"
-            if not db_path.exists():
-                continue
-            try:
-                c = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-            except sqlite3.OperationalError:
-                continue
-            try:
-                hit = c.execute(probe_sql, probe_ids).fetchone()
-            except sqlite3.Error:
-                hit = None
-            finally:
-                c.close()
-            if hit:
-                key = (proj_dir.name, agent_dir.name)
-                if key not in seen_keys:
-                    seen_keys.add(key)
-                    matches.append((db_path, agent_dir.name))
-    return matches
-
-
-def _list_project_agent_dirs(trace_project: str) -> List[Tuple[Path, str]]:
-    """Return ``(sessions.db path, agent_slug)`` for every agent associated
-    with this trace project. Cached in-process for
-    ``_SESSION_LOC_CACHE_TTL_SECONDS`` since discovery probes many
-    sessions.db files when names diverge.
-
-    Honors the ``OMNIAGENTS_HISTORY_DB`` single-file override.
-    """
-    override = os.getenv("OMNIAGENTS_HISTORY_DB")
-    if override:
-        path = Path(os.path.expanduser(override)).resolve()
-        return [(path, "default")] if path.exists() else []
-
-    import time
-
-    now = time.monotonic()
-    with _SESSION_LOC_CACHE_LOCK:
-        cached = _SESSION_LOC_CACHE.get(trace_project)
-        if cached and now - cached[0] < _SESSION_LOC_CACHE_TTL_SECONDS:
-            return cached[1]
-
-    result = _compute_session_db_locations(trace_project)
-
-    with _SESSION_LOC_CACHE_LOCK:
-        _SESSION_LOC_CACHE[trace_project] = (now, result)
-    return result
-
-
-def _resolve_agent_group_ids(
-    trace_project: str, agent: str, *, max_sessions: int = 10000
-) -> List[str]:
-    """Resolve session ids for ``agent`` under ``trace_project`` into trace
-    group_ids (``session_{sid}``).
-
-    Aggregates across every sessions.db whose ``agent_slug`` matches ``agent``
-    (the same slug can appear in multiple session-project dirs).
-    """
-    if not agent:
-        return []
-
-    candidates = [
-        db for db, slug in _list_project_agent_dirs(trace_project) if slug == agent
-    ]
-
-    out: List[str] = []
-    for db_path in candidates:
-        if not db_path.exists():
-            continue
-        remaining = max_sessions - len(out)
-        if remaining <= 0:
-            break
-        try:
-            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        except sqlite3.OperationalError:
-            continue
-        try:
-            rows = conn.execute(
-                "SELECT session_id FROM sessions ORDER BY created_at DESC LIMIT ?",
-                (remaining,),
-            ).fetchall()
-        except sqlite3.Error:
-            continue
-        finally:
-            conn.close()
-        out.extend(f"session_{r[0]}" for r in rows if r and r[0])
-    return out
-
-
-def _load_session_metadata_for_project(
-    trace_project: str, session_ids: List[str]
-) -> Dict[str, Dict[str, Any]]:
-    """Best-effort lookup of session rows for a list of session_ids.
-
-    Sessions live in per-(session-project, agent) SQLite DBs and the
-    session-project slug doesn't have to match the trace project name, so
-    we resolve candidates via :func:`_list_project_agent_dirs` (which falls
-    back to discovery by trace content) and query each.
-    """
-    ids = [s for s in session_ids if isinstance(s, str) and s]
-    if not ids:
-        return {}
-
-    override = os.getenv("OMNIAGENTS_HISTORY_DB")
-    if override:
-        db_paths: List[Tuple[Path, Optional[str]]] = [
-            (Path(os.path.expanduser(override)).resolve(), None)
-        ]
-    else:
-        db_paths = [(p, slug) for p, slug in _list_project_agent_dirs(trace_project)]
-
-    out: Dict[str, Dict[str, Any]] = {}
-    seen: Set[str] = set()
-    for db_path, agent_slug in db_paths:
-        remaining = [sid for sid in ids if sid not in seen]
-        if not remaining:
-            break
-        try:
-            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        except sqlite3.OperationalError:
-            continue
-        try:
-            cols = {
-                row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()
-            }
-            if "session_id" not in cols:
-                continue
-            select_parts = ["session_id", "archived", "created_at"]
-            for opt in ("user_id", "hold"):
-                if opt in cols:
-                    select_parts.append(opt)
-            placeholders = ",".join("?" for _ in remaining)
-            sql = (
-                f"SELECT {', '.join(select_parts)} FROM sessions "
-                f"WHERE session_id IN ({placeholders})"
-            )
-            rows = conn.execute(sql, remaining).fetchall()
-            for row in rows:
-                rec = dict(zip(select_parts, row))
-                sid = rec["session_id"]
-                out[sid] = {
-                    "session_id": sid,
-                    "agent_slug": agent_slug,
-                    "archived": bool(rec.get("archived")),
-                    "hold": bool(rec.get("hold")),
-                    "user_id": rec.get("user_id"),
-                    "created_at": rec.get("created_at"),
-                }
-                seen.add(sid)
-        except sqlite3.Error:
-            pass
-        finally:
-            conn.close()
-    return out
 
 
 def _extract_trace_io_preview(spans):
@@ -622,28 +332,6 @@ class StorageManager:
             if created:
                 logger.info("Created Studio database for project '%s'", project)
         return self.storages[project]
-
-
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: List[WebSocket] = []
-
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-
-    def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
-
-    async def broadcast(self, message: dict):
-        for connection in self.active_connections:
-            try:
-                await connection.send_json(message)
-            except:
-                pass
-
-
-manager = ConnectionManager()
 
 
 class DimensionValueModel(BaseModel):
@@ -1971,6 +1659,8 @@ class EvaluationScenarioResultModel(BaseModel):
     measures: List[EvaluationMeasureResultModel] = []
     error: Optional[Dict[str, str]] = None
     group_id: Optional[str] = None
+    # The conversation the scenario ran in (its canonical thread).
+    session_id: Optional[str] = None
 
 
 class EvaluationMeasureAggregateModel(BaseModel):
@@ -2002,6 +1692,8 @@ class EvaluationResultsDetailResponse(BaseModel):
     summary: Dict[str, int]
     scenarios: List[EvaluationScenarioResultModel] = []
     workflow_name: Optional[str] = None
+    # The project agent the run evaluated, whose conversations hold its runs.
+    agent: Optional[str] = None
 
 
 def create_api_app(
@@ -5539,312 +5231,6 @@ def create_api_app(
     # Each agent's real runtime (ws, terminals, tickets) for the Playground.
     app.mount("/api/agents/{agent_key}/runtime", agent_runtimes)
 
-    @app.get("/api/conversations")
-    async def get_conversations(
-        project: str = Query(..., description="Project name"),
-        limit: int = Query(100, ge=1, le=1000),
-        offset: int = Query(0, ge=0),
-        search: Optional[str] = None,
-        has_errors: Optional[bool] = None,
-        workflow_name: Optional[str] = None,
-        agent: Optional[str] = Query(
-            None,
-            description="Filter to conversations whose session lives under this agent slug",
-        ),
-        dim: Optional[List[str]] = Query(
-            None, description="Synthetic dimension filters as 'dimension:value'"
-        ),
-    ):
-        """Get conversations (grouped traces) with filtering and pagination.
-
-        Aggregates per group_id in a single SQL query rather than scanning
-        every trace's spans in Python (which used to load the entire DB
-        on every sidebar refresh).
-        """
-        try:
-            try:
-                storage = storage_manager.get_storage(project)
-            except ValueError:
-                return {"conversations": [], "total": 0}
-
-            dim_map: Dict[str, set] = {}
-            if dim:
-                for entry in dim:
-                    try:
-                        k, v = entry.split(":", 1)
-                        dim_map.setdefault(k, set()).add(v)
-                    except ValueError:
-                        continue
-
-            base_sql = """
-                WITH ranked AS (
-                  SELECT t.trace_id, t.workflow_name, t.metadata, t.created_at,
-                         COALESCE(t.group_id, t.trace_id) AS gkey,
-                         ROW_NUMBER() OVER (
-                           PARTITION BY COALESCE(t.group_id, t.trace_id)
-                           ORDER BY t.created_at DESC
-                         ) AS rn_desc,
-                         ROW_NUMBER() OVER (
-                           PARTITION BY COALESCE(t.group_id, t.trace_id)
-                           ORDER BY t.created_at ASC
-                         ) AS rn_asc
-                  FROM traces t
-                ),
-                groups AS (
-                  SELECT gkey AS group_id,
-                         COUNT(*) AS trace_count,
-                         MAX(created_at) AS created_at_raw,
-                         MAX(CASE WHEN rn_desc = 1 THEN workflow_name END) AS workflow_name,
-                         MAX(CASE WHEN rn_desc = 1 THEN metadata END)      AS metadata,
-                         MAX(CASE WHEN rn_asc  = 1 THEN trace_id END)      AS first_trace_id
-                  FROM ranked
-                  GROUP BY gkey
-                ),
-                err_groups AS (
-                  SELECT DISTINCT COALESCE(t.group_id, t.trace_id) AS gkey
-                  FROM traces t
-                  JOIN spans s ON s.trace_id = t.trace_id
-                  WHERE s.error IS NOT NULL
-                ),
-                joined AS (
-                  SELECT g.group_id, g.trace_count, g.created_at_raw,
-                         g.workflow_name, g.metadata, g.first_trace_id,
-                         CASE WHEN err.gkey IS NOT NULL THEN 1 ELSE 0 END AS has_errors
-                  FROM groups g
-                  LEFT JOIN err_groups err ON err.gkey = g.group_id
-                )
-            """
-
-            filters: List[str] = []
-            params: List[Any] = []
-            if workflow_name:
-                filters.append("LOWER(workflow_name) = LOWER(?)")
-                params.append(workflow_name)
-            if search:
-                filters.append(
-                    "(LOWER(workflow_name) LIKE LOWER(?) OR LOWER(group_id) LIKE LOWER(?))"
-                )
-                like = f"%{search}%"
-                params.extend([like, like])
-            if has_errors is not None:
-                filters.append("has_errors = ?")
-                params.append(1 if has_errors else 0)
-            if agent:
-                # Traces don't carry the agent slug, so resolve session ids
-                # from the agent's sessions.db and filter by group_id (which
-                # bridge.py sets to "session_{session.id}"). Capped to keep
-                # the IN clause within SQLite's host-parameter limit.
-                gids = _resolve_agent_group_ids(project, agent, max_sessions=10000)
-                if not gids:
-                    return {"conversations": [], "total": 0}
-                placeholders = ",".join("?" for _ in gids)
-                filters.append(f"group_id IN ({placeholders})")
-                params.extend(gids)
-            where_sql = ("WHERE " + " AND ".join(filters)) if filters else ""
-
-            # Without dim filter we can paginate in SQL and get total via window function.
-            # With dim filter we need to inspect per-trace metadata, so we materialize
-            # the filtered groups in Python and paginate there.
-            if not dim_map:
-                page_sql = base_sql + f"""
-                    SELECT group_id, trace_count,
-                           datetime(created_at_raw) || 'Z' AS created_at,
-                           workflow_name, metadata, first_trace_id, has_errors,
-                           COUNT(*) OVER () AS total_rows
-                    FROM joined
-                    {where_sql}
-                    ORDER BY created_at_raw DESC
-                    LIMIT ? OFFSET ?
-                    """
-                rows = list(storage.conn.execute(page_sql, [*params, limit, offset]))
-                total = rows[0]["total_rows"] if rows else 0
-            else:
-                all_sql = base_sql + f"""
-                    SELECT group_id, trace_count,
-                           datetime(created_at_raw) || 'Z' AS created_at,
-                           workflow_name, metadata, first_trace_id, has_errors
-                    FROM joined
-                    {where_sql}
-                    ORDER BY created_at_raw DESC
-                    """
-                all_rows = list(storage.conn.execute(all_sql, params))
-                matching_ids = _filter_groups_by_dim(
-                    storage.conn, [r["group_id"] for r in all_rows], dim_map
-                )
-                rows = [r for r in all_rows if r["group_id"] in matching_ids]
-                total = len(rows)
-                rows = rows[offset : offset + limit]
-
-            conversations = []
-            for row in rows:
-                md = row["metadata"]
-                if isinstance(md, str):
-                    try:
-                        md = json.loads(md) or {}
-                    except Exception:
-                        md = {}
-                elif md is None:
-                    md = {}
-
-                conversations.append(
-                    {
-                        "group_id": row["group_id"],
-                        "trace_count": row["trace_count"],
-                        "has_errors": bool(row["has_errors"]),
-                        "created_at": row["created_at"],
-                        "workflow_name": row["workflow_name"],
-                        "metadata": md,
-                        "first_input": _fetch_first_user_input(
-                            storage.conn, row["first_trace_id"]
-                        ),
-                    }
-                )
-
-            # Attach session metadata for conversations whose group_id was
-            # produced by the runtime (group_id="session_{session.id}" — see
-            # core/runtime/bridge.py). This is the only join key between the
-            # trace store and per-(project,agent) sessions.db.
-            session_id_by_gid: Dict[str, str] = {}
-            for conv in conversations:
-                gid = conv.get("group_id")
-                if isinstance(gid, str) and gid.startswith("session_"):
-                    session_id_by_gid[gid] = gid[len("session_") :]
-            if session_id_by_gid:
-                session_meta = _load_session_metadata_for_project(
-                    project, list(session_id_by_gid.values())
-                )
-                for conv in conversations:
-                    sid = session_id_by_gid.get(conv.get("group_id"))
-                    if sid is None:
-                        continue
-                    meta = session_meta.get(sid)
-                    if meta is not None:
-                        conv["session"] = meta
-
-            return {"conversations": conversations, "total": total}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-
-    @app.get("/api/synthetic_dimensions")
-    async def get_synthetic_dimensions(
-        project: str = Query(..., description="Project name"),
-        workflow_name: Optional[str] = None,
-    ):
-        """Get distinct synthetic dimension definitions for a project/workflow"""
-        try:
-            try:
-                storage = storage_manager.get_storage(project)
-            except ValueError:
-                return {"dimensions": []}
-            sql = """
-                SELECT metadata FROM traces
-                WHERE json_extract(metadata, '$.omniagents.synthetic.catalog.dimensions') IS NOT NULL
-            """
-            params: List[Any] = []
-            if workflow_name:
-                sql += " AND LOWER(workflow_name) = LOWER(?)"
-                params.append(workflow_name)
-            traces = list(storage.conn.execute(sql, params))
-            dims_map: Dict[str, Dict[str, Any]] = {}
-
-            def display_name(s: str) -> str:
-                return s.replace("_", " ").title()
-
-            for t in traces:
-                md = t["metadata"]
-                try:
-                    meta = json.loads(md) if isinstance(md, str) else (md or {})
-                except Exception:
-                    meta = {}
-                dims = (
-                    meta.get("omniagents", {})
-                    .get("synthetic", {})
-                    .get("catalog", {})
-                    .get("dimensions", [])
-                )
-                for d in dims or []:
-                    name = d.get("name")
-                    if not name:
-                        continue
-                    label = d.get("label") or display_name(name)
-                    if name not in dims_map:
-                        dims_map[name] = {"label": label, "values": {}}
-                    for v in d.get("values", []) or []:
-                        vname = v.get("name")
-                        if not vname:
-                            continue
-                        vlabel = v.get("label") or display_name(vname)
-                        dims_map[name]["values"][vname] = vlabel
-            dimensions = []
-            for name, defn in dims_map.items():
-                values = [
-                    {"name": vn, "label": vl}
-                    for vn, vl in sorted(defn["values"].items())
-                ]
-                dimensions.append(
-                    {"name": name, "label": defn["label"], "values": values}
-                )
-            dimensions.sort(key=lambda d: d["label"].lower())
-            return {"dimensions": dimensions}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-
-    @app.get("/api/workflows")
-    async def get_workflows(project: str = Query(..., description="Project name")):
-        """Get distinct workflow names for a project"""
-        try:
-            try:
-                storage = storage_manager.get_storage(project)
-            except ValueError:
-                return {"workflows": []}
-            names = storage.get_workflow_names()
-            return {"workflows": names}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-
-    @app.get("/api/project_agents")
-    async def get_project_agents(
-        project: str = Query(..., description="Project name"),
-    ):
-        """List agents that have produced sessions referenced by this trace
-        project.
-
-        Source-of-truth for the agent-filter dropdown on Logs. We list what
-        actually produced sessions on disk (with discovery falling back to
-        scanning when trace and session project names diverge) rather than
-        what's currently configured in ``/api/agents``, so historical
-        conversations from removed or renamed agents remain reachable.
-
-        Same agent_slug appearing under multiple session-project dirs is
-        merged into one row with summed session_count.
-        """
-        per_slug: Dict[str, Dict[str, Any]] = {}
-        for db_path, slug in _list_project_agent_dirs(project):
-            count: Optional[int] = None
-            try:
-                conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-            except sqlite3.OperationalError:
-                conn = None
-            if conn is not None:
-                try:
-                    row = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()
-                    count = int(row[0]) if row and row[0] is not None else 0
-                except sqlite3.Error:
-                    count = None
-                finally:
-                    conn.close()
-            existing = per_slug.get(slug)
-            if existing is None:
-                per_slug[slug] = {"agent_slug": slug, "session_count": count}
-            else:
-                if count is not None:
-                    existing["session_count"] = (
-                        existing.get("session_count") or 0
-                    ) + count
-        return {
-            "agents": sorted(per_slug.values(), key=lambda a: a["agent_slug"].lower())
-        }
-
     @app.get("/api/conversations/{project}/{group_id}/traces")
     async def get_conversation_traces(
         project: str,
@@ -5939,76 +5325,6 @@ def create_api_app(
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-    @app.get("/api/traces")
-    async def get_traces(
-        project: str = Query(..., description="Project name"),
-        limit: int = Query(100, ge=1, le=1000),
-        offset: int = Query(0, ge=0),
-        search: Optional[str] = None,
-        has_errors: Optional[bool] = None,
-        span_type: Optional[str] = None,
-    ):
-        """Get traces with filtering and pagination"""
-        try:
-            # Get the storage for this project
-            try:
-                storage = storage_manager.get_storage(project)
-            except ValueError:
-                # Project doesn't exist
-                return {"traces": [], "total": 0}
-
-            # Get traces from the storage
-            traces = storage.get_traces(limit=limit + offset)
-
-            # Apply filters
-            filtered_traces = traces
-
-            if search:
-                filtered_traces = [
-                    t
-                    for t in filtered_traces
-                    if search.lower() in (t.get("workflow_name") or "").lower()
-                ]
-
-            if has_errors is not None:
-                # Check if trace has any spans with errors
-                traces_with_errors = set()
-                for trace in filtered_traces:
-                    spans = storage.get_spans_for_trace(trace["trace_id"])
-                    if any(s.get("error") for s in spans):
-                        traces_with_errors.add(trace["trace_id"])
-
-                if has_errors:
-                    filtered_traces = [
-                        t
-                        for t in filtered_traces
-                        if t["trace_id"] in traces_with_errors
-                    ]
-                else:
-                    filtered_traces = [
-                        t
-                        for t in filtered_traces
-                        if t["trace_id"] not in traces_with_errors
-                    ]
-
-            if span_type:
-                # Filter traces that contain specific span type
-                traces_with_type = set()
-                for trace in filtered_traces:
-                    spans = storage.get_spans_for_trace(trace["trace_id"])
-                    if any(s.get("span_type") == span_type for s in spans):
-                        traces_with_type.add(trace["trace_id"])
-                filtered_traces = [
-                    t for t in filtered_traces if t["trace_id"] in traces_with_type
-                ]
-
-            # Apply pagination
-            paginated = filtered_traces[offset : offset + limit]
-
-            return {"traces": paginated, "total": len(filtered_traces)}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-
     @app.get("/api/traces/{project}/{trace_id}")
     async def get_trace(project: str, trace_id: str):
         """Get a single trace with all its spans"""
@@ -6053,103 +5369,6 @@ def create_api_app(
             return {"trace": trace, "spans": processed_spans}
         except HTTPException:
             raise
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-
-    @app.get("/api/search")
-    async def search(
-        project: str = Query(..., description="Project name"),
-        q: str = Query(..., min_length=1),
-        type: str = Query("traces", pattern="^(traces|spans)$"),
-    ):
-        """Search traces or spans within a project"""
-        try:
-            # Get the storage for this project
-            try:
-                storage = storage_manager.get_storage(project)
-            except ValueError:
-                return {"results": [], "total": 0}
-
-            results = []
-
-            if type == "traces":
-                traces = storage.get_traces(limit=1000)
-                results = [
-                    t
-                    for t in traces
-                    if q.lower() in (t.get("workflow_name") or "").lower()
-                    or q.lower() in t.get("trace_id", "").lower()
-                ]
-            else:
-                # Search in spans
-                traces = storage.get_traces(limit=1000)
-                for trace in traces:
-                    spans = storage.get_spans_for_trace(trace["trace_id"])
-                    for span in spans:
-                        span_data = json.loads(span.get("data", "{}"))
-                        if (
-                            q.lower() in span.get("span_name", "").lower()
-                            or q.lower() in span.get("span_type", "").lower()
-                            or q.lower() in json.dumps(span_data).lower()
-                        ):
-                            results.append(span)
-
-            return {"results": results[:100], "total": len(results)}  # Limit results
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-
-    @app.get("/api/stats/overview")
-    async def get_stats(project: str = Query(..., description="Project name")):
-        """Get statistics overview for a project"""
-        try:
-            # Get the storage for this project
-            try:
-                storage = storage_manager.get_storage(project)
-            except ValueError:
-                return {
-                    "total_traces": 0,
-                    "total_spans": 0,
-                    "error_rate": 0,
-                    "avg_duration": 0,
-                    "spans_by_type": {},
-                }
-
-            traces = storage.get_traces(limit=10000)
-            total_spans = 0
-            error_count = 0
-            durations = []
-            spans_by_type = {}
-
-            for trace in traces:
-                spans = storage.get_spans_for_trace(trace["trace_id"])
-                total_spans += len(spans)
-
-                for span in spans:
-                    # Count errors
-                    if span.get("error"):
-                        error_count += 1
-
-                    # Count by type
-                    span_type = span.get("span_type", "unknown")
-                    spans_by_type[span_type] = spans_by_type.get(span_type, 0) + 1
-
-                    # Calculate duration
-                    if span.get("started_at") and span.get("ended_at"):
-                        start = datetime.fromisoformat(span["started_at"])
-                        end = datetime.fromisoformat(span["ended_at"])
-                        duration = (end - start).total_seconds() * 1000
-                        durations.append(duration)
-
-            avg_duration = sum(durations) / len(durations) if durations else 0
-            error_rate = (error_count / total_spans * 100) if total_spans > 0 else 0
-
-            return {
-                "total_traces": len(traces),
-                "total_spans": total_spans,
-                "error_rate": error_rate,
-                "avg_duration": avg_duration,
-                "spans_by_type": spans_by_type,
-            }
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -6785,6 +6004,7 @@ def create_api_app(
 
             scenarios.append(
                 {
+                    "session_id": run.get("session_id"),
                     "scenario_id": run.get("scenario_id") or run.get("id"),
                     "scenario_name": run.get("scenario_name")
                     or run.get("scenario", "unnamed"),
@@ -6866,6 +6086,7 @@ def create_api_app(
             # Get workflow_name from metadata.json (in same directory as results.json)
             metadata_file = results_path.parent / "metadata.json"
             workflow_name = None
+            agent = None
             run_at = datetime.fromtimestamp(
                 results_path.stat().st_mtime, tz=timezone.utc
             ).isoformat()
@@ -6873,6 +6094,7 @@ def create_api_app(
                 try:
                     mdata = json.loads(metadata_file.read_text(encoding="utf-8"))
                     workflow_name = mdata.get("workflow_name")
+                    agent = mdata.get("agent")
                     if mdata.get("created_at"):
                         run_at = mdata["created_at"]
                 except Exception:
@@ -6885,6 +6107,7 @@ def create_api_app(
                 summary=summary,
                 scenarios=[EvaluationScenarioResultModel(**s) for s in scenarios],
                 workflow_name=workflow_name,
+                agent=agent,
             ).model_dump()
         except HTTPException:
             raise
@@ -7109,18 +6332,6 @@ def create_api_app(
             except Exception:
                 pass
 
-    @app.websocket("/api/ws/traces")
-    async def websocket_endpoint(websocket: WebSocket):
-        """WebSocket for real-time trace updates"""
-        await _require_ws_auth(websocket)
-        await manager.connect(websocket)
-        try:
-            while True:
-                # Keep connection alive
-                await asyncio.sleep(1)
-        except WebSocketDisconnect:
-            manager.disconnect(websocket)
-
     if dev_server_url:
         dev_base = dev_server_url.rstrip("/")
 
@@ -7151,4 +6362,4 @@ def create_api_app(
                 )
                 break
 
-    return app, manager
+    return app

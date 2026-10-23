@@ -6902,12 +6902,41 @@ class AgentService(RpcMethodsBase):
         ):
             ownership.release()
 
+    def _existing_queue_store(self, sess):
+        """The store holding *sess*'s thread, or None when it has none yet.
+
+        Reads go through this, not :meth:`_queue_store`: looking at a
+        conversation (its snapshot, its queue) must not create it, or every
+        chat a client merely opens is left behind as an empty conversation.
+        A legacy session's history is projected on first sight, as any read
+        of it would; work arriving (an enqueue, a run) creates the thread.
+        """
+        from omniagents.core.conversation.recorder import recorder_for_session
+        from omniagents.core.conversation.service import ThreadNotFound
+
+        recorder = recorder_for_session(sess)
+        if recorder is None:
+            return None
+        if recorder.store.get_thread(sess.id) is not None:
+            recorder.recover_pending_messages(sess.id)
+            return recorder.store
+        try:
+            self._conversation_service().ensure_thread(sess.id)
+        except ThreadNotFound:
+            return None
+        return recorder.store
+
     def _refresh_queue(self, sess, *, reveal_claims=False):
         from omniagents.core.session import queue_inbox
         from omniagents.core.conversation.model import derive_item_id
 
         self._recover_local_run_ownership(sess)
-        store = self._queue_store(sess)
+        store = self._existing_queue_store(sess)
+        if store is None:
+            # No thread yet: nothing was ever queued for it.
+            sess.pending_notifications = []
+            sess.message_queue = []
+            return
         sess.archived = store.get_thread(sess.id).status.value == "archived"
         from omniagents.core.workers.recovery import reconcile_session
 
@@ -6996,15 +7025,15 @@ class AgentService(RpcMethodsBase):
             # The database pins item/inbox reads against other processes; no
             # await pins this serving runtime's state and event watermark.
             import copy
-            from omniagents.core.conversation.recorder import ensure_conversation_thread
             from omniagents.core.conversation.runtime_snapshot import (
                 reconcile_runtime_controls,
                 snapshot_queue,
                 snapshot_state_events,
             )
 
-            ensure_conversation_thread(sess)
-
+            # A conversation with no thread yet reads as empty; reading it
+            # does not create it.
+            self._existing_queue_store(sess)
             stored = self._conversation_service().store.read_snapshot(sess.id)
             items = [item.to_dict() for item in stored["items"]]
             queue = snapshot_queue(stored["inbox"], sess)

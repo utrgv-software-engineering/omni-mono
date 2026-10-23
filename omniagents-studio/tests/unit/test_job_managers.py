@@ -22,7 +22,7 @@ from omniagents_studio.api import (
 
 
 def build_api_app():
-    app, _ = create_api_app()
+    app = create_api_app()
     return app
 
 

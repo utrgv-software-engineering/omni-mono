@@ -54,6 +54,10 @@ function sharedConnection(factory: RPCClientFactory, url: string, token?: string
       connection.owners++;
       connection.generation++;
       const releaseSessions = getSessionRegistry(connection.client).retain();
+      // The provider owns the connection, so it dials: anything under it may
+      // use the client, not only a chat column booting. A boot's own
+      // connect() joins this dial; a failed one is retried by the client.
+      void connection.client.connect().catch(() => {});
       return () => {
         releaseSessions();
         connection.owners--;

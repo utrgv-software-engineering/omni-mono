@@ -246,6 +246,11 @@ class AgentRun(ABC):
         """An error the agent runtime reported without raising, if any."""
         return None
 
+    def annotate(self, metadata: Dict[str, Any]) -> None:
+        """Record *metadata* on the run's conversation. A run with no
+        conversation store (a bare SDK agent) has nothing to annotate."""
+        return None
+
     async def cleanup(self) -> None:
         return None
 
@@ -324,6 +329,19 @@ class _ProjectAgentRun(AgentRun):
 
     def run_error(self) -> Optional[Dict[str, Any]]:
         return self._error
+
+    def annotate(self, metadata: Dict[str, Any]) -> None:
+        """Merge *metadata* into the run's conversation, in the store
+        ``history`` reads (thread metadata merges key by key)."""
+        sid = self.session_id
+        if not sid:
+            return
+        from omniagents.core.conversation.service import ConversationService
+
+        ConversationService(
+            project_slug=self._spec.project_slug,
+            agent_slug=self._spec.agent_slug,
+        ).update_thread(sid, can_access=lambda _owner: True, metadata=metadata)
 
     async def cleanup(self) -> None:
         cleanup = getattr(self._agent, "cleanup", None)

@@ -112,6 +112,23 @@ async def test_buffered_notification_survives_reload(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_reading_a_new_conversation_does_not_create_it(monkeypatch):
+    """Opening a chat reads its snapshot and queue; until work arrives there
+    is no conversation, so nothing is left behind as an empty one."""
+    service = make_service(monkeypatch)
+    monkeypatch.setattr(service, "_ensure_drainer", lambda session: None)
+    conversations = service._conversation_service()
+
+    snapshot = await service.queue_status("just-opened", include_snapshot=True)
+    assert snapshot["snapshot"]["items"] == []
+    assert (await service.list_queue("just-opened"))["items"] == []
+    assert conversations.store.get_thread("just-opened") is None
+
+    await service.enqueue_message("just-opened", "now there is work")
+    assert conversations.store.get_thread("just-opened") is not None
+
+
+@pytest.mark.asyncio
 async def test_queue_refresh_does_not_unarchive_canonical_thread(monkeypatch):
     from omniagents.core.conversation.model import ThreadStatus
 

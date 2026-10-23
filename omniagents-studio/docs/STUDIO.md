@@ -35,6 +35,25 @@ project directory as its workspace.
   canonical conversation store like every other client's. The address names
   the agent and the conversation (`?agent=<key>&session=<id>`).
 
+## Logs
+
+Logs reads the project agents' conversations from the canonical
+conversation store, through each agent's runtime (`list_threads`,
+`search_threads`), so it shows every conversation any client had — the
+desktop app, the web UI, the TUI, the Playground and evaluation runs.
+
+- **Review** renders a conversation with the shared chat UI, read-only,
+  beside the error-analysis panel (judgment, notes, failure categories).
+  Reviews are stored per trace project under the conversation's trace group:
+  an evaluation run's own group, otherwise `session_<thread id>`, so reviews
+  made on a run's traces stay with its conversation.
+- **Evaluation runs** record their scenario, synthetic selection and expected
+  outcome on their conversation (thread metadata `omniagents`, the same block
+  their trace carries). Logs filters by run kind and by those dimensions, and
+  an evaluation result's "Open conversation" link lands on the run.
+- **Timing** shows the traces a conversation's runs recorded, when tracing was
+  on; it is the only part of Logs that reads traces.
+
 ## Lifecycle Coverage
 
 - Priority focus: all lifecycle steps below are high priority for Studio parity unless flagged otherwise. Optimization flows remain lower priority follow-ups.

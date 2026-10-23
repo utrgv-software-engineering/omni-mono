@@ -97,10 +97,10 @@ describe('ApiClient credential handling', () => {
   it('dials without credentials when no token is configured', async () => {
     const client = makeClient('http://studio.test:7860/api')
 
-    const ws = (await client.createWebSocket()) as unknown as FakeWebSocket
+    const ws = (await client.createScenarioRunWebSocket('job-1')) as unknown as FakeWebSocket
 
     expect(fetchMock).not.toHaveBeenCalled()
-    expect(ws.url).toBe('ws://studio.test:7860/api/ws/traces')
+    expect(ws.url).toBe('ws://studio.test:7860/api/evaluation/scenarios/run/job-1/ws')
   })
 
   it('fails the dial when the ticket cannot be minted', async () => {

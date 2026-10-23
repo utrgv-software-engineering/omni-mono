@@ -103,8 +103,54 @@ def _scenario_name(scenario: Dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _evaluation_metadata(
+    scenario: Dict[str, Any],
+    scenario_type: str,
+    *,
+    run_id: Optional[str],
+    agent_yaml: Optional[Path],
+    catalog: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """What one evaluation run was: its scenario, the synthetic selection it
+    exercised and the outcome it expected. Recorded on the run's trace and
+    on its conversation, so either is self-contained for review."""
+    import hashlib
+    import json
+
+    try:
+        import omniagents as _oa
+
+        version = getattr(_oa, "__version__", None)
+    except Exception:
+        version = None
+    try:
+        blob = json.dumps(catalog, sort_keys=True, ensure_ascii=False)
+        catalog_id: Optional[str] = hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
+    except Exception:
+        catalog_id = None
+    scenario_meta = {"id": scenario.get("id"), "name": scenario.get("name")}
+    if scenario.get("goal"):
+        scenario_meta["goal"] = scenario.get("goal")
+    expected = scenario.get("expect")
+    return {
+        "run_type": "evaluation",
+        "scenario_type": scenario_type,
+        "scenario": scenario_meta,
+        "run": {"id": run_id},
+        **({"expected": expected} if expected else {}),
+        "synthetic": {
+            "catalog_id": catalog_id,
+            "catalog": {"dimensions": catalog},
+            "selection": {"mapping": scenario.get("dimensions", {})},
+        },
+        "config": {"agent_yaml": str(agent_yaml) if agent_yaml else None},
+        **({"omniagents_version": version} if version else {}),
+    }
+
+
 class _Trace:
-    """Trace ids and the studio trace scope for one run (no-op without a workflow)."""
+    """Trace ids and the studio trace scope for one run (no-op without a
+    workflow), and the run's evaluation metadata either way."""
 
     def __init__(
         self,
@@ -121,59 +167,31 @@ class _Trace:
         self.agent_run_config: Any = None
         self.user_run_config: Any = None
         self._scope: Any = nullcontext()
-        if not workflow_name:
-            return
-        from agents import RunConfig
+        if workflow_name:
+            from agents import RunConfig
 
-        sid = scenario.get("id") or scenario.get("name") or "scenario"
-        self.group_id = f"{sid}-{uuid.uuid4().hex[:8]}"
-        self.agent_run_config = RunConfig(
-            workflow_name=workflow_name, group_id=self.group_id
+            sid = scenario.get("id") or scenario.get("name") or "scenario"
+            self.group_id = f"{sid}-{uuid.uuid4().hex[:8]}"
+            self.agent_run_config = RunConfig(
+                workflow_name=workflow_name, group_id=self.group_id
+            )
+            self.user_run_config = RunConfig(
+                workflow_name=f"{workflow_name}_simulated_user",
+                group_id=f"{sid}-user-{uuid.uuid4().hex[:8]}",
+            )
+        self.metadata = _evaluation_metadata(
+            scenario,
+            scenario_type,
+            run_id=self.group_id,
+            agent_yaml=agent_yaml,
+            catalog=catalog,
         )
-        self.user_run_config = RunConfig(
-            workflow_name=f"{workflow_name}_simulated_user",
-            group_id=f"{sid}-user-{uuid.uuid4().hex[:8]}",
-        )
-        if studio_trace is None:
-            return
-        import hashlib
-        import json
-
-        try:
-            import omniagents as _oa
-
-            version = getattr(_oa, "__version__", None)
-        except Exception:
-            version = None
-        try:
-            blob = json.dumps(catalog, sort_keys=True, ensure_ascii=False)
-            catalog_id: Optional[str] = hashlib.sha1(blob.encode("utf-8")).hexdigest()[
-                :16
-            ]
-        except Exception:
-            catalog_id = None
-        scenario_meta = {"id": scenario.get("id"), "name": scenario.get("name")}
-        if scenario.get("goal"):
-            scenario_meta["goal"] = scenario.get("goal")
-        expected = scenario.get("expect")
-        meta = {
-            "omniagents": {
-                "run_type": "evaluation",
-                "scenario_type": scenario_type,
-                "scenario": scenario_meta,
-                "run": {"id": self.group_id},
-                # The expected outcome makes the trace self-contained for review.
-                **({"expected": expected} if expected else {}),
-                "synthetic": {
-                    "catalog_id": catalog_id,
-                    "catalog": {"dimensions": catalog},
-                    "selection": {"mapping": scenario.get("dimensions", {})},
-                },
-                "config": {"agent_yaml": str(agent_yaml) if agent_yaml else None},
-                **({"omniagents_version": version} if version else {}),
-            }
-        }
-        self._scope = studio_trace(workflow_name, group_id=self.group_id, metadata=meta)
+        if workflow_name and studio_trace is not None:
+            self._scope = studio_trace(
+                workflow_name,
+                group_id=self.group_id,
+                metadata={"omniagents": self.metadata},
+            )
 
     def scope(self) -> Any:
         return self._scope
@@ -443,6 +461,12 @@ async def run_scenario(
                 else:
                     drive = await _drive_single(run, scenario, trace, usage)
         history = run.history()
+        # The run's conversation carries what it was, like its trace does,
+        # so it can be found and reviewed from the conversation store.
+        try:
+            run.annotate({"omniagents": trace.metadata})
+        except Exception as exc:
+            _logger.debug("Could not annotate the run's conversation: %s", exc)
         if scenario_type == "synthetic":
             drive["exchanges"] = sum(1 for m in history if m.get("role") == "user")
 

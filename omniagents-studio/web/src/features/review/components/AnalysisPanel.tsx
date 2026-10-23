@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useTraceStore } from '../../traces/store/traceStore'
+import { useReviewStore } from '../reviewStore'
 import { Target, ThumbsUp, ThumbsDown, Check, Save, Plus, Trash2, AlertTriangle } from 'lucide-react'
 import { cn } from '../../../lib/utils'
 import type { AnalysisData } from '../../../types'
 
 export function AnalysisPanel() {
-  const { 
-    selectedConversation, 
+  const {
+    selectedReviewKey,
     conversationAnalysis, 
     setConversationAnalysis,
     getAnalysisStats,
@@ -17,8 +17,8 @@ export function AnalysisPanel() {
     deleteFailureCategory,
     updateAnalysisCategories,
     analysisGoals,
-    conversations
-  } = useTraceStore()
+    reviewKeys,
+  } = useReviewStore()
   
   const [localAnalysis, setLocalAnalysis] = useState<AnalysisData>({
     markedForAnalysis: false,
@@ -38,8 +38,8 @@ export function AnalysisPanel() {
   
   // Load analysis data when conversation changes
   useEffect(() => {
-    if (selectedConversation) {
-      const existingAnalysis = conversationAnalysis[selectedConversation.group_id] || {
+    if (selectedReviewKey) {
+      const existingAnalysis = conversationAnalysis[selectedReviewKey] || {
         markedForAnalysis: false,
         judgment: null,
         notes: '',
@@ -54,7 +54,7 @@ export function AnalysisPanel() {
         categories: []
       })
     }
-  }, [selectedConversation, conversationAnalysis])
+  }, [selectedReviewKey, conversationAnalysis])
   
   // Load failure categories when project changes
   useEffect(() => {
@@ -89,7 +89,7 @@ export function AnalysisPanel() {
         return
       }
       
-      if (!selectedConversation) return
+      if (!selectedReviewKey) return
       
       switch (e.key) {
         case '1':
@@ -112,7 +112,7 @@ export function AnalysisPanel() {
     
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedConversation, localAnalysis])
+  }, [selectedReviewKey, localAnalysis])
   
   // Show saved indicator for 2 seconds
   const triggerSavedIndicator = () => {
@@ -121,7 +121,7 @@ export function AnalysisPanel() {
   }
   
   const handleJudgment = async (judgment: 'acceptable' | 'unacceptable') => {
-    if (!selectedConversation) return
+    if (!selectedReviewKey) return
     
     const newAnalysis = {
       ...localAnalysis,
@@ -130,12 +130,12 @@ export function AnalysisPanel() {
       analyzedAt: new Date().toISOString()
     }
     setLocalAnalysis(newAnalysis)
-    await setConversationAnalysis(selectedConversation.group_id, newAnalysis)
+    await setConversationAnalysis(selectedReviewKey, newAnalysis)
     triggerSavedIndicator()
   }
   
   const handleNotesChange = useCallback((notes: string) => {
-    if (!selectedConversation) return
+    if (!selectedReviewKey) return
     
     const newAnalysis = {
       ...localAnalysis,
@@ -151,13 +151,13 @@ export function AnalysisPanel() {
     }
     
     saveTimeoutRef.current = setTimeout(async () => {
-      await setConversationAnalysis(selectedConversation.group_id, newAnalysis)
+      await setConversationAnalysis(selectedReviewKey, newAnalysis)
       // Don't show saved indicator on every keystroke, just update silently
     }, 500) // Save after 500ms of no typing
-  }, [selectedConversation, localAnalysis, setConversationAnalysis])
+  }, [selectedReviewKey, localAnalysis, setConversationAnalysis])
   
   const handleCategoryToggle = async (categoryId: string) => {
-    if (!selectedConversation) return
+    if (!selectedReviewKey) return
     
     const currentCategories = localAnalysis.categories || []
     const newCategories = currentCategories.includes(categoryId)
@@ -171,7 +171,7 @@ export function AnalysisPanel() {
     setLocalAnalysis(newAnalysis)
     
     // Update backend immediately for categories
-    await updateAnalysisCategories(selectedConversation.group_id, newCategories)
+    await updateAnalysisCategories(selectedReviewKey, newCategories)
     triggerSavedIndicator()
   }
   
@@ -194,14 +194,14 @@ export function AnalysisPanel() {
       setShowAddCategory(false)
       
       // Auto-select the new category
-      if (selectedConversation) {
+      if (selectedReviewKey) {
         const newCategories = [...(localAnalysis.categories || []), newCategory.id]
         const newAnalysis = {
           ...localAnalysis,
           categories: newCategories
         }
         setLocalAnalysis(newAnalysis)
-        await updateAnalysisCategories(selectedConversation.group_id, newCategories)
+        await updateAnalysisCategories(selectedReviewKey, newCategories)
         triggerSavedIndicator()
       }
     } catch (error) {
@@ -226,7 +226,7 @@ export function AnalysisPanel() {
     }
   }
   
-  if (!selectedConversation) {
+  if (!selectedReviewKey) {
     return (
       <div className="h-full flex items-center justify-center text-muted-foreground">
         <div className="text-center">
@@ -241,8 +241,8 @@ export function AnalysisPanel() {
   
   // Get overall analysis stats
   const stats = getAnalysisStats()
-  const allowedGroupIds = new Set(conversations.map(c => c.group_id))
-  const totalConversations = conversations.length
+  const allowedGroupIds = new Set(reviewKeys)
+  const totalConversations = reviewKeys.length
   
   // Calculate progress for each goal
   const tracesProgress = Math.min((totalConversations / analysisGoals.tracesRequired) * 100, 100)
