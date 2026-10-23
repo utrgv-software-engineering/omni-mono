@@ -25,14 +25,7 @@ import type { ChatMessage, MessageItem, ToolItem } from '@/shared/chat-types';
 
 /** Flattened view of the machine for UI rendering. */
 export type VoiceSessionPhase =
-  | 'closed'
-  | 'connecting'
-  | 'starting'
-  | 'attending'
-  | 'responding'
-  | 'speaking'
-  | 'stopping'
-  | 'error';
+  'closed' | 'connecting' | 'starting' | 'attending' | 'responding' | 'speaking' | 'stopping' | 'error';
 
 /** Orb visual state, derived from phase + mute + tool activity. */
 export type VoiceOrbState = 'idle' | 'listening' | 'thinking' | 'speaking';

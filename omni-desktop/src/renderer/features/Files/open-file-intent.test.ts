@@ -4,15 +4,13 @@ import { dispatchOpenFileIntent, type OpenFileResult, registerOpenFileTarget } f
 
 describe('open-file intents', () => {
   it('routes an exact session, path, and range to the registered Files target', async () => {
-    const target = vi.fn(
-      async ({ requestId, intent }): Promise<OpenFileResult> => ({
-        status: 'opened',
-        requestId,
-        sessionId: intent.sessionId,
-        path: intent.path,
-        location: intent.location,
-      })
-    );
+    const target = vi.fn(async ({ requestId, intent }): Promise<OpenFileResult> => ({
+      status: 'opened',
+      requestId,
+      sessionId: intent.sessionId,
+      path: intent.path,
+      location: intent.location,
+    }));
     const unregister = registerOpenFileTarget('session-1', target);
 
     const result = await dispatchOpenFileIntent(

@@ -25,8 +25,7 @@ const nameByOrigin = new Map<string, string>();
 const pendingByOrigin = new Map<string, Promise<ProxyRegistrationResult>>();
 
 type ProxyRegistrationResult =
-  | { ok: true; proxyName: string; proxyPath: string }
-  | { ok: false; reason: string; status?: number };
+  { ok: true; proxyName: string; proxyPath: string } | { ok: false; reason: string; status?: number };
 
 export type ProxiedSrcResult =
   | {

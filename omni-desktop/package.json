@@ -23,7 +23,7 @@
     "clean": "rimraf out/ dist/",
     "download": "ts-node download_uv.ts",
     "download:clean": "rimraf assets/bin/",
-    "lint:knip": "knip --tags=-knipignore",
+    "lint:knip": "knip --directory .. --workspace omni-desktop --tags=-knipignore",
     "lint:dpdm": "dpdm --no-warning --no-tree --transform --exit-code circular:1 src/main/index.ts src/renderer/index.ts src/preload/index.ts",
     "lint:eslint": "eslint --max-warnings=0 .",
     "lint:prettier": "prettier --check .",
@@ -179,7 +179,7 @@
     "tmp": "^0.2.3",
     "ts-node": "^10.9.2",
     "tsafe": "^1.8.5",
-    "typescript": "^5.9.2",
+    "typescript": "5.9.2",
     "typescript-eslint": "^8.39.0",
     "use-stick-to-bottom": "^1.1.1",
     "vite": "^7.0.6",
@@ -222,8 +222,5 @@
       "url": "https://github.com/astral-sh/uv/releases/download/0.6.12/uv-x86_64-apple-darwin.tar.gz",
       "sha256": "5b6ee08766de11dc49ee9e292333e8b46ef2ceaaa3ebb0388467e114fca2ed8c"
     }
-  },
-  "overrides": {
-    "esbuild": "^0.28.1"
   }
 }

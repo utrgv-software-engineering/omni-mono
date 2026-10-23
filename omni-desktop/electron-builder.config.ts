@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 
 import type { Configuration, WindowsConfiguration } from 'electron-builder';
@@ -37,8 +38,13 @@ const getWindowsSigningOptions = (): Partial<WindowsConfiguration> => {
   return {};
 };
 
+// npm hoists Electron to the monorepo root, where electron-builder does not
+// look for it; the version comes from the installed package instead.
+const electronVersion: string = createRequire(import.meta.url)('electron/package.json').version;
+
 export default {
   appId: 'com.omni.omni-code',
+  electronVersion,
   productName: 'Omni Code',
   directories: {
     output: 'dist',

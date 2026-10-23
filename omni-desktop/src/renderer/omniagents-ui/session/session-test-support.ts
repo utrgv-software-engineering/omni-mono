@@ -118,9 +118,9 @@ export function fakeSessionClient() {
         order: 30,
       },
     ]),
-    serverCall: vi.fn(
-      async (_name: string, _args?: any, _id?: string, _target?: any): Promise<any> => ({ snapshot: null })
-    ),
+    serverCall: vi.fn(async (_name: string, _args?: any, _id?: string, _target?: any): Promise<any> => ({
+      snapshot: null,
+    })),
     clientResponse: vi.fn(async () => ({ ok: true })),
     startRun: vi.fn(async () => ({ run_id: 'new-run' })),
     stopRun: vi.fn(async (_runId: string) => ({})),

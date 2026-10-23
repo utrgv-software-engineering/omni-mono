@@ -477,8 +477,7 @@ describe('GitSurface', () => {
 
   it('watches repository status server-side and refreshes quietly on change events', async () => {
     let pushChange:
-      | ((event: { environment_id: string; repo: WorkspaceRepo; watch_id: string; digest: string }) => void)
-      | undefined;
+      ((event: { environment_id: string; repo: WorkspaceRepo; watch_id: string; digest: string }) => void) | undefined;
     mocks.git.onStatusChanged.mockImplementation(
       (handler: (event: { environment_id: string; repo: WorkspaceRepo; watch_id: string; digest: string }) => void) => {
         pushChange = handler;

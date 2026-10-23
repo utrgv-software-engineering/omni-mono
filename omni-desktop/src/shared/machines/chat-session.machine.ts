@@ -42,13 +42,7 @@ import {
  * `context.sessionId` is guaranteed to be defined.
  */
 export type ChatSessionPhase =
-  | 'initializing'
-  | 'initError'
-  | 'idle'
-  | 'starting'
-  | 'running'
-  | 'awaitingApproval'
-  | 'stopping';
+  'initializing' | 'initError' | 'idle' | 'starting' | 'running' | 'awaitingApproval' | 'stopping';
 
 /**
  * One snapshot of model context staged via MCP-Apps ``ui/update-model-context``.

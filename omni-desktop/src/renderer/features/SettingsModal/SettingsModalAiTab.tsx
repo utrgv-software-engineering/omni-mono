@@ -1108,8 +1108,7 @@ const ModelRow = memo(
 
     const storeValue = (model.model_settings as Record<string, unknown> | undefined)?.store !== false;
     const extraBody = (model.model_settings as Record<string, unknown> | undefined)?.extra_body as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     const includeArr = Array.isArray(extraBody?.include) ? (extraBody.include as string[]) : [];
     const hasEncryptedReasoning = includeArr.includes('reasoning.encrypted_content');
 

@@ -60,14 +60,12 @@ export async function listRepos(fetchFn: FetchFn, token: string, org: string, qu
   const q = query.trim().toLowerCase();
   return data.value
     .filter((r) => !r.isDisabled)
-    .map(
-      (r): RemoteRepo => ({
-        fullName: `${r.project?.name ?? org}/${r.name}`,
-        cloneUrl: cleanCloneUrl(r.remoteUrl),
-        defaultBranch: r.defaultBranch?.replace(/^refs\/heads\//, '') ?? 'main',
-        private: true,
-      })
-    )
+    .map((r): RemoteRepo => ({
+      fullName: `${r.project?.name ?? org}/${r.name}`,
+      cloneUrl: cleanCloneUrl(r.remoteUrl),
+      defaultBranch: r.defaultBranch?.replace(/^refs\/heads\//, '') ?? 'main',
+      private: true,
+    }))
     .filter((r) => (q ? r.fullName.toLowerCase().includes(q) : true))
     .sort((a, b) => a.fullName.localeCompare(b.fullName));
 }

@@ -29,15 +29,7 @@ export function workspaceRepo(value: string): WorkspaceRepo {
 export type GitDiffMode = 'worktree' | 'staged' | 'head' | 'range';
 export type GitResetMode = 'soft' | 'mixed' | 'hard';
 export type GitFileStatus =
-  | 'unmodified'
-  | 'modified'
-  | 'type_changed'
-  | 'added'
-  | 'deleted'
-  | 'renamed'
-  | 'copied'
-  | 'unmerged'
-  | 'unknown';
+  'unmodified' | 'modified' | 'type_changed' | 'added' | 'deleted' | 'renamed' | 'copied' | 'unmerged' | 'unknown';
 
 export type GitRepository = {
   repo: WorkspaceRepo;
@@ -373,8 +365,7 @@ export class GitConfirmation {
 }
 
 export type GitMutationOutcome<T> =
-  | { kind: 'completed'; result: T }
-  | { kind: 'confirmation_required'; confirmation: GitConfirmation };
+  { kind: 'completed'; result: T } | { kind: 'confirmation_required'; confirmation: GitConfirmation };
 
 type GitTransport = Pick<RPCClient, 'request' | 'on'>;
 

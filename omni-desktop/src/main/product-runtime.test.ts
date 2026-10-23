@@ -4,8 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const hoisted = vi.hoisted(() => ({
   cliExists: true,
   execResult: { kind: 'success', stdout: '' } as
-    | { kind: 'success'; stdout: string }
-    | { kind: 'error'; error: NodeJS.ErrnoException },
+    { kind: 'success'; stdout: string } | { kind: 'error'; error: NodeJS.ErrnoException },
 }));
 
 vi.mock('node:child_process', () => {

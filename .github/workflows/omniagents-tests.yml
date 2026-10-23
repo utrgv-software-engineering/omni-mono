@@ -36,8 +36,7 @@ jobs:
         # tests must execute rather than disappearing behind importorskip.
         run: python -m pip install '.[dev,server,sandbox-docker,sandbox-bashkit,sandbox-aci]'
       - name: Install ink dependencies
-        working-directory: omniagents/omniagents/backends/ink/tui
-        run: npm ci
+        run: npm ci --include-workspace-root -w omni-ink-tui
       - name: Install web UI dependencies
         working-directory: omniagents/omniagents/backends/web/ui
         run: npm ci
@@ -83,8 +82,7 @@ jobs:
         working-directory: omniagents/omniagents/backends/web/ui
         run: npm ci
       - name: Install ink dependencies
-        working-directory: omniagents/omniagents/backends/ink/tui
-        run: npm ci
+        run: npm ci --include-workspace-root -w omni-ink-tui
       - name: Run Python tests
         # Shell-heavy tests that hang on Windows fail fast instead of
         # eating the job timeout.

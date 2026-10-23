@@ -29,6 +29,17 @@ omni-code then runs against this repository's omniagents. Run tools from a
 package directory (`cd omniagents && ../.venv/bin/mypy`). Don't run Python
 from the repository root: the `omniagents/` folder there shadows the package.
 
+## JavaScript development
+
+The root `package.json` is an npm workspace for every JavaScript project:
+`omni-desktop/`, the omniagents web UI (`omniagents/omniagents/backends/web/ui`)
+and TUI (`omniagents/omniagents/backends/ink/tui`), `omniagents-studio/web`,
+and the shared packages under `packages/`. One `npm install` (from the root or
+any workspace) installs them all against the root `package-lock.json`;
+packages are hoisted to the root `node_modules`. Patches for dependencies live
+in the root `patches/` and are applied by the root `postinstall`. Knip runs
+from the root (`knip.ts`).
+
 ## CI
 
 Workflows live in `.github/workflows/`, named `<package>-<name>.yml`. Each

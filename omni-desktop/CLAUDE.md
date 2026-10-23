@@ -9,7 +9,8 @@ Omni Code Launcher — an Electron + React desktop app for installing the Omni C
 ## Commands
 
 ```bash
-npm i                      # Install deps; postinstall runs electron-rebuild (node-pty)
+npm i                      # Install the monorepo's npm workspace (root lockfile);
+                           # postinstall runs electron-rebuild (node-pty)
                            # and downloads uv
 npm run dev                # Electron dev with hot reload (electron-vite)
 npm run build              # Build main + preload + renderer into out/

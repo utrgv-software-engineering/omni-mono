@@ -383,8 +383,7 @@ export const Webview = forwardRef<
           }
           try {
             const win = (el as HTMLIFrameElement).contentWindow as
-              | (Window & { eval: (code: string) => unknown })
-              | null;
+              (Window & { eval: (code: string) => unknown }) | null;
             if (!win) {
               return undefined;
             }

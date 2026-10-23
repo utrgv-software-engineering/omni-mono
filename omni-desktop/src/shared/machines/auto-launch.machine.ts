@@ -14,14 +14,7 @@ import { assign, fromCallback, setup } from 'xstate';
 // ---------------------------------------------------------------------------
 
 export type AutoLaunchPhase =
-  | 'idle'
-  | 'checking'
-  | 'installing'
-  | 'ready'
-  | 'configChecking'
-  | 'starting'
-  | 'running'
-  | 'error';
+  'idle' | 'checking' | 'installing' | 'ready' | 'configChecking' | 'starting' | 'running' | 'error';
 
 export type AutoLaunchContext = {
   error: string | null;

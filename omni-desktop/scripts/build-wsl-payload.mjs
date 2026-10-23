@@ -91,13 +91,17 @@ for (const [label, path] of [
 }
 
 const packageJson = JSON.parse(await readFile(join(projectRoot, 'package.json'), 'utf-8'));
-const lockfile = JSON.parse(await readFile(join(projectRoot, 'package-lock.json'), 'utf-8'));
+// The launcher is an npm workspace of the monorepo: its packages are locked in
+// the root lockfile, hoisted to the root unless a version conflict nests them.
+const lockfile = JSON.parse(await readFile(join(projectRoot, '..', 'package-lock.json'), 'utf-8'));
 
 // Exact versions for the staged node_modules, pinned from the lockfile so the
 // payload can never drift from what the launcher was built against.
 const dependencies = { ...WS_NATIVE_HELPER_VERSIONS };
 for (const name of LOCKFILE_EXTERNALS) {
-  const version = lockfile.packages?.[`node_modules/${name}`]?.version;
+  const version = (
+    lockfile.packages?.[`omni-desktop/node_modules/${name}`] ?? lockfile.packages?.[`node_modules/${name}`]
+  )?.version;
   if (!version) {
     console.error(`\x1b[31mCould not resolve ${name} in package-lock.json — is it still a dependency?\x1b[0m`);
     process.exit(1);

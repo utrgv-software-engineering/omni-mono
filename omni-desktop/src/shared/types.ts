@@ -18,14 +18,7 @@ export type WindowProps = {
  */
 export type LayoutMode = 'work' | 'chat' | 'routines' | 'plugins' | 'settings' | 'gallery';
 export type OmniTheme =
-  | 'omni'
-  | 'teams-light'
-  | 'teams-dark'
-  | 'default'
-  | 'tokyo-night'
-  | 'vscode-dark'
-  | 'vscode-light'
-  | 'utrgv';
+  'omni' | 'teams-light' | 'teams-dark' | 'default' | 'tokyo-night' | 'vscode-dark' | 'vscode-light' | 'utrgv';
 
 export type AudioSettings = {
   /** mediaDevices deviceId for the input mic. Null = OS default. */

@@ -6,12 +6,16 @@ on:
     paths:
       - 'omni-desktop/**'
       - 'omniagents/omniagents/backends/web/ui/src/protocol/generated/**'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/omni-desktop-check.yml'
   pull_request:
     types: [ready_for_review, opened, synchronize]
     paths:
       - 'omni-desktop/**'
       - 'omniagents/omniagents/backends/web/ui/src/protocol/generated/**'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/omni-desktop-check.yml'
   workflow_dispatch:
   merge_group:
@@ -39,7 +43,7 @@ jobs:
         with:
           node-version: 22.x
           cache: 'npm'
-          cache-dependency-path: omni-desktop/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci

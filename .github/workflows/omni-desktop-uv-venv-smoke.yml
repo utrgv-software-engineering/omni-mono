@@ -6,12 +6,16 @@ on:
     paths:
       - 'omni-desktop/**'
       - 'omniagents/omniagents/backends/web/ui/src/protocol/generated/**'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/omni-desktop-uv-venv-smoke.yml'
   pull_request:
     types: [ready_for_review, opened, synchronize]
     paths:
       - 'omni-desktop/**'
       - 'omniagents/omniagents/backends/web/ui/src/protocol/generated/**'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/omni-desktop-uv-venv-smoke.yml'
   workflow_dispatch:
   merge_group:
@@ -62,7 +66,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: omni-desktop/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Generate lockfile hash without version
         id: lockfile-hash
@@ -74,6 +78,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
+            node_modules
             omni-desktop/node_modules
             ~/.electron-gyp
           key: ${{ runner.os }}-node-${{ env.NODE_VERSION }}-modules-${{ steps.lockfile-hash.outputs.hash }}

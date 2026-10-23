@@ -28,11 +28,7 @@ import type { IpcRendererEvents } from '@/shared/types';
 type WindowSender = <T extends keyof IpcRendererEvents>(channel: T, ...args: IpcRendererEvents[T]) => void;
 
 export type ConsoleErrorKind =
-  | 'process_not_ready'
-  | 'rpc_failed'
-  | 'session_unavailable'
-  | 'terminal_unavailable'
-  | 'backend_no_pty_stream';
+  'process_not_ready' | 'rpc_failed' | 'session_unavailable' | 'terminal_unavailable' | 'backend_no_pty_stream';
 
 export class ConsoleError extends Error {
   readonly kind: ConsoleErrorKind;
