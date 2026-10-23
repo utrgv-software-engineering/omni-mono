@@ -1,12 +1,11 @@
+import type { TerminalState } from '@omniagents/chat-ui/terminal/terminal-store';
+import { useXTermTheme } from '@omniagents/chat-ui/terminal/use-xterm-theme';
 import { debounce } from 'es-toolkit/compat';
 import { memo, useCallback, useEffect, useRef } from 'react';
 import { assert } from 'tsafe';
 
-import type { TerminalState } from '@/renderer/features/Console/state';
-import { useXTermTheme } from '@/renderer/features/Console/use-xterm-theme';
-import { emitter } from '@/renderer/services/ipc';
-
-export const ConsoleXterm = memo(({ terminal, isActive }: { terminal: TerminalState; isActive: boolean }) => {
+/** Shows one terminal's xterm, fitted to its container. */
+export const TerminalView = memo(({ terminal, isActive }: { terminal: TerminalState; isActive: boolean }) => {
   const theme = useXTermTheme();
   const ref = useRef<HTMLDivElement | null>(null);
 
@@ -17,9 +16,6 @@ export const ConsoleXterm = memo(({ terminal, isActive }: { terminal: TerminalSt
     assert(parent);
 
     terminal.xterm.options.theme = theme;
-    const resizeSub = terminal.xterm.onResize(({ rows, cols }) => {
-      emitter.invoke('terminal:resize', terminal.id, cols, rows);
-    });
 
     const fit = () => {
       terminal.fitAddon.fit();
@@ -49,7 +45,6 @@ export const ConsoleXterm = memo(({ terminal, isActive }: { terminal: TerminalSt
 
     return () => {
       cancelAnimationFrame(raf);
-      resizeSub.dispose();
       resizeObserver.disconnect();
     };
   }, [terminal.fitAddon, terminal.id, terminal.xterm, theme]);
@@ -67,4 +62,4 @@ export const ConsoleXterm = memo(({ terminal, isActive }: { terminal: TerminalSt
   }, [terminal.xterm]);
   return <div ref={ref} className="w-full h-full" onPointerDownCapture={handlePointerDownCapture} />;
 });
-ConsoleXterm.displayName = 'ConsoleXterm';
+TerminalView.displayName = 'TerminalView';

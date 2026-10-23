@@ -1,6 +1,5 @@
+import { TERMINAL_FONT, TERMINAL_FONT_SIZE } from '@omniagents/chat-ui/terminal/xterm-options';
 import { useEffect } from 'react';
-
-import { TERMINAL_FONT, TERMINAL_FONT_SIZE } from '@/renderer/constants';
 
 export const usePreloadTerminalFont = () => {
   useEffect(() => {

@@ -5,7 +5,7 @@ import { TerminalProxy } from '@/main/terminal-proxy';
 
 const { FakeWs } = vi.hoisted(() => {
   /**
-   * Minimal `ws` stand-in (Node-style event API). Tests drive the server side
+   * Minimal `ws` stand-in (its Node-style and WHATWG-style event APIs). Tests drive the server side
    * via `serverOpen` / `emit`.
    */
   class FakeWs {
@@ -38,6 +38,17 @@ const { FakeWs } = vi.hoisted(() => {
         cb(...args);
       };
       return this.on(event, wrapper);
+    }
+
+    /** `ws`'s WHATWG-style listeners: message/close arrive as event objects. */
+    addEventListener(event: string, cb: (event?: unknown) => void): void {
+      if (event === 'message') {
+        this.on('message', (data) => cb({ data }));
+      } else if (event === 'close') {
+        this.on('close', (code) => cb({ code }));
+      } else {
+        this.on(event, () => cb());
+      }
     }
 
     off(event: string, cb: (...args: unknown[]) => void): this {

@@ -34,9 +34,8 @@ vi.mock('@/renderer/services/agent-process', () => ({
   teardownTerminal: vi.fn(),
 }));
 
-vi.mock('@/renderer/features/Console/state', () => ({
-  destroyAllTerminalsForTab: vi.fn(),
-  forgetTerminalsForTab: vi.fn(),
+vi.mock('@/renderer/features/Console/desktop-terminals', () => ({
+  desktopTerminals: { forget: vi.fn() },
 }));
 
 vi.mock('@/renderer/constants', () => ({

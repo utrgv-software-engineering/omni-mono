@@ -1,61 +1,54 @@
 import { useStore } from '@nanostores/react';
+import type { TerminalState, TerminalStore } from '@omniagents/chat-ui/terminal/terminal-store';
+import { TerminalView } from '@omniagents/chat-ui/terminal/TerminalView';
 import { Button } from '@omniagents/ui/button';
 import { cn } from '@omniagents/ui/cn';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@omniagents/ui/tabs';
 import { Plus, SquareTerminal, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo } from 'react';
 
-import { ConsoleXterm } from '@/renderer/features/Console/ConsoleXterm';
-import type { TerminalState } from '@/renderer/features/Console/state';
-import {
-  $activeTerminalIdByTab,
-  $terminalCreateErrorByTab,
-  $terminalsByTab,
-  createTerminal,
-  destroyTerminal,
-  ensureTerminalForTab,
-  setActiveTerminal,
-} from '@/renderer/features/Console/state';
-
 type TerminalTabButtonProps = {
-  tabId: string;
+  store: TerminalStore;
+  scope: string;
   terminalId: string;
   label: string;
   className: string;
   closeClassName: string;
 };
 
-const TerminalTabButton = memo(({ tabId, terminalId, label, className, closeClassName }: TerminalTabButtonProps) => {
-  const handleClose = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation();
-      void destroyTerminal(tabId, terminalId);
-    },
-    [tabId, terminalId]
-  );
+const TerminalTabButton = memo(
+  ({ store, scope, terminalId, label, className, closeClassName }: TerminalTabButtonProps) => {
+    const handleClose = useCallback(
+      (e: React.MouseEvent) => {
+        e.stopPropagation();
+        void store.destroy(scope, terminalId);
+      },
+      [store, scope, terminalId]
+    );
 
-  return (
-    <div className={className}>
-      <TabsTrigger
-        value={terminalId}
-        className="h-full min-w-0 flex-1 justify-start gap-1.5 border-0 bg-transparent p-0 text-xs leading-normal font-normal text-inherit after:hidden data-[state=active]:bg-transparent data-[state=active]:text-inherit data-[state=active]:shadow-none"
-      >
-        <SquareTerminal className="size-3.5 shrink-0" />
-        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{label}</span>
-      </TabsTrigger>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        className={closeClassName}
-        onClick={handleClose}
-        aria-label={`Close ${label}`}
-      >
-        <X />
-      </Button>
-    </div>
-  );
-});
+    return (
+      <div className={className}>
+        <TabsTrigger
+          value={terminalId}
+          className="h-full min-w-0 flex-1 justify-start gap-1.5 border-0 bg-transparent p-0 text-xs leading-normal font-normal text-inherit after:hidden data-[state=active]:bg-transparent data-[state=active]:text-inherit data-[state=active]:shadow-none"
+        >
+          <SquareTerminal className="size-3.5 shrink-0" />
+          <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{label}</span>
+        </TabsTrigger>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          className={closeClassName}
+          onClick={handleClose}
+          aria-label={`Close ${label}`}
+        >
+          <X />
+        </Button>
+      </div>
+    );
+  }
+);
 TerminalTabButton.displayName = 'TerminalTabButton';
 
 type XtermPaneProps = {
@@ -66,37 +59,42 @@ type XtermPaneProps = {
 
 const XtermPane = memo(({ terminal, isActive, className }: XtermPaneProps) => (
   <TabsContent value={terminal.id} forceMount className={cn(className, 'm-0 data-[state=inactive]:hidden')}>
-    <ConsoleXterm terminal={terminal} isActive={isActive} />
+    <TerminalView terminal={terminal} isActive={isActive} />
   </TabsContent>
 ));
 XtermPane.displayName = 'XtermPane';
 
-type ConsoleStartedProps = {
-  tabId: string;
+type TerminalTabsProps = {
+  store: TerminalStore;
+  /** Whose terminals: a chat column, a session. */
+  scope: string;
 };
 
-export const ConsoleStarted = memo(({ tabId }: ConsoleStartedProps) => {
-  const terminalsByTab = useStore($terminalsByTab);
-  const activeByTab = useStore($activeTerminalIdByTab);
-  const createErrorByTab = useStore($terminalCreateErrorByTab);
-  const terminals = useMemo(() => terminalsByTab[tabId] ?? [], [terminalsByTab, tabId]);
-  const activeId = activeByTab[tabId] ?? null;
-  const createError = createErrorByTab[tabId] ?? null;
+/** A scope's terminals as tabs, opening one on first show. */
+export const TerminalTabs = memo(({ store, scope }: TerminalTabsProps) => {
+  const terminalsByScope = useStore(store.$terminalsByScope);
+  const activeByScope = useStore(store.$activeByScope);
+  const createErrorByScope = useStore(store.$createErrorByScope);
+  const terminals = useMemo(() => terminalsByScope[scope] ?? [], [terminalsByScope, scope]);
+  const activeId = activeByScope[scope] ?? null;
+  const createError = createErrorByScope[scope] ?? null;
 
   useEffect(() => {
-    void ensureTerminalForTab(tabId);
-  }, [tabId]);
+    void store.ensure(scope);
+  }, [store, scope]);
 
   const handleNewTab = useCallback(() => {
-    void createTerminal(tabId);
-  }, [tabId]);
+    void store.create(scope).catch(() => {
+      // The store recorded the error; the empty state shows it.
+    });
+  }, [store, scope]);
 
   const showEmptyState = terminals.length === 0 && createError !== null;
 
   return (
     <Tabs
       value={activeId ?? ''}
-      onValueChange={(terminalId) => setActiveTerminal(tabId, terminalId)}
+      onValueChange={(terminalId) => store.setActive(scope, terminalId)}
       className="relative flex h-full min-h-0 w-full flex-col gap-0"
     >
       <div className="flex min-h-8.5 w-full shrink-0 items-stretch gap-0.5 overflow-hidden border-b border-border bg-card px-1">
@@ -108,7 +106,8 @@ export const ConsoleStarted = memo(({ tabId }: ConsoleStartedProps) => {
           {terminals.map((t, i) => (
             <TerminalTabButton
               key={t.id}
-              tabId={tabId}
+              store={store}
+              scope={scope}
               terminalId={t.id}
               label={`Terminal ${i + 1}`}
               className={cn(
@@ -135,11 +134,11 @@ export const ConsoleStarted = memo(({ tabId }: ConsoleStartedProps) => {
       <div className="relative w-full h-full min-h-0">
         {showEmptyState ? (
           <div className="flex w-full h-full items-center justify-center flex-col gap-2 p-6 text-center text-muted-foreground text-sm">
-            {createError?.kind === 'process_not_ready' ? (
+            {createError?.kind === 'not_ready' ? (
               <>
-                <div>Open a code session to launch a terminal.</div>
+                <div>The agent is not running yet.</div>
                 <div className="text-xs text-muted-foreground">
-                  Terminals now run inside the sandbox. Start a workspace from the Code app, then click + above.
+                  Terminals open in the agent&apos;s environment. Once it starts, click + above.
                 </div>
               </>
             ) : (
@@ -160,4 +159,4 @@ export const ConsoleStarted = memo(({ tabId }: ConsoleStartedProps) => {
     </Tabs>
   );
 });
-ConsoleStarted.displayName = 'ConsoleStarted';
+TerminalTabs.displayName = 'TerminalTabs';

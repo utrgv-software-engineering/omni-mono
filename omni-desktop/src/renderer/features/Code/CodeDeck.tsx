@@ -4,6 +4,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { useStore } from '@nanostores/react';
 import { OmniAgentsHeaderActionsSlot } from '@omniagents/chat-ui/header-actions';
 import { $columnActivity, activityStatusText } from '@omniagents/chat-ui/services/column-activity';
+import { TerminalTabs } from '@omniagents/chat-ui/terminal/TerminalTabs';
 import { Button } from '@omniagents/ui/button';
 import { cn } from '@omniagents/ui/cn';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@omniagents/ui/dropdown-menu';
@@ -23,7 +24,7 @@ import { AgentsSurface } from '@/renderer/features/Agents';
 import { $appLaunchRequest, clearAppLaunchRequest } from '@/renderer/features/AppControl/app-launch-bridge';
 import { BrowserView } from '@/renderer/features/Browser/BrowserView';
 import { $previewRequest, clearPreviewRequest } from '@/renderer/features/Code/preview-bridge';
-import { ConsoleStarted } from '@/renderer/features/Console/ConsoleRunning';
+import { desktopTerminals } from '@/renderer/features/Console/desktop-terminals';
 import { JobsSurface } from '@/renderer/features/Jobs';
 import { $agentStatuses } from '@/renderer/services/agent-process';
 import { persistedStoreApi } from '@/renderer/services/store';
@@ -293,7 +294,7 @@ const SidecarBody = memo(
       );
     } else if (app.kind === 'builtin-terminal') {
       body = runtime ? (
-        <ConsoleStarted tabId={originTabId} />
+        <TerminalTabs store={desktopTerminals} scope={originTabId} />
       ) : (
         <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
           Terminal is available after the session starts.

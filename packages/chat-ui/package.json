@@ -21,7 +21,12 @@
     "./hooks/*": "./src/hooks/*.ts",
     "./services/*": "./src/services/*.ts",
     "./lib/*": "./src/lib/*.ts",
-    "./testing/*": "./src/testing/*.tsx"
+    "./testing/*": "./src/testing/*.tsx",
+    "./terminal/TerminalTabs": "./src/terminal/TerminalTabs.tsx",
+    "./terminal/TerminalView": "./src/terminal/TerminalView.tsx",
+    "./terminal/terminal-store": "./src/terminal/terminal-store.ts",
+    "./terminal/use-xterm-theme": "./src/terminal/use-xterm-theme.ts",
+    "./terminal/xterm-options": "./src/terminal/xterm-options.ts"
   },
   "scripts": {
     "lint": "eslint --max-warnings=0 . && prettier --check src",
@@ -45,8 +50,11 @@
     "@streamdown/math": "^1.0.2",
     "@streamdown/mermaid": "^1.0.2",
     "@xstate/react": "^6.1.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "es-toolkit": "^1.39.8",
     "framer-motion": "^12.34.2",
     "katex": "^0.16.25",
     "lucide-react": "^1.8.0",
@@ -60,6 +68,7 @@
     "remark-math": "^6.0.0",
     "shiki": "^3.23.0",
     "streamdown": "^2.5.0",
+    "tsafe": "^1.8.5",
     "use-stick-to-bottom": "^1.1.1",
     "xstate": "^5.30.0",
     "zod": "^4.0.14"

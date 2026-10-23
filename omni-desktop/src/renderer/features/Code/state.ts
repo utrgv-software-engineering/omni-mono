@@ -2,7 +2,7 @@ import { map } from 'nanostores';
 
 import { STATUS_POLL_INTERVAL_MS } from '@/renderer/constants';
 import type { AutoLaunchPhase } from '@/renderer/features/Code/use-code-auto-launch';
-import { forgetTerminalsForTab } from '@/renderer/features/Console/state';
+import { desktopTerminals } from '@/renderer/features/Console/desktop-terminals';
 import { clearStatus, pollProcessStatus, teardownTerminal } from '@/renderer/services/agent-process';
 import { emitter } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
@@ -14,7 +14,7 @@ export const $codeTabErrors = map<Record<CodeTabId, string | null>>({});
 
 export function finishRemoval(tabId: string) {
   try {
-    forgetTerminalsForTab(tabId);
+    desktopTerminals.forget(tabId);
     teardownTerminal(tabId);
   } finally {
     clearStatus(tabId);

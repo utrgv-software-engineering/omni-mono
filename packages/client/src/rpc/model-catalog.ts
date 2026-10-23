@@ -9,7 +9,6 @@ export function modelProvider(ref: string | null | undefined): string | null {
   return slash < 0 ? 'openai' : ref.slice(0, slash);
 }
 
-
 type ModelCatalogMethod = Extract<
   keyof RpcMethodMap,
   'list_models' | 'get_model' | 'list_providers' | 'set_session_model' | 'set_session_reasoning'

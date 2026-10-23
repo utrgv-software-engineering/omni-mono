@@ -1,4 +1,5 @@
 import { classifyCloseCode, DEFAULT_LIFECYCLE_POLICY } from '@omniagents/client/lifecycle';
+import { createRuntimeTerminal, terminalSocketUrl, TerminalStream } from '@omniagents/client/rpc/terminal';
 import { WebSocket } from 'ws';
 
 import { wsAuthOptions } from '@/lib/ws-auth';
@@ -54,11 +55,7 @@ export class ConsoleError extends Error {
 type ProxiedTerminal = {
   id: string;
   tabId: string;
-  serveTerminalId: string;
-  serveSessionId: string;
-  token: string;
-  ioSocket: WebSocket;
-  disposing: boolean;
+  stream: TerminalStream;
 };
 
 type RpcCall = {
@@ -112,98 +109,54 @@ export class TerminalProxy {
     const rpc = await this.ensureTabRpc(tabId, wsUrl, authToken);
     const sessionId = await this.ensureSession(rpc);
 
-    // We deliberately do not send `cwd` here: the materialized
-    // environment's terminal defaults own it.
-    const created = await this.rpcCall(rpc, 'server_call', {
-      function: 'terminal.create',
-      args: { cols: 80, rows: 24 },
-      session_id: sessionId,
-      workspace_id: workspaceId,
-      environment_id: environmentId,
-      environment_generation: environmentGeneration,
-    });
-    if (!isObject(created)) {
-      throw new ConsoleError('rpc_failed', 'terminal.create returned an unexpected payload');
-    }
-    const serveTerminalId = String(created['terminal_id'] ?? '').trim();
-    const token = String(created['terminal_token'] ?? created['token'] ?? '').trim();
-    const path = String(created['path'] ?? '/ws/terminal').trim() || '/ws/terminal';
-    const serveSessionId = String(created['session_id'] ?? sessionId).trim();
-    if (!serveTerminalId || !token) {
-      throw new ConsoleError('terminal_unavailable', 'omni serve did not return a usable terminal');
-    }
-
-    const ioUrl = this.buildTerminalUrl(wsUrl, path);
-    const ioSocket = new WebSocket(ioUrl, wsAuthOptions(authToken));
-    const entry: ProxiedTerminal = {
-      id: serveTerminalId,
-      tabId,
-      serveTerminalId,
-      serveSessionId,
-      token,
-      ioSocket,
-      disposing: false,
-    };
-    this.terminals.set(serveTerminalId, entry);
-
-    // Attach credentials go in the FIRST frame on the socket, before any
-    // input/resize. `open` fires before user frames can be written (write/
-    // resize drop frames until readyState is OPEN), so this send is ordered
-    // first on the wire.
-    ioSocket.on('open', () => {
-      ioSocket.send(
-        JSON.stringify({
-          type: 'attach',
-          session_id: serveSessionId,
-          terminal_id: serveTerminalId,
-          terminal_token: token,
-        })
+    let attach;
+    try {
+      attach = await createRuntimeTerminal(
+        (func, args, session, target) =>
+          this.rpcCall(rpc, 'server_call', {
+            function: func,
+            args,
+            session_id: session,
+            workspace_id: target?.workspaceId,
+            environment_id: target?.environmentId,
+            environment_generation: target?.environmentGeneration,
+          }),
+        {
+          sessionId,
+          target: { workspaceId, environmentId, environmentGeneration },
+          cols: 80,
+          rows: 24,
+        }
       );
-    });
-    ioSocket.on('message', (raw) => this.handleIoMessage(entry, raw));
-    ioSocket.on('close', (code) => {
-      // A clean shell exit arrives as an `exit` io message first (which sets
-      // `disposing`), so a close reaching here is transport-level. Permanent
-      // close codes (44xx auth/feature rejections, 1002/1003/1008) surface as
-      // a non-zero exit so the renderer doesn't render a clean exit.
-      const exitCode = classifyCloseCode(code) === 'permanent' ? 1 : 0;
-      this.terminals.delete(entry.id);
-      if (!entry.disposing) {
-        this.deps.sendToWindow('terminal:exited', entry.tabId, entry.id, exitCode);
+    } catch (err) {
+      if (err instanceof ConsoleError) {
+        throw err;
       }
-    });
+      throw new ConsoleError('terminal_unavailable', (err as Error).message ?? String(err));
+    }
+
+    const ioSocket = new WebSocket(terminalSocketUrl(wsUrl, attach.path), wsAuthOptions(authToken));
     ioSocket.on('error', (err) => {
       console.error('[TerminalProxy] /ws/terminal error', err);
     });
-
-    return serveTerminalId;
+    const id = attach.terminalId;
+    const stream = new TerminalStream(ioSocket, attach, {
+      onOutput: (text) => this.deps.sendToWindow('terminal:output', tabId, id, text),
+      onExit: (code) => {
+        this.terminals.delete(id);
+        this.deps.sendToWindow('terminal:exited', tabId, id, code);
+      },
+    });
+    this.terminals.set(id, { id, tabId, stream });
+    return id;
   }
 
   write(id: string, data: string): void {
-    const entry = this.terminals.get(id);
-    if (!entry || entry.disposing) {
-      return;
-    }
-    if (entry.ioSocket.readyState !== WebSocket.OPEN) {
-      return;
-    }
-    entry.ioSocket.send(
-      JSON.stringify({
-        type: 'input',
-        data: Buffer.from(data, 'utf-8').toString('base64'),
-      })
-    );
+    this.terminals.get(id)?.stream.write(data);
   }
 
   resize(id: string, cols: number, rows: number): void {
-    const entry = this.terminals.get(id);
-    if (!entry || entry.disposing) {
-      return;
-    }
-    if (entry.ioSocket.readyState !== WebSocket.OPEN) {
-      return;
-    }
-    entry.ioSocket.send(JSON.stringify({ type: 'resize', cols, rows }));
+    this.terminals.get(id)?.stream.resize(cols, rows);
   }
 
   async dispose(id: string): Promise<void> {
@@ -211,20 +164,8 @@ export class TerminalProxy {
     if (!entry) {
       return;
     }
-    entry.disposing = true;
-    try {
-      if (entry.ioSocket.readyState === WebSocket.OPEN) {
-        entry.ioSocket.send(JSON.stringify({ type: 'close' }));
-      }
-    } catch {
-      // socket might already be dead
-    }
-    try {
-      entry.ioSocket.close();
-    } catch {
-      // ignore
-    }
     this.terminals.delete(id);
+    entry.stream.close();
   }
 
   async disposeAllForTab(tabId: string): Promise<void> {
@@ -266,40 +207,6 @@ export class TerminalProxy {
   }
 
   // ----------------------------- internals -----------------------------
-
-  private handleIoMessage(entry: ProxiedTerminal, raw: unknown): void {
-    let msg: unknown;
-    try {
-      msg = JSON.parse(String(raw));
-    } catch {
-      return;
-    }
-    if (!isObject(msg)) {
-      return;
-    }
-    const type = msg['type'];
-    if (type === 'output') {
-      const data = String(msg['data'] ?? '');
-      if (!data) {
-        return;
-      }
-      const decoded = Buffer.from(data, 'base64').toString('utf-8');
-      this.deps.sendToWindow('terminal:output', entry.tabId, entry.id, decoded);
-      return;
-    }
-    if (type === 'exit') {
-      const codeRaw = msg['code'];
-      const code = typeof codeRaw === 'number' ? codeRaw : 0;
-      entry.disposing = true;
-      this.terminals.delete(entry.id);
-      this.deps.sendToWindow('terminal:exited', entry.tabId, entry.id, code);
-      try {
-        entry.ioSocket.close();
-      } catch {
-        // ignore
-      }
-    }
-  }
 
   private async ensureTabRpc(tabId: string, wsUrl: string, authToken?: string): Promise<TabRpc> {
     const existing = this.tabRpc.get(tabId);
@@ -465,16 +372,6 @@ export class TerminalProxy {
       p.reject(err);
     }
     rpc.pending.clear();
-  }
-
-  private buildTerminalUrl(rpcWsUrl: string, path: string): string {
-    // rpcWsUrl is like `ws://host:port/ws`; keep host + port, swap the path.
-    // No credentials in the URL: connection auth is the Authorization
-    // upgrade header, attach credentials are the first message.
-    const u = new URL(rpcWsUrl);
-    u.pathname = path;
-    u.search = '';
-    return u.toString();
   }
 }
 

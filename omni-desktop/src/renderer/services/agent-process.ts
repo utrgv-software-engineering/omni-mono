@@ -1,8 +1,8 @@
 import { objectEquals } from '@observ33r/object-equals';
+import { XTERM_OPTIONS } from '@omniagents/chat-ui/terminal/xterm-options';
 import { Terminal } from '@xterm/xterm';
 import { map } from 'nanostores';
 
-import { DEFAULT_XTERM_OPTIONS } from '@/renderer/constants';
 import { toast } from '@/renderer/features/Toast/state';
 import { emitter, ipc, wsEmitter } from '@/renderer/services/ipc';
 import type {
@@ -37,7 +37,7 @@ export const initializeTerminal = (processId: string): Terminal => {
     return existing;
   }
 
-  const xterm = new Terminal({ ...DEFAULT_XTERM_OPTIONS, disableStdin: true });
+  const xterm = new Terminal({ ...XTERM_OPTIONS, disableStdin: true });
   const subs = new Set<() => void>();
 
   subs.add(

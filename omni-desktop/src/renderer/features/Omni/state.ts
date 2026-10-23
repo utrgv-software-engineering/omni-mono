@@ -1,8 +1,9 @@
 import { objectEquals } from '@observ33r/object-equals';
+import { XTERM_OPTIONS } from '@omniagents/chat-ui/terminal/xterm-options';
 import { Terminal } from '@xterm/xterm';
 import { atom } from 'nanostores';
 
-import { DEFAULT_XTERM_OPTIONS, STATUS_POLL_INTERVAL_MS } from '@/renderer/constants';
+import { STATUS_POLL_INTERVAL_MS } from '@/renderer/constants';
 import { emitter, ipc } from '@/renderer/services/ipc';
 import type { OmniInstallProcessStatus, OmniRuntimeInfo, WithTimestamp } from '@/shared/types';
 
@@ -90,7 +91,7 @@ const initializeOmniInstallTerminal = (): Terminal => {
     return xterm;
   }
 
-  xterm = new Terminal({ ...DEFAULT_XTERM_OPTIONS, disableStdin: true });
+  xterm = new Terminal({ ...XTERM_OPTIONS, disableStdin: true });
 
   omniInstallTerminalSubscriptions.add(
     ipc.on('omni-install-process:raw-output', (data) => {
