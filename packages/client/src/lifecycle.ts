@@ -1,13 +1,8 @@
 /**
- * Standard connection-lifecycle policy shared by all maintained OmniAgents
- * GUI clients, ported into the launcher for its own WebSocket transports.
- *
- * Source of truth: `omniagents/rpc/lifecycle.py` and its byte-identical
- * TypeScript twins at `omniagents/backends/web/ui/src/rpc/lifecycle.ts` and
- * `omniagents/backends/ink/tui/src/rpc/lifecycle.ts` (omniagents PR #293).
- * This file is a launcher-style port (formatting only) — the policy values,
- * classification tables, and backoff math must match the upstream module.
- * If a default changes upstream, change it here too.
+ * Standard connection-lifecycle policy for every OmniAgents GUI client: the
+ * TypeScript twin of `omniagents/rpc/lifecycle.py`. omniagents'
+ * `tests/unit/rpc/test_lifecycle.py` checks the defaults and error-code
+ * tables against the Python module; change both together.
  *
  * See `omniagents/rpc/protocol.md` §"Connection Lifecycle" for the normative
  * policy, including idempotency guidance for retries.

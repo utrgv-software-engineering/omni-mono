@@ -177,6 +177,7 @@ export type ChatSessionEvent =
     }
   // Direct item manipulation (slash commands, external updates)
   | { type: 'APPEND_RESPONSE'; content: string }
+  | { type: 'RUN_FAILED'; message: string }
   | { type: 'SET_SESSION_ID'; sessionId: string }
   // MCP-Apps ``ui/update-model-context`` — stage content for the next
   // user turn. ``source`` keys per-view (e.g. ``mcp_ui:<call_id>``) so
@@ -562,6 +563,13 @@ export const chatSessionMachine = setup({
     // Deliberately NOT runId-stamped: APPEND_RESPONSE carries out-of-band
     // content (slash-command results), not model output of a run — stamping
     // it would fold external text into the agent's activity chain.
+    appendRunFailure: assign({
+      items: ({ context, event }) => {
+        const e = event as Extract<ChatSessionEvent, { type: 'RUN_FAILED' }>;
+        return [...context.items, { type: 'chat' as const, role: 'system' as const, content: e.message }];
+      },
+    }),
+
     appendResponse: assign({
       items: ({ context, event }) => {
         const e = event as Extract<ChatSessionEvent, { type: 'APPEND_RESPONSE' }>;
@@ -642,6 +650,7 @@ export const chatSessionMachine = setup({
     HISTORY_LOADED: { actions: 'setHistoryItems' },
     CANONICAL_ITEM_UPDATED: { guard: 'acceptLoose', actions: 'upsertCanonicalItem' },
     APPEND_RESPONSE: { actions: 'appendResponse' },
+    RUN_FAILED: { actions: 'appendRunFailure' },
     ADD_ARTIFACT: { guard: 'acceptLoose', actions: 'addArtifact' },
     STAGE_CONTEXT: { actions: 'stageContext' },
     CLEAR_STAGED_CONTEXT: { actions: 'clearStagedContext' },

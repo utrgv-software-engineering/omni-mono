@@ -7,7 +7,6 @@ const sessionEvents = [
   'run_end',
   'run_status',
   'token',
-  'token_usage',
   'tool_called',
   'tool_result',
   'client_request',
@@ -93,11 +92,15 @@ export class SessionRegistry {
       this.cleanups.push(
         this.client.on(name, (payload) => {
           // Missing identity is not permission to broadcast into every chat.
-          const id = typeof payload?.session_id === 'string' ? payload.session_id : payload?.thread_id;
+          const { session_id: sessionId, thread_id: threadId } = (payload ?? {}) as {
+            session_id?: unknown;
+            thread_id?: unknown;
+          };
+          const id = typeof sessionId === 'string' ? sessionId : threadId;
           if (typeof id !== 'string') {
             return;
           }
-          if (typeof payload?.thread_id === 'string' && payload.thread_id !== id) {
+          if (typeof threadId === 'string' && threadId !== id) {
             return;
           }
           this.sessions.get(id)?.dispatch(name, payload);

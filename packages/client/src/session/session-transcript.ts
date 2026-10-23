@@ -4,6 +4,7 @@ import { ConversationClient } from '../rpc/conversation';
 import { mcpArtifact } from '../rpc/mcp-artifact';
 import { PlanDiffRecovery } from '../rpc/plan-diff-recovery';
 import { PlansAndDiffsClient } from '../rpc/plans-and-diffs';
+import { runFailureNotice } from '../transcript/run-failures';
 import { HIDDEN_TOOLS } from '../transcript/transcript-items';
 import type { ConversationSession } from './conversation-session';
 
@@ -74,6 +75,9 @@ export function wireSessionTranscript(session: ConversationSession, client: RPCC
 
     session.on('run_end', (p: any) => {
       const threadId = typeof p?.session_id === 'string' ? p.session_id : '';
+      if (p?.end_reason === 'error') {
+        actor.send({ type: 'RUN_FAILED', message: runFailureNotice(p?.error).content });
+      }
       actor.send({
         type: 'RUN_END',
         run_id: typeof p?.run_id === 'string' ? p.run_id : undefined,

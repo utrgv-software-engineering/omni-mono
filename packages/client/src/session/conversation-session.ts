@@ -6,6 +6,7 @@ import { createMachineLogger } from '../machines/machine-logger';
 import { adaptCanonicalConversationItems } from '../rpc/canonical-chat-history';
 import type { RPCClient } from '../rpc/client';
 import { ClientRequestNotPendingError } from '../rpc/client-response-error';
+import { ConversationClient, type ConversationTurn } from '../rpc/conversation';
 import type { ExecutionTarget, RunOverrides } from '../rpc/execution';
 import {
   findSlashCommand,
@@ -22,6 +23,7 @@ import {
   publishSubagentEvent,
   publishSubagentsSnapshot,
 } from '../transcript/activity-store';
+import { withRunFailureNotices } from '../transcript/run-failures';
 import { uuidv4 } from '../util/uuid';
 import { encodeMessage } from './encode-message';
 import { prepareConversation } from './prepare-conversation';
@@ -339,7 +341,7 @@ export class ConversationSession {
           throw new Error('Conversation connection was closed');
         }
         const snapshot = result.snapshot;
-        const items = adaptCanonicalConversationItems(snapshot.items);
+        const items = withRunFailureNotices(adaptCanonicalConversationItems(snapshot.items), await this.failedTurns());
         this.panels.set('queuedMessages', snapshot.queue);
         this.panels.set('escalation', null);
         this.snapshotCursor = { stream: snapshot.stream_id, seq: snapshot.last_seq };
@@ -384,6 +386,24 @@ export class ConversationSession {
       }
     })();
     return this.loading;
+  }
+
+  /** Turns of this conversation that ended in error; none when unreadable. */
+  private async failedTurns(): Promise<ConversationTurn[]> {
+    const conversations = new ConversationClient(this.client);
+    const failed: ConversationTurn[] = [];
+    try {
+      let cursor: string | undefined;
+      do {
+        const page = await conversations.listTurns(this.id, { limit: 200, cursor });
+        failed.push(...page.turns.filter((turn) => turn.end_reason === 'error'));
+        cursor = page.has_more && page.next_cursor ? page.next_cursor : undefined;
+      } while (cursor);
+    } catch {
+      // A conversation with no turns yet is unknown to the runtime; the
+      // notices are presentation, never a reason to fail the load.
+    }
+    return failed;
   }
 
   reconnected() {
@@ -597,6 +617,9 @@ export class ConversationSession {
     }
     this.receive({ type: 'SUBMIT', text, attachments, stagedContext: staged });
     try {
+      // Without an explicit target the run inherits the conversation's own
+      // binding, which the runtime resolves (a standalone server binds new
+      // conversations to its default environment).
       const target = options.executionTarget;
       const result = await this.submitOnce(submissionId, () =>
         this.client.startRun(
@@ -607,7 +630,7 @@ export class ConversationSession {
                 environment_id: target.environmentId,
                 environment_generation: target.environmentGeneration,
               }
-            : { mode: 'none' },
+            : { mode: 'inherit' },
           this.id,
           variables,
           content,

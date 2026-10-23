@@ -180,15 +180,15 @@ export interface StartRun {
   };
   environment_selection:
     | {
-        mode: 'inherit';
+        mode: "inherit";
       }
     | {
-        mode: 'none';
+        mode: "none";
       }
     | {
         environment_generation?: number;
         environment_id: string;
-        mode: 'explicit';
+        mode: "explicit";
       };
   group_id?: string;
   prompt: string;
@@ -438,11 +438,11 @@ export interface AgentHostRegisterWorkspace {
 export interface AgentHostRegisterProfile {
   definition:
     | {
-        kind: 'default';
+        kind: "default";
         project_id?: string;
       }
     | {
-        kind: 'path';
+        kind: "path";
         path: string;
       };
   owner_user_id?: string;
@@ -452,16 +452,16 @@ export interface AgentHostBindThread {
   binding: {
     environment_selection:
       | {
-          mode: 'none';
+          mode: "none";
         }
       | {
-          mode: 'automatic';
+          mode: "automatic";
           profile_id: string;
         }
       | {
           environment_generation?: number;
           environment_id: string;
-          mode: 'existing';
+          mode: "existing";
         };
     workspace_id: string | null;
   };

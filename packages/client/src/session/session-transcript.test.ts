@@ -156,3 +156,29 @@ it('adopts queued canonical messages live once and only in their owning session'
     session.dispose();
   }
 });
+
+it('says when a run fails instead of ending in silence', async () => {
+  const { client } = fakeSessionClient();
+  const session = new ConversationSession('failing-run', client);
+  try {
+    await session.load();
+    session.dispatch('run_started', { session_id: session.id, run_id: 'run-1' });
+    session.dispatch('run_end', {
+      session_id: session.id,
+      run_id: 'run-1',
+      end_reason: 'error',
+      error: { message: 'Error code: 401 - invalid api key' },
+    });
+    session.dispatch('run_started', { session_id: session.id, run_id: 'run-2' });
+    session.dispatch('run_end', { session_id: session.id, run_id: 'run-2', end_reason: 'completed' });
+    const notices = session.actor
+      .getSnapshot()
+      .context.items.filter((item) => item.type === 'chat' && item.role === 'system');
+    expect(notices).toEqual([
+      { type: 'chat', role: 'system', content: 'The run failed: Error code: 401 - invalid api key' },
+    ]);
+    expect(session.actor.getSnapshot().matches({ ready: 'idle' })).toBe(true);
+  } finally {
+    session.dispose();
+  }
+});

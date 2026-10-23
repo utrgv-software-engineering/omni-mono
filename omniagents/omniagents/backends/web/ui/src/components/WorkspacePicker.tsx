@@ -1,211 +1,160 @@
-import React, { useCallback, useEffect, useState } from 'react'
-import type { RPCClient } from '../rpc/client'
+import type { RPCClient } from '@omniagents/client/rpc/client';
+import { Button } from '@omniagents/ui/button';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@omniagents/ui/dialog';
+import { Input } from '@omniagents/ui/input';
+import { Spinner } from '@omniagents/ui/spinner';
+import { ArrowUpIcon, FolderIcon, HomeIcon } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
 
-type DirEntry = {
-  name: string
-  path: string
-  is_dir: boolean
-}
+type DirEntry = { name: string; path: string };
 
+type ListDirResult = {
+  path?: string;
+  parent?: string;
+  entries?: Array<{ name: string; path: string; is_dir?: boolean }>;
+};
+
+/** Browse the agent host's folders and pick the workspace for a new chat. */
 export function WorkspacePicker({
   client,
-  sessionId,
   initialPath,
   onSelect,
   onClose,
 }: {
-  client: RPCClient
-  sessionId?: string
-  initialPath?: string
-  onSelect: (path: string) => void
-  onClose: () => void
+  client: RPCClient;
+  initialPath?: string;
+  onSelect: (path: string) => void;
+  onClose: () => void;
 }) {
-  const [currentPath, setCurrentPath] = useState<string | null>(null)
-  const [parentPath, setParentPath] = useState<string | null>(null)
-  const [entries, setEntries] = useState<DirEntry[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [manualInput, setManualInput] = useState('')
-  const [editingPath, setEditingPath] = useState(false)
+  const [currentPath, setCurrentPath] = useState<string | null>(null);
+  const [parentPath, setParentPath] = useState<string | null>(null);
+  const [entries, setEntries] = useState<DirEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [typedPath, setTypedPath] = useState<string | null>(null);
 
-  const load = useCallback(async (path?: string | null) => {
-    setLoading(true)
-    setError(null)
-    try {
-      const res = await client.serverCall('fs_list_dir', {
-        path: path || undefined,
-        include_files: false,
-        ignore_hidden: true,
-      }, sessionId) as { path?: string; parent?: string; entries?: Array<{ name: string; path: string; is_dir?: boolean }> }
-      setCurrentPath(res.path || null)
-      setParentPath(res.parent || null)
-      setManualInput(res.path || '')
-      const list: DirEntry[] = []
-      if (Array.isArray(res.entries)) {
-        for (const e of res.entries) {
-          if (e && typeof e === 'object') {
-            list.push({ name: e.name, path: e.path, is_dir: !!e.is_dir })
-          }
-        }
+  const load = useCallback(
+    async (path?: string | null) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = (await client.serverCall('fs_list_dir', {
+          path: path || undefined,
+          include_files: false,
+          ignore_hidden: true,
+        })) as ListDirResult;
+        setCurrentPath(res.path || null);
+        setParentPath(res.parent || null);
+        setEntries(
+          (res.entries ?? [])
+            .filter((entry) => entry.is_dir !== false)
+            .map((entry) => ({ name: entry.name, path: entry.path }))
+        );
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        setLoading(false);
       }
-      setEntries(list)
-    } catch (e) {
-      setError(String((e as Error)?.message || e))
-    } finally {
-      setLoading(false)
+    },
+    [client]
+  );
+
+  const home = useCallback(async () => {
+    try {
+      const res = (await client.serverCall('fs_get_home')) as { path?: string };
+      return res.path;
+    } catch {
+      return undefined;
     }
-  }, [client, sessionId])
+  }, [client]);
 
   useEffect(() => {
-    (async () => {
-      let start = initialPath
+    void (async () => {
+      let start = initialPath;
       if (!start) {
         try {
-          // Start picker at the agent's workspace root (manifest root for
-          // sandboxed clients), not omni serve's host cwd.
-          const res = await client.serverCall('fs_get_workspace_root', {}, sessionId) as { path?: string }
-          start = res?.path
+          // The agent's workspace root, not the server's own working directory.
+          const res = (await client.serverCall('fs_get_workspace_root')) as { path?: string };
+          start = res.path;
         } catch {}
       }
-      if (!start) {
-        try {
-          const res = await client.serverCall('fs_get_home', {}, sessionId) as { path?: string }
-          start = res?.path
-        } catch {}
-      }
-      await load(start)
-    })()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleManualGo = useCallback(() => {
-    const trimmed = manualInput.trim()
-    if (trimmed) {
-      load(trimmed)
-      setEditingPath(false)
-    }
-  }, [manualInput, load])
+      await load(start ?? (await home()));
+    })();
+  }, [client, initialPath, load, home]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
-      <div
-        className="bg-bgMain border border-bgCardAlt rounded-xl shadow-2xl w-full max-w-lg mx-4 flex flex-col"
-        style={{ maxHeight: '80vh' }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-bgCardAlt">
-          <h2 className="text-sm font-semibold text-textHeading">Choose Workspace</h2>
-          <button
-            onClick={onClose}
-            className="text-textSubtle hover:text-textHeading p-1 rounded"
-            aria-label="Close"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d="M18 6L6 18M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-
-        {/* Path bar */}
-        <div className="flex items-center gap-2 px-4 py-2 border-b border-bgCardAlt">
-          <button
-            onClick={() => parentPath && load(parentPath)}
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="flex max-h-[80vh] flex-col gap-3 sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Choose workspace</DialogTitle>
+        </DialogHeader>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Parent folder"
             disabled={!parentPath}
-            className="flex-shrink-0 text-textSubtle hover:text-textHeading disabled:opacity-30 p-1 rounded"
-            aria-label="Go up"
-            title="Parent directory"
+            onClick={() => parentPath && void load(parentPath)}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d="M12 19V5M5 12l7-7 7 7" />
-            </svg>
-          </button>
-          <button
-            onClick={async () => {
-              try {
-                const res = await client.serverCall('fs_get_home', {}, sessionId) as { path?: string }
-                if (res?.path) load(res.path)
-              } catch {}
+            <ArrowUpIcon />
+          </Button>
+          <Button variant="ghost" size="icon-sm" aria-label="Home folder" onClick={() => void home().then(load)}>
+            <HomeIcon />
+          </Button>
+          <form
+            className="min-w-0 flex-1"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (typedPath?.trim()) {
+                void load(typedPath.trim());
+              }
+              setTypedPath(null);
             }}
-            className="flex-shrink-0 text-textSubtle hover:text-textHeading p-1 rounded"
-            aria-label="Home"
-            title="Home directory"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-              <polyline points="9 22 9 12 15 12 15 22" />
-            </svg>
-          </button>
-          {editingPath ? (
-            <form
-              className="flex-1 flex items-center gap-1"
-              onSubmit={(e) => { e.preventDefault(); handleManualGo() }}
-            >
-              <input
-                type="text"
-                value={manualInput}
-                onChange={(e) => setManualInput(e.target.value)}
-                onBlur={() => setEditingPath(false)}
-                onKeyDown={(e) => { if (e.key === 'Escape') setEditingPath(false) }}
-                autoFocus
-                className="flex-1 bg-bgCard text-textHeading text-xs rounded px-2 py-1 border border-bgCardAlt outline-none focus:border-tweetBlue"
-              />
-            </form>
-          ) : (
-            <button
-              onClick={() => setEditingPath(true)}
-              className="flex-1 text-left text-xs text-textHeading truncate hover:underline cursor-text px-1"
-              title={currentPath || ''}
-            >
-              {currentPath || '…'}
-            </button>
-          )}
+            <Input
+              aria-label="Folder path"
+              value={typedPath ?? currentPath ?? ''}
+              onChange={(event) => setTypedPath(event.target.value)}
+              onBlur={() => setTypedPath(null)}
+              className="h-8 text-xs"
+            />
+          </form>
         </div>
-
-        {/* Entries list */}
-        <div className="flex-1 overflow-y-auto min-h-0" style={{ maxHeight: '50vh' }}>
+        <div className="min-h-32 flex-1 overflow-y-auto rounded-md border">
           {loading ? (
-            <div className="flex items-center justify-center py-8">
-              <div className="animate-spin rounded-full h-5 w-5 border-2 border-tweetBlue border-t-transparent" />
+            <div className="flex justify-center py-8">
+              <Spinner />
             </div>
           ) : error ? (
-            <div className="px-4 py-6 text-sm text-errorRed text-center">{error}</div>
+            <p className="px-4 py-6 text-center text-sm text-destructive">{error}</p>
           ) : entries.length === 0 ? (
-            <div className="px-4 py-6 text-sm text-textSubtle text-center">No subdirectories</div>
+            <p className="px-4 py-6 text-center text-sm text-muted-foreground">No subfolders</p>
           ) : (
-            <div className="py-1">
+            <ul className="py-1">
               {entries.map((entry) => (
-                <button
-                  key={entry.path}
-                  onClick={() => load(entry.path)}
-                  className="w-full flex items-center gap-3 px-4 py-2 text-left hover:bg-bgCard/50 transition-colors"
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" className="flex-shrink-0 text-tweetBlue" fill="currentColor">
-                    <path d="M2 6a2 2 0 012-2h5l2 2h9a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
-                  </svg>
-                  <span className="text-sm text-textHeading truncate">{entry.name}</span>
-                </button>
+                <li key={entry.path}>
+                  <button
+                    type="button"
+                    onClick={() => void load(entry.path)}
+                    className="flex w-full items-center gap-3 px-3 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+                  >
+                    <FolderIcon className="shrink-0 text-muted-foreground" />
+                    <span className="truncate">{entry.name}</span>
+                  </button>
+                </li>
               ))}
-            </div>
+            </ul>
           )}
         </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-bgCardAlt">
-          <button
-            onClick={onClose}
-            className="px-3 py-1.5 text-sm text-textSubtle hover:text-textHeading rounded-lg hover:bg-bgCard transition-colors"
-          >
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>
             Cancel
-          </button>
-          <button
-            onClick={() => currentPath && onSelect(currentPath)}
-            disabled={!currentPath}
-            className="px-4 py-1.5 text-sm font-medium bg-tweetBlue text-white rounded-lg hover:brightness-110 disabled:opacity-50 transition-all"
-          >
-            Use This Folder
-          </button>
-        </div>
-      </div>
-    </div>
-  )
+          </Button>
+          <Button disabled={!currentPath} onClick={() => currentPath && onSelect(currentPath)}>
+            Use this folder
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }

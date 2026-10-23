@@ -60,19 +60,15 @@ A complete, self-contained plan to implement a new backend launched via `omniage
     - Call `build_app(config_path=..., spec=..., auth_token=...)` (from `omniagents/backends/server/app.py`).
     - Bind to `127.0.0.1:<free_port>`.
     - Wait for server readiness (socket connect retry loop).
-    - Resolve UI `dist/` folder (see Auto-build section) and mount via `StaticFiles` at `/` (root) with index.
+    - Resolve the built UI `dist/` folder (`OMNI_WEB_UI_PATH`, else the packaged one) and mount via `StaticFiles` at `/` (root) with index.
     - Open default browser to `http://127.0.0.1:<port>/`.
     - Apply CLI overrides: `apply_cli_overrides(spec, args)` so SafeAgent flags work.
     - Accept `session_id`, `resume`, `initial_prompt`, `debug`, `auth_token` in kwargs.
   - Environment variables:
-    - `OMNI_WEB_AUTO_BUILD`: "0"/"false" disables auto-build (default: enabled).
-    - `OMNI_WEB_UI_PATH`: absolute path to a prebuilt `dist/` folder to skip build.
+    - `OMNI_WEB_UI_PATH`: absolute path to a built `dist/` folder.
     - `OMNI_DEBUG`: enable backend debug prints (also from `--debug`).
-  - Cache directory (platform-specific):
-    - Linux: `~/.cache/omniagents/web/ui`
-    - macOS: `~/Library/Caches/OmniAgents/web/ui`
-    - Windows: `%LOCALAPPDATA%/OmniAgents/web/ui`
-  - Stamp/hash file: `omni-web-ui.hash` (to avoid redundant cache sync/build).
+  - The UI is never built at runtime: it imports the shared `@omniagents/*`
+    packages of the omni-mono npm workspace, and the wheel ships `ui/dist`.
 
 4) Frontend scaffold (React + Tailwind)
 - New folder: `omniagents/backends/web/ui/`
@@ -157,15 +153,13 @@ A complete, self-contained plan to implement a new backend launched via `omniage
 
 ## Environment & Commands
 
-- Frontend build (development):
-  - `cd omniagents/backends/web/ui`
+- Frontend build (development), from the omni-mono root:
   - `npm install`
-  - `npm run build`
+  - `npm run build --workspace omniagents-web-ui`
 - Run web backend:
   - `omniagents run -P project.yml --mode web`
   - Options: `--resume`, `--session-id <id>`, `--debug`, `--auth-token <token>`, `--ui-minimal`
 - Env vars:
-  - `OMNI_WEB_AUTO_BUILD=0` to disable auto-build
   - `OMNI_WEB_UI_PATH=/abs/path/to/ui/dist` to use prebuilt assets
   - `OMNI_DEBUG=1` for verbose backend logs
   - `OMNI_WEB_AUTO_OPEN=0` to skip launching the default browser (headless mode)

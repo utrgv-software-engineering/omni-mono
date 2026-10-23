@@ -1,0 +1,14 @@
+@import 'tailwindcss';
+@import '@omniagents/ui/theme.css';
+@import '@omniagents/chat-ui/styles.css';
+@plugin '@tailwindcss/typography';
+
+/* streamdown ships Tailwind class strings in its build; npm hoists it to the
+ * monorepo root. */
+@source "../../../../../../node_modules/streamdown/dist";
+
+html,
+body,
+#root {
+  height: 100%;
+}

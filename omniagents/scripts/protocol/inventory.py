@@ -2,7 +2,10 @@ import ast
 from pathlib import Path
 import re
 
-CALL_PATTERN = re.compile(r"(?:this\.)?call(?:<[^>]+>)?\(\s*['\"]([a-z_]+)['\"]")
+# A request: `call('x'` / `this.call('x'` / `request('x'`.
+CALL_PATTERN = re.compile(
+    r"(?:this\.)?(?:call|request)(?:<[^>]+>)?\(\s*['\"]([a-z_]+)['\"]"
+)
 HANDLER_PATTERN = re.compile(r"\.on\(\s*['\"]([a-z_]+)['\"]")
 
 

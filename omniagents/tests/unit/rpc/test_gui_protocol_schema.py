@@ -1,6 +1,7 @@
 import hashlib
 import importlib
 import json
+import re
 from pathlib import Path
 import subprocess
 
@@ -352,9 +353,24 @@ def test_catalog_requests_exist_on_real_agent_service():
     assert GUI_RPC_METHODS == catalog_requests
 
 
+def _shared_client_sources() -> list[Path]:
+    """The TypeScript every OmniAgents UI talks to the GUI protocol through.
+
+    Realtime voice speaks the separate /ws/realtime protocol (excluded from
+    the inventory), so its client is not scanned.
+    """
+    packages = ROOT.parent / "packages"
+    return sorted(
+        path
+        for package in ("client", "chat-ui")
+        for path in (packages / package / "src").rglob("*.ts*")
+        if ".test." not in path.name and "realtime" not in path.name
+    )
+
+
 def test_maintained_client_rpc_calls_are_cataloged():
     paths = [
-        ROOT / "omniagents/backends/web/ui/src/rpc/client.ts",
+        *_shared_client_sources(),
         ROOT / "omniagents/backends/ink/tui/src/rpc/client.ts",
     ]
     discovered = discover_client_rpc_calls(paths)
@@ -362,15 +378,25 @@ def test_maintained_client_rpc_calls_are_cataloged():
         operation.name for operation in OPERATIONS if operation.kind == "request"
     }
     assert not missing_from_catalog(discovered, catalog)
-    assert {"start_run", "archive_session", "enqueue_message"} <= discovered
+    assert {"start_run", "update_thread", "enqueue_message"} <= discovered
+
+
+def _session_routed_notifications() -> set[str]:
+    """Notifications the shared client routes to its conversation sessions."""
+    source = (
+        ROOT.parent / "packages/client/src/session/session-registry.ts"
+    ).read_text()
+    table = re.search(r"const sessionEvents = \[(.*?)\] as const", source, re.S)
+    assert table, "sessionEvents table not found"
+    return set(re.findall(r"'([a-z_]+)'", table.group(1)))
 
 
 def test_maintained_notification_handlers_are_cataloged():
     paths = [
-        ROOT / "omniagents/backends/web/ui/src/App.tsx",
+        *_shared_client_sources(),
         ROOT / "omniagents/backends/ink/tui/src/hooks/useMessagesNew.ts",
     ]
-    discovered = discover_notification_handlers(paths)
+    discovered = discover_notification_handlers(paths) | _session_routed_notifications()
     catalog = {
         operation.name for operation in OPERATIONS if operation.kind != "request"
     }

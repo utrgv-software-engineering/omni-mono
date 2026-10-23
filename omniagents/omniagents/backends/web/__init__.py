@@ -1,7 +1,6 @@
 import os
 import sys
 import time
-import platform
 import shutil
 import subprocess
 import webbrowser
@@ -142,13 +141,12 @@ class WebBackend:
         dev_port = int(getattr(args, "dev_port", 5173) or 5173)
 
         if not dev_flag:
-            dist_dir = self._resolve_dist_dir(debug=debug)
+            dist_dir = self._resolve_dist_dir()
             if dist_dir is None:
                 print("Error: Web UI not found.")
-                print("Manual build:")
-                print("  cd omniagents/backends/web/ui")
+                print("Build it from the omni-mono checkout:")
                 print("  npm install")
-                print("  npm run build")
+                print("  npm run build --workspace omniagents-web-ui")
                 sys.exit(1)
             # SPA shell with pre-bootstrap workspace seed. We intercept GET /
             # and GET /index.html before the StaticFiles mount so we can inject
@@ -192,7 +190,9 @@ class WebBackend:
             config_kwargs["ssl_certfile"] = ssl_cert
             config_kwargs["ssl_keyfile"] = ssl_key
         try:
-            server = BackgroundServer(uvicorn.Config(app, **config_kwargs), sock).start()
+            server = BackgroundServer(
+                uvicorn.Config(app, **config_kwargs), sock
+            ).start()
         except RuntimeError as e:
             print(f"Error: Failed to start server on port {port}: {e}")
             sys.exit(1)
@@ -380,7 +380,10 @@ class WebBackend:
                 continue
         return url
 
-    def _resolve_dist_dir(self, debug: bool = False) -> Optional[Path]:
+    def _resolve_dist_dir(self) -> Optional[Path]:
+        """The built web UI: ``OMNI_WEB_UI_PATH``, else the one shipped in the
+        package. It is built in the monorepo's npm workspace, which the shared
+        chat packages it imports belong to, so it cannot be rebuilt here."""
         override = os.environ.get("OMNI_WEB_UI_PATH")
         if override:
             p = Path(override).expanduser()
@@ -389,160 +392,7 @@ class WebBackend:
         packaged = Path(__file__).parent / "ui" / "dist"
         if packaged.is_dir() and (packaged / "index.html").exists():
             return packaged
-        cache_dir = self._cache_dir()
-        if cache_dir is not None:
-            candidate = cache_dir / "dist"
-            if candidate.is_dir() and (candidate / "index.html").exists():
-                return candidate
-        auto_build = os.environ.get("OMNI_WEB_AUTO_BUILD", "1").lower() not in {
-            "0",
-            "false",
-            "no",
-        }
-        if auto_build:
-            try:
-                built = self._build_ui(debug=debug)
-                return built
-            except SystemExit:
-                raise
-            except Exception as e:
-                print(f"Error: Failed to build web UI: {e}")
-                return None
         return None
-
-    def _build_ui(self, debug: bool = False) -> Path:
-        if shutil.which("npm") is None or shutil.which("node") is None:
-            print("Error: Node.js/npm not found.")
-            raise SystemExit(1)
-        try:
-            v = subprocess.check_output(["node", "-v"], text=True).strip()
-            if v.startswith("v"):
-                v = v[1:]
-            major = int((v.split(".") or ["0"])[0])
-            if major < 18:
-                print("Error: Node.js >= 18 required.")
-                raise SystemExit(1)
-        except Exception:
-            pass
-
-        src_base = Path(__file__).parent / "ui"
-        if not src_base.exists():
-            raise SystemExit(1)
-        cache_dir = self._cache_dir() or src_base
-        src_hash = self._compute_source_hash(src_base)
-        stamp = self._stamp_path(cache_dir)
-        need_sync = True
-        try:
-            if (
-                stamp.exists()
-                and src_hash
-                and stamp.read_text(encoding="utf-8").strip() == src_hash
-            ):
-                need_sync = False
-        except Exception:
-            need_sync = True
-        if need_sync and cache_dir != src_base:
-            if cache_dir.exists():
-                try:
-                    shutil.rmtree(cache_dir)
-                except Exception:
-                    pass
-            shutil.copytree(src_base, cache_dir)
-
-        env = os.environ.copy()
-        env.setdefault("NPM_CONFIG_AUDIT", "false")
-        env.setdefault("NPM_CONFIG_FUND", "false")
-        install_cmd = ["npm", "install"]
-        lockfile = cache_dir / "package-lock.json"
-        if lockfile.exists():
-            install_cmd = ["npm", "ci"]
-        try:
-            subprocess.run(
-                install_cmd,
-                cwd=str(cache_dir),
-                check=True,
-                env=env,
-                stdout=None if debug else subprocess.PIPE,
-                stderr=None if debug else subprocess.PIPE,
-                text=True,
-            )
-        except subprocess.CalledProcessError as e:
-            raise SystemExit(e.returncode)
-        try:
-            subprocess.run(
-                ["npm", "run", "build"],
-                cwd=str(cache_dir),
-                check=True,
-                env=env,
-                stdout=None if debug else subprocess.PIPE,
-                stderr=None if debug else subprocess.PIPE,
-                text=True,
-            )
-        except subprocess.CalledProcessError as e:
-            raise SystemExit(e.returncode)
-        out_dir = cache_dir / "dist"
-        if not out_dir.is_dir() or not (out_dir / "index.html").exists():
-            raise SystemExit(1)
-        try:
-            if src_hash:
-                stamp.write_text(src_hash + "\n", encoding="utf-8")
-        except Exception:
-            pass
-        return out_dir
-
-    def _cache_dir(self) -> Optional[Path]:
-        base = self._user_cache_dir()
-        if base is None:
-            return None
-        dest = base / "web" / "ui"
-        dest.mkdir(parents=True, exist_ok=True)
-        return dest
-
-    def _user_cache_dir(self) -> Optional[Path]:
-        home = Path.home()
-        system = platform.system().lower()
-        if system == "windows":
-            base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
-            if not base:
-                return None
-            return Path(base) / "OmniAgents"
-        elif system == "darwin":
-            return home / "Library" / "Caches" / "OmniAgents"
-        else:
-            xdg = os.environ.get("XDG_CACHE_HOME")
-            if xdg:
-                return Path(xdg) / "omniagents"
-            return home / ".cache" / "omniagents"
-
-    def _stamp_path(self, cache_dir: Path) -> Path:
-        return cache_dir / "omni-web-ui.hash"
-
-    def _compute_source_hash(self, src_base: Path) -> Optional[str]:
-        try:
-            files = []
-            for root, _dirs, names in os.walk(src_base / "src"):
-                for n in names:
-                    if n.endswith(".ts") or n.endswith(".tsx"):
-                        files.append(str(Path(root) / n))
-            files.append(str(src_base / "package.json"))
-            files.append(str(src_base / "tsconfig.json"))
-            tcfg = src_base / "tailwind.config.js"
-            if tcfg.exists():
-                files.append(str(tcfg))
-            pcfg = src_base / "postcss.config.js"
-            if pcfg.exists():
-                files.append(str(pcfg))
-            files = [f for f in files if os.path.isfile(f)]
-            files.sort()
-            import hashlib as _hashlib
-
-            digest = _hashlib.sha256()
-            for f in files:
-                with open(f, "rb") as fh:
-                    digest.update(fh.read())
-            return digest.hexdigest()
-        except Exception:
-            return None
 
 
 __all__ = ["WebBackend"]
