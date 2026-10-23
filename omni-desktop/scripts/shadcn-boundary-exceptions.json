@@ -146,14 +146,14 @@
     },
     {
       "rule": "arbitrary-value",
-      "file": "src/renderer/omniagents-ui/activity-presentation.tsx",
+      "file": "../packages/chat-ui/src/activity-presentation.tsx",
       "match": "grid-cols-[auto_minmax(0,1fr)]",
       "source": "<dl className=\"grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-xs\">",
       "reason": "Term/description list: the label column sizes to content and the value column takes the rest without overflowing."
     },
     {
       "rule": "inline-style",
-      "file": "src/renderer/omniagents-ui/components/MessageList.tsx",
+      "file": "../packages/chat-ui/src/components/MessageList.tsx",
       "match": "style",
       "source": "style={{ height }}",
       "expressionHash": "d196116ff7362e251c07463033f3787989ad96b6f75fc5a9c585826cd536b908",
@@ -161,21 +161,21 @@
     },
     {
       "rule": "arbitrary-value",
-      "file": "src/renderer/omniagents-ui/components/PillStrip.tsx",
+      "file": "../packages/chat-ui/src/components/PillStrip.tsx",
       "match": "max-w-[90vw]",
       "source": "<PopoverContent side=\"top\" align=\"start\" className=\"w-96 max-w-[90vw] p-0 text-xs\">",
       "reason": "The popover caps at 90% of the viewport width so it never overflows a narrow window."
     },
     {
       "rule": "arbitrary-value",
-      "file": "src/renderer/omniagents-ui/components/ai/chain-of-thought.tsx",
+      "file": "../packages/chat-ui/src/components/ai/chain-of-thought.tsx",
       "match": "max-h-[22rem]",
       "source": "<div className=\"relative flex max-h-[22rem] items-center justify-center overflow-hidden rounded-lg bg-muted p-3\">",
       "reason": "Image previews in a reasoning step cap at 22rem tall so one image cannot push the transcript off screen."
     },
     {
       "rule": "inline-style",
-      "file": "src/renderer/omniagents-ui/components/ai/code-block.tsx",
+      "file": "../packages/chat-ui/src/components/ai/code-block.tsx",
       "match": "style",
       "source": "style={{\n    backgroundColor: token.bgColor,\n    color: token.color,\n    fontStyle: isItalic(token.fontStyle) ? 'italic' : undefined,\n    fontWeight: isBold(token.fontStyle) ? 'bold' : undefined,\n    textDecoration: isUnderline(token.fontStyle) ? 'underline' : undefined,\n    ...token.htmlStyle,\n}}",
       "expressionHash": "7c0e5be045032502ac801b01eb959aebd929058c723d90d167c794e9088bc772",
@@ -183,7 +183,7 @@
     },
     {
       "rule": "inline-style",
-      "file": "src/renderer/omniagents-ui/components/ai/code-block.tsx",
+      "file": "../packages/chat-ui/src/components/ai/code-block.tsx",
       "match": "style",
       "source": "style={useMemo(() => ({ backgroundColor: tokenized.bg, color: tokenized.fg }), [tokenized.bg, tokenized.fg])}",
       "expressionHash": "60996f74a06d51e67363fe3e939bce85ab6336562273011f6d41eb635b01d5ea",

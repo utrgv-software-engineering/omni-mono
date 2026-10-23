@@ -11,11 +11,11 @@
  */
 
 import { useStore } from '@nanostores/react';
+import { getVoiceMic, resolveCodeVoiceScope } from '@omniagents/chat-ui/services/voice-recording';
 import { useCallback, useRef } from 'react';
 import { useHotkeys } from 'react-hotkeys-hook';
 
 import { persistedStoreApi } from '@/renderer/services/store';
-import { getVoiceMic, resolveCodeVoiceScope } from '@/renderer/services/voice-recording';
 
 // keyup too, so a hold can send on release.
 const hotkeyOptions = { enableOnFormTags: true, preventDefault: true, keydown: true, keyup: true } as const;

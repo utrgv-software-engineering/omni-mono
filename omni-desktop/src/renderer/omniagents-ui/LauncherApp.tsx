@@ -1,17 +1,16 @@
+import type { ClientToolCallHandler } from '@omniagents/chat-ui/App';
+import { App as OmniAgentsCore } from '@omniagents/chat-ui/App';
+import type { PendingMessage } from '@omniagents/chat-ui/ChatShell';
+import { RPCClientProvider } from '@omniagents/chat-ui/rpc-context';
+import type { SessionController } from '@omniagents/chat-ui/session-controller';
+import { UiConfigProvider } from '@omniagents/chat-ui/ui-config';
 import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
 import type { PlanItem } from '@omniagents/client/transcript/chat-types';
 import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 
 import { serverOrigin } from '@/renderer/services/ipc';
-import type { SessionController } from '@/renderer/services/session-control';
 import type { AgentRuntimeConnection } from '@/shared/types';
-
-import type { ClientToolCallHandler } from './App';
-import { App as OmniAgentsCore } from './App';
-import type { PendingMessage } from './ChatShell';
-import { RPCClientProvider } from './rpc-context';
-import { UiConfigProvider } from './ui-config';
 
 type OmniAgentsAppProps = {
   /** RPC server connection for the directly embedded React client. */

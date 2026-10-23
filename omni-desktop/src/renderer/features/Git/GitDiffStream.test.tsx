@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { GitDiffStream } from './GitDiffStream';
 
-vi.mock('@/renderer/omniagents-ui/components/ai/code-block', () => ({
+vi.mock('@omniagents/chat-ui/components/ai/code-block', () => ({
   highlightCode: () => null,
   TokenSpan: () => null,
 }));

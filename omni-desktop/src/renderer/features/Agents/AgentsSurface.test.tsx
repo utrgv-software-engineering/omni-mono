@@ -1,3 +1,4 @@
+import { withChatHost } from '@omniagents/chat-ui/testing/chat-host';
 import {
   $subagentTranscriptsBySession,
   type ActivityActions,
@@ -42,7 +43,7 @@ beforeEach(() => {
   vi.stubGlobal('ResizeObserver', ResizeObserverStub);
   container = document.createElement('div');
   document.body.appendChild(container);
-  root = createRoot(container);
+  root = withChatHost(createRoot(container));
 });
 
 afterEach(() => {
@@ -146,7 +147,7 @@ describe('AgentsSurface worker-plan drill-down', () => {
     expect(workerPlanSection()).toBeNull();
 
     await act(async () => root.unmount());
-    root = createRoot(container);
+    root = withChatHost(createRoot(container));
     await renderSubagentDetail(worker(), null);
     expect(workerPlanSection()).toBeNull();
   });

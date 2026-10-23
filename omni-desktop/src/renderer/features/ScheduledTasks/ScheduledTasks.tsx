@@ -1,4 +1,5 @@
 import { useStore } from '@nanostores/react';
+import { formatDuration, formatTimestamp } from '@omniagents/chat-ui/lib/format-time';
 import { Alert, AlertDescription } from '@omniagents/ui/alert';
 import {
   AlertDialog,
@@ -29,7 +30,6 @@ import { Textarea } from '@omniagents/ui/textarea';
 import { Edit, Ellipsis, ExternalLink, Play, Plus, Trash2 } from 'lucide-react';
 import { memo, useCallback, useId, useMemo, useState } from 'react';
 
-import { formatDuration, formatTimestamp } from '@/lib/format-time';
 import { useIsDesktop } from '@/renderer/common/use-is-desktop';
 import { TopAppBar } from '@/renderer/ds/TopAppBar';
 import { toast } from '@/renderer/features/Toast/state';

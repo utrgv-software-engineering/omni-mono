@@ -1,4 +1,5 @@
 import { useStore } from '@nanostores/react';
+import { useRPCClient, useRPCConnected } from '@omniagents/chat-ui/rpc-context';
 import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
 import { FsClient, WatchRegistry } from '@omniagents/client/rpc/fs';
 import { Alert, AlertDescription, AlertTitle } from '@omniagents/ui/alert';
@@ -24,7 +25,6 @@ import { PanelLeftIcon, TriangleAlert } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-import { useRPCClient, useRPCConnected } from '@/renderer/omniagents-ui/rpc-context';
 import { persistedStoreApi } from '@/renderer/services/store';
 import { type FileEditorLease, FileEditorRegistry } from '@/shared/machines/file-editor-registry';
 import type { WorkspaceMountDescriptor } from '@/shared/types';

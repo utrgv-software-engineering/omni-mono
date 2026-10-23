@@ -1,4 +1,25 @@
 import { useStore } from '@nanostores/react';
+import {
+  ActivityBackButton,
+  ActivityDetailLabel,
+  ActivityListRow,
+  ActivityMetaGrid,
+  ActivitySectionLabel,
+  ActivityStopButton,
+  groupSubagents,
+  KindBadge,
+  PlanTaskRow,
+  StatusDot,
+  type StopController,
+  subagentDotClass,
+  SubagentElapsed,
+  subagentLabel,
+  SubagentTail,
+  useActivityDetail,
+  useStopController,
+} from '@omniagents/chat-ui/activity-presentation';
+import { MessageList } from '@omniagents/chat-ui/components/MessageList';
+import { formatTimestamp } from '@omniagents/chat-ui/lib/format-time';
 import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
 import {
   $activityActionsBySession,
@@ -20,28 +41,7 @@ import { BotIcon } from 'lucide-react';
 import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
-import { formatTimestamp } from '@/lib/format-time';
 import { OmniAgentsApp } from '@/renderer/omniagents-ui';
-import {
-  ActivityBackButton,
-  ActivityDetailLabel,
-  ActivityListRow,
-  ActivityMetaGrid,
-  ActivitySectionLabel,
-  ActivityStopButton,
-  groupSubagents,
-  KindBadge,
-  PlanTaskRow,
-  StatusDot,
-  type StopController,
-  subagentDotClass,
-  SubagentElapsed,
-  subagentLabel,
-  SubagentTail,
-  useActivityDetail,
-  useStopController,
-} from '@/renderer/omniagents-ui/activity-presentation';
-import { MessageList } from '@/renderer/omniagents-ui/components/MessageList';
 import { serverOrigin } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { AgentRuntimeConnection } from '@/shared/types';

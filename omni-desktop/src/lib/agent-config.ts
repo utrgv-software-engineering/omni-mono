@@ -4,6 +4,8 @@
  * No fs, Electron, or node:crypto imports — safe for the renderer, main, and
  * server bundles alike.
  */
+import { modelProvider } from '@omniagents/client/rpc/model-catalog';
+
 import type { ModelsConfig } from '@/shared/types';
 
 /** Empty `models.json` (current schema version). */
@@ -37,15 +39,6 @@ export function parseEnvVars(content: string): Record<string, string> {
     out[key] = raw.slice(eq + 1);
   }
   return out;
-}
-
-/** Provider identity is the catalog key, not the transport type (e.g. azure). */
-export function modelProvider(ref: string | null | undefined): string | null {
-  if (!ref) {
-    return null;
-  }
-  const slash = ref.indexOf('/');
-  return slash < 0 ? 'openai' : ref.slice(0, slash);
 }
 
 export const PROVIDER_CONNECTION_FIELDS = [

@@ -1,7 +1,8 @@
+import type { RoutineEvent } from '@omniagents/chat-ui/host';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ScheduledTaskManager } from '@/main/scheduled-task-manager';
-import type { RoutineBridgeEvent, ScheduledTask, StoreData } from '@/shared/types';
+import type { ScheduledTask, StoreData } from '@/shared/types';
 
 const now = 1_700_000_000_000;
 
@@ -35,14 +36,14 @@ function createStore(storeData: Partial<StoreData>) {
 
 /** Mock RoutineBridge that records dispatches and lets tests emit events. */
 function createBridge(startRunResult: { runId: string } = { runId: 'run-1' }) {
-  let handler: ((event: RoutineBridgeEvent) => void) | undefined;
+  let handler: ((event: RoutineEvent) => void) | undefined;
   const calls = {
     ensureColumn: [] as Array<{ taskId: string; sessionId: string; activate?: boolean }>,
     startRun: [] as Array<{ taskId: string; prompt: string; safeToolOverrides?: unknown }>,
     stop: [] as string[],
   };
   const bridge = {
-    onEvent: (h: (event: RoutineBridgeEvent) => void) => {
+    onEvent: (h: (event: RoutineEvent) => void) => {
       handler = h;
       return () => {
         handler = undefined;
@@ -63,7 +64,7 @@ function createBridge(startRunResult: { runId: string } = { runId: 'run-1' }) {
   return {
     bridge: bridge as any,
     calls,
-    emit: (event: RoutineBridgeEvent) => handler?.(event),
+    emit: (event: RoutineEvent) => handler?.(event),
   };
 }
 

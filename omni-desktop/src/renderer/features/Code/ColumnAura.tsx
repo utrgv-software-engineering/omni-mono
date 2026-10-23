@@ -19,9 +19,9 @@
 import './CodeVisualEffects.css';
 
 import { useStore } from '@nanostores/react';
+import { $columnActivity } from '@omniagents/chat-ui/services/column-activity';
+import { $recordingScope } from '@omniagents/chat-ui/services/voice-recording';
 
-import { $columnActivity } from '@/renderer/services/column-activity';
-import { $recordingScope } from '@/renderer/services/voice-recording';
 import type { AutoLaunchPhase } from '@/shared/machines/auto-launch.machine';
 
 import { $codeTabPhases } from './state';

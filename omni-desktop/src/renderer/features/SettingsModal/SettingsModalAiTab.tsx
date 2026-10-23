@@ -1,4 +1,5 @@
 import { useStore } from '@nanostores/react';
+import { modelProvider } from '@omniagents/client/rpc/model-catalog';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@omniagents/ui/accordion';
 import {
   AlertDialog,
@@ -23,7 +24,6 @@ import { Plus, Trash2 } from 'lucide-react';
 import type { ChangeEvent } from 'react';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 
-import { modelProvider } from '@/lib/agent-config';
 import { buildCodexConfig, probeForProvider } from '@/lib/provider-config';
 import { SaveBar } from '@/renderer/ds/SaveBar';
 import {

@@ -1,3 +1,4 @@
+import type { AudioSettings, RoutineEvent } from '@omniagents/chat-ui/host';
 import type { RunOverrides } from '@omniagents/client/rpc/execution';
 import type { OmniTheme } from '@omniagents/ui/themes';
 import type { Rectangle } from 'electron/main';
@@ -19,16 +20,6 @@ export type WindowProps = {
  * Data stored in the electron store.
  */
 export type LayoutMode = 'work' | 'chat' | 'routines' | 'plugins' | 'settings' | 'gallery';
-
-export type AudioSettings = {
-  /** mediaDevices deviceId for the input mic. Null = OS default. */
-  inputDeviceId: string | null;
-  /** mediaDevices deviceId for output (applied via setSinkId on a routed <audio> element). Null = OS default. */
-  outputDeviceId: string | null;
-  echoCancellation: boolean;
-  noiseSuppression: boolean;
-  autoGainControl: boolean;
-};
 
 export type WslBackend = {
   kind: 'wsl';
@@ -1537,26 +1528,13 @@ export type RoutineBridgeRequest =
   | { kind: 'stop'; taskId: string }
   | { kind: 'dispose'; taskId: string };
 
-export type RoutineApprovalRequest = {
-  kind: 'function' | 'mcp';
-  toolName?: string;
-  serverLabel?: string;
-};
-
-export type RoutineBridgeEvent =
-  | { kind: 'run-started'; taskId: string; runId: string }
-  | { kind: 'run-end'; taskId: string; reason: string }
-  | { kind: 'approval-requested'; taskId: string; approval: RoutineApprovalRequest }
-  | { kind: 'approval-resolved'; taskId: string }
-  | { kind: 'disconnected'; taskId: string };
-
 type RoutineIpcEvents = Namespaced<
   'routine',
   {
     /** Renderer reports the result of a routine bridge request issued by main. */
     'dispatch-result': (requestId: string, ok: boolean, result?: { runId?: string }, error?: string) => void;
     /** Renderer forwards a routine run/approval event so main can update history. */
-    event: (event: RoutineBridgeEvent) => void;
+    event: (event: RoutineEvent) => void;
     /**
      * Renderer announces its dispatch listener is wired. Main queues
      * `routine:dispatch` sends until this arrives — at boot the manager can

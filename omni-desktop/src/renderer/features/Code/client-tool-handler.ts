@@ -9,12 +9,13 @@
  * in omniagents-ui/App.tsx).
  */
 
+import type { ClientToolCallHandler } from '@omniagents/chat-ui/App';
+
 import { listAppsForScope } from '@/renderer/features/AppControl/app-catalog';
 import { requestAppLaunch } from '@/renderer/features/AppControl/app-launch-bridge';
 import { resolveAppHandle } from '@/renderer/features/AppControl/live-registry';
 import { requestPlanApproval } from '@/renderer/features/Code/plan-approval-bridge';
 import { requestPreviewOpen } from '@/renderer/features/Code/preview-bridge';
-import type { ClientToolCallHandler } from '@/renderer/omniagents-ui/App';
 import { emitter } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
 import { getVoiceClient } from '@/renderer/services/voice-client';

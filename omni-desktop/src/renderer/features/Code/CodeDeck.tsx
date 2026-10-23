@@ -2,6 +2,8 @@ import { DndContext, type DragEndEvent, PointerSensor, useSensor, useSensors } f
 import { arrayMove, horizontalListSortingStrategy, SortableContext, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useStore } from '@nanostores/react';
+import { OmniAgentsHeaderActionsSlot } from '@omniagents/chat-ui/header-actions';
+import { $columnActivity, activityStatusText } from '@omniagents/chat-ui/services/column-activity';
 import { Button } from '@omniagents/ui/button';
 import { cn } from '@omniagents/ui/cn';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@omniagents/ui/dropdown-menu';
@@ -23,9 +25,7 @@ import { BrowserView } from '@/renderer/features/Browser/BrowserView';
 import { $previewRequest, clearPreviewRequest } from '@/renderer/features/Code/preview-bridge';
 import { ConsoleStarted } from '@/renderer/features/Console/ConsoleRunning';
 import { JobsSurface } from '@/renderer/features/Jobs';
-import { OmniAgentsHeaderActionsSlot } from '@/renderer/omniagents-ui/header-actions';
 import { $agentStatuses } from '@/renderer/services/agent-process';
-import { $columnActivity, activityStatusText } from '@/renderer/services/column-activity';
 import { persistedStoreApi } from '@/renderer/services/store';
 import { FADE_DURATION_S } from '@/renderer/theme/motion';
 import type { AppDescriptor, AppId } from '@/shared/app-registry';

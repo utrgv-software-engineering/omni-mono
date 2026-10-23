@@ -1,15 +1,14 @@
-import type { MessageItem } from '@omniagents/client/transcript/chat-types';
-import { describe, expect, it } from 'vitest';
-
 import {
   createCursorAssigner,
   fullEntry,
-  getSessionController,
   lastEntrySignal,
-  registerSessionController,
   type SessionController,
   transcriptPage,
-} from '@/renderer/services/session-control';
+} from '@omniagents/chat-ui/session-controller';
+import type { MessageItem } from '@omniagents/client/transcript/chat-types';
+import { describe, expect, it } from 'vitest';
+
+import { getSessionController, registerSessionController } from '@/renderer/services/session-control';
 
 const stub = (over?: Partial<SessionController>): SessionController => ({
   sendMessage: () => {},

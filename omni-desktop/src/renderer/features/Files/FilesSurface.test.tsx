@@ -27,7 +27,7 @@ class ResizeObserverStub {
 }
 (globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= ResizeObserverStub;
 
-vi.mock('@/renderer/omniagents-ui/rpc-context', () => ({
+vi.mock('@omniagents/chat-ui/rpc-context', () => ({
   useRPCClient: () => mocks.rpc,
   useRPCConnected: () => true,
 }));

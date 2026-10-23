@@ -1,4 +1,10 @@
 import { useStore } from '@nanostores/react';
+import type { ClientToolCallHandler } from '@omniagents/chat-ui/App';
+import { ChatShell, type PendingMessage } from '@omniagents/chat-ui/ChatShell';
+import { ConversationComposerProvider } from '@omniagents/chat-ui/components/ConversationComposer';
+import { getGreeting } from '@omniagents/chat-ui/greeting';
+import { useAutoRetry } from '@omniagents/chat-ui/hooks/use-auto-retry';
+import { $hoveredVoiceScope, VoiceScopeContext } from '@omniagents/chat-ui/services/voice-recording';
 import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
 import { uuidv4 } from '@omniagents/client/util/uuid';
 import { Button } from '@omniagents/ui/button';
@@ -14,17 +20,11 @@ import { SessionStatusBanner } from '@/renderer/features/Banner/SessionStatusBan
 import { buildClientToolHandler } from '@/renderer/features/Code/client-tool-handler';
 import { $pendingPlan, resolvePlanApproval } from '@/renderer/features/Code/plan-approval-bridge';
 import { openSettingsTab } from '@/renderer/features/SettingsModal/settings-nav';
-import { useAutoRetry } from '@/renderer/hooks/use-auto-retry';
 import { useSessionWorkspaceDir } from '@/renderer/hooks/use-session-workspace-dir';
-import type { ClientToolCallHandler } from '@/renderer/omniagents-ui/App';
-import { ChatShell, type PendingMessage } from '@/renderer/omniagents-ui/ChatShell';
-import { ConversationComposerProvider } from '@/renderer/omniagents-ui/components/ConversationComposer';
 import { DraftSessionControls } from '@/renderer/omniagents-ui/components/DraftSessionControls';
-import { getGreeting } from '@/renderer/omniagents-ui/greeting';
 import { $agentStatuses } from '@/renderer/services/agent-process';
 import { emitter, serverOrigin } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
-import { $hoveredVoiceScope, VoiceScopeContext } from '@/renderer/services/voice-recording';
 import type { AppId } from '@/shared/app-registry';
 import type { CodeTab, CodeTabId, WorkspaceMountDescriptor } from '@/shared/types';
 import { firstSource, isChatColumn } from '@/shared/types';

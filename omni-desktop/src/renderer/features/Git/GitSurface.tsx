@@ -1,3 +1,4 @@
+import { useRPCClient, useRPCConnected } from '@omniagents/chat-ui/rpc-context';
 import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
 import {
   GitClient,
@@ -28,8 +29,6 @@ import { ToggleGroup, ToggleGroupItem } from '@omniagents/ui/toggle-group';
 import { PanelLeftIcon, RefreshCwIcon, TriangleAlert } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-
-import { useRPCClient, useRPCConnected } from '@/renderer/omniagents-ui/rpc-context';
 
 import { mergeUntracked, repositoryLabel } from './diff-model';
 import { GitDiffStream, type GitStreamMode } from './GitDiffStream';

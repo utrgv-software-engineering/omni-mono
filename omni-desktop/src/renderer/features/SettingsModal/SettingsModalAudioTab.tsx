@@ -1,4 +1,5 @@
 import { useStore } from '@nanostores/react';
+import type { AudioSettings } from '@omniagents/chat-ui/host';
 import { Button } from '@omniagents/ui/button';
 import { Card, CardContent } from '@omniagents/ui/card';
 import { Field, FieldLabel } from '@omniagents/ui/field';
@@ -16,7 +17,6 @@ import {
 import { SettingsModalVoicePersonas } from '@/renderer/features/SettingsModal/SettingsModalVoicePersonas';
 import { SettingsModalVoiceShortcut } from '@/renderer/features/SettingsModal/SettingsModalVoiceShortcut';
 import { persistedStoreApi } from '@/renderer/services/store';
-import type { AudioSettings } from '@/shared/types';
 
 type DeviceOption = { deviceId: string; label: string };
 

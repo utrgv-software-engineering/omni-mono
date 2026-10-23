@@ -1,9 +1,9 @@
 import { useStore } from '@nanostores/react';
+import type { SessionItem } from '@omniagents/chat-ui/components/SessionList';
+import { generateSessionTitle } from '@omniagents/chat-ui/lib/utils';
 import { useEffect, useMemo, useState } from 'react';
 
 import { MAX_CHAT_CONVERSATIONS } from '@/lib/chat-conversations';
-import type { SessionItem } from '@/renderer/omniagents-ui/components/SessionList';
-import { generateSessionTitle } from '@/renderer/omniagents-ui/lib/utils';
 import { getSessionController, onColumnRunEnd } from '@/renderer/services/session-control';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { ChatConversation, CodeTab } from '@/shared/types';

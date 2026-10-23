@@ -1,3 +1,4 @@
+import { resolveUiConfig } from '@omniagents/chat-ui/ui-config';
 import { RPCClient } from '@omniagents/client/rpc/client';
 import {
   ManagementRepository,
@@ -8,8 +9,6 @@ import { createContext, type ReactNode, useContext, useEffect, useMemo, useState
 
 import { emitter, wsEmitter } from '@/renderer/services/ipc';
 import type { AgentRuntimeConnection, ReasoningEffort, RuntimeModelList } from '@/shared/types';
-
-import { resolveUiConfig } from './ui-config';
 
 export type ProductManagementBootstrapStatus = 'starting' | 'connecting' | 'ready' | 'error';
 

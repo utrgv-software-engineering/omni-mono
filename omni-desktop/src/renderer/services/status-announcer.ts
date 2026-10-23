@@ -8,7 +8,7 @@
  * starting to wait for approval, and a run finishing. Working-start is
  * deliberately silent (it's noise at deck scale).
  */
-import type { ColumnActivity } from '@/renderer/services/column-activity';
+import type { ColumnActivity } from '@omniagents/chat-ui/services/column-activity';
 
 export function buildAnnouncements(
   prev: Record<string, ColumnActivity>,

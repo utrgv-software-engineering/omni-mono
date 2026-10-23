@@ -7,7 +7,7 @@ import { useVoiceCapture, type VoiceCapture } from './use-voice-capture';
 const mocks = vi.hoisted(() => ({ transcribe: vi.fn() }));
 vi.mock('@/renderer/services/store', () => ({ persistedStoreApi: { $atom: { get: () => ({ audioSettings: {} }) } } }));
 vi.mock('@/renderer/services/voice-client', () => ({ getVoiceClient: () => mocks }));
-vi.mock('@/renderer/services/voice-recording', () => ({ voiceLevel: { current: 0 } }));
+vi.mock('@omniagents/chat-ui/services/voice-recording', () => ({ voiceLevel: { current: 0 } }));
 
 let root: Root | undefined;
 afterEach(async () => {

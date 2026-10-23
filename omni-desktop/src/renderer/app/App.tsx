@@ -1,5 +1,4 @@
 import '@/renderer/styles/tailwind.css';
-import '@/renderer/omniagents-ui/styles/index.css';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/space-grotesk';
 import '@xterm/xterm/css/xterm.css';
@@ -13,6 +12,7 @@ import { MotionConfig } from 'framer-motion';
 import { useEffect, useLayoutEffect } from 'react';
 import { ErrorBoundary } from 'react-error-boundary';
 
+import { DesktopChatHost } from '@/renderer/app/DesktopChatHost';
 import { ErrorBoundaryFallback } from '@/renderer/app/ErrorBoundaryFallback';
 import { MainContent } from '@/renderer/app/MainContent';
 import { StatusAnnouncer } from '@/renderer/app/StatusAnnouncer';
@@ -63,23 +63,25 @@ export const App = () => {
           Hand-written CSS animations carry their own media-query overrides. */}
       <MotionConfig reducedMotion="user">
         <SystemInfoProvider>
-          <div className="app-shell relative flex w-dvw flex-col overflow-hidden bg-background font-sans text-foreground antialiased">
-            <ErrorBoundary FallbackComponent={ErrorBoundaryFallback}>
-              <SystemInfoLoadingGate>
-                <ProductManagementProvider>
-                  <ConnectionStatusBanner />
-                  <div className="flex min-h-0 w-full flex-1">
-                    <MainContent />
-                  </div>
-                  <VoiceHotkeys />
-                  <CommandPalette />
-                  <ViewportDebug />
-                  <StatusAnnouncer />
-                </ProductManagementProvider>
-              </SystemInfoLoadingGate>
-              <ToastContainer />
-            </ErrorBoundary>
-          </div>
+          <DesktopChatHost>
+            <div className="app-shell relative flex w-dvw flex-col overflow-hidden bg-background font-sans text-foreground antialiased">
+              <ErrorBoundary FallbackComponent={ErrorBoundaryFallback}>
+                <SystemInfoLoadingGate>
+                  <ProductManagementProvider>
+                    <ConnectionStatusBanner />
+                    <div className="flex min-h-0 w-full flex-1">
+                      <MainContent />
+                    </div>
+                    <VoiceHotkeys />
+                    <CommandPalette />
+                    <ViewportDebug />
+                    <StatusAnnouncer />
+                  </ProductManagementProvider>
+                </SystemInfoLoadingGate>
+                <ToastContainer />
+              </ErrorBoundary>
+            </div>
+          </DesktopChatHost>
         </SystemInfoProvider>
       </MotionConfig>
     </TooltipProvider>

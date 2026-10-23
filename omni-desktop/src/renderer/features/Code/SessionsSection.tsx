@@ -1,4 +1,5 @@
 import { useStore } from '@nanostores/react';
+import { $columnActivity, activityStatusText } from '@omniagents/chat-ui/services/column-activity';
 import { Button } from '@omniagents/ui/button';
 import { cn } from '@omniagents/ui/cn';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@omniagents/ui/dialog';
@@ -20,7 +21,6 @@ import { memo, useCallback, useMemo, useState } from 'react';
 
 import { NavSection } from '@/renderer/common/NavSection';
 import { SidebarRow, SidebarRowActions } from '@/renderer/common/SidebarRow';
-import { $columnActivity, activityStatusText } from '@/renderer/services/column-activity';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { ChatConversation, CodeTab, ProjectId } from '@/shared/types';
 

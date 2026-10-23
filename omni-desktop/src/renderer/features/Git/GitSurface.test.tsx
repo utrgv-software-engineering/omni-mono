@@ -43,7 +43,7 @@ vi.mock('@/renderer/services/ipc', () => ({ emitter: { invoke: mocks.invoke } })
 
 vi.mock('@/renderer/services/store', () => ({ persistedStoreApi: { $atom: {} } }));
 
-vi.mock('@/renderer/omniagents-ui/rpc-context', () => ({
+vi.mock('@omniagents/chat-ui/rpc-context', () => ({
   useRPCClient: () => mocks.rpc,
   useRPCConnected: () => mocks.connected,
 }));
@@ -55,7 +55,7 @@ vi.mock('@omniagents/client/rpc/git', async (importOriginal) => {
 
 // Shiki loads WASM grammars; the surface tests only care that raw diff text
 // renders while tokens are pending.
-vi.mock('@/renderer/omniagents-ui/components/ai/code-block', () => ({
+vi.mock('@omniagents/chat-ui/components/ai/code-block', () => ({
   highlightCode: () => null,
   TokenSpan: () => null,
 }));

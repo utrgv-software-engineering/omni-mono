@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import type { RoutineApprovalRequest, RoutineEvent } from '@omniagents/chat-ui/host';
 import type Store from 'electron-store';
 
 import { mostRecentMissedScheduledTaskRun, nextScheduledTaskRun } from '@/lib/scheduled-task-schedule';
@@ -7,8 +8,6 @@ import type { RoutineBridge } from '@/main/routine-bridge';
 import type { IIpcListener } from '@/shared/ipc-listener';
 import type {
   IpcRendererEvents,
-  RoutineApprovalRequest,
-  RoutineBridgeEvent,
   ScheduledTask,
   ScheduledTaskAllowedMcpTool,
   ScheduledTaskInput,
@@ -410,7 +409,7 @@ export class ScheduledTaskManager {
    * matching task's active run. Events for tasks without an active run (stale
    * tabs, post-completion disconnects) are ignored.
    */
-  private handleBridgeEvent(event: RoutineBridgeEvent): void {
+  private handleBridgeEvent(event: RoutineEvent): void {
     const active = this.activeRuns.get(event.taskId);
     if (!active) {
       return;

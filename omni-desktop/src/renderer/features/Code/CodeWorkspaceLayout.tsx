@@ -1,3 +1,6 @@
+import type { ClientToolCallHandler } from '@omniagents/chat-ui/App';
+import type { PendingMessage } from '@omniagents/chat-ui/ChatShell';
+import type { SessionController } from '@omniagents/chat-ui/session-controller';
 import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
 import { memo, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 
@@ -5,14 +8,7 @@ import { dispatchOpenFileIntent, WorkspaceFilesPortal } from '@/renderer/feature
 import { WorkspaceGitPortal } from '@/renderer/features/Git';
 import { WorkspaceReviewPortal } from '@/renderer/features/Review';
 import { OmniAgentsApp } from '@/renderer/omniagents-ui';
-import type { ClientToolCallHandler } from '@/renderer/omniagents-ui/App';
-import type { PendingMessage } from '@/renderer/omniagents-ui/ChatShell';
-import {
-  emitColumnRunEnd,
-  emitColumnRunStarted,
-  registerSessionController,
-  type SessionController,
-} from '@/renderer/services/session-control';
+import { emitColumnRunEnd, emitColumnRunStarted, registerSessionController } from '@/renderer/services/session-control';
 import type { AppId } from '@/shared/app-registry';
 import { APP_REGISTRY } from '@/shared/app-registry';
 import type { AgentRuntimeConnection, WorkspaceMountDescriptor } from '@/shared/types';

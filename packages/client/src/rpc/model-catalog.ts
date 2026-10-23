@@ -1,5 +1,15 @@
 import type { RpcMethodMap } from '../protocol/gui-v2';
 
+/** A model reference's provider (`provider/model`, bare names are OpenAI). Provider identity is the catalog key, not the transport type (e.g. azure). */
+export function modelProvider(ref: string | null | undefined): string | null {
+  if (!ref) {
+    return null;
+  }
+  const slash = ref.indexOf('/');
+  return slash < 0 ? 'openai' : ref.slice(0, slash);
+}
+
+
 type ModelCatalogMethod = Extract<
   keyof RpcMethodMap,
   'list_models' | 'get_model' | 'list_providers' | 'set_session_model' | 'set_session_reasoning'

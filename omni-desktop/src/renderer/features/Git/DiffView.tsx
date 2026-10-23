@@ -1,5 +1,6 @@
 import './DiffView.css';
 
+import { highlightCode, type TokenizedCode, TokenSpan } from '@omniagents/chat-ui/components/ai/code-block';
 import { Badge } from '@omniagents/ui/badge';
 import { Button } from '@omniagents/ui/button';
 import { cn } from '@omniagents/ui/cn';
@@ -8,8 +9,6 @@ import { ChevronRightIcon, SquareArrowOutUpRightIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import type { ThemedToken } from 'shiki';
-
-import { highlightCode, type TokenizedCode, TokenSpan } from '@/renderer/omniagents-ui/components/ai/code-block';
 
 import { type ChangeBadge, type DiffLine, languageForPath } from './diff-model';
 

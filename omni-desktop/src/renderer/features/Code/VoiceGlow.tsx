@@ -8,9 +8,8 @@
  */
 import './CodeVisualEffects.css';
 
+import { voiceLevel } from '@omniagents/chat-ui/services/voice-recording';
 import { useEffect, useRef } from 'react';
-
-import { voiceLevel } from '@/renderer/services/voice-recording';
 
 // Registering the angle as <angle> lets the conic gradient rotate smoothly —
 // custom properties don't interpolate in animations without @property.

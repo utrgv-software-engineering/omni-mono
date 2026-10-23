@@ -1,10 +1,4 @@
-import type { ToolItem } from '@omniagents/client/transcript/chat-types';
-import { Button } from '@omniagents/ui/button';
-import { TooltipProvider } from '@omniagents/ui/tooltip';
-import { CodeIcon, FileTextIcon, GlobeIcon, SendHorizontalIcon } from 'lucide-react';
-import { memo, useState } from 'react';
-
-import type { ToolState } from '@/renderer/omniagents-ui/ai-types';
+import type { ToolState } from '@omniagents/chat-ui/ai-types';
 import {
   Artifact,
   ArtifactAction,
@@ -32,14 +26,19 @@ import {
   ToolHeader,
   ToolInput,
   ToolOutput,
-} from '@/renderer/omniagents-ui/components/ai';
-import { ToolCard } from '@/renderer/omniagents-ui/components/MessageList';
-import { Markdown } from '@/renderer/omniagents-ui/components/promptkit/markdown';
+} from '@omniagents/chat-ui/components/ai';
+import { ToolCard } from '@omniagents/chat-ui/components/MessageList';
+import { Markdown } from '@omniagents/chat-ui/components/promptkit/markdown';
 import {
   PromptInput,
   PromptInputActions,
   PromptInputTextarea,
-} from '@/renderer/omniagents-ui/components/promptkit/PromptInput';
+} from '@omniagents/chat-ui/components/promptkit/PromptInput';
+import type { ToolItem } from '@omniagents/client/transcript/chat-types';
+import { Button } from '@omniagents/ui/button';
+import { TooltipProvider } from '@omniagents/ui/tooltip';
+import { CodeIcon, FileTextIcon, GlobeIcon, SendHorizontalIcon } from 'lucide-react';
+import { memo, useState } from 'react';
 
 const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
   <section className="mb-12">

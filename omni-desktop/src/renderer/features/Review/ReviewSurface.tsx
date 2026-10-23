@@ -1,4 +1,5 @@
 import { useStore } from '@nanostores/react';
+import { useRPCClient, useRPCConnected } from '@omniagents/chat-ui/rpc-context';
 import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
 import {
   GitClient,
@@ -38,7 +39,6 @@ import {
   treeDirPaths,
 } from '@/renderer/features/Git/diff-model';
 import { DiffLines, DiffSection, useDiffTokens } from '@/renderer/features/Git/DiffView';
-import { useRPCClient, useRPCConnected } from '@/renderer/omniagents-ui/rpc-context';
 
 /**
  * The Review sidecar app: a read-only, review-oriented pass over what

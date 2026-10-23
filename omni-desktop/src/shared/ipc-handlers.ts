@@ -7,10 +7,11 @@
  */
 import { randomUUID } from 'node:crypto';
 
+import { modelProvider } from '@omniagents/client/rpc/model-catalog';
 import { mkdir, readdir, readFile, writeFile } from 'fs/promises';
 import { basename, dirname, join } from 'path';
 
-import { modelProvider, stripModelConnectionFields, validateModelsConfig } from '@/lib/agent-config';
+import { stripModelConnectionFields, validateModelsConfig } from '@/lib/agent-config';
 import { normalizeCompatibleBaseUrl } from '@/lib/provider-config';
 import type { SkillStore } from '@/main/skills';
 import { installSkillFromFile, listSkills, setSkillEnabled, uninstallSkill } from '@/main/skills';

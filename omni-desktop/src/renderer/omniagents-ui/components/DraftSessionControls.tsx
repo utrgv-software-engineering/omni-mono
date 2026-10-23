@@ -1,9 +1,8 @@
+import { ModelSessionControls } from '@omniagents/chat-ui/components/ModelSessionControls';
 import type { ModelCatalogRpcTransport } from '@omniagents/client/rpc/model-catalog';
 import { updateConversationDraft } from '@omniagents/client/session/conversation-drafts';
 
 import { useProductManagementSnapshot } from '@/renderer/omniagents-ui/product-management-context';
-
-import { ModelSessionControls } from './ModelSessionControls';
 
 const noTransport: ModelCatalogRpcTransport = {
   request: async () => {

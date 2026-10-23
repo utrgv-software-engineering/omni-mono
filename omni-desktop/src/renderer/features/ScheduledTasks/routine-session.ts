@@ -1,4 +1,5 @@
-import { formatTimestamp } from '@/lib/format-time';
+import { formatTimestamp } from '@omniagents/chat-ui/lib/format-time';
+
 import { emitter } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { CodeTab, ScheduledTask } from '@/shared/types';

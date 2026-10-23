@@ -11,6 +11,7 @@
 
 @import 'tailwindcss';
 @import '@omniagents/ui/theme.css';
+@import '@omniagents/chat-ui/styles.css';
 @plugin '@tailwindcss/typography';
 
 /* Scan third-party packages that ship with Tailwind class strings, so the
