@@ -76,7 +76,6 @@ from omniagents.core.eval.results import (
     update_runs_index,
 )
 from omniagents.core.evaluation.registry import _MEASURES as _REGISTERED_MEASURES
-from omniagents.core.project.apply import apply_agent_instructions
 from omniagents.core.project.scaffold import (
     scaffold_judge,
 )
@@ -3515,18 +3514,6 @@ def create_api_app(
 
         try:
             result = await loop.run_in_executor(None, _execute)
-            try:
-                instructions_value = (
-                    result.get("instructions") if isinstance(result, dict) else None
-                )
-                if instructions_value:
-                    apply_agent_instructions(
-                        str(manifest_path), payload.agent_key, instructions_value
-                    )
-            except Exception as apply_exc:
-                logger.exception(
-                    "Failed to apply agent optimization updates: %s", apply_exc
-                )
             log_path_value = None
             if isinstance(result, dict):
                 log_path_value = result.get("log_file") or log_file_holder.get("value")
