@@ -1,7 +1,14 @@
 import { readFileSync } from 'node:fs';
 
 import { expect, test } from 'tests/e2e/fixtures/test';
-import { activeSessionId, newDeckChat, openSession, sessionPane, visibleComposer } from 'tests/e2e/support/app';
+import {
+  activeSessionId,
+  expectRunFinished,
+  newDeckChat,
+  openSession,
+  sessionPane,
+  visibleComposer,
+} from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -118,7 +125,7 @@ for (const crash of [false, true]) {
       return;
     }
     await a.getByRole('button', { name: 'Stop', exact: true }).click();
-    await expect(a.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 30_000 });
+    await expectRunFinished(a, 30_000);
     await expect.poll(() => ownedPids.every((pid) => !isRunning(pid)), { timeout: 10_000 }).toBe(true);
     await a.getByRole('textbox').fill('AFTER_EXECUTOR_STOP');
     await a.getByRole('textbox').press('Enter');

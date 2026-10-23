@@ -1,5 +1,12 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
-import { activeSessionId, newDeckChat, openSession, sessionPane, visibleComposer } from 'tests/e2e/support/app';
+import {
+  activeSessionId,
+  expectRunFinished,
+  newDeckChat,
+  openSession,
+  sessionPane,
+  visibleComposer,
+} from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -44,7 +51,7 @@ test('persisted response appears once in its own tile without its stream message
     await composer.fill(`PERSISTENCE_SETUP_${index}`);
     await composer.press('Enter');
     await expect(column.getByText('HOST_FIRST_MESSAGE_READY', { exact: true })).toBeVisible({ timeout: 90_000 });
-    await expect(column.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
+    await expectRunFinished(column);
     await expect(column.getByText('HOST_FIRST_MESSAGE_READY', { exact: true })).toHaveCount(1);
   }
   const a = sessionPane(page, ids[0]!);
@@ -55,7 +62,7 @@ test('persisted response appears once in its own tile without its stream message
   await composer.fill('SOAK_PERSISTENCE WAIT_FOR_SESSION_A');
   await composer.press('Enter');
   await expect(a.getByText('SESSION_A_REPLY', { exact: true })).toBeVisible({ timeout: 90_000 });
-  await expect(a.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
+  await expectRunFinished(a);
   expect(suppressed).toBeGreaterThan(0);
   expect(providerUpdates).toBeGreaterThan(updatesBefore);
   await expect(a.getByText('SESSION_A_REPLY', { exact: true })).toHaveCount(1);

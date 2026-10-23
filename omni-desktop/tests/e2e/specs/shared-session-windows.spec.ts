@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from 'tests/e2e/fixtures/test';
+import { expectRunFinished } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -78,13 +79,13 @@ test('a competing approval reply and remote archive converge in both windows', a
     await b.evaluate(() => (window as any).releaseApproval());
     for (const page of [a, b]) {
       await expect(page.getByRole('button', { name: 'Approve Once', exact: true })).toHaveCount(0);
-      await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
+      await expectRunFinished(page);
     }
     await input(b).fill('SHARED_AFTER_APPROVAL');
     await input(b).press('Enter');
     for (const page of [a, b]) {
       await expect(page.getByRole('log').getByText('SHARED_AFTER_APPROVAL', { exact: true })).toHaveCount(1);
-      await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
+      await expectRunFinished(page);
     }
     await attachProofPng(info, 'competing approval resolved in second window', await b.screenshot());
     await a.getByRole('button', { name: 'Session menu', exact: true }).click();

@@ -1,5 +1,6 @@
 import type { WebSocketRoute } from '@playwright/test';
 import { expect, test } from 'tests/e2e/fixtures/test';
+import { expectRunFinished } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -84,7 +85,7 @@ test('explicit browser credential expiry keeps the draft until an authenticated 
   await input.fill('LOGIN_RECOVERED_DRAFT');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByRole('log').getByText('LOGIN_RECOVERED_DRAFT', { exact: true })).toHaveCount(1);
-  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
+  await expectRunFinished(page);
   const sends = await page.evaluate(() => (window as any).loginRecoverySends);
   expect(sends).toHaveLength(1);
   await attachProofPng(info, 'authenticated reload sends once', await page.screenshot());

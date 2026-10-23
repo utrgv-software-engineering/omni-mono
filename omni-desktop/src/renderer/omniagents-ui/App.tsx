@@ -1261,7 +1261,14 @@ function SessionView({
     );
   } else {
     content = (
-      <div className="app h-full flex flex-row min-w-0 relative">
+      <div
+        className="app h-full flex flex-row min-w-0 relative"
+        // The session's run lifecycle, readable from outside: "idle" only once
+        // the session is connected, loaded and has no run in flight. Controls
+        // like Stop also disappear while a reconnecting session reloads, so
+        // their absence does not mean a run ended.
+        data-run-state={connected ? machine.phase : 'disconnected'}
+      >
         {!minimalMode && (
           <Sidebar
             open={sidebarOpen}

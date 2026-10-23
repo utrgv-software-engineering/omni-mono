@@ -1,6 +1,13 @@
 import type { WebSocketRoute } from '@playwright/test';
 import { expect, test } from 'tests/e2e/fixtures/test';
-import { activeSessionId, newDeckChat, openSession, sessionPane, visibleComposer } from 'tests/e2e/support/app';
+import {
+  activeSessionId,
+  expectRunFinished,
+  newDeckChat,
+  openSession,
+  sessionPane,
+  visibleComposer,
+} from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -91,7 +98,7 @@ test('recovers silently stalled RPC sockets while preserving each visible tile d
   await expect(
     first.getByRole('log').getByText('draft kept through silent connection failure', { exact: true })
   ).toHaveCount(1, { timeout: 90_000 });
-  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
+  await expectRunFinished(page);
   await openSession(page, 'SILENT_SECOND_SESSION');
   await expect(second.getByRole('log')).not.toContainText('draft kept through silent connection failure');
   await expect(composer).toHaveValue('independent second session draft');

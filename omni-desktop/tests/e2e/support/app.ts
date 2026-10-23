@@ -46,6 +46,17 @@ export async function openSession(page: Page, title: string | RegExp): Promise<v
   await expect(page.locator('[data-deck-column]:not([aria-hidden="true"])')).toHaveCount(1);
 }
 
+/**
+ * Wait until a chat's run has finished: the session is connected, loaded and
+ * idle. `scope` is a session pane, or the page for the chat currently shown.
+ * Waiting for the Stop button to vanish is not enough: it also disappears
+ * while a reconnecting session reloads its snapshot.
+ */
+export async function expectRunFinished(scope: Page | Locator, timeout = 90_000): Promise<void> {
+  const pane = 'goto' in scope ? scope.locator('[data-deck-column]:not([aria-hidden="true"])') : scope;
+  await expect(pane.locator('[data-run-state]')).toHaveAttribute('data-run-state', 'idle', { timeout });
+}
+
 /** Deck header "New chat": always opens another chat column. */
 export async function newDeckChat(page: Page): Promise<void> {
   await page.getByRole('main').getByRole('button', { name: 'New chat', exact: true }).first().click();

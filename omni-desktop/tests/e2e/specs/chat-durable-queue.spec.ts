@@ -1,5 +1,12 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
-import { activeSessionId, newDeckChat, openSession, sessionPane, visibleComposer } from 'tests/e2e/support/app';
+import {
+  activeSessionId,
+  expectRunFinished,
+  newDeckChat,
+  openSession,
+  sessionPane,
+  visibleComposer,
+} from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -46,7 +53,7 @@ for (const dispatched of [false, true]) {
     await expect(restored.getByText(/Dispatch outcome unknown|Waiting for the previous runtime/)).toHaveCount(0);
     if (dispatched) {
       await expect(restored.getByRole('button', { name: 'Approve Once', exact: true })).toHaveCount(0);
-      await expect(restored.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
+      await expectRunFinished(restored);
     } else {
       await expect(restored.getByRole('log').getByText(queued, { exact: true })).toHaveCount(0);
     }

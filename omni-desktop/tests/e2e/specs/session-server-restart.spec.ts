@@ -1,5 +1,12 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
-import { activeSessionId, newDeckChat, openSession, sessionPane, visibleComposer } from 'tests/e2e/support/app';
+import {
+  activeSessionId,
+  expectRunFinished,
+  newDeckChat,
+  openSession,
+  sessionPane,
+  visibleComposer,
+} from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -38,7 +45,7 @@ for (const crash of [false, true]) {
     await expect(restoredComposer).toBeEditable({ timeout: 90_000 });
     await expect(restoredB.getByRole('log')).toContainText('TILE_QUESTION_B');
     // A dead server-side waiter leaves nothing running.
-    await expect(restoredB.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
+    await expectRunFinished(restoredB);
     await openSession(page, 'TILE_APPROVAL_A');
     await expect(restoredComposer).toBeEditable({ timeout: 90_000 });
     await expect(restoredA.getByRole('log')).toContainText('TILE_APPROVAL_A');

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 
 import { expect, test } from 'tests/e2e/fixtures/test';
+import { expectRunFinished } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -17,7 +18,7 @@ test('recovers chat after only the launcher backend dies, then retires the survi
   await input.fill('HOST_FIRST_MESSAGE_READY');
   await input.press('Enter');
   await expect(page.getByRole('log')).toContainText('HOST_FIRST_MESSAGE_READY', { timeout: 90_000 });
-  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
+  await expectRunFinished(page);
   const before = { runtimePids: app.runtimePids(), tabs: app.storedTabs() };
   expect(before.runtimePids.length).toBeGreaterThan(0);
   const id = before.tabs[0]!.id;
@@ -31,7 +32,7 @@ test('recovers chat after only the launcher backend dies, then retires the survi
   await expect(page.getByRole('log').getByText('HOST_FIRST_MESSAGE_READY', { exact: true })).toHaveCount(3, {
     timeout: 90_000,
   });
-  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
+  await expectRunFinished(page);
   await expect
     .poll(
       () =>

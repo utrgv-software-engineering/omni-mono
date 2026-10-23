@@ -1,5 +1,12 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
-import { activeSessionId, newDeckChat, openSession, sessionPane, visibleComposer } from 'tests/e2e/support/app';
+import {
+  activeSessionId,
+  expectRunFinished,
+  newDeckChat,
+  openSession,
+  sessionPane,
+  visibleComposer,
+} from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -71,7 +78,7 @@ test('archives one active session without stopping its neighbor, including a los
   const restored = sessionPane(page, reopened.id);
   await expect(restored.getByRole('log')).toContainText('TILE_APPROVAL_A');
   await expect(restored.getByRole('button', { name: 'Approve Once', exact: true })).toHaveCount(0);
-  await expect(restored.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
+  await expectRunFinished(restored);
   if (mode === 'server-local') {
     await expect.poll(() => page.evaluate(() => (window as any).archiveReplyDropped), { timeout: 90_000 }).toBe(true);
     await expect

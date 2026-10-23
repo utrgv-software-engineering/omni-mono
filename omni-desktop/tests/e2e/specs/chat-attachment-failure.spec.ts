@@ -1,4 +1,5 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
+import { expectRunFinished } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -45,7 +46,7 @@ test('retains an aborted attachment and sends its bytes once on retry', async ({
   });
   await input.press('Enter');
   await expect(page.getByRole('log')).toContainText('ATTACHMENT_RETRY');
-  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
+  await expectRunFinished(page);
   const sends = await page.evaluate(() => (window as any).attachmentSends);
   expect(sends).toHaveLength(1);
   expect(JSON.stringify(sends[0])).toContain(Buffer.from('original attachment bytes').toString('base64'));

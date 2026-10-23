@@ -1,5 +1,5 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
-import { activeSessionId, sessionPane } from 'tests/e2e/support/app';
+import { activeSessionId, expectRunFinished, sessionPane } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -15,7 +15,7 @@ test('preserves separate tool calls when the provider reuses an ID in later runs
     await expect(tile.getByRole('button', { name: 'Approve Once', exact: true })).toBeVisible({ timeout: 90_000 });
     await tile.getByRole('button', { name: 'Approve Once', exact: true }).click();
     await expect(tile.getByText('HOST_FIRST_MESSAGE_READY', { exact: true })).toHaveCount(run, { timeout: 90_000 });
-    await expect(tile.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
+    await expectRunFinished(tile);
   }
   await expect(tile.getByText(/steps?.*1 command/)).toHaveCount(2);
   await attachProofPng(info, 'distinct repeated tool calls before reload', await app.captureScreenshot());

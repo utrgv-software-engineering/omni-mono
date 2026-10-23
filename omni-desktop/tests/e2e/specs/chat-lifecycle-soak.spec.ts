@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from 'tests/e2e/fixtures/test';
-import { activeSessionId, openChat, openSession, sessionPane } from 'tests/e2e/support/app';
+import { activeSessionId, expectRunFinished, openChat, openSession, sessionPane } from 'tests/e2e/support/app';
 import { invokeApp } from 'tests/e2e/support/invoke';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
@@ -132,7 +132,7 @@ test('sustains mixed conversation lifecycles and checks ownership and retirement
       await page.evaluate(() => (window as any).soakDisconnect());
       await show(0);
       await expect(textbox(a)).toBeEditable({ timeout: 90_000 });
-      await expect(a.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
+      await expectRunFinished(a);
       await a.getByRole('button', { name: /GPT 5\.2 E2E/ }).click();
       await page.getByRole('menuitemradio', { name: /GPT 5\.2 Mini E2E/ }).click();
       await expect(a.getByRole('button', { name: /GPT 5\.2 Mini E2E/ })).toBeVisible();
@@ -192,7 +192,7 @@ test('sustains mixed conversation lifecycles and checks ownership and retirement
       await textbox(restoredC).fill(`${prefix}_RESTORED`);
       await textbox(restoredC).press('Enter');
       await expect(restoredC.getByRole('log')).toContainText('HOST_FIRST_MESSAGE_READY', { timeout: 90_000 });
-      await expect(restoredC.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
+      await expectRunFinished(restoredC);
       await show(1);
       await expect(b.getByText('Question for tile B', { exact: true })).toBeVisible();
       const { workerPids, ...resources } = app.inspectRuntimeResources();

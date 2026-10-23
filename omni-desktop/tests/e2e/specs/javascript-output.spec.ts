@@ -2,7 +2,7 @@ import { unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { expect, test } from 'tests/e2e/fixtures/test';
-import { activeSessionId, sessionPane } from 'tests/e2e/support/app';
+import { activeSessionId, expectRunFinished, sessionPane } from 'tests/e2e/support/app';
 
 test.use({ seedState: 'lazy-host-first-message' });
 
@@ -19,7 +19,7 @@ test('JavaScript filters and retrieves an automatically retained nested result',
   await prompt.fill(`JAVASCRIPT_OUTPUT_PROOF ${path.join(app.workspaceDir, 'oversized-output.txt')}`);
   await prompt.press('Enter');
   await expect(page.getByText('JAVASCRIPT_FILTER_READY', { exact: true }).last()).toBeVisible({ timeout: 240_000 });
-  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
+  await expectRunFinished(page);
   // Remove the source and restart the entire app: only the durable result can
   // satisfy the second request, and the model does not supply its result ID.
   await unlink(path.join(app.workspaceDir, 'oversized-output.txt'));

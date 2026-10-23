@@ -1,5 +1,5 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
-import { activeSessionId, sessionPane } from 'tests/e2e/support/app';
+import { activeSessionId, expectRunFinished, sessionPane } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -59,7 +59,7 @@ for (const reload of [false, true]) {
     await expect(page.getByRole('button', { name: 'Approve Once', exact: true })).toBeVisible();
     await attachProofPng(testInfo, 'failed stop remains retryable', await app.captureScreenshot());
     await page.getByRole('button', { name: 'Stop', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 30_000 });
+    await expectRunFinished(page, 30_000);
     await expect(page.getByRole('button', { name: 'Approve Once', exact: true })).toHaveCount(0);
     // Boot can also create a fresh tile; assert the original owner's composer.
     await expect(owner.getByRole('textbox', { name: 'How can I help you today?' })).toBeEditable();

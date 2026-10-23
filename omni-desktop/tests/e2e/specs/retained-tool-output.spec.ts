@@ -2,6 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { expect, test } from 'tests/e2e/fixtures/test';
+import { expectRunFinished } from 'tests/e2e/support/app';
 
 test.use({ seedState: 'lazy-host-first-message' });
 
@@ -20,7 +21,7 @@ test('retrieves omitted text from saved tool output after restart', async ({ app
   await expect(page.getByText('HOST_FIRST_MESSAGE_READY', { exact: true }).last()).toBeVisible({ timeout: 240_000 });
   // Tool details live inside the activity disclosure.
   const openOutput = async () => {
-    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
+    await expectRunFinished(page);
     const activity = page.getByRole('button', { name: '1 step — 1 read', exact: true });
     await expect(activity).toBeVisible();
     // Completed activities collapse automatically; wait for that transition.

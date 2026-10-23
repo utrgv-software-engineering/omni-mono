@@ -1,5 +1,12 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
-import { activeSessionId, newDeckChat, openSession, sessionPane, visibleComposer } from 'tests/e2e/support/app';
+import {
+  activeSessionId,
+  expectRunFinished,
+  newDeckChat,
+  openSession,
+  sessionPane,
+  visibleComposer,
+} from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -67,7 +74,7 @@ for (const scenario of ['stream', 'approval', 'artifact'] as const) {
     const marker =
       scenario === 'stream' ? 'SESSION_A_REPLY' : scenario === 'approval' ? 'TILE_APPROVAL_A' : 'A_ARTIFACT_initial';
     await openSession(page, 'BACKGROUND_0');
-    await expect(a.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
+    await expectRunFinished(a);
     await expect(composer).toBeEditable({ timeout: 90_000 });
     await composer.fill(`${prompt} BACKGROUND_LIFECYCLE_GATE`);
     await a.getByRole('button', { name: 'Send', exact: true }).click();
@@ -108,7 +115,7 @@ for (const scenario of ['stream', 'approval', 'artifact'] as const) {
     if (scenario === 'approval') {
       await expect(a.getByRole('button', { name: 'Approve Once', exact: true })).toBeVisible();
       await a.getByRole('button', { name: 'Approve Once', exact: true }).click();
-      await expect(a.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
+      await expectRunFinished(a);
     } else {
       await expect(a.getByText(marker, { exact: true })).toBeVisible({ timeout: 90_000 });
     }

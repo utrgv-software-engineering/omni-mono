@@ -1,5 +1,12 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
-import { activeSessionId, newDeckChat, openSession, sessionPane, visibleComposer } from 'tests/e2e/support/app';
+import {
+  activeSessionId,
+  expectRunFinished,
+  newDeckChat,
+  openSession,
+  sessionPane,
+  visibleComposer,
+} from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -127,10 +134,8 @@ test('isolates three mixed sessions through seeded switching churn, duplicate ev
   await expect(c!.getByTitle('Choose the model for this conversation', { exact: true })).toBeEnabled();
   await expect(c!.getByRole('button', { name: 'Approve Once', exact: true })).toBeVisible();
   await show(0);
-  // Wait for the run's own reply, not for the Stop button to disappear: the
-  // button also vanishes while a reconnecting session reloads its snapshot,
-  // so its absence does not mean the run ended.
   await expect(a!.getByText('SESSION_A_REPLY', { exact: true })).toBeVisible({ timeout: 60_000 });
+  await expectRunFinished(a!);
   await expect(a!.getByTitle('Choose the model for this conversation', { exact: true })).toBeEnabled();
   await expect(a!.getByText('A_ARTIFACT_initial', { exact: true })).toBeVisible();
   await attachProofPng(testInfo, 'three sessions recovered after offline transport', await app.captureScreenshot());
