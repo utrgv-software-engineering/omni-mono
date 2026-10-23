@@ -9,6 +9,7 @@ eval pipeline, scenario generator, judges, and optimizers.
 from __future__ import annotations
 
 import fnmatch
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -21,6 +22,7 @@ from omniagents.core.eval.layout import (
     EvalLayout,
     check_layout,
     evaluations_dir,
+    slugify,
 )
 
 # ---------------------------------------------------------------------------
@@ -229,15 +231,109 @@ _OPTIMIZER_FILES = (
 )
 
 
-def _collect_judges(root: Path) -> Tuple[Dict[str, Any], Dict[str, Path]]:
+def _collect_judges(layout: EvalLayout) -> Tuple[Dict[str, Any], Dict[str, Path]]:
     judges: Dict[str, Any] = {}
     sources: Dict[str, Path] = {}
-    for key, (cfg, path) in _collect_folders(root, JUDGE_FILE).items():
+    for key, (cfg, path) in _collect_folders(layout.judges_dir, JUDGE_FILE).items():
         cfg = _resolve_judge_agent_ref(path.parent, cfg)
         _resolve_files(f"Judge {key!r}", cfg, path, _JUDGE_FILES)
+        if cfg.get("examples"):
+            cfg["_examples"] = _judge_examples(layout, key, cfg)
         judges[key] = cfg
         sources[key] = path
     return judges, sources
+
+
+def _split_examples(path: Path) -> Dict[str, Dict[str, Any]]:
+    if not path.is_file():
+        return {}
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return {
+        str(e["id"]): e
+        for e in data.get("scenarios") or []
+        if isinstance(e, dict) and e.get("id")
+    }
+
+
+def _judge_examples(
+    layout: EvalLayout, key: str, cfg: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    """A judge's few-shot examples (``examples:`` in its ``judge.yml``, answer
+    ids): reviewed answers from the train split of its category's judge
+    dataset, each with the reviewer's notes as its critique. An example
+    from dev or test would leak into the judge's measurement, so it is
+    refused."""
+    category = cfg.get("failure_category") or cfg.get("category")
+    if not category:
+        raise ValueError(f"Judge {key!r} has examples but no failure_category")
+    folder = layout.judge_dataset_dir(slugify(str(category)))
+    train = _split_examples(folder / "train.yml")
+    held_out = {
+        **_split_examples(folder / "dev.yml"),
+        **_split_examples(folder / "test.yml"),
+    }
+    examples = []
+    for example_id in cfg.get("examples") or []:
+        example_id = str(example_id)
+        if example_id in held_out:
+            raise ValueError(
+                f"Judge {key!r}: example {example_id} is in the dev or test split of "
+                f"{folder.name}; few-shot examples come from the train split only"
+            )
+        if example_id not in train:
+            raise ValueError(
+                f"Judge {key!r}: example {example_id} is not in the train split of "
+                f"the {folder.name} judge dataset"
+            )
+        example = train[example_id]
+        if not str(example.get("notes") or "").strip():
+            raise ValueError(
+                f"Judge {key!r}: example {example_id} has no reviewer notes to use "
+                "as its critique"
+            )
+        examples.append(
+            {
+                "id": example_id,
+                "answer": "Fail" if example.get("label") else "Pass",
+                "prompt": example.get("prompt"),
+                "reply": example.get("reply"),
+                "history": example.get("history"),
+                "critique": str(example["notes"]).strip(),
+            }
+        )
+    return examples
+
+
+#: How much of an example's conversation a judge prompt carries.
+EXAMPLE_CHARS = 4000
+
+
+def judge_examples_text(cfg: Dict[str, Any]) -> str:
+    """A judge's few-shot examples as an ``## Examples`` section for its
+    instructions (empty without any): each answer, the reviewer's critique,
+    and the verdict."""
+    examples = cfg.get("_examples") or []
+    if not examples:
+        return ""
+    reads_history = (cfg.get("input") or {}).get("source") == "history"
+    blocks = ["## Examples"]
+    for number, example in enumerate(examples, start=1):
+        if reads_history and example.get("history"):
+            shown = json.dumps(example["history"], ensure_ascii=False)
+            label = "Conversation"
+        else:
+            shown = str(example.get("reply") or "")
+            label = "Reply"
+        if len(shown) > EXAMPLE_CHARS:
+            shown = shown[:EXAMPLE_CHARS] + " [...]"
+        blocks.append(
+            f"### Example {number}: {example['answer']}\n"
+            + (f"User: {example['prompt']}\n" if example.get("prompt") else "")
+            + f"{label}:\n{shown}\n"
+            + f"Reasoning: {example['critique']}\n"
+            + f"Answer: {example['answer']}"
+        )
+    return "\n\n".join(blocks)
 
 
 def _collect_optimizers(root: Path) -> Dict[str, Any]:
@@ -434,7 +530,7 @@ def load_eval_config(
 
     settings = _evaluation_settings(layout.evaluation_file)
     scenarios = _collect_scenarios(layout.scenario_files())
-    judges, judge_sources = _collect_judges(layout.judges_dir)
+    judges, judge_sources = _collect_judges(layout)
     optimizers = _collect_optimizers(layout.optimizers_dir)
     metrics = [m for m in settings.get("metrics") or [] if m is not None]
 

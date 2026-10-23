@@ -145,6 +145,11 @@ async def evaluate_split(
                 )
             except Exception:
                 pass
+        from omniagents.core.eval.loader import judge_examples_text
+
+        examples = judge_examples_text(jcfg)
+        if examples:
+            instructions = f"{instructions}\n\n{examples}"
         model = agent_cfg.get("model", "gpt-4.1")
         output_type = agent_cfg.get("output_type", dict)
         output_type_strict = bool(agent_cfg.get("output_type_strict", False))

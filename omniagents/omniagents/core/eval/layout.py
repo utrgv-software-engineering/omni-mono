@@ -17,7 +17,10 @@ Produced by people and tools, committed::
 
     reviews/<run id>.jsonl      people's verdicts on a run's answers, each
                                 with the answer it judges
-    generated/<set>/            a generated set: scenarios.yml, manifest.json
+    generated/<set>/            a generated set: the combinations of dimension
+                                values a person reviewed (combinations.yml),
+                                its scenarios.yml and manifest.json, and the
+                                queries the realism filter left out
                                 (regenerating costs model calls and never
                                 gives the same set)
     holdout/                    the suite's train/dev/test assignment
@@ -41,6 +44,7 @@ loaded.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -56,6 +60,7 @@ SCENARIOS = "scenarios"
 GENERATED = "generated"
 GENERATED_SCENARIOS = "scenarios.yml"
 GENERATED_MANIFEST = "manifest.json"
+COMBINATIONS_FILE = "combinations.yml"
 HOLDOUT = "holdout"
 JUDGE_DATASETS = "judge-datasets"
 DATASET_MANIFEST = "manifest.yml"
@@ -65,6 +70,12 @@ OPTIMIZATIONS = "optimizations"
 REVIEWS = "reviews"
 BASELINES = "baselines"
 SPLIT_NAMES = ("train", "dev", "test")
+
+
+def slugify(value: str) -> str:
+    """A failure category's id: its name, lowercased, words joined by ``_``."""
+    token = re.sub(r"[^a-z0-9\-_]+", "_", (value or "").strip().lower())
+    return re.sub(r"_+", "_", token).strip("_")
 
 
 class EvalLayoutError(ValueError):
@@ -167,6 +178,12 @@ class EvalLayout:
     @property
     def baselines_dir(self) -> Path:
         return self.eval_dir / BASELINES
+
+    @property
+    def review_assist_dir(self) -> Path:
+        """The review assistant's working state (sample, proposals,
+        suggestions): local, under ``runs/``."""
+        return self.runs_dir / "review-assist"
 
     def relative(self, path: Path) -> str:
         """``path`` as written in records: relative to the evaluations

@@ -11,13 +11,17 @@ import type {
   AgentOptions,
   AgentSource,
   Dimension,
+  Draft,
   Holdout,
   Job,
   JobRequest,
   Judge,
   JudgeDataset,
   JudgeDatasetSplitDetail,
+  LabelSuggestion,
   Measure,
+  ReviewAssist,
+  ReviewSample,
   RunComparison,
   SavedRun,
   SavedRunEntry,
@@ -434,8 +438,60 @@ export class ApiClient {
     return this.send('/evaluation/baselines', 'POST', { path, name })
   }
 
+  async setJudgeExamples(key: string, ids: string[]): Promise<Judge> {
+    return this.send(`/evaluation/judges/${encodeURIComponent(key)}/examples`, 'PUT', { ids })
+  }
+
   async removeBaseline(name: string): Promise<{ removed: string }> {
     return this.send(`/evaluation/baselines/${encodeURIComponent(name)}`, 'DELETE')
+  }
+
+  // -- evaluation: drafted generated sets ---------------------------------------
+
+  async getDrafts(): Promise<{ drafts: Draft[] }> {
+    return this.fetch('/evaluation/drafts')
+  }
+
+  async draftCombinations(draft: {
+    name: string
+    count?: number
+    seed?: number | null
+    dimension_values?: Record<string, string[]> | null
+  }): Promise<Draft> {
+    return this.send('/evaluation/drafts', 'POST', draft)
+  }
+
+  async setCombinations(name: string, combinations: Array<Record<string, string>>): Promise<Draft> {
+    return this.send(`/evaluation/drafts/${encodeURIComponent(name)}`, 'PUT', { combinations })
+  }
+
+  async removeDraft(name: string): Promise<{ removed: string }> {
+    return this.send(`/evaluation/drafts/${encodeURIComponent(name)}`, 'DELETE')
+  }
+
+  // -- evaluation: review assistant --------------------------------------------
+
+  async getReviewAssist(): Promise<ReviewAssist> {
+    return this.fetch('/evaluation/review-assist')
+  }
+
+  async drawReviewSample(size = 20, seed = 0): Promise<ReviewSample> {
+    return this.send('/evaluation/review-assist/sample', 'POST', { size, seed })
+  }
+
+  async acceptProposal(
+    id: string,
+    changes: { name?: string | null; description?: string | null },
+  ): Promise<{ category: { id: string; name: string }; unapplied: string[] }> {
+    return this.send(`/evaluation/review-assist/proposals/${encodeURIComponent(id)}/accept`, 'POST', changes)
+  }
+
+  async dismissProposal(id: string): Promise<{ dismissed: string }> {
+    return this.send(`/evaluation/review-assist/proposals/${encodeURIComponent(id)}/dismiss`, 'POST', {})
+  }
+
+  async decideSuggestions(ids: string[], accept: boolean): Promise<{ decided: LabelSuggestion[] }> {
+    return this.send('/evaluation/review-assist/suggestions', 'POST', { ids, accept })
   }
 
   // -- evaluation: jobs --------------------------------------------------------

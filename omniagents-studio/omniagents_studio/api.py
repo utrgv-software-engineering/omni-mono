@@ -1,11 +1,9 @@
 """FastAPI routes for the React UI"""
 
 import csv
-import getpass
 import io
 import json
 import logging
-import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Literal
@@ -50,6 +48,7 @@ from omniagents.core.eval.workspace import (
 
 from .agent_runtimes import AgentRuntimes
 from .agents import router as agents_router
+from .evaluation import reviewer_name
 from .evaluation import router as evaluation_router
 from .jobs import Jobs
 
@@ -645,21 +644,11 @@ def create_api_app(
         return None
 
     def _reviewer() -> Optional[str]:
-        """Who is reviewing: the project's git user, else this login."""
         try:
-            root = _get_manifest_path().parent
-            name = subprocess.run(
-                ["git", "config", "user.name"],
-                cwd=root,
-                capture_output=True,
-                text=True,
-                timeout=5,
-            ).stdout.strip()
-            if name:
-                return name
-        except (HTTPException, OSError, subprocess.SubprocessError):
-            pass
-        return getpass.getuser()
+            root: Optional[Path] = _get_manifest_path().parent
+        except HTTPException:
+            root = None
+        return reviewer_name(root)
 
     def _review_view(review: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         review = review or {}

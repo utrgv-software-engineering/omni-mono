@@ -436,7 +436,33 @@ def main():
 
     eval_scen = eval_sub.add_parser("scenarios", help="Scenario utilities")
     scen_sub = eval_scen.add_subparsers(dest="scen_cmd")
-    scen_gen = scen_sub.add_parser("generate", help="Generate synthetic scenarios")
+    scen_combos = scen_sub.add_parser(
+        "combinations",
+        help="Draft the combinations of dimension values a new generated set will "
+        "use, for you to review in evaluations/generated/<name>/combinations.yml "
+        "before generating",
+    )
+    scen_combos.add_argument(
+        "--project",
+        "-P",
+        required=False,
+        help="Path to project.yml (defaults to project.yml in CWD)",
+    )
+    scen_combos.add_argument("--name", required=True, help="The set's name")
+    scen_combos.add_argument("--count", type=int, default=20)
+    scen_combos.add_argument("--seed", type=int, default=None)
+    scen_combos.add_argument(
+        "--value",
+        action="append",
+        default=[],
+        metavar="DIMENSION=VALUE",
+        help="Only draw this value of a dimension (repeatable)",
+    )
+    scen_gen = scen_sub.add_parser(
+        "generate",
+        help="Generate a set's scenarios from its reviewed combinations "
+        "(eval scenarios combinations)",
+    )
     scen_gen.add_argument(
         "--project",
         "-P",
@@ -608,7 +634,11 @@ def main():
         "name", help="Judge key (snake_case, e.g., out_of_scope_judge)"
     )
     gen_judge.add_argument("--project", "-P", required=False, default=".")
-    gen_judge.add_argument("--model", default="gpt-4.1")
+    gen_judge.add_argument(
+        "--model",
+        default="gpt-4.1-2025-04-14",
+        help="A dated snapshot: a judge validated against an alias can drift",
+    )
     gen_judge.add_argument(
         "--source",
         choices=["final_assistant_text", "history"],
@@ -962,6 +992,25 @@ def main():
     judge_dataset.add_argument("--dev", type=float, default=0.425)
     judge_dataset.add_argument("--test", type=float, default=0.425)
     judge_dataset.add_argument("--seed", type=int, default=42)
+    judge_examples = judge_sub.add_parser(
+        "examples",
+        help="List a judge's candidate few-shot examples (reviewed answers in the "
+        "train split of its category's judge dataset, critiqued by the reviewer's "
+        "notes), or set them",
+    )
+    judge_examples.add_argument(
+        "--project",
+        "-P",
+        required=False,
+        help="Path to project.yml (defaults to project.yml in CWD)",
+    )
+    judge_examples.add_argument("--judge", "-j", required=True)
+    judge_examples.add_argument(
+        "ids", nargs="*", help="Answer ids to use as its examples (replacing any)"
+    )
+    judge_examples.add_argument(
+        "--clear", action="store_true", help="Use no few-shot examples"
+    )
     judge_run = judge_sub.add_parser(
         "run", help="Evaluate an LLM-as-Judge over a split"
     )
@@ -2139,6 +2188,34 @@ def main():
             except Exception as e:
                 print(f"Error creating holdout: {e}")
                 sys.exit(1)
+        elif (
+            args.eval_cmd == "scenarios"
+            and getattr(args, "scen_cmd", None) == "combinations"
+        ):
+            from omniagents.core.eval.workspace import EvalWorkspace, EvalWorkspaceError
+
+            workspace = EvalWorkspace(getattr(args, "project", None) or Path.cwd())
+            values: dict = {}
+            for item in args.value:
+                dimension, _, value = str(item).partition("=")
+                if not value:
+                    print(f"Error: --value takes DIMENSION=VALUE, got {item!r}")
+                    sys.exit(2)
+                values.setdefault(dimension, []).append(value)
+            try:
+                draft = workspace.draft_combinations(
+                    args.name, count=args.count, seed=args.seed, dimension_values=values
+                )
+            except EvalWorkspaceError as exc:
+                print(f"Error: {exc}")
+                sys.exit(2)
+            for combination in draft["combinations"]:
+                print("  " + ", ".join(f"{k}={v}" for k, v in combination.items()))
+            print(
+                f"Drafted {len(draft['combinations'])} combinations in {draft['path']}. "
+                "Remove the ones real users never present and add missing ones, then: "
+                f"omniagents eval scenarios generate --name {args.name}"
+            )
         elif args.eval_cmd == "baseline":
             from omniagents.core.eval.workspace import EvalWorkspace, EvalWorkspaceError
 
@@ -2178,6 +2255,46 @@ def main():
                 )
             for warning in dataset["manifest"].get("warnings") or []:
                 print(f"Warning: {warning}")
+        elif getattr(args, "judge_cmd", None) == "examples":
+            from omniagents.core.eval.workspace import (
+                EvalWorkspace,
+                EvalWorkspaceError,
+                slugify,
+            )
+
+            workspace = EvalWorkspace(getattr(args, "project", None) or Path.cwd())
+            try:
+                if args.ids or args.clear:
+                    judge = workspace.set_judge_examples(
+                        args.judge, [] if args.clear else list(args.ids)
+                    )
+                    print(
+                        f"{args.judge} uses {len(judge['examples'])} few-shot examples"
+                    )
+                    sys.exit(0)
+                judge = workspace.judge(args.judge)
+                category = judge.get("failure_category")
+                if not category:
+                    print(f"Error: {args.judge} decides no failure category")
+                    sys.exit(2)
+                dataset = workspace.judge_dataset(slugify(category))
+                train = next(s for s in dataset["splits"] if s["split"] == "train")
+                answers = workspace.judge_dataset_split(train["path"])["scenarios"]
+            except EvalWorkspaceError as exc:
+                print(f"Error: {exc}")
+                sys.exit(2)
+            chosen = set(judge["examples"])
+            for answer in answers:
+                mark = "*" if answer["id"] in chosen else " "
+                verdict = "Fail" if answer.get("label") else "Pass"
+                notes = (answer.get("notes") or "(no notes: cannot be an example)")[
+                    :100
+                ]
+                print(f"{mark} {answer['id']}  {verdict}  {notes}")
+            print(
+                "* marks its examples. Choose a clear Pass, a clear Fail and a "
+                "borderline case (2-4 in all)."
+            )
         elif getattr(args, "judge_cmd", None) == "run":
             try:
                 from omniagents.core.eval.loader import load_eval_config
@@ -2551,6 +2668,17 @@ def main():
                     )
                 out_path.write_text(json.dumps(out, indent=2), encoding="utf-8")
                 print(f"Wrote results: {out_path}")
+                from omniagents.core.eval.judge_validation import is_pinned
+
+                judge_model = (
+                    ((eval_cfg.config.get("judges") or {}).get(jkey) or {}).get("agent")
+                    or {}
+                ).get("model")
+                if not is_pinned(judge_model):
+                    print(
+                        f"Warning: {jkey}'s model {judge_model!r} is an alias; pin a "
+                        "dated snapshot so the judge cannot change under its validation"
+                    )
                 if out.get("validation"):
                     print(
                         f"Validated {jkey} on the test split; recorded in "

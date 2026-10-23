@@ -1,5 +1,6 @@
 import { Badge } from '@omniagents/ui/badge'
 import { Button } from '@omniagents/ui/button'
+import { Checkbox } from '@omniagents/ui/checkbox'
 import { Input } from '@omniagents/ui/input'
 import { Label } from '@omniagents/ui/label'
 import { NativeSelect, NativeSelectOption } from '@omniagents/ui/native-select'
@@ -74,7 +75,7 @@ function NewJudge({ onCreated }: { onCreated: (key: string) => void }) {
   const queryClient = useQueryClient()
   const categories = useQuery({ queryKey: ['evaluation', 'categories'], queryFn: () => api.getCategories() })
   const [key, setKey] = useState('')
-  const [model, setModel] = useState('gpt-4.1')
+  const [model, setModel] = useState('gpt-4.1-2025-04-14')
   const [category, setCategory] = useState('')
   const create = useMutation({
     mutationFn: () => api.addJudge({ key: key.trim(), model: model.trim(), failure_category: category || null }),
@@ -204,7 +205,91 @@ function JudgeEditor({ judge }: { judge: Judge }) {
           onChange={(e) => setDraft({ ...draft, template: e.target.value })}
         />
       </div>
+      <FewShotExamples judge={judge} />
     </section>
+  )
+}
+
+function categoryId(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\-_]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '')
+}
+
+/**
+ * A judge's few-shot examples: reviewed answers from the train split of its
+ * category's dataset, each shown to the judge with the reviewer's notes as
+ * its critique. Never from dev or test, which measure the judge.
+ */
+function FewShotExamples({ judge }: { judge: Judge }) {
+  const queryClient = useQueryClient()
+  const datasets = useQuery({ queryKey: ['evaluation', 'judge-datasets'], queryFn: () => api.getJudgeDatasets() })
+  const dataset = judge.failure_category
+    ? datasets.data?.datasets.find((d) => d.category === categoryId(judge.failure_category!))
+    : undefined
+  const trainPath = dataset?.splits.find((split) => split.split === 'train')?.path ?? null
+  const train = useQuery({
+    queryKey: ['evaluation', 'judge-split', trainPath],
+    queryFn: () => api.getJudgeDatasetSplit(trainPath!),
+    enabled: !!trainPath,
+  })
+  const [chosen, setChosen] = useState<string[]>(judge.examples)
+  useEffect(() => setChosen(judge.examples), [judge.examples])
+  const save = useMutation({
+    mutationFn: () => api.setJudgeExamples(judge.key, chosen),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['evaluation'] }),
+  })
+  const changed = JSON.stringify(chosen) !== JSON.stringify(judge.examples)
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-end justify-between gap-2">
+        <div>
+          <Label>Few-shot examples</Label>
+          <p className="text-xs text-muted-foreground">
+            Answers from the train split of its judge dataset, shown to the judge with the reviewer&apos;s notes as the
+            critique. Pick a clear Pass, a clear Fail and a borderline case (2-4 in all).
+          </p>
+        </div>
+        <Button size="sm" variant="outline" disabled={!changed || save.isPending} onClick={() => save.mutate()}>
+          Save examples
+        </Button>
+      </div>
+      {!judge.failure_category ? (
+        <p className="text-xs text-muted-foreground">Give the judge a failure category to draw examples from its dataset.</p>
+      ) : !trainPath ? (
+        <p className="text-xs text-muted-foreground">Build its category&apos;s judge dataset first.</p>
+      ) : (
+        <div className="max-h-72 space-y-1 overflow-y-auto rounded-md border border-border p-2">
+          {(train.data?.scenarios ?? []).map((answer) => {
+            const id = String(answer.id)
+            const notes = typeof answer.notes === 'string' ? answer.notes.trim() : ''
+            return (
+              <label key={id} className={cn('flex items-start gap-2 text-xs', !notes && 'opacity-50')}>
+                <Checkbox
+                  checked={chosen.includes(id)}
+                  disabled={!notes}
+                  onCheckedChange={(on) => setChosen(on ? [...chosen, id] : chosen.filter((c) => c !== id))}
+                />
+                <span className="min-w-0 flex-1">
+                  <Badge variant={answer.label ? 'destructive' : 'secondary'} className="mr-1">
+                    {answer.label ? 'Fail' : 'Pass'}
+                  </Badge>
+                  {excerpt(answer.reply, 120)}
+                  <span className="block text-muted-foreground">
+                    {notes ? `Critique: ${excerpt(notes, 160)}` : 'No reviewer notes, so it cannot be an example'}
+                  </span>
+                </span>
+              </label>
+            )
+          })}
+        </div>
+      )}
+      {save.error ? <p className="text-xs text-destructive">{(save.error as Error).message}</p> : null}
+    </div>
   )
 }
 
@@ -401,6 +486,20 @@ const STATUS: Record<Judge['status'], string> = {
  * its verdicts uncorrected.
  */
 function Validation({ judge }: { judge: Judge }) {
+  return (
+    <>
+      <ValidationStatus judge={judge} />
+      {!judge.model_pinned ? (
+        <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+          Its model ({judge.model ?? 'unset'}) is an alias the provider can change; pin a dated snapshot (e.g.
+          gpt-4.1-2025-04-14) so it cannot drift from its validation.
+        </p>
+      ) : null}
+    </>
+  )
+}
+
+function ValidationStatus({ judge }: { judge: Judge }) {
   const test = judge.validation?.test
   if (judge.status === 'unvalidated' || !test) {
     return (

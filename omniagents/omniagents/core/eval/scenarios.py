@@ -259,6 +259,76 @@ def _enumerate_combos(
     return combos
 
 
+def draft_combinations(
+    dimensions: List[Dict[str, Any]],
+    *,
+    count: int,
+    seed: int | None = None,
+    filters: Dict[str, List[str]] | None = None,
+) -> List[Dict[str, str]]:
+    """A sample of ``count`` combinations of dimension values (every one
+    when there are fewer), for a person to review before any scenario is
+    generated from them: they know which combinations real users present
+    and which never occur."""
+    combos = _enumerate_combos(dimensions, filters)
+    rng = random.Random(seed)
+    rng.shuffle(combos)
+    return combos[: max(0, int(count))]
+
+
+REALISM_INSTRUCTIONS = """\
+You judge synthetic test queries for an AI application: would a real user
+of it write this, as the user described by its dimension values?
+
+Score each query 1 to 5:
+5 - indistinguishable from a real user's message;
+4 - realistic, with small tells;
+3 - plausible but generic or stiff;
+2 - awkward, or does not match the user it is meant to come from;
+1 - clearly artificial, or not something anyone would send.
+
+Return JSON: {"ratings": [{"id": "...", "score": 1-5, "reason": "..."}]}
+"""
+
+
+async def rate_realism(
+    scenarios: List[Dict[str, Any]], ask: Any, application: str, *, batch: int = 10
+) -> Dict[str, Dict[str, Any]]:
+    """Each scenario's realism (``{score, reason}``) by its id, from
+    ``ask(instructions, prompt) -> dict``."""
+    ratings: Dict[str, Dict[str, Any]] = {}
+    for start in range(0, len(scenarios), batch):
+        chunk = scenarios[start : start + batch]
+        prompt = json.dumps(
+            {
+                "application": application,
+                "queries": [
+                    {
+                        "id": sc["id"],
+                        "user": sc.get("dimensions") or {},
+                        "query": sc.get("prompt"),
+                    }
+                    for sc in chunk
+                ],
+            },
+            ensure_ascii=False,
+        )
+        output = await ask(REALISM_INSTRUCTIONS, prompt)
+        for rating in output.get("ratings") or []:
+            if isinstance(rating, dict) and rating.get("id") in {
+                sc["id"] for sc in chunk
+            }:
+                try:
+                    score = int(rating.get("score"))
+                except (TypeError, ValueError):
+                    continue
+                ratings[str(rating["id"])] = {
+                    "score": score,
+                    "reason": str(rating.get("reason") or "").strip() or None,
+                }
+    return ratings
+
+
 def _persona_from_mapping(
     dimensions: List[Dict[str, Any]], mapping: Dict[str, str]
 ) -> List[Dict[str, Any]]:
@@ -333,14 +403,21 @@ async def generate_scenarios(
     compiled_yaml: Path,
     *,
     output: Path,
+    combinations: List[Dict[str, str]],
     count: int | None = None,
     seed: int | None = None,
     set_name: str | None = None,
     workflow_name: str | None = None,
     progress_cb: Any | None = None,
-    dimension_filters: Dict[str, List[str]] | None = None,
     eval_config: Any | None = None,
+    realism: Any | None = None,
+    min_realism: int = 3,
 ) -> Tuple[List[Dict[str, Any]], Path, str]:
+    """Generate scenarios from ``combinations`` (reviewed dimension-value
+    combinations), about ``count`` in all, into ``output``. With
+    ``realism`` (an ``ask`` for :func:`rate_realism`), queries rated below
+    ``min_realism`` are left out of the set and written to ``filtered.yml``
+    beside it with their ratings, so a person can see what was dropped."""
     if eval_config is not None:
         cfg_path = eval_config.agent_path
         eval_cfg = eval_config.config
@@ -376,19 +453,9 @@ async def generate_scenarios(
 
     scenarios: List[Dict[str, Any]] = []
     used_names: Dict[str, int] = {}
-    filters_for_combos: Dict[str, List[str]] | None = None
-    if dimension_filters:
-        normalized_filters: Dict[str, List[str]] = {}
-        for key, values in dimension_filters.items():
-            if not values:
-                continue
-            allowed_values = [str(v).strip() for v in values if str(v).strip()]
-            if allowed_values:
-                normalized_filters[str(key)] = allowed_values
-        if normalized_filters:
-            filters_for_combos = normalized_filters
-    combos = _enumerate_combos(dims, filters_for_combos)
-    random.shuffle(combos)
+    combos = [dict(c) for c in combinations]
+    if not combos:
+        raise ValueError("There are no combinations to generate scenarios from")
     import hashlib as _hashlib, json as _json
 
     try:
@@ -512,9 +579,43 @@ async def generate_scenarios(
         if len(scenarios) >= target_count:
             break
 
+    filtered: List[Dict[str, Any]] = []
+    if realism is not None and scenarios:
+        agent_cfg_meta = (eval_config.agent_config if eval_config else {}) or {}
+        application = str(
+            agent_cfg_meta.get("description")
+            or agent_cfg_meta.get("label")
+            or agent_cfg_meta.get("name")
+            or "an AI assistant"
+        )
+        ratings = await rate_realism(scenarios, realism, application)
+        kept = []
+        for sc in scenarios:
+            rating = ratings.get(sc["id"])
+            if rating is not None and rating["score"] < min_realism:
+                filtered.append({**sc, "realism": rating})
+            else:
+                kept.append(sc)
+        scenarios = kept
     out_path = _write_set(
         Path(output), scenarios, set_name, ts, cfg_path, _project_root, workflow_name
     )
+    filtered_path = out_path.parent / "filtered.yml"
+    if filtered:
+        filtered_path.write_text(
+            yaml.safe_dump(
+                {"scenarios": filtered}, sort_keys=False, allow_unicode=True
+            ),
+            encoding="utf-8",
+        )
+    else:
+        filtered_path.unlink(missing_ok=True)
+    manifest_path = out_path.parent / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["counts"] = {"total": len(scenarios), "filtered": len(filtered)}
+    if realism is not None:
+        manifest["min_realism"] = min_realism
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     if progress_cb:
         try:
             progress_cb({"event": "done", "count": len(scenarios)})

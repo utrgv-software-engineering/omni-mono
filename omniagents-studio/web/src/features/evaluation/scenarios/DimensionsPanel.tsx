@@ -8,7 +8,7 @@ import { Plus, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { api } from '../../../lib/api'
-import type { Dimension } from '../../../types/evaluation'
+import type { Dimension, Draft } from '../../../types/evaluation'
 import { JobPanel } from '../jobs'
 import { useJob } from '../useJob'
 
@@ -134,44 +134,65 @@ export function DimensionsPanel() {
   )
 }
 
-/** Generate a scenario set from the saved dimensions, optionally only some values. */
+/**
+ * A generated set, in two steps. First draft a sample of combinations of
+ * dimension values; review it (remove the ones real users never present, add
+ * the ones missing), since you know which occur. Then generate scenarios from
+ * exactly those; queries a model rates unrealistic are left out.
+ */
 function GenerateScenarios({ dimensions }: { dimensions: Dimension[] }) {
-  const job = useJob([['evaluation', 'scenario-sets']])
+  const queryClient = useQueryClient()
+  const drafts = useQuery({ queryKey: ['evaluation', 'drafts'], queryFn: () => api.getDrafts() })
   const [name, setName] = useState('')
   const [count, setCount] = useState('20')
   const [seed, setSeed] = useState('')
   const [excluded, setExcluded] = useState<Record<string, string[]>>({})
+  const draft = useMutation({
+    mutationFn: () => {
+      const valueFilter = Object.fromEntries(
+        dimensions
+          .filter((dim) => (excluded[dim.name] ?? []).length > 0)
+          .map((dim) => [dim.name, dim.values.map((v) => v.name).filter((v) => !(excluded[dim.name] ?? []).includes(v))]),
+      )
+      return api.draftCombinations({
+        name: name.trim(),
+        count: Number(count) || 20,
+        seed: seed ? Number(seed) : null,
+        dimension_values: Object.keys(valueFilter).length ? valueFilter : null,
+      })
+    },
+    onSuccess: () => {
+      setName('')
+      void queryClient.invalidateQueries({ queryKey: ['evaluation', 'drafts'] })
+    },
+  })
 
   if (dimensions.length === 0) {
     return null
   }
-  const valueFilter = Object.fromEntries(
-    dimensions
-      .filter((dim) => (excluded[dim.name] ?? []).length > 0)
-      .map((dim) => [dim.name, dim.values.map((v) => v.name).filter((v) => !(excluded[dim.name] ?? []).includes(v))]),
-  )
 
   return (
     <div className="space-y-3 rounded-md border border-border bg-muted/30 p-4">
       <div>
         <h4 className="text-sm font-semibold">Generate a scenario set</h4>
         <p className="text-xs text-muted-foreground">
-          Writes generated/&lt;name&gt;/ in the evaluations directory. Run it, review the conversations in Logs, then promote the good scenarios or
-          build a judge dataset from the reviews.
+          Draft the combinations of values first and review them: remove the ones real users never present, add the
+          ones missing. Scenarios are generated from exactly those into generated/&lt;name&gt;/, and queries a model rates
+          unrealistic are set aside in filtered.yml.
         </p>
       </div>
       <div className="grid grid-cols-3 gap-3">
         <div className="grid gap-1.5">
-          <Label htmlFor="generate-name">Set name</Label>
-          <Input id="generate-name" placeholder="batch_1" value={name} onChange={(e) => setName(e.target.value)} />
+          <Label htmlFor="draft-name">Set name</Label>
+          <Input id="draft-name" placeholder="batch_1" value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div className="grid gap-1.5">
-          <Label htmlFor="generate-count">Scenarios</Label>
-          <Input id="generate-count" type="number" min={1} value={count} onChange={(e) => setCount(e.target.value)} />
+          <Label htmlFor="draft-count">Combinations</Label>
+          <Input id="draft-count" type="number" min={1} value={count} onChange={(e) => setCount(e.target.value)} />
         </div>
         <div className="grid gap-1.5">
-          <Label htmlFor="generate-seed">Seed (optional)</Label>
-          <Input id="generate-seed" type="number" value={seed} onChange={(e) => setSeed(e.target.value)} />
+          <Label htmlFor="draft-seed">Seed (optional)</Label>
+          <Input id="draft-seed" type="number" value={seed} onChange={(e) => setSeed(e.target.value)} />
         </div>
       </div>
       <div className="space-y-1">
@@ -198,21 +219,110 @@ function GenerateScenarios({ dimensions }: { dimensions: Dimension[] }) {
           </div>
         ))}
       </div>
-      <Button
-        size="sm"
-        disabled={!name.trim() || job.running}
-        onClick={() =>
-          void job.start({
-            kind: 'generate',
-            name: name.trim(),
-            count: Number(count) || null,
-            seed: seed ? Number(seed) : null,
-            dimension_values: Object.keys(valueFilter).length ? valueFilter : null,
-          })
-        }
-      >
-        Generate
+      <Button size="sm" disabled={!name.trim() || draft.isPending} onClick={() => draft.mutate()}>
+        Draft combinations
       </Button>
+      {draft.error ? <p className="text-xs text-destructive">{(draft.error as Error).message}</p> : null}
+      {(drafts.data?.drafts ?? []).map((item) => (
+        <DraftReview key={item.name} draft={item} dimensions={dimensions} />
+      ))}
+    </div>
+  )
+}
+
+function DraftReview({ draft, dimensions }: { draft: Draft; dimensions: Dimension[] }) {
+  const queryClient = useQueryClient()
+  const job = useJob([['evaluation', 'scenario-sets'], ['evaluation', 'drafts']])
+  const [combinations, setCombinations] = useState(draft.combinations)
+  const [adding, setAdding] = useState<Record<string, string>>(() =>
+    Object.fromEntries(dimensions.map((dim) => [dim.name, dim.values[0]?.name ?? ''])),
+  )
+  const [count, setCount] = useState(String(draft.combinations.length * 2))
+  useEffect(() => setCombinations(draft.combinations), [draft.combinations])
+  const refresh = () => void queryClient.invalidateQueries({ queryKey: ['evaluation', 'drafts'] })
+  const save = useMutation({ mutationFn: () => api.setCombinations(draft.name, combinations), onSuccess: refresh })
+  const remove = useMutation({ mutationFn: () => api.removeDraft(draft.name), onSuccess: refresh })
+  const changed = JSON.stringify(combinations) !== JSON.stringify(draft.combinations)
+  const key = (c: Record<string, string>) => dimensions.map((d) => c[d.name]).join(' · ')
+
+  return (
+    <div className="space-y-2 rounded-md border border-border bg-background p-3">
+      <div className="flex items-center justify-between gap-2">
+        <h5 className="text-sm font-medium">
+          {draft.name} <span className="font-normal text-muted-foreground">({combinations.length} combinations to review)</span>
+        </h5>
+        <Button size="icon-xs" variant="ghost" aria-label="Delete draft" onClick={() => remove.mutate()}>
+          <Trash2 />
+        </Button>
+      </div>
+      <ul className="max-h-60 space-y-0.5 overflow-y-auto text-xs">
+        {combinations.map((combination) => (
+          <li key={key(combination)} className="flex items-center justify-between gap-2 rounded px-1 hover:bg-muted">
+            <span>{key(combination)}</span>
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Remove combination"
+              onClick={() => setCombinations(combinations.filter((c) => key(c) !== key(combination)))}
+            >
+              <Trash2 />
+            </Button>
+          </li>
+        ))}
+      </ul>
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        {dimensions.map((dim) => (
+          <select
+            key={dim.name}
+            aria-label={dim.label ?? dim.name}
+            className="rounded-sm border border-border bg-background px-1 py-0.5"
+            value={adding[dim.name] ?? ''}
+            onChange={(e) => setAdding({ ...adding, [dim.name]: e.target.value })}
+          >
+            {dim.values.map((value) => (
+              <option key={value.name} value={value.name}>
+                {value.label ?? value.name}
+              </option>
+            ))}
+          </select>
+        ))}
+        <Button
+          size="xs"
+          variant="outline"
+          onClick={() => {
+            if (!combinations.some((c) => key(c) === key(adding))) setCombinations([...combinations, { ...adding }])
+          }}
+        >
+          <Plus /> Add combination
+        </Button>
+      </div>
+      <div className="flex flex-wrap items-end gap-2">
+        <Button size="sm" variant="outline" disabled={!changed || save.isPending} onClick={() => save.mutate()}>
+          Save review
+        </Button>
+        <div className="grid gap-1">
+          <Label htmlFor={`generate-count-${draft.name}`} className="text-xs">
+            Scenarios
+          </Label>
+          <Input
+            id={`generate-count-${draft.name}`}
+            className="h-8 w-24"
+            type="number"
+            min={1}
+            value={count}
+            onChange={(e) => setCount(e.target.value)}
+          />
+        </div>
+        <Button
+          size="sm"
+          disabled={changed || combinations.length === 0 || job.running}
+          title={changed ? 'Save the review first' : undefined}
+          onClick={() => void job.start({ kind: 'generate', name: draft.name, count: Number(count) || null })}
+        >
+          Generate from these
+        </Button>
+      </div>
+      {save.error ? <p className="text-xs text-destructive">{(save.error as Error).message}</p> : null}
       <JobPanel job={job.job} error={job.error} onDismiss={job.dismiss} />
     </div>
   )

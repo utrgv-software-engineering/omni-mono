@@ -167,7 +167,10 @@ metrics:
 Scenario pipeline (optional)
 
 ```bash
-# Generate synthetic scenarios from dimensions into a named set
+# Draft combinations of dimension values for a new set, review them in
+# evaluations/generated/myset/combinations.yml (remove the ones real users never
+# present, add missing ones), then generate scenarios from exactly those
+python -m omniagents.cli eval scenarios combinations -P path/to/project.yml --name myset --count 20
 python -m omniagents.cli eval scenarios generate -P path/to/project.yml --name myset --count 100
 
 # Run the set; each run keeps its conversation for review and for judges
@@ -188,6 +191,22 @@ Validating a judge (`omniagents.core.eval.judge_validation`)
 - TPR and TNR treat **Pass as the positive class**: TPR is how often the judge says Pass when a person said Pass, TNR how often it says Fail when a person said Fail. Iterate on dev until both are above 90% (80% at least).
 - A judge's run on its dataset's **test split** is its validation, recorded in `judges/<key>/validation.yml` (committed): the judge version measured (a hash of its settings, instructions and template), the test split, the counts, TPR and TNR. The test split is measured **once per version**: running it again on an unchanged judge and split is refused. Editing the judge makes a new, unvalidated version. `judge optimize --apply` records the applied judge's test measurement the same way.
 - A run reports, per judge, its **raw pass rate** and, for a judge validated as it is now, the **corrected rate** with a 95% bootstrap interval (Rogan-Gladen: `(p_obs + TNR - 1) / (TPR + TNR - 1)`, resampling the test labels and the run's verdicts). An unvalidated judge, or one changed since validation, is reported uncorrected and says so (the run's `judges` list, the CLI summary, Studio's run detail and Judges tab).
+
+- A judge's **few-shot examples** are answers from the train split of its category's dataset, listed as `examples:` (answer ids) in its `judge.yml` (`omniagents judge examples -j <key> [ids]`, or Studio's Judges tab). Each is shown to the judge with the reviewer's notes as its critique and the verdict; an answer without notes cannot be one, and one in dev or test is refused (it would leak into the judge's measurement). Pick a clear Pass, a clear Fail and a borderline case. The examples are part of the judge's version.
+- **Pin judge models** to a dated snapshot (`gpt-4.1-2025-04-14`, not `gpt-4.1`): a provider can move an alias, and the judge drifts from its validation. The scaffolder and Studio default to a snapshot; `judge run` and the Judges tab warn about an alias.
+
+Generating scenarios
+
+- A generated set starts as **combinations** of dimension values (`generated/<set>/combinations.yml`, committed), a sample a person reviews: they know which combinations real users present. Generation uses exactly the reviewed combinations.
+- Unless `synthetic_data_generation.realism` is `false`, a model rates each generated query's realism 1-5 for the user its values describe (`realism: {min_score: 3, model: ...}`, the generator's model by default). Queries below `min_score` are left out of the set and written to `filtered.yml` beside it with their ratings; the manifest counts both.
+
+Reviewing answers (`omniagents.core.eval.review_assist`, Studio)
+
+The person notices; the assistant organizes. Nothing it produces is a label until a person accepts it. Its working state is local, in `runs/review-assist/`; its model is `review_assistant.model` in `evaluation.yml` (a pinned default otherwise).
+
+- **What to review next**: a sample of unreviewed evaluation answers, about two thirds representatives of clusters of similar answers (size and shape, whether they passed, their scenario's dimension values) and a third random picks. Studio's Logs shows it as the **Sample** filter.
+- **Failure modes from notes**: people's free-text notes grouped by the failure they describe, matched to existing categories or proposed as new ones (Studio's Categories tab). Accepting one creates the category if new and labels the reviews it grouped.
+- **Find more**: every answer read against a failure mode's definition and the answers already labelled with it; each that may show it becomes a suggestion (Logs' **Suggested** filter and the review panel), favouring recall. Accepting labels the answer (and marks it unacceptable if nobody judged it); a dismissed suggestion is not made again.
 
 Notes
 

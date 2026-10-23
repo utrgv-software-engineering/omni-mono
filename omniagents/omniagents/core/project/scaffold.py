@@ -429,7 +429,7 @@ def scaffold_server_function(
 def scaffold_judge(
     project_ref: str,
     key: str,
-    model: str = "gpt-4.1",
+    model: str = "gpt-4.1-2025-04-14",
     source: str = "final_assistant_text",
     add_measure: bool = True,
     failure_category: Optional[str] = None,

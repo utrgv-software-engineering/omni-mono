@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -207,6 +208,16 @@ def is_test_split(layout: EvalLayout, split_path: Path) -> bool:
     )
 
 
+_SNAPSHOT = re.compile(r"\d{4}-?\d{2}-?\d{2}")
+
+
+def is_pinned(model: Optional[str]) -> bool:
+    """Whether ``model`` names a dated snapshot (``gpt-4.1-2025-04-14``,
+    ``claude-sonnet-4-5-20250929``) rather than an alias a provider can
+    move: a judge validated against an alias may silently drift."""
+    return bool(model) and bool(_SNAPSHOT.search(str(model)))
+
+
 def validation_status(
     layout: EvalLayout, key: str, cfg: Dict[str, Any]
 ) -> Dict[str, Any]:
@@ -214,10 +225,15 @@ def validation_status(
     ``changed`` (validated, then edited) or ``unvalidated``, with the
     recorded measurement."""
     recorded = read_validation(layout, key)
+    pinned = is_pinned((cfg.get("agent") or {}).get("model"))
     if recorded is None:
-        return {"status": "unvalidated", "validation": None}
+        return {"status": "unvalidated", "validation": None, "model_pinned": pinned}
     current = recorded.get("judge_version") == judge_version(cfg)
-    return {"status": "validated" if current else "changed", "validation": recorded}
+    return {
+        "status": "validated" if current else "changed",
+        "validation": recorded,
+        "model_pinned": pinned,
+    }
 
 
 def _verdict(output: Any) -> Optional[bool]:

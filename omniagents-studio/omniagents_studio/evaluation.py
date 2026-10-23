@@ -2,17 +2,21 @@
 
 Every endpoint is a call into the workspace, so Studio reads and writes a
 project's evaluation exactly as ``omniagents eval`` does. Long work
-(running scenarios, generating them, annotating a set, optimizing a judge
-or an agent) starts a job (:mod:`.jobs`) the page follows.
+(running scenarios, generating them, proposing failure modes, scanning for
+a failure mode, optimizing a judge or an agent) starts a job (:mod:`.jobs`)
+the page follows.
 
-Reviews (a person's judgment of one conversation, with the failure
-categories it showed) are Studio's own data, kept with its traces; they
-count toward a category's use here.
+Reviews of evaluation answers live in the evaluations directory's
+``reviews/``; reviews of other conversations are Studio's own data, kept
+with its traces. Both count toward a category's use here, and both feed
+the review assistant's proposed failure modes.
 """
 
 from __future__ import annotations
 
 import asyncio
+import getpass
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
@@ -53,6 +57,24 @@ def _project_name(request: Request) -> str | None:
 
 def _workspace(request: Request, agent: str | None = None) -> EvalWorkspace:
     return EvalWorkspace(_manifest(request), agent=agent or None)
+
+
+def reviewer_name(root: Path | None) -> str:
+    """Who is reviewing: the project's git user, else this login."""
+    if root is not None:
+        try:
+            name = subprocess.run(
+                ["git", "config", "user.name"],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            ).stdout.strip()
+            if name:
+                return name
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return getpass.getuser()
 
 
 def _call(action: Callable[[], Any]) -> Any:
@@ -324,6 +346,17 @@ def patch_judge(request: Request, key: str, body: JudgeChange) -> dict[str, Any]
     return _call(lambda: _workspace(request).update_judge(key, **body.model_dump()))
 
 
+class JudgeExamples(BaseModel):
+    ids: list[str]
+
+
+@router.put("/judges/{key}/examples")
+def put_judge_examples(
+    request: Request, key: str, body: JudgeExamples
+) -> dict[str, Any]:
+    return _call(lambda: _workspace(request).set_judge_examples(key, body.ids))
+
+
 @router.delete("/judges/{key}")
 def delete_judge(request: Request, key: str) -> dict[str, Any]:
     _call(lambda: _workspace(request).remove_judge(key))
@@ -433,6 +466,119 @@ def delete_baseline(request: Request, name: str) -> dict[str, Any]:
     return {"removed": name}
 
 
+# -- drafted generated sets ----------------------------------------------------
+
+
+class NewDraft(BaseModel):
+    name: str
+    count: int = Field(default=20, ge=1, le=1000)
+    seed: int | None = None
+    dimension_values: dict[str, list[str]] | None = None
+
+
+class Combinations(BaseModel):
+    combinations: list[dict[str, str]]
+
+
+@router.get("/drafts")
+def get_drafts(request: Request) -> dict[str, Any]:
+    return {"drafts": _call(lambda: _workspace(request).drafts())}
+
+
+@router.post("/drafts")
+def post_draft(request: Request, body: NewDraft) -> dict[str, Any]:
+    return _call(
+        lambda: _workspace(request).draft_combinations(
+            body.name,
+            count=body.count,
+            seed=body.seed,
+            dimension_values=body.dimension_values,
+        )
+    )
+
+
+@router.put("/drafts/{name}")
+def put_draft(request: Request, name: str, body: Combinations) -> dict[str, Any]:
+    return _call(lambda: _workspace(request).set_combinations(name, body.combinations))
+
+
+@router.delete("/drafts/{name}")
+def delete_draft(request: Request, name: str) -> dict[str, Any]:
+    _call(lambda: _workspace(request).remove_draft(name))
+    return {"removed": name}
+
+
+# -- review assistant ---------------------------------------------------------
+
+
+@router.get("/review-assist")
+def get_review_assist(request: Request) -> dict[str, Any]:
+    return _call(lambda: _workspace(request).review_assist())
+
+
+class DrawSample(BaseModel):
+    size: int = Field(default=20, ge=1, le=500)
+    seed: int = 0
+
+
+@router.post("/review-assist/sample")
+def post_review_sample(request: Request, body: DrawSample) -> dict[str, Any]:
+    return _call(
+        lambda: _workspace(request).draw_review_sample(size=body.size, seed=body.seed)
+    )
+
+
+class AcceptProposal(BaseModel):
+    name: str | None = None
+    description: str | None = None
+
+
+@router.post("/review-assist/proposals/{proposal_id}/accept")
+def accept_proposal(
+    request: Request, proposal_id: str, body: AcceptProposal
+) -> dict[str, Any]:
+    workspace = _workspace(request)
+    result = _call(
+        lambda: workspace.accept_proposal(
+            proposal_id,
+            reviewer=reviewer_name(workspace.root),
+            name=body.name,
+            description=body.description,
+        )
+    )
+    # Notes on other conversations are labelled where Studio keeps them.
+    project = _project_name(request)
+    if project and result["unapplied"]:
+        storage = request.app.state.storage_manager.get_storage(project)
+        for group_id in result["unapplied"]:
+            labels = set(storage.get_analysis_categories(group_id))
+            labels.add(result["category"]["id"])
+            storage.set_analysis_categories(project, group_id, sorted(labels))
+    return result
+
+
+@router.post("/review-assist/proposals/{proposal_id}/dismiss")
+def dismiss_proposal(request: Request, proposal_id: str) -> dict[str, Any]:
+    _call(lambda: _workspace(request).dismiss_proposal(proposal_id))
+    return {"dismissed": proposal_id}
+
+
+class DecideSuggestions(BaseModel):
+    ids: list[str]
+    accept: bool
+
+
+@router.post("/review-assist/suggestions")
+def decide_suggestions(request: Request, body: DecideSuggestions) -> dict[str, Any]:
+    workspace = _workspace(request)
+    decided = _call(
+        lambda: workspace.decide_suggestions(
+            body.ids, accept=body.accept, reviewer=reviewer_name(workspace.root)
+        )
+    )
+    return {"decided": decided}
+
+
 # -- jobs -------------------------------------------------------------------------
 
 
@@ -453,7 +599,6 @@ class GenerateJob(BaseModel):
     name: str
     count: int | None = None
     seed: int | None = None
-    dimension_values: dict[str, list[str]] | None = None
 
 
 class OptimizeJudgeJob(BaseModel):
@@ -473,7 +618,23 @@ class OptimizeAgentJob(BaseModel):
     seed: int = 0
 
 
-JobRequest = RunJob | GenerateJob | OptimizeJudgeJob | OptimizeAgentJob
+class ProposeModesJob(BaseModel):
+    kind: Literal["propose_modes"]
+
+
+class SuggestLabelsJob(BaseModel):
+    kind: Literal["suggest_labels"]
+    category: str
+
+
+JobRequest = (
+    RunJob
+    | GenerateJob
+    | OptimizeJudgeJob
+    | OptimizeAgentJob
+    | ProposeModesJob
+    | SuggestLabelsJob
+)
 
 
 def _run_work(workspace: EvalWorkspace, body: RunJob):
@@ -522,7 +683,6 @@ def _generate_work(workspace: EvalWorkspace, body: GenerateJob):
             body.name,
             count=body.count,
             seed=body.seed,
-            dimension_values=body.dimension_values,
             progress_cb=progress,
         )
         return {"set_path": generated["path"], "count": len(generated["scenarios"])}
@@ -611,6 +771,41 @@ def _optimize_agent_work(workspace: EvalWorkspace, body: OptimizeAgentJob):
     return work
 
 
+def _other_notes(request: Request, workspace: EvalWorkspace) -> list[dict[str, Any]]:
+    """Notes on conversations that are not evaluation answers, from the
+    trace database."""
+    project = _project_name(request)
+    if not project:
+        return []
+    evaluation = {r["group_id"] for r in workspace.reviews()}
+    storage = request.app.state.storage_manager.get_storage(project)
+    return [
+        {"id": row["group_id"], "verdict": row["judgment"], "notes": row["notes"]}
+        for row in storage.get_all_analysis(project)
+        if (row.get("notes") or "").strip() and row["group_id"] not in evaluation
+    ]
+
+
+def _propose_modes_work(workspace: EvalWorkspace, other_notes: list[dict[str, Any]]):
+    async def work(report: JobReporter) -> dict[str, Any]:
+        report.log("Organizing review notes into failure modes")
+        proposals = await workspace.propose_failure_modes(other_notes=other_notes)
+        report.log(f"Proposed {len(proposals)} failure modes")
+        return {"proposals": len(proposals)}
+
+    return work
+
+
+def _suggest_labels_work(workspace: EvalWorkspace, body: SuggestLabelsJob):
+    async def work(report: JobReporter) -> dict[str, Any]:
+        report.log(f"Reading every answer for {body.category}")
+        added = await workspace.suggest_labels(body.category)
+        report.log(f"Suggested {len(added)} answers")
+        return {"suggestions": len(added)}
+
+    return work
+
+
 @router.post("/jobs")
 async def start_job(request: Request, body: JobRequest) -> dict[str, Any]:
     jobs: Jobs = request.app.state.jobs
@@ -622,6 +817,10 @@ async def start_job(request: Request, body: JobRequest) -> dict[str, Any]:
         work = _generate_work(workspace, body)
     elif isinstance(body, OptimizeJudgeJob):
         work = _optimize_judge_work(workspace, body)
+    elif isinstance(body, ProposeModesJob):
+        work = _propose_modes_work(workspace, _other_notes(request, workspace))
+    elif isinstance(body, SuggestLabelsJob):
+        work = _suggest_labels_work(workspace, body)
     else:
         work = _optimize_agent_work(workspace, body)
     return jobs.start(body.kind, body.model_dump(), work).to_dict()

@@ -61,7 +61,11 @@ conversation of a saved run) is written to the evaluations directory's
 `reviews/<run id>.jsonl` with the answer it judges, and is committed: judge
 datasets are built from these. A review of any other conversation (Playground,
 desktop, web) stays in this machine's trace database. **Timing** shows the
-run's traces when tracing was on.
+run's traces when tracing was on. The **Sample** filter lists unreviewed
+evaluation answers the review assistant picked to read next (cluster
+representatives and random picks; "Draw a sample" draws a new one), and the
+**Suggested** filter the answers it thinks may show a failure mode, which the
+review panel offers to accept or dismiss.
 
 ## Evaluation
 
@@ -71,8 +75,11 @@ The agent picker in the header chooses what runs are made against.
   runs) and the generated sets in `generated/`, edited in place. Run a set;
   promote a generated scenario into `scenarios/promoted.yml`. A scenario's
   failure categories say what it is written to probe; what reviewers saw is in
-  the reviews. **Dimensions and generation** edits the dimensions
-  synthetic scenarios are drawn from and generates a set from them.
+  the reviews. **Dimensions and generation** drafts combinations of dimension
+  values for a new set, which you review (remove, add) before generating
+  scenarios from exactly those; queries rated unrealistic are set aside in
+  `filtered.yml`. It also edits the dimensions synthetic scenarios are drawn
+  from.
 - **Runs**: run the suite (a selection, a holdout split, unmeasured scenarios,
   a turn limit), make the train/dev/test holdout, and read saved runs: each with
   its pass rate and 95% interval, answered rate, metrics with their slices, the
@@ -84,13 +91,19 @@ The agent picker in the header chooses what runs are made against.
   someone reports; runs themselves stay on this machine.
 - **Categories and measures**: failure categories with the measures that
   catch each and how many scenarios and reviews use it; measures, built in or
-  the project's `measures.py`, with a stub written for a new one.
+  the project's `measures.py`, with a stub written for a new one. **Failure
+  modes from review notes** groups reviewers' notes into failure modes
+  (existing categories or proposed new ones) to accept or dismiss; **Find
+  more** on a category reads every evaluation answer for it and suggests the
+  ones that may show it.
 - **Judges**: each judge's model, what it reads, the category it decides, its
   instructions and template, and whether it is validated as it is now (its
   TPR and TNR on its dataset's test split, Pass positive); judge datasets,
   built per category from every reviewed answer and balanced by label, with
   each answer's Pass/Fail label, the reply the judge reads and a warning when
-  a label is too scarce; optimizing a judge on a dataset. A run's detail shows
+  a label is too scarce; choosing a judge's few-shot examples from its train
+  split (critiqued by the reviewer's notes), with a warning when its model is
+  an alias rather than a dated snapshot; optimizing a judge on a dataset. A run's detail shows
   each judge's raw pass rate and, for a validated judge, the rate corrected
   for its errors.
 - **Optimize**: improving an agent's instructions against a judge dataset; the

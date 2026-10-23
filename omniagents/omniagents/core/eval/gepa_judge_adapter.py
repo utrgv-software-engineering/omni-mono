@@ -472,6 +472,13 @@ class OmniAgentsJudgeAdapter:
                 default_instructions or "You are an evaluation agent. Return ONLY JSON."
             )
         )
+        # The judge's few-shot examples stay as they are; only its
+        # instructions and template are optimized.
+        from omniagents.core.eval.loader import judge_examples_text
+
+        examples = judge_examples_text(self._judge_cfg)
+        if examples:
+            instructions = f"{instructions}\n\n{examples}"
 
         # Build judge agent once per evaluation
         judge_agent = None
@@ -557,7 +564,14 @@ class OmniAgentsJudgeAdapter:
                         with studio_trace(
                             self.workflow_name, group_id=run_uid, metadata=meta
                         ):
-                            res = asyncio.run(AgentsRunner.run(judge_agent, prompt, context={"workspace_root": os.getcwd()}, max_turns=self.judge_max_turns))  # type: ignore
+                            res = asyncio.run(
+                                AgentsRunner.run(
+                                    judge_agent,
+                                    prompt,
+                                    context={"workspace_root": os.getcwd()},
+                                    max_turns=self.judge_max_turns,
+                                )
+                            )  # type: ignore
                     except RuntimeError:
                         import asyncio as _asyncio
 
@@ -570,9 +584,23 @@ class OmniAgentsJudgeAdapter:
                             )
                         )
                     except Exception:
-                        res = asyncio.run(AgentsRunner.run(judge_agent, prompt, context={"workspace_root": os.getcwd()}, max_turns=self.judge_max_turns))  # type: ignore
+                        res = asyncio.run(
+                            AgentsRunner.run(
+                                judge_agent,
+                                prompt,
+                                context={"workspace_root": os.getcwd()},
+                                max_turns=self.judge_max_turns,
+                            )
+                        )  # type: ignore
                 else:
-                    res = asyncio.run(AgentsRunner.run(judge_agent, prompt, context={"workspace_root": os.getcwd()}, max_turns=self.judge_max_turns))  # type: ignore
+                    res = asyncio.run(
+                        AgentsRunner.run(
+                            judge_agent,
+                            prompt,
+                            context={"workspace_root": os.getcwd()},
+                            max_turns=self.judge_max_turns,
+                        )
+                    )  # type: ignore
             except RuntimeError:
                 import asyncio as _asyncio
 

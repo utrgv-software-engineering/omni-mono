@@ -64,6 +64,10 @@ export interface Judge {
   instructions_path: string | null
   template_path: string | null
   defined_in: string
+  /** Few-shot examples: answer ids from its dataset's train split. */
+  examples: string[]
+  /** Whether its model is a dated snapshot rather than a movable alias. */
+  model_pinned: boolean
   /** Validated as it is now, edited since, or never validated. */
   status: 'validated' | 'changed' | 'unvalidated'
   /** Its one measurement on the judge dataset's test split (Pass positive). */
@@ -261,7 +265,7 @@ export interface RunComparison {
   scenarios: Array<{ scenario: string; name: string | null; a: number | null; b: number | null }>
 }
 
-export type JobKind = 'run' | 'generate' | 'optimize_judge' | 'optimize_agent'
+export type JobKind = 'run' | 'generate' | 'optimize_judge' | 'optimize_agent' | 'propose_modes' | 'suggest_labels'
 
 export interface Job {
   id: string
@@ -290,8 +294,10 @@ export type JobRequest =
       max_turns?: number | null
       name?: string | null
     }
-  | { kind: 'generate'; name: string; count?: number | null; seed?: number | null; dimension_values?: Record<string, string[]> | null }
+  | { kind: 'generate'; name: string; count?: number | null; seed?: number | null }
   | { kind: 'optimize_judge'; judge: string; category: string; max_metric_calls?: number; seed?: number }
+  | { kind: 'propose_modes' }
+  | { kind: 'suggest_labels'; category: string }
   | {
       kind: 'optimize_agent'
       agent: string
@@ -320,4 +326,47 @@ export interface AgentOptions {
   tools: string[]
   guardrails: Record<'input' | 'output' | 'tool_input' | 'tool_output', string[]>
   agents: string[]
+}
+
+/** Unreviewed evaluation answers to read next, and why each was picked. */
+export interface ReviewSample {
+  drawn_at: string
+  unreviewed: number
+  items: Array<{ group_id: string; reason: string }>
+}
+
+/** Review notes grouped into a failure mode: an existing category, or a new one. */
+export interface FailureModeProposal {
+  id: string
+  existing_category: string | null
+  name: string
+  description: string | null
+  review_ids: string[]
+  notes: string[]
+}
+
+/** An answer that may show a failure mode; a label only once accepted. */
+export interface LabelSuggestion {
+  id: string
+  group_id: string
+  category: string
+  quote: string | null
+  reason: string | null
+  reviewed: boolean
+  status: 'pending' | 'accepted' | 'dismissed'
+}
+
+export interface ReviewAssist {
+  sample: ReviewSample | null
+  proposals: FailureModeProposal[]
+  suggestions: LabelSuggestion[]
+}
+
+/** A generated set drafted but not yet generated: the combinations of
+ * dimension values a person reviews before any scenario is written. */
+export interface Draft {
+  name: string
+  path: string
+  combinations: Array<Record<string, string>>
+  generated: boolean
 }

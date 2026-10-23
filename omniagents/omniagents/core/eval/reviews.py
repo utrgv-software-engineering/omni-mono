@@ -289,6 +289,9 @@ def build_judge_dataset(
             "label": category in categories,
             "target_category": category,
             "reply": review.get("reply"),
+            # The reviewer's notes: an example's critique when it is a judge's
+            # few-shot example.
+            "notes": review.get("notes"),
         }
         if review.get("history") is not None:
             example["history"] = review["history"]

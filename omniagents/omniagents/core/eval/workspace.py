@@ -36,6 +36,7 @@ from typing import Any
 import yaml
 from omniagents.core.eval.judge_validation import validation_status
 from omniagents.core.eval.layout import (
+    COMBINATIONS_FILE,
     DATASET_MANIFEST,
     GENERATED_MANIFEST,
     GENERATED_SCENARIOS,
@@ -44,6 +45,7 @@ from omniagents.core.eval.layout import (
     EvalLayoutError,
     check_layout,
     evaluations_dir,
+    slugify,
 )
 from omniagents.core.eval.loader import EvalConfig, load_eval_config
 from omniagents.core.eval.results import (
@@ -71,12 +73,6 @@ class EvalWorkspaceError(ValueError):
 
 class NotFound(EvalWorkspaceError):
     """What the request names does not exist."""
-
-
-def slugify(value: str) -> str:
-    """A failure category's id: its name, lowercased, words joined by ``_``."""
-    token = re.sub(r"[^a-z0-9\-_]+", "_", (value or "").strip().lower())
-    return re.sub(r"_+", "_", token).strip("_")
 
 
 def _iso(path: Path) -> str | None:
@@ -858,42 +854,177 @@ class EvalWorkspace:
         else:
             path.unlink()
 
+    @staticmethod
+    def _set_name(name: str) -> str:
+        name = (name or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name):
+            raise EvalWorkspaceError(
+                "A scenario set's name is letters, digits, - and _ (it names its folder)"
+            )
+        return name
+
+    def _combinations_path(self, name: str) -> Path:
+        return self.layout.generated_set_dir(self._set_name(name)) / COMBINATIONS_FILE
+
+    def combinations(self, name: str) -> dict[str, Any]:
+        """A set's reviewed combinations of dimension values."""
+        path = self._combinations_path(name)
+        if not path.is_file():
+            raise NotFound(f"No combinations drafted for {name!r}")
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return {
+            "name": name,
+            "path": str(path),
+            "combinations": [dict(c) for c in data.get("combinations") or []],
+            "generated": (path.parent / GENERATED_SCENARIOS).is_file(),
+        }
+
+    def drafts(self) -> list[dict[str, Any]]:
+        """Sets whose combinations are drafted but not yet generated."""
+        root = self.layout.generated_dir
+        if not root.is_dir():
+            return []
+        return [
+            self.combinations(folder.name)
+            for folder in sorted(root.iterdir())
+            if (folder / COMBINATIONS_FILE).is_file()
+            and not (folder / GENERATED_SCENARIOS).is_file()
+        ]
+
+    def _check_combinations(self, combinations: Sequence[Mapping[str, Any]]) -> list:
+        allowed = {
+            d["name"]: {v["name"] for v in d["values"]} for d in self.dimensions()
+        }
+        checked = []
+        for combination in combinations:
+            entry = {str(k): str(v) for k, v in combination.items()}
+            if set(entry) != set(allowed):
+                raise EvalWorkspaceError(
+                    "A combination gives one value of each dimension: "
+                    + ", ".join(sorted(allowed))
+                )
+            for dimension, value in entry.items():
+                if value not in allowed[dimension]:
+                    raise EvalWorkspaceError(f"{dimension} has no value {value!r}")
+            if entry not in checked:
+                checked.append(entry)
+        return checked
+
+    def set_combinations(
+        self, name: str, combinations: Sequence[Mapping[str, Any]]
+    ) -> dict[str, Any]:
+        """Replace a draft's combinations with the reviewed ones."""
+        path = self._combinations_path(name)
+        if (path.parent / GENERATED_SCENARIOS).is_file():
+            raise EvalWorkspaceError(f"{name!r} is already generated")
+        checked = self._check_combinations(combinations)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        replace_file(
+            path,
+            yaml.safe_dump(
+                {
+                    "reviewed_at": datetime.now(UTC).isoformat(timespec="seconds"),
+                    "combinations": checked,
+                },
+                sort_keys=False,
+            ),
+        )
+        return self.combinations(name)
+
+    def remove_draft(self, name: str) -> None:
+        """Delete a set drafted but not generated."""
+        path = self._combinations_path(name)
+        if (path.parent / GENERATED_SCENARIOS).is_file() or not path.is_file():
+            raise NotFound(f"No draft {name!r}")
+        shutil.rmtree(path.parent)
+
+    def draft_combinations(
+        self,
+        name: str,
+        *,
+        count: int = 20,
+        seed: int | None = None,
+        dimension_values: Mapping[str, Sequence[str]] | None = None,
+    ) -> dict[str, Any]:
+        """Draft ``count`` combinations of dimension values for a new
+        generated set, as ``generated/<name>/combinations.yml``, for a person
+        to review (remove the ones real users never present, add missing
+        ones) before generating. ``dimension_values`` limits which values of
+        each dimension are drawn."""
+        from omniagents.core.eval.scenarios import draft_combinations
+
+        path = self._combinations_path(name)
+        if (path.parent / GENERATED_SCENARIOS).is_file():
+            raise EvalWorkspaceError(f"A generated set named {name!r} exists")
+        dimensions = self.dimensions()
+        if not dimensions:
+            raise EvalWorkspaceError("Describe the dimensions before drafting")
+        filters = {
+            str(dim): _names(list(values))
+            for dim, values in (dimension_values or {}).items()
+            if _names(list(values))
+        }
+        drafted = draft_combinations(
+            dimensions, count=count, seed=seed, filters=filters or None
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        replace_file(
+            path,
+            yaml.safe_dump(
+                {
+                    "drafted_at": datetime.now(UTC).isoformat(timespec="seconds"),
+                    "combinations": drafted,
+                },
+                sort_keys=False,
+            ),
+        )
+        return self.combinations(name)
+
     async def generate_scenarios(
         self,
         name: str,
         *,
         count: int | None = None,
         seed: int | None = None,
-        dimension_values: Mapping[str, Sequence[str]] | None = None,
         progress_cb: ProgressCallback | None = None,
     ) -> dict[str, Any]:
-        """Generate a set of synthetic scenarios from the dimensions, as
-        ``generated/<name>/``. ``dimension_values`` limits which values of
-        each dimension are drawn."""
+        """Generate the set ``generated/<name>/`` from its reviewed
+        combinations (:meth:`draft_combinations`), about ``count`` scenarios
+        in all. Unless ``synthetic_data_generation.realism`` is ``false``,
+        queries a model rates below its ``min_score`` (default 3 of 5) are
+        left out, in ``filtered.yml`` beside the set."""
+        from omniagents.core.eval.review_assist import model_asker
         from omniagents.core.eval.scenarios import generate_scenarios
 
-        name = (name or "").strip()
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name):
-            raise EvalWorkspaceError(
-                "A scenario set's name is letters, digits, - and _ (it names its folder)"
-            )
+        combinations = self.combinations(name)["combinations"]
+        combinations = self._check_combinations(combinations)
         config = self.config()
+        generation = config.config.get("synthetic_data_generation") or {}
+        realism = generation.get("realism", {})
+        ask = None
+        min_score = 3
+        if realism is not False:
+            realism = realism if isinstance(realism, dict) else {}
+            min_score = int(realism.get("min_score") or 3)
+            model = realism.get("model") or (
+                (generation.get("generator") or {}).get("agent") or {}
+            ).get("model")
+            from omniagents.core.eval.review_assist import DEFAULT_MODEL
+
+            ask = model_asker(str(model or DEFAULT_MODEL))
         workflow_name = self._start_tracing(config, f"generate_{name}")
-        filters = {
-            str(dim): _names(list(values))
-            for dim, values in (dimension_values or {}).items()
-            if _names(list(values))
-        }
         _scenarios, out_path, _ = await generate_scenarios(
             config.agent_path,
+            combinations=combinations,
             count=count,
             seed=seed,
             set_name=name,
             output=self.layout.generated_set_dir(name) / GENERATED_SCENARIOS,
             workflow_name=workflow_name,
             progress_cb=progress_cb,
-            dimension_filters=filters or None,
             eval_config=config,
+            realism=ask,
+            min_realism=min_score,
         )
         return self.scenario_set(out_path)
 
@@ -934,6 +1065,8 @@ class EvalWorkspace:
                     "instructions_path": instructions_path,
                     "template_path": template_path,
                     "defined_in": str(config.judge_sources.get(str(key)) or ""),
+                    # few-shot examples: answer ids from its dataset's train split
+                    "examples": [str(i) for i in cfg.get("examples") or []],
                     # validated / changed (since validation) / unvalidated
                     **validation_status(self.layout, str(key), cfg),
                 }
@@ -1040,6 +1173,26 @@ class EvalWorkspace:
             )
         return self.judge(key)
 
+    def set_judge_examples(self, key: str, example_ids: Sequence[str]) -> dict:
+        """Make answers from the train split of the judge's dataset its
+        few-shot examples (``examples`` in its ``judge.yml``), each shown with
+        the reviewer's notes as its critique. Refused, leaving the file as it
+        was, when one is not in the train split or has no notes."""
+        path = self._judge_file(key)
+        before = path.read_text(encoding="utf-8")
+        doc_yaml, entry = load_document(before)
+        ids = [str(i) for i in example_ids]
+        if ids:
+            entry["examples"] = ids
+        else:
+            entry.pop("examples", None)
+        replace_file(path, dump_document(doc_yaml, entry))
+        try:
+            return self.judge(key)
+        except ValueError as exc:
+            replace_file(path, before)
+            raise EvalWorkspaceError(str(exc)) from exc
+
     def remove_judge(self, key: str) -> None:
         """Delete a judge's folder. Its measure function stays in
         ``measures.py``."""
@@ -1110,6 +1263,132 @@ class EvalWorkspace:
             remove_review(self.layout, group_id)
         except ReviewError as exc:
             raise NotFound(str(exc)) from exc
+
+    # -- review assistant --------------------------------------------------
+
+    def review_assist(self) -> dict[str, Any]:
+        """The review assistant's sample, pending proposals and suggestions
+        (:mod:`review_assist`)."""
+        from omniagents.core.eval.review_assist import state
+
+        return state(self.layout)
+
+    def draw_review_sample(self, *, size: int = 20, seed: int = 0) -> dict[str, Any]:
+        """Which unreviewed evaluation answers to read next."""
+        from omniagents.core.eval.review_assist import draw_sample
+
+        return draw_sample(self.layout, size=size, seed=seed)
+
+    def _assistant(self) -> Any:
+        from omniagents.core.eval.review_assist import assistant_model, model_asker
+
+        return model_asker(assistant_model(self._evaluation_block()))
+
+    async def propose_failure_modes(
+        self,
+        *,
+        other_notes: Sequence[Mapping[str, Any]] = (),
+        ask: Any = None,
+    ) -> list[dict[str, Any]]:
+        """Group people's review notes into failure modes: the notes on
+        evaluation answers, and ``other_notes`` (``{id, verdict, notes}``,
+        e.g. reviews of other conversations kept elsewhere)."""
+        from omniagents.core.eval.review_assist import propose_failure_modes
+
+        notes = [
+            {"id": r["group_id"], "verdict": r.get("verdict"), "notes": r.get("notes")}
+            for r in self.reviews()
+        ] + [dict(n) for n in other_notes]
+        try:
+            return await propose_failure_modes(
+                self.layout, notes, self.failure_categories(), ask or self._assistant()
+            )
+        except ValueError as exc:
+            raise EvalWorkspaceError(str(exc)) from exc
+
+    def _add_label(self, group_id: str, category: str, reviewer: str | None) -> None:
+        """Label an evaluation answer with ``category``; an answer showing a
+        failure is unacceptable unless a person already judged it."""
+        review = self.review(group_id) or {}
+        labels = sorted({*(review.get("failure_categories") or []), category})
+        self.save_review(
+            group_id,
+            reviewer=reviewer,
+            failure_categories=labels,
+            verdict=review.get("verdict") or "unacceptable",
+        )
+
+    def accept_proposal(
+        self,
+        proposal_id: str,
+        *,
+        reviewer: str | None,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        """Accept a proposed failure mode: the category (an existing one, or
+        a new one named ``name``) and the label on each review it grouped.
+        Returns the category and the ids that are not evaluation answers'
+        reviews (``unapplied``), for the caller to label where it keeps them."""
+        from omniagents.core.eval.review_assist import take_proposal
+
+        try:
+            proposal = take_proposal(self.layout, proposal_id)
+        except KeyError as exc:
+            raise NotFound(str(exc)) from exc
+        if proposal["existing_category"]:
+            category = self._category(proposal["existing_category"])
+        else:
+            chosen = (name or proposal["name"]).strip()
+            existing = next(
+                (c for c in self.failure_categories() if c["id"] == slugify(chosen)),
+                None,
+            )
+            category = existing or self.add_failure_category(
+                chosen,
+                description=description
+                if description is not None
+                else proposal["description"],
+            )
+        unapplied = []
+        for group_id in proposal["review_ids"]:
+            if self.review(group_id) is not None:
+                self._add_label(group_id, category["id"], reviewer)
+            else:
+                unapplied.append(group_id)
+        return {"category": self._category(category["id"]), "unapplied": unapplied}
+
+    def dismiss_proposal(self, proposal_id: str) -> None:
+        from omniagents.core.eval.review_assist import take_proposal
+
+        try:
+            take_proposal(self.layout, proposal_id)
+        except KeyError as exc:
+            raise NotFound(str(exc)) from exc
+
+    async def suggest_labels(self, category_id: str, *, ask: Any = None) -> list[dict]:
+        """Read every evaluation answer for failure mode ``category_id`` and
+        add a pending suggestion for each that may show it."""
+        from omniagents.core.eval.review_assist import suggest_labels
+
+        category = self._category(slugify(category_id))
+        return await suggest_labels(self.layout, category, ask or self._assistant())
+
+    def decide_suggestions(
+        self, ids: Sequence[str], *, accept: bool, reviewer: str | None
+    ) -> list[dict[str, Any]]:
+        """Accept (label the answers) or dismiss pending suggestions."""
+        from omniagents.core.eval.review_assist import decide_suggestions
+
+        decided = decide_suggestions(
+            self.layout, ids, "accepted" if accept else "dismissed"
+        )
+        if accept:
+            for suggestion in decided:
+                self._add_label(
+                    suggestion["group_id"], suggestion["category"], reviewer
+                )
+        return decided
 
     # -- judge datasets ----------------------------------------------------
 

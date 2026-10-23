@@ -317,6 +317,11 @@ async def run_judge(
         instructions = read_text_file(eval_base, str(instr_file))
     if not instructions:
         instructions = "You are an evaluation agent. Return ONLY a JSON object appropriate for this judge."
+    from omniagents.core.eval.loader import judge_examples_text
+
+    examples = judge_examples_text(jcfg or {})
+    if examples:
+        instructions = f"{instructions}\n\n{examples}"
     model = agent_cfg.get("model", "gpt-4.1")
     output_type = agent_cfg.get("output_type", "dict")
     output_type_strict = bool(agent_cfg.get("output_type_strict", False))

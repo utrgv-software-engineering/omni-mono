@@ -10,6 +10,8 @@ const LABELS: Record<Job['kind'], string> = {
   generate: 'Scenario generation',
   optimize_judge: 'Judge optimization',
   optimize_agent: 'Agent optimization',
+  propose_modes: 'Failure modes from notes',
+  suggest_labels: 'Finding a failure mode',
 }
 
 /** A job's progress, its last log lines and how it ended. */

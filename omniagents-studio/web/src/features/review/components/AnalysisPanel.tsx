@@ -3,6 +3,7 @@ import { useReviewStore } from '../reviewStore'
 import { Target, ThumbsUp, ThumbsDown, Check, Save, Plus, Trash2, AlertTriangle } from 'lucide-react'
 import { cn } from '../../../lib/utils'
 import type { AnalysisData } from '../../../types'
+import { AssistSuggestions } from './AssistSuggestions'
 
 export function AnalysisPanel() {
   const {
@@ -297,6 +298,7 @@ export function AnalysisPanel() {
       <div className="flex-1 overflow-y-auto">
         {/* Analysis Status and Actions */}
         <div className="p-4 space-y-4">
+        <AssistSuggestions reviewKey={selectedReviewKey} />
         {/* Step 1: Rate Quality */}
         <div className="space-y-2">
           <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">

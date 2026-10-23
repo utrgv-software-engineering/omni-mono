@@ -8,7 +8,7 @@ import yaml
 from omniagents.core.eval import scenarios
 
 
-def test_generate_scenarios_filters_dimensions_and_emits_manifest(
+def test_generate_scenarios_uses_the_reviewed_combinations_and_emits_manifest(
     tmp_path, monkeypatch
 ):
     cfg_dir = tmp_path / "cfg"
@@ -94,10 +94,10 @@ def test_generate_scenarios_filters_dimensions_and_emits_manifest(
             seed=7,
             set_name="demo-set",
             workflow_name="wf",
-            dimension_filters={
-                "Persona": ["Expert"],
-                "Topic": ["Quality", "Security"],
-            },
+            combinations=[
+                {"Persona": "Expert", "Topic": "Quality"},
+                {"Persona": "Expert", "Topic": "Security"},
+            ],
             progress_cb=progress_events.append,
         )
     )
@@ -212,6 +212,7 @@ def test_generate_scenarios_skips_outputs_without_prompt(tmp_path, monkeypatch):
         scenarios.generate_scenarios(
             compiled_yaml=compiled_path,
             output=tmp_path / "generated" / "no-prompts" / "scenarios.yml",
+            combinations=[{"Persona": "Any"}],
             count=1,
             seed=3,
             set_name="no-prompts",

@@ -280,3 +280,49 @@ def test_a_review_of_an_evaluation_answer_is_committed_with_it(
 
     env.client.delete(f"/api/analysis/{name}/initial-group", headers=AUTH)
     assert not (env.project_dir / f"evaluations/reviews/{run_id}.jsonl").exists()
+
+
+def test_the_review_assistant_and_drafted_sets_over_http(studio_api_env, monkeypatch):
+    env = studio_api_env
+    _fake_engine(monkeypatch, [False])
+    _wait(
+        env,
+        env.client.post(
+            "/api/evaluation/jobs", json={"kind": "run"}, headers=AUTH
+        ).json()["id"],
+    )
+
+    sample = env.client.post(
+        "/api/evaluation/review-assist/sample", json={"size": 5}, headers=AUTH
+    ).json()
+    assert [item["group_id"] for item in sample["items"]] == ["initial-group"]
+    assist = _get(env, "/api/evaluation/review-assist")
+    assert assist["sample"]["items"] == sample["items"]
+    assert assist["proposals"] == [] and assist["suggestions"] == []
+    missing = env.client.post(
+        "/api/evaluation/review-assist/proposals/nope/dismiss", headers=AUTH
+    )
+    assert missing.status_code == 404
+
+    dimensions = _get(env, "/api/evaluation/dimensions")["dimensions"]
+    name, value = dimensions[0]["name"], dimensions[0]["values"][0]["name"]
+    others = {d["name"]: d["values"][0]["name"] for d in dimensions}
+    drafted = env.client.post(
+        "/api/evaluation/drafts", json={"name": "next", "count": 3}, headers=AUTH
+    )
+    assert drafted.status_code == 200, drafted.text
+    assert [d["name"] for d in _get(env, "/api/evaluation/drafts")["drafts"]] == [
+        "next"
+    ]
+    reviewed = env.client.put(
+        "/api/evaluation/drafts/next", json={"combinations": [others]}, headers=AUTH
+    )
+    assert reviewed.json()["combinations"] == [others]
+    bad = env.client.put(
+        "/api/evaluation/drafts/next",
+        json={"combinations": [{**others, name: value + "-nope"}]},
+        headers=AUTH,
+    )
+    assert bad.status_code == 422
+    env.client.delete("/api/evaluation/drafts/next", headers=AUTH)
+    assert _get(env, "/api/evaluation/drafts")["drafts"] == []

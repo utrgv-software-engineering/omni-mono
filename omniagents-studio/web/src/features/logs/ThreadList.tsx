@@ -1,14 +1,16 @@
 import type { OrganizationThread } from '@omniagents/client/rpc/conversation-organization'
 import { formatDistanceToNow } from 'date-fns'
 import { Archive, ChevronDown, ChevronRight, Circle, Edit3, FlaskConical, MessageSquare, ThumbsDown, ThumbsUp } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
+import { api } from '../../lib/api'
 import type { AgentSummary } from '../../types'
 import { useReviewStore } from '../review/reviewStore'
 import { dimensionsOf, evaluationOf, reviewKey, threadTitle } from './threads'
 import { useThreads } from './useThreads'
 
-type StatusFilter = 'all' | 'unanalyzed' | 'good' | 'bad' | 'bad-no-notes'
+type StatusFilter = 'all' | 'unanalyzed' | 'good' | 'bad' | 'bad-no-notes' | 'sample' | 'suggested'
 type KindFilter = 'all' | 'conversations' | 'evaluations'
 
 const statusLabels: Record<StatusFilter, string> = {
@@ -17,6 +19,8 @@ const statusLabels: Record<StatusFilter, string> = {
   good: 'Good',
   bad: 'Bad',
   'bad-no-notes': 'Needs notes',
+  sample: 'Sample',
+  suggested: 'Suggested',
 }
 
 interface ThreadListProps {
@@ -47,6 +51,25 @@ export function ThreadList({ agents, agentKey, onSelectAgent, selectedThreadId, 
   const [openDimensions, setOpenDimensions] = useState<Record<string, boolean>>({})
   const [focused, setFocused] = useState(0)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
+  // The review assistant: a sample of unreviewed evaluation answers to read
+  // next, and answers it suggests may show a failure mode.
+  const queryClient = useQueryClient()
+  const assist = useQuery({ queryKey: ['evaluation', 'review-assist'], queryFn: () => api.getReviewAssist(), retry: false })
+  const draw = useMutation({
+    mutationFn: () => api.drawReviewSample(20, Math.floor(Math.random() * 1e6)),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['evaluation', 'review-assist'] })
+      setStatus('sample')
+    },
+  })
+  const sampleOrder = useMemo(
+    () => new Map((assist.data?.sample?.items ?? []).map((item, index) => [item.group_id, index])),
+    [assist.data],
+  )
+  const suggested = useMemo(
+    () => new Set((assist.data?.suggestions ?? []).filter((s) => s.status === 'pending').map((s) => s.group_id)),
+    [assist.data],
+  )
 
   useEffect(() => {
     void loadEvaluationResults()
@@ -66,7 +89,8 @@ export function ThreadList({ agents, agentKey, onSelectAgent, selectedThreadId, 
 
   const visible = useMemo(
     () =>
-      threads.filter((thread) => {
+      threads
+        .filter((thread) => {
         const evaluation = evaluationOf(thread)
         if (kind === 'evaluations' && !evaluation) return false
         if (kind === 'conversations' && evaluation) return false
@@ -86,9 +110,17 @@ export function ThreadList({ agents, agentKey, onSelectAgent, selectedThreadId, 
             return analysis?.judgment === 'unacceptable'
           case 'bad-no-notes':
             return analysis?.judgment === 'unacceptable' && !hasNotes
+          case 'sample':
+            return sampleOrder.has(reviewKey(thread)) && !analysis?.judgment
+          case 'suggested':
+            return suggested.has(reviewKey(thread))
         }
-      }),
-    [threads, kind, dimensionFilter, status, conversationAnalysis],
+      })
+        // A sample is read in the order it was drawn.
+        .sort((a, b) =>
+          status === 'sample' ? (sampleOrder.get(reviewKey(a)) ?? 0) - (sampleOrder.get(reviewKey(b)) ?? 0) : 0,
+        ),
+    [threads, kind, dimensionFilter, status, conversationAnalysis, sampleOrder, suggested],
   )
 
   useEffect(() => onVisibleChange(visible), [visible, onVisibleChange])
@@ -207,6 +239,28 @@ export function ThreadList({ agents, agentKey, onSelectAgent, selectedThreadId, 
               </button>
             ))}
           </div>
+          {status === 'sample' || status === 'suggested' ? (
+            <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+              <span>
+                {status === 'sample'
+                  ? assist.data?.sample
+                    ? `Unreviewed evaluation answers from a sample of ${assist.data.sample.items.length}: cluster representatives and random picks`
+                    : 'No sample drawn yet'
+                  : 'Answers the review assistant thinks may show a failure mode'}
+              </span>
+              {status === 'sample' ? (
+                <button
+                  type="button"
+                  className="shrink-0 rounded-sm border border-border px-2 py-0.5 hover:bg-muted"
+                  disabled={draw.isPending}
+                  onClick={() => draw.mutate()}
+                >
+                  {draw.isPending ? 'Drawing…' : 'Draw a sample'}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {draw.error ? <p className="mt-1 text-[11px] text-destructive">{(draw.error as Error).message}</p> : null}
         </div>
         <div className="flex gap-1">
           {(['all', 'conversations', 'evaluations'] as KindFilter[]).map((value) => (
