@@ -40,7 +40,7 @@ export function OptimizeTab({ agent }: { agent: string | null }) {
       </div>
       {complete.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          This needs a judge dataset with train, dev and test: build one from a reviewed generated set on the Scenarios tab.
+          This needs a judge dataset with train, dev and test: review answers in Logs, then build one on the Judges tab.
         </p>
       ) : (
         <div className="grid grid-cols-2 gap-4">

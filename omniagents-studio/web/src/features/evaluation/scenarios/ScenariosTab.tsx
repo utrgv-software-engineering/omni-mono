@@ -1,11 +1,8 @@
 import { Badge } from '@omniagents/ui/badge'
 import { Button } from '@omniagents/ui/button'
-import { Input } from '@omniagents/ui/input'
-import { Label } from '@omniagents/ui/label'
-import { NativeSelect, NativeSelectOption } from '@omniagents/ui/native-select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@omniagents/ui/table'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowUpToLine, Pencil, Play, Plus, Tags, Trash2 } from 'lucide-react'
+import { ArrowUpToLine, Pencil, Play, Plus, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
 import { cn } from '../../../lib/utils'
@@ -43,7 +40,6 @@ export function ScenariosTab({ agent }: { agent: string | null }) {
   const [editing, setEditing] = useState<{ scenario: Scenario | null; match: ScenarioMatch | null } | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const runJob = useJob([['evaluation', 'runs']])
-  const annotateJob = useJob([['evaluation', 'scenario-sets']])
 
   const all = useMemo(() => sets.data?.sets ?? [], [sets.data])
   const root = sets.data?.evaluations_dir ?? null
@@ -130,25 +126,11 @@ export function ScenariosTab({ agent }: { agent: string | null }) {
                 >
                   <Plus /> Scenario
                 </Button>
-                {current.kind === 'generated' ? (
-                  <>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={annotateJob.running}
-                      title="Label each scenario with the failure categories reviewers gave its conversation"
-                      onClick={() => void annotateJob.start({ kind: 'annotate', set_path: current.path, agent })}
-                    >
-                      <Tags /> Label from reviews
-                    </Button>
-                    <JudgeDatasetButton set={current} categories={categories.data?.categories.map((c) => c.id) ?? []} />
-                  </>
-                ) : null}
                 <Button
                   size="sm"
                   variant="ghost"
                   onClick={() => {
-                    if (window.confirm(`Delete ${current.label}${current.kind === 'generated' ? ' with its runs and judge datasets' : ''}?`)) {
+                    if (window.confirm(`Delete ${current.label}?`)) {
                       act.mutate(() => api.removeScenarioSet(current.path))
                       setSelected(null)
                     }
@@ -159,7 +141,6 @@ export function ScenariosTab({ agent }: { agent: string | null }) {
               </div>
             </div>
             <JobPanel job={runJob.job} error={runJob.error} onDismiss={runJob.dismiss} />
-            <JobPanel job={annotateJob.job} error={annotateJob.error} onDismiss={annotateJob.dismiss} />
             {act.error ? <p className="text-sm text-destructive">{(act.error as Error).message}</p> : null}
             <Table>
               <TableHeader>
@@ -184,9 +165,6 @@ export function ScenariosTab({ agent }: { agent: string | null }) {
                             </Badge>
                           ))}
                         </div>
-                      ) : null}
-                      {scenario.analysis ? (
-                        <div className="mt-1 text-[11px] text-muted-foreground">Reviewed: {String(scenario.analysis.judgment ?? 'noted')}</div>
                       ) : null}
                     </TableCell>
                     <TableCell className="max-w-md whitespace-normal align-top text-xs text-muted-foreground">{what(scenario)}</TableCell>
@@ -291,57 +269,6 @@ function SetList({
           <span className="text-xs text-muted-foreground">{set.scenarios.length}</span>
         </button>
       ))}
-    </div>
-  )
-}
-
-/** Split a reviewed generated set into a judge's train/dev/test for one category. */
-function JudgeDatasetButton({ set, categories }: { set: ScenarioSet; categories: string[] }) {
-  const queryClient = useQueryClient()
-  const [open, setOpen] = useState(false)
-  const [category, setCategory] = useState(categories[0] ?? '')
-  const [seed, setSeed] = useState('42')
-  const create = useMutation({
-    mutationFn: () => api.createJudgeDataset({ set_path: set.path, category, seed: Number(seed) || 42 }),
-    onSuccess: () => {
-      setOpen(false)
-      void queryClient.invalidateQueries({ queryKey: ['evaluation', 'judge-datasets'] })
-    },
-  })
-  if (!open) {
-    return (
-      <Button size="sm" variant="outline" disabled={categories.length === 0} onClick={() => setOpen(true)}>
-        Judge dataset…
-      </Button>
-    )
-  }
-  return (
-    <div className="flex items-end gap-2 rounded-md border border-border p-2">
-      <div className="grid gap-1">
-        <Label htmlFor="judge-dataset-category" className="text-xs">
-          Category
-        </Label>
-        <NativeSelect id="judge-dataset-category" size="sm" value={category} onChange={(e) => setCategory(e.target.value)}>
-          {categories.map((id) => (
-            <NativeSelectOption key={id} value={id}>
-              {id}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
-      </div>
-      <div className="grid w-20 gap-1">
-        <Label htmlFor="judge-dataset-seed" className="text-xs">
-          Seed
-        </Label>
-        <Input id="judge-dataset-seed" className="h-8" value={seed} onChange={(e) => setSeed(e.target.value)} />
-      </div>
-      <Button size="sm" disabled={!category || create.isPending} onClick={() => create.mutate()}>
-        Build
-      </Button>
-      <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
-        Cancel
-      </Button>
-      {create.error ? <span className="text-xs text-destructive">{(create.error as Error).message}</span> : null}
     </div>
   )
 }

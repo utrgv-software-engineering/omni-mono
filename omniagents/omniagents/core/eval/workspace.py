@@ -48,7 +48,6 @@ from omniagents.core.eval.layout import (
 from omniagents.core.eval.loader import EvalConfig, load_eval_config
 from omniagents.core.eval.results import (
     compare_runs,
-    latest_conversations,
     list_runs,
     read_run,
     save_evaluation_run,
@@ -820,36 +819,6 @@ class EvalWorkspace:
         self._edit_scenarios(path, update)
         return self.scenario_set(path)
 
-    def label_scenario(
-        self,
-        set_path: str | Path,
-        *,
-        failure_categories: Sequence[str],
-        review: Mapping[str, Any] | None = None,
-        scenario_id: str | None = None,
-        name: str | None = None,
-    ) -> None:
-        """Record a reviewer's verdict on a scenario: the failure categories
-        its run showed, and the review (``judgment``, ``notes``) under
-        ``analysis``. A judge dataset is built from these labels."""
-        path = Path(self.scenario_set(set_path)["path"])
-        slugs = sorted({slugify(c) for c in failure_categories if slugify(c)})
-
-        def update(entries: Any) -> None:
-            entry = entries[
-                self._locate(entries, scenario_id=scenario_id, name=name, index=None)
-            ]
-            if slugs:
-                entry["failure_categories"] = slugs
-            else:
-                entry.pop("failure_categories", None)
-            if review:
-                entry["analysis"] = {k: v for k, v in review.items() if v is not None}
-            else:
-                entry.pop("analysis", None)
-
-        self._edit_scenarios(path, update)
-
     def promote_scenario(
         self,
         set_path: str | Path,
@@ -869,7 +838,6 @@ class EvalWorkspace:
                 self._locate(entries, scenario_id=scenario_id, name=name, index=index)
             ]
         )
-        scenario.pop("analysis", None)
         target = self.layout.scenarios_dir / "promoted.yml"
         cleaned = self._clean_scenario(scenario)
 
@@ -1074,55 +1042,104 @@ class EvalWorkspace:
         ``measures.py``."""
         shutil.rmtree(self._judge_file(key).parent)
 
+    # -- reviews -----------------------------------------------------------
+
+    def reviews(self) -> list[dict[str, Any]]:
+        """Every review of an evaluation answer (:mod:`reviews`)."""
+        from omniagents.core.eval.reviews import list_reviews
+
+        return list_reviews(self.layout)
+
+    def review(self, group_id: str) -> dict[str, Any] | None:
+        from omniagents.core.eval.reviews import review_of
+
+        return review_of(self.layout, group_id)
+
+    def is_reviewable(self, group_id: str) -> bool:
+        """Whether ``group_id`` is a conversation of a saved run (or already
+        reviewed), so its review belongs in ``reviews/``."""
+        from omniagents.core.eval.results import find_conversation
+
+        return (
+            self.review(group_id) is not None
+            or find_conversation(self.layout, group_id) is not None
+        )
+
+    def save_review(
+        self, group_id: str, *, reviewer: str | None, **changes: Any
+    ) -> dict[str, Any] | None:
+        """Record a person's review of an evaluation answer: ``verdict``,
+        ``failure_categories`` (ids of the project's categories), ``notes``
+        and ``marked``; fields not given keep what the review had. The whole
+        conversation is kept with it when a judge of the project reads
+        conversations, since every review is an example for every
+        category's judge. Returns the review, or ``None`` once it is empty."""
+        from omniagents.core.eval.reviews import ReviewError, save_review
+
+        if changes.get("failure_categories") is not None:
+            known = {category["id"] for category in self.failure_categories()}
+            unknown = [
+                c for c in changes["failure_categories"] if slugify(c) not in known
+            ]
+            if unknown:
+                raise EvalWorkspaceError(
+                    "Unknown failure category: " + ", ".join(unknown)
+                )
+            changes["failure_categories"] = [
+                slugify(c) for c in changes["failure_categories"]
+            ]
+        keep_history = any(judge["source"] == "history" for judge in self.judges())
+        try:
+            return save_review(
+                self.layout,
+                group_id,
+                reviewer=reviewer,
+                keep_history=keep_history,
+                **changes,
+            )
+        except ReviewError as exc:
+            raise EvalWorkspaceError(str(exc)) from exc
+
+    def remove_review(self, group_id: str) -> None:
+        from omniagents.core.eval.reviews import ReviewError, remove_review
+
+        try:
+            remove_review(self.layout, group_id)
+        except ReviewError as exc:
+            raise NotFound(str(exc)) from exc
+
     # -- judge datasets ----------------------------------------------------
 
     def judge_datasets(self) -> list[dict[str, Any]]:
-        """For each failure category with one, the train/dev/test scenarios
-        (labelled positive or negative for the category) a judge of that
-        category is optimized and checked on, and the generated set they
-        were drawn from."""
+        """For each failure category with one, its judge dataset: reviewed
+        answers labelled positive (reviewers saw the category) or negative,
+        split into train, dev and test."""
         root = self.layout.judge_datasets_dir
         if not root.is_dir():
             return []
         datasets = []
         for folder in sorted(p for p in root.iterdir() if p.is_dir()):
             manifest_path = folder / DATASET_MANIFEST
-            manifest = (
-                yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
-                if manifest_path.is_file()
-                else {}
-            )
+            if not manifest_path.is_file():
+                continue
+            manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
             splits = []
             for split in SPLIT_NAMES:
                 path = folder / f"{split}.yml"
-                if not path.is_file():
-                    continue
-                entries = self._read_scenarios(path)
+                counts = (manifest.get("counts") or {}).get(split) or {}
                 splits.append(
                     {
                         "split": split,
                         "path": str(path),
-                        "scenario_count": len(entries),
-                        "positives": sum(1 for e in entries if e.get("label") is True),
-                        "negatives": sum(1 for e in entries if e.get("label") is False),
+                        "scenario_count": int(counts.get("positives") or 0)
+                        + int(counts.get("negatives") or 0),
+                        "positives": int(counts.get("positives") or 0),
+                        "negatives": int(counts.get("negatives") or 0),
                         "updated_at": _iso(path),
                     }
                 )
-            if not splits:
-                continue
-            set_path = (
-                self.layout.resolve(str(manifest["set"]))
-                if manifest.get("set")
-                else None
-            )
             datasets.append(
-                {
-                    "category": folder.name,
-                    "set": set_path.parent.name if set_path else None,
-                    "set_path": str(set_path) if set_path else None,
-                    "manifest": manifest,
-                    "splits": splits,
-                }
+                {"category": folder.name, "manifest": manifest, "splits": splits}
             )
         return datasets
 
@@ -1134,83 +1151,36 @@ class EvalWorkspace:
 
     def create_judge_dataset(
         self,
-        set_path: str | Path,
         category: str,
         *,
         fractions: tuple[float, float, float] = (0.15, 0.425, 0.425),
         seed: int = 42,
-        negatives_ratio: float | None = None,
     ) -> dict[str, Any]:
-        """Split a reviewed generated set into the judge dataset for
-        ``category`` (replacing the one it had): scenarios labelled with it
-        are positives, the rest negatives."""
-        from omniagents.core.eval.split import create_splits
+        """Build (or rebuild) the judge dataset for ``category`` from every
+        reviewed answer. An answer's split depends only on it and the seed,
+        so rebuilding after more reviews keeps every earlier example where
+        it was."""
+        from omniagents.core.eval.reviews import ReviewError, build_judge_dataset
 
-        scenario_set = self.scenario_set(set_path)
-        if scenario_set["kind"] != GENERATED:
-            raise EvalWorkspaceError(
-                "Judge datasets are built from generated scenario sets"
-            )
-        if sum(fractions) <= 0 or any(f < 0 for f in fractions):
-            raise EvalWorkspaceError("Train, dev and test fractions must be positive")
-        if slugify(category) != category:
-            raise EvalWorkspaceError(f"{category!r} is not a failure category id")
-        path = Path(scenario_set["path"])
-        folder = self.layout.judge_dataset_dir(category)
-        if folder.is_dir():
-            shutil.rmtree(folder)
-        create_splits(
-            path,
-            category,
-            output_dir=folder,
-            f_train=fractions[0],
-            f_dev=fractions[1],
-            f_test=fractions[2],
-            seed=seed,
-            negatives_ratio=negatives_ratio,
-        )
-        (folder / DATASET_MANIFEST).write_text(
-            yaml.safe_dump(
-                {
-                    "set": self.layout.relative(path),
-                    "category": category,
-                    "seed": int(seed),
-                    "fractions": [float(f) for f in fractions],
-                    "negatives_ratio": negatives_ratio,
-                    "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
-                },
-                sort_keys=False,
-            ),
-            encoding="utf-8",
-        )
+        self._category(category)
+        try:
+            build_judge_dataset(self.layout, category, fractions=fractions, seed=seed)
+        except ReviewError as exc:
+            raise EvalWorkspaceError(str(exc)) from exc
         return self.judge_dataset(category)
 
     def judge_dataset_split(self, split_path: str | Path) -> dict[str, Any]:
-        """One split's scenarios with the reply each got in the newest run
-        of the set the dataset was drawn from (what the judge reads)."""
+        """One split's examples: each reviewed answer, its label, and the
+        reply the judge reads."""
         path = self._inside(split_path)
         for dataset in self.judge_datasets():
             for split in dataset["splits"]:
-                if Path(split["path"]) != path:
-                    continue
-                conversations = (
-                    latest_conversations(self.layout, Path(dataset["set_path"]))
-                    if dataset["set_path"]
-                    else {}
-                )
-                scenarios = []
-                for scenario in self._read_scenarios(path):
-                    key = str(scenario.get("id") or scenario.get("name") or "")
-                    run = conversations.get(key)
-                    scenarios.append(
-                        {
-                            **scenario,
-                            "reply": (
-                                None if run is None else run.get("final_assistant_text")
-                            ),
-                        }
-                    )
-                return {**dataset, "split": split, "scenarios": scenarios}
+                if Path(split["path"]) == path:
+                    return {
+                        **dataset,
+                        "split": split,
+                        "scenarios": self._read_scenarios(path),
+                    }
         raise NotFound(f"No judge dataset split at {split_path}")
 
     def remove_judge_dataset(self, category: str) -> None:
@@ -1381,42 +1351,23 @@ class EvalWorkspace:
         """How saved run ``b`` differs from ``a`` (:func:`results.compare_runs`)."""
         return compare_runs(self.read_run(a), self.read_run(b))
 
-    # -- labels from reviews ----------------------------------------------
+    def keep_run(self, path: str | Path, name: str) -> dict[str, Any]:
+        """Keep a saved run as the committed baseline ``name``: the evidence,
+        with the agent it tested, for a number someone reports."""
+        from omniagents.core.eval.results import keep_run
 
-    def annotate_from_reviews(
-        self, set_path: str | Path, trace_project: str
-    ) -> dict[str, Any]:
-        """Label each scenario in a set with the failure categories its
-        conversation was given in review, in the newest saved run of the set
-        (a scenario its reviewers gave none loses its labels). Returns the
-        set and the run the labels came from."""
-        from omniagents.core.eval.annotate import review_labels
+        resolved = self._run_path(path)
+        if resolved.parent.parent != self.layout.runs_dir:
+            raise EvalWorkspaceError("Only a saved run is kept as a baseline")
+        try:
+            return keep_run(self.layout, resolved.parent.name, name)
+        except (ValueError, FileNotFoundError) as exc:
+            raise EvalWorkspaceError(str(exc)) from exc
 
-        path = Path(self.scenario_set(set_path)["path"])
-        recorded = self.layout.relative(path)
-        run = next(
-            (
-                entry
-                for entry in self.runs()
-                if entry.get("set") == recorded and entry.get("workflow_name")
-            ),
-            None,
-        )
-        if run is None:
-            raise EvalWorkspaceError(
-                "That set has no saved run with traces to read reviews from; run it"
-            )
-        labels = review_labels(trace_project, str(run["workflow_name"]))
+    def remove_baseline(self, name: str) -> None:
+        from omniagents.core.eval.results import remove_baseline
 
-        def update(entries: Any) -> None:
-            for entry in entries:
-                if not isinstance(entry, dict):
-                    continue
-                found = labels.get(str(entry.get("id") or ""))
-                if found:
-                    entry["failure_categories"] = found
-                else:
-                    entry.pop("failure_categories", None)
-
-        self._edit_scenarios(path, update)
-        return {"set": self.scenario_set(path), "run": run["path"]}
+        try:
+            remove_baseline(self.layout, name)
+        except FileNotFoundError as exc:
+            raise NotFound(str(exc)) from exc

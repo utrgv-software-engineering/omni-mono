@@ -351,6 +351,22 @@ class _ProjectAgentRun(AgentRun):
                 await result
 
 
+def _store_identity(agent_yaml: Path, project_root: Path) -> tuple[str, str]:
+    """The (project, agent) names the project's runtime keys this agent's
+    conversations under (``project.runtime``): the product's slug and the
+    agent's folder name."""
+    from omniagents.core.project.runtime import _slugify, manifest_product
+
+    manifest = project_root / "project.yml"
+    data = (
+        yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
+        if manifest.is_file()
+        else {}
+    )
+    key = agent_yaml.parent.name
+    return manifest_product(data, project_root).slug, _slugify(key, key)
+
+
 class ProjectAgentTarget(AgentTarget):
     """A project agent loaded from its ``agent.yml``."""
 
@@ -409,6 +425,12 @@ class ProjectAgentTarget(AgentTarget):
             user_mcp_servers=user_mcp or None,
         )
         spec.use_safe_agent = False
+        # Conversations go to the project agent's own store, as the project's
+        # runtime keys it, so Studio's Logs (which reads that store) shows
+        # them for review. Without this they went to a store named "default".
+        spec.project_slug, spec.agent_slug = _store_identity(
+            self._agent_yaml, self.transcript_root
+        )
         # Per-scenario session variables (e.g. additional_instructions).
         _apply_scenario_variables(spec, scenario)
         if defaults.get("max_turns") is not None:

@@ -12,7 +12,7 @@ import { useEffect, useState } from 'react'
 import { cn } from '../../../lib/utils'
 import { api } from '../../../lib/api'
 import type { Judge, JudgeDataset } from '../../../types/evaluation'
-import { excerpt } from '../format'
+import { excerpt, when } from '../format'
 import { JobPanel } from '../jobs'
 import { useJob } from '../useJob'
 
@@ -219,16 +219,20 @@ function JudgeDatasets({ judges }: { judges: Judge[] }) {
       <div>
         <h3 className="text-base font-semibold">Judge datasets</h3>
         <p className="text-xs text-muted-foreground">
-          One per category: reviewed generated scenarios split into train, dev and test, positives being the scenarios
-          reviewers labelled with it. Build one from a generated set on the Scenarios tab; building again replaces it.
+          One per category, built from every answer reviewed in Logs: positives are the answers reviewers saw the category
+          in. Each answer&apos;s split depends only on it and the seed, so building again after more reviews adds the new
+          ones and keeps the rest where they were.
         </p>
       </div>
+      <BuildJudgeDataset />
       {list.length === 0 ? <p className="text-sm text-muted-foreground">No judge datasets yet.</p> : null}
       {list.map((dataset) => (
         <div key={dataset.category} className="space-y-2 rounded-md border border-border p-3">
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <span className="font-medium">{dataset.category}</span>
-            <span className="text-xs text-muted-foreground">from {dataset.set ?? 'a set that no longer exists'}</span>
+            {dataset.manifest.built_at ? (
+              <span className="text-xs text-muted-foreground">built {when(String(dataset.manifest.built_at))}</span>
+            ) : null}
             {dataset.splits.map((split) => (
               <button key={split.split} type="button" onClick={() => setBrowsing(browsing === split.path ? null : split.path)}>
                 <Badge variant={browsing === split.path ? 'default' : 'outline'}>
@@ -269,7 +273,7 @@ function SplitBrowser({ path }: { path: string }) {
               <Badge variant={scenario.label ? 'destructive' : 'secondary'}>{scenario.label ? 'shows it' : 'does not'}</Badge>
             </TableCell>
             <TableCell className="max-w-xl whitespace-normal align-top text-xs text-muted-foreground">
-              {scenario.reply === null ? <em>No saved run: run the set first</em> : excerpt(scenario.reply, 240)}
+              {scenario.reply === null ? <em>No reply</em> : excerpt(scenario.reply, 240)}
             </TableCell>
           </TableRow>
         ))}
@@ -331,6 +335,46 @@ function OptimizeJudge({ dataset, judges }: { dataset: JudgeDataset; judges: Jud
         </Button>
       </div>
       <JobPanel job={job.job} error={job.error} onDismiss={job.dismiss} />
+    </div>
+  )
+}
+
+/** Build (or rebuild) one category's judge dataset from the reviews. */
+function BuildJudgeDataset() {
+  const queryClient = useQueryClient()
+  const categories = useQuery({ queryKey: ['evaluation', 'categories'], queryFn: () => api.getCategories() })
+  const ids = categories.data?.categories.map((c) => c.id) ?? []
+  const [category, setCategory] = useState('')
+  const [seed, setSeed] = useState('42')
+  const chosen = category || ids[0] || ''
+  const build = useMutation({
+    mutationFn: () => api.createJudgeDataset({ category: chosen, seed: Number(seed) || 42 }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['evaluation', 'judge-datasets'] }),
+  })
+  return (
+    <div className="flex flex-wrap items-end gap-2">
+      <div className="grid gap-1">
+        <Label htmlFor="judge-dataset-category" className="text-xs">
+          Category
+        </Label>
+        <NativeSelect id="judge-dataset-category" size="sm" value={chosen} onChange={(e) => setCategory(e.target.value)}>
+          {ids.map((id) => (
+            <NativeSelectOption key={id} value={id}>
+              {id}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+      </div>
+      <div className="grid w-20 gap-1">
+        <Label htmlFor="judge-dataset-seed" className="text-xs">
+          Seed
+        </Label>
+        <Input id="judge-dataset-seed" className="h-8" value={seed} onChange={(e) => setSeed(e.target.value)} />
+      </div>
+      <Button size="sm" variant="outline" disabled={!chosen || build.isPending} onClick={() => build.mutate()}>
+        Build from reviews
+      </Button>
+      {build.error ? <span className="text-xs text-destructive">{(build.error as Error).message}</span> : null}
     </div>
   )
 }

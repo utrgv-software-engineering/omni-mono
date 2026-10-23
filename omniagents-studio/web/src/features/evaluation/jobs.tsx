@@ -8,7 +8,6 @@ import type { Job } from '../../types/evaluation'
 const LABELS: Record<Job['kind'], string> = {
   run: 'Run',
   generate: 'Scenario generation',
-  annotate: 'Annotation',
   optimize_judge: 'Judge optimization',
   optimize_agent: 'Agent optimization',
 }

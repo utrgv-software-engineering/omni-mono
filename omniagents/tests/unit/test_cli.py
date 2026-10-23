@@ -819,57 +819,9 @@ def test_eval_scenarios_generate(monkeypatch, tmp_path, capsys):
         "seed": None,
     }
     captured = capsys.readouterr().out
-    assert "Wrote 1 scenarios to evaluations/generated/demo-set/scenarios.yml" in captured
-
-
-def test_eval_scenarios_annotate(monkeypatch, tmp_path, capsys):
-    calls = {}
-
-    class FakeWorkspace:
-        def __init__(self, project, agent=None):
-            pass
-
-        def config(self):
-            return types.SimpleNamespace(tracing_config={"project": "trace-demo"})
-
-        def resolve_set(self, value):
-            return tmp_path / "evaluations/generated" / value / "scenarios.yml"
-
-        def annotate_from_reviews(self, set_path, project):
-            calls.update(set=set_path, project=project)
-            return {
-                "set": {
-                    "path": str(set_path),
-                    "scenarios": [{"id": "a", "failure_categories": ["x"]}, {"id": "b"}],
-                },
-                "run": "runs/r1/results.json",
-            }
-
-    monkeypatch.setattr("omniagents.core.eval.workspace.EvalWorkspace", FakeWorkspace)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "omniagents",
-            "eval",
-            "scenarios",
-            "annotate",
-            "--project",
-            str(tmp_path / "project.yml"),
-            "--set",
-            "demo-set",
-        ],
+    assert (
+        "Wrote 1 scenarios to evaluations/generated/demo-set/scenarios.yml" in captured
     )
-
-    with pytest.raises(SystemExit) as exc:
-        cli_main()
-
-    assert exc.value.code == 0
-    assert calls == {
-        "set": tmp_path / "evaluations/generated/demo-set/scenarios.yml",
-        "project": "trace-demo",
-    }
-    assert "Labelled 1 of 2 scenarios" in capsys.readouterr().out
 
 
 def test_generate_tool(monkeypatch, tmp_path, capsys):
@@ -1175,20 +1127,49 @@ def test_eval_runs_pass_their_selection_to_the_workspace(monkeypatch, tmp_path):
     assert seen["include_unmeasured"] is True
 
 
-def test_judge_dataset_splits_a_reviewed_set(monkeypatch, tmp_path, capsys):
-    _project_with_scenarios(tmp_path, [{"name": "suite", "prompt": "p"}])
-    generated = tmp_path / "evaluations" / "generated" / "batch" / "scenarios.yml"
-    generated.parent.mkdir(parents=True)
-    scenarios = [
+def _reviewed_project(root, monkeypatch, verdicts):
+    """A project with one saved run whose answers carry ``verdicts``
+    (``(verdict, categories)`` per answer)."""
+    from omniagents.core.eval import pipeline
+    from omniagents.core.eval.workspace import EvalWorkspace
+
+    _project_with_scenarios(root, [{"name": "suite", "prompt": "p"}])
+    evaluation = root / "evaluations" / "evaluation.yml"
+    evaluation.write_text("evaluation:\n  failure_categories:\n    - name: tone\n")
+    records = [
         {
-            "id": f"s{i}",
-            "name": f"s{i}",
-            "prompt": "p",
-            **({"failure_categories": ["tone"]} if i % 2 else {}),
+            "scenario": f"s{i}",
+            "scenario_config": {"id": f"s{i}", "name": f"s{i}", "prompt": "p"},
+            "measures": [],
+            "final_assistant_text": f"reply {i}",
+            "trace_group_id": f"g{i}",
         }
-        for i in range(8)
+        for i in range(len(verdicts))
     ]
-    generated.write_text(json.dumps({"scenarios": scenarios}))
+    monkeypatch.setattr(
+        pipeline,
+        "run_evaluation",
+        lambda agent_path, **kw: {
+            "runs": records,
+            "manifest": {},
+            "workflow_name": "wf",
+        },
+    )
+    workspace = EvalWorkspace(root)
+    run = workspace.run(include_unmeasured=True)
+    for i, (verdict, categories) in enumerate(verdicts):
+        workspace.save_review(
+            f"g{i}", reviewer="ana", verdict=verdict, failure_categories=categories
+        )
+    return run
+
+
+def test_judge_dataset_is_built_from_reviews(monkeypatch, tmp_path, capsys):
+    _reviewed_project(
+        tmp_path,
+        monkeypatch,
+        [("unacceptable", ["tone"]) if i % 2 else ("acceptable", []) for i in range(8)],
+    )
     monkeypatch.setattr(
         sys,
         "argv",
@@ -1198,8 +1179,6 @@ def test_judge_dataset_splits_a_reviewed_set(monkeypatch, tmp_path, capsys):
             "dataset",
             "--project",
             str(tmp_path),
-            "--set",
-            "batch",
             "--category",
             "tone",
             "--train",
@@ -1214,7 +1193,7 @@ def test_judge_dataset_splits_a_reviewed_set(monkeypatch, tmp_path, capsys):
     cli_main()
 
     out = capsys.readouterr().out
-    assert "train: 4 scenarios" in out
+    assert "train: " in out and "answers" in out
     split_dir = tmp_path / "evaluations" / "judge-datasets" / "tone"
     labels = [
         item["label"]
@@ -1224,3 +1203,27 @@ def test_judge_dataset_splits_a_reviewed_set(monkeypatch, tmp_path, capsys):
         ]
     ]
     assert sorted(labels) == [False] * 4 + [True] * 4
+
+
+def test_eval_baseline_keeps_a_saved_run(monkeypatch, tmp_path, capsys):
+    run = _reviewed_project(tmp_path, monkeypatch, [])
+    run_id = run["metadata"]["id"]
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "omniagents",
+            "eval",
+            "baseline",
+            "--project",
+            str(tmp_path),
+            run_id,
+            "--name",
+            "v1",
+        ],
+    )
+
+    cli_main()
+
+    assert f"Kept {run_id} as baseline v1" in capsys.readouterr().out
+    assert (tmp_path / "evaluations" / "baselines" / "v1" / "results.json").is_file()

@@ -56,9 +56,12 @@ capability, guardrail or agent, a wrong `name`, a template that does not parse.
 
 Every conversation any client had (desktop, web UI, TUI, Playground, evaluation
 runs), from the conversation store. **Review** shows a conversation with the
-shared chat UI beside the review panel; a review of an evaluation run labels the
-scenario it ran with the failure categories it showed, which is what judge
-datasets are built from. **Timing** shows the run's traces when tracing was on.
+shared chat UI beside the review panel. A review of an evaluation answer (a
+conversation of a saved run) is written to the evaluations directory's
+`reviews/<run id>.jsonl` with the answer it judges, and is committed: judge
+datasets are built from these. A review of any other conversation (Playground,
+desktop, web) stays in this machine's trace database. **Timing** shows the
+run's traces when tracing was on.
 
 ## Evaluation
 
@@ -66,8 +69,9 @@ The agent picker in the header chooses what runs are made against.
 
 - **Scenarios**: the project's scenario files in `scenarios/` (what the suite
   runs) and the generated sets in `generated/`, edited in place. Run a set;
-  promote a generated scenario into `scenarios/promoted.yml`; label a set from
-  the reviews of its newest run; build a category's judge dataset from it. **Dimensions and generation** edits the dimensions
+  promote a generated scenario into `scenarios/promoted.yml`. A scenario's
+  failure categories say what it is written to probe; what reviewers saw is in
+  the reviews. **Dimensions and generation** edits the dimensions
   synthetic scenarios are drawn from and generates a set from them.
 - **Runs**: run the suite (a selection, a holdout split, unmeasured scenarios,
   a turn limit), make the train/dev/test holdout, and read saved runs: each with
@@ -75,19 +79,24 @@ The agent picker in the header chooses what runs are made against.
   manifest it ran with, and every scenario and trial with its measures and a
   link to its conversation. Two runs are compared when they used the same
   scenarios the same number of times: what changed in the manifest, the change
-  in pass rate, and the scenarios whose outcome changed.
+  in pass rate, and the scenarios whose outcome changed. A run can be kept as
+  a named baseline (`baselines/<name>/`, committed), the evidence for a number
+  someone reports; runs themselves stay on this machine.
 - **Categories and measures**: failure categories with the measures that
   catch each and how many scenarios and reviews use it; measures, built in or
   the project's `measures.py`, with a stub written for a new one.
 - **Judges**: each judge's model, what it reads, the category it decides, its
-  instructions and template; judge datasets with each scenario's label and the
-  reply the judge reads; optimizing a judge on a dataset.
+  instructions and template; judge datasets, built per category from every
+  reviewed answer, with each answer's label and the reply the judge reads;
+  optimizing a judge on a dataset.
 - **Optimize**: improving an agent's instructions against a judge dataset; the
   best instructions are saved into the agent's files.
 
 All of it lives in the project's evaluations directory, laid out as
-`omniagents/core/eval/layout.py` describes: what people write
-(`evaluation.yml`, `measures.py`, `judges/<key>/`, `scenarios/`) apart from
-what the tools produce (`generated/`, `holdout/`, `judge-datasets/<category>/`,
-`runs/`, `optimizations/`). Each saved run keeps a copy of the agent it tested.
-A project laid out the old way is refused with what to move where.
+`omniagents/core/eval/layout.py` describes. Committed: what people write
+(`evaluation.yml`, `measures.py`, `judges/<key>/`, `scenarios/`) and what is
+expensive or impossible to make again (`reviews/`, `generated/`, `holdout/`,
+`judge-datasets/<category>/`, `baselines/`). Local: `runs/` and
+`optimizations/`. Reviews and generated sets include agents' answers, so
+evaluation inputs must be synthetic. A project laid out the old way is refused
+with what to move where.

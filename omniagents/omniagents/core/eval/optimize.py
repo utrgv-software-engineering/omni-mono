@@ -546,7 +546,6 @@ def optimize_judge_from_project(
     dev_file: str | None,
     test_file: str | None,
     judge_key: str | None,
-    runs_file: str | None,
     source: str,
     max_turns: int,
     max_metric_calls: int,
@@ -660,20 +659,19 @@ def optimize_judge_from_project(
     except Exception:
         pass
 
-    from omniagents.core.eval.layout import EvalLayout
-    from omniagents.core.eval.results import conversations_for
-    from omniagents.core.eval.split import dataset_set
+    from omniagents.core.eval.reviews import dataset_conversations
 
-    # The conversations the judge reads: the saved runs of the set the
-    # dataset was drawn from, or the runs file given.
-    explicit_runs = None
-    if runs_file:
-        explicit_runs = _P(runs_file)
-        if not explicit_runs.is_absolute():
-            explicit_runs = (base / explicit_runs).resolve()
-    layout = EvalLayout(_eval_config.eval_dir, _eval_config.project_root)
-    source_set = dataset_set(layout, dv_path)
-    conversations = conversations_for(layout, source_set, explicit_runs)
+    # What the judge reads: each example's answer as it was reviewed.
+    conversations = dataset_conversations(
+        [
+            item
+            for path in (tr_path, dv_path, ts_path)
+            for item in (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get(
+                "scenarios"
+            )
+            or []
+        ]
+    )
     wanted = {
         item["id"] if item.get("id") not in (None, "None") else str(item.get("name"))
         for item in trainset + devset + testset
@@ -681,9 +679,8 @@ def optimize_judge_from_project(
     missing = sorted(wanted - set(conversations))
     if missing:
         raise SystemExit(
-            f"{len(missing)} scenario(s) in the judge dataset have no saved run "
-            f"with its conversation (e.g. {missing[0]}). Run the scenario set "
-            "first: omniagents eval scenarios run --set <the set's name>"
+            f"{len(missing)} example(s) in the judge dataset carry no reviewed "
+            f"answer (e.g. {missing[0]}); build the judge dataset from reviews"
         )
 
     jkey = judge_key
@@ -742,30 +739,9 @@ def optimize_judge_from_project(
     try:
         tracing = _eval_config.tracing_config or {}
         if str(tracing.get("provider", "")).lower() == "studio":
-            import json as _json
-
             base_name = tracing.get("name") or _P(compiled_cfg_path).stem
-            set_dir = source_set.parent if source_set is not None else None
-            ts = None
-            sc_name = None
-            try:
-                if set_dir is not None:
-                    mf = set_dir / "manifest.json"
-                    if mf.exists():
-                        md = _json.loads(mf.read_text(encoding="utf-8"))
-                        ts = md.get("timestamp")
-                        sc_name = md.get("name")
-            except Exception:
-                ts = None
-                sc_name = None
-            if not ts:
-                ts = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-            if not sc_name:
-                try:
-                    sc_name = set_dir.name if set_dir is not None else "scenarios"
-                except Exception:
-                    sc_name = "scenarios"
-            workflow_name = f"{base_name}_judge_optimize_{jkey}_{sc_name}_{ts}"
+            ts = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+            workflow_name = f"{base_name}_judge_optimize_{jkey}_{cat}_{ts}"
     except Exception:
         workflow_name = None
     adapter = OmniAgentsJudgeAdapter(

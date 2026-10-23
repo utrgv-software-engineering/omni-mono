@@ -387,11 +387,9 @@ export class ApiClient {
   }
 
   async createJudgeDataset(dataset: {
-    set_path: string
     category: string
     fractions?: [number, number, number]
     seed?: number
-    negatives_ratio?: number | null
   }): Promise<JudgeDataset> {
     return this.send('/evaluation/judge-datasets', 'POST', dataset)
   }
@@ -430,6 +428,14 @@ export class ApiClient {
 
   async compareRuns(a: string, b: string): Promise<RunComparison> {
     return this.fetch(`/evaluation/runs/compare?${new URLSearchParams({ a, b })}`)
+  }
+
+  async keepRun(path: string, name: string): Promise<SavedRunEntry> {
+    return this.send('/evaluation/baselines', 'POST', { path, name })
+  }
+
+  async removeBaseline(name: string): Promise<{ removed: string }> {
+    return this.send(`/evaluation/baselines/${encodeURIComponent(name)}`, 'DELETE')
   }
 
   // -- evaluation: jobs --------------------------------------------------------

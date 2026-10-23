@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import json
 import textwrap
+import uuid
 from pathlib import Path
 
 import pytest
 import yaml
 
 from omniagents.core.eval import pipeline
+from omniagents.core.eval.layout import SPLIT_NAMES
 from omniagents.core.eval.workspace import EvalWorkspace, EvalWorkspaceError, NotFound
 
 EVALUATION_YML = """\
@@ -115,7 +117,9 @@ def test_failure_categories_and_their_scenarios(project):
     assert units["id"] == "wrong_units"
     assert units["scenario_count"] == 3  # one project, two generated
 
-    workspace.add_failure_category("Ignores Location", description="Answers for elsewhere")
+    workspace.add_failure_category(
+        "Ignores Location", description="Answers for elsewhere"
+    )
     with pytest.raises(EvalWorkspaceError, match="Unknown measure"):
         workspace.add_failure_category("Other", measures=["no_such_measure"])
     with pytest.raises(EvalWorkspaceError, match="exists"):
@@ -147,9 +151,10 @@ def test_measures_list_builtin_and_project_functions(project):
         "label": "Cites a source",
     }
     assert "def cites_source(ctx):" in (project / "evaluations/measures.py").read_text()
-    assert workspace.update_measure("cites_source", description="Links it")[
-        "description"
-    ] == "Links it"
+    assert (
+        workspace.update_measure("cites_source", description="Links it")["description"]
+        == "Links it"
+    )
     workspace.remove_measure("cites_source")
     # The function is code and stays; only its description is gone.
     assert workspace._measure("cites_source")["label"] == "Cites Source"
@@ -187,23 +192,14 @@ def test_scenarios_are_edited_in_place_and_stale_edits_refused(project):
         workspace.scenario_set("/etc/passwd")
 
 
-def test_generated_scenarios_are_promoted_labelled_and_removed(project):
+def test_generated_scenarios_are_promoted_and_removed(project):
     workspace = EvalWorkspace(project)
     generated = str(project / "evaluations/generated/batch1/scenarios.yml")
 
     workspace.promote_scenario(generated, scenario_id="g2")
-    workspace.label_scenario(
-        generated,
-        scenario_id="g4",
-        failure_categories=["Wrong Units"],
-        review={"judgment": "fail", "notes": "kelvin again"},
-    )
 
     promoted = workspace.scenario_set(project / "evaluations/scenarios/promoted.yml")
     assert [s["id"] for s in promoted["scenarios"]] == ["g2"]
-    labelled = workspace.scenario_set(generated)["scenarios"][3]
-    assert labelled["failure_categories"] == ["wrong_units"]
-    assert labelled["analysis"] == {"judgment": "fail", "notes": "kelvin again"}
 
     workspace.remove_scenario_set(generated)
     assert not (project / "evaluations/generated/batch1").exists()
@@ -244,6 +240,7 @@ def _engine_result(passes: list[bool], *, select=None, model="gpt-5.5"):
                 "answered": True,
                 "final_assistant_text": f"reply {index}",
                 "history": [{"role": "assistant", "content": f"reply {index}"}],
+                "trace_group_id": f"s{index}-{uuid.uuid4().hex[:8]}",
             }
         )
     return {
@@ -307,19 +304,14 @@ def test_runs_are_saved_whole_listed_and_compared(project, monkeypatch):
     assert refused["pass_rate"]["change"] is None
 
 
-def test_a_set_run_is_saved_in_runs_and_feeds_its_judge_dataset(
-    project, monkeypatch
-):
+def test_a_set_run_is_saved_in_runs(project, monkeypatch):
     workspace = EvalWorkspace(project)
     generated = project / "evaluations/generated/batch1/scenarios.yml"
     seen = {}
 
     def fake_run(agent_path, **kwargs):
         seen.update(kwargs)
-        data = _engine_result([True, True, False, True])
-        for run, scenario in zip(data["runs"], kwargs["eval_cfg"]["scenarios"]):
-            run["scenario_config"] = scenario
-        return data
+        return _engine_result([True, True, False, True])
 
     monkeypatch.setattr(pipeline, "run_evaluation", fake_run)
 
@@ -328,28 +320,167 @@ def test_a_set_run_is_saved_in_runs_and_feeds_its_judge_dataset(
     assert seen["include_unmeasured"] is True
     assert Path(saved["path"]).parent.parent == project / "evaluations/runs"
     assert saved["metadata"]["set"] == "generated/batch1/scenarios.yml"
-    # A suite run does not stand in for the set's conversations.
-    workspace.run(name="suite")
 
-    dataset = workspace.create_judge_dataset(
-        "evaluations/generated/batch1/scenarios.yml",
-        "wrong_units",
-        fractions=(0.5, 0.25, 0.25),
-        seed=1,
+
+def _saved_run(workspace, monkeypatch, passes, **result):
+    monkeypatch.setattr(
+        pipeline,
+        "run_evaluation",
+        lambda agent_path, **kwargs: {**_engine_result(passes), **result},
     )
+    return workspace.run()
+
+
+def test_reviews_are_kept_with_the_answers_they_judge(project, monkeypatch):
+    workspace = EvalWorkspace(project)
+    run = _saved_run(workspace, monkeypatch, [False, True])
+    first, second = run["runs"]
+    with pytest.raises(EvalWorkspaceError, match="No saved run"):
+        workspace.save_review("not-a-run", reviewer="ana", verdict="acceptable")
+    with pytest.raises(EvalWorkspaceError, match="Unknown failure category"):
+        workspace.save_review(
+            first["trace_group_id"], reviewer="ana", failure_categories=["nope"]
+        )
+
+    review = workspace.save_review(
+        first["trace_group_id"],
+        reviewer="ana",
+        verdict="unacceptable",
+        failure_categories=["Wrong Units"],
+        notes="kelvin again",
+    )
+    assert review["failure_categories"] == ["wrong_units"]
+    assert review["reply"] == "reply 0" and review["scenario"]["id"] == "s0"
+    assert "history" not in review  # no judge of the project reads conversations
+    path = project / "evaluations/reviews" / f"{run['metadata']['id']}.jsonl"
+    [line] = path.read_text().splitlines()
+    assert json.loads(line)["verdict"] == "unacceptable"
+
+    # Fields not given keep what the review had.
+    workspace.save_review(first["trace_group_id"], reviewer="bo", notes="")
+    kept = workspace.review(first["trace_group_id"])
+    assert kept["verdict"] == "unacceptable" and kept["notes"] is None
+    assert kept["reviewer"] == "bo"
+
+    # The review stands on its own once the run is gone.
+    import shutil
+
+    shutil.rmtree(Path(run["path"]).parent)
+    assert workspace.is_reviewable(first["trace_group_id"])
+    assert not workspace.is_reviewable(second["trace_group_id"])
+
+    # A review left empty is removed, and so is a file with none left.
+    workspace.save_review(
+        first["trace_group_id"], reviewer="bo", verdict=None, failure_categories=[]
+    )
+    assert workspace.reviews() == [] and not path.exists()
+
+
+def test_a_review_keeps_the_conversation_when_a_judge_reads_one(project, monkeypatch):
+    workspace = EvalWorkspace(project)
+    workspace.add_judge("units_judge", model="gpt-5.5", source="history")
+    run = _saved_run(workspace, monkeypatch, [False])
+    group = run["runs"][0]["trace_group_id"]
+    review = workspace.save_review(group, reviewer="ana", verdict="unacceptable")
+    assert review["history"] == [{"role": "assistant", "content": "reply 0"}]
+
+
+def test_judge_datasets_are_built_from_reviews_and_keep_their_splits(
+    project, monkeypatch
+):
+    workspace = EvalWorkspace(project)
+    run = _saved_run(workspace, monkeypatch, [False] * 12)
+    groups = [record["trace_group_id"] for record in run["runs"]]
+    for index, group in enumerate(groups[:8]):
+        workspace.save_review(
+            group,
+            reviewer="ana",
+            verdict="unacceptable" if index % 2 else "acceptable",
+            failure_categories=["wrong_units"] if index % 2 else [],
+        )
+    workspace.save_review(groups[8], reviewer="ana", notes="only a note")
+
+    with pytest.raises(NotFound):
+        workspace.create_judge_dataset("not_a_category")
+    dataset = workspace.create_judge_dataset("wrong_units", seed=7)
     folder = project / "evaluations/judge-datasets/wrong_units"
-    assert dataset["category"] == "wrong_units" and dataset["set"] == "batch1"
-    assert yaml.safe_load((folder / "manifest.yml").read_text())["set"] == (
-        "generated/batch1/scenarios.yml"
-    )
-    assert sum(s["positives"] for s in dataset["splits"]) == 2
-    split = workspace.judge_dataset_split(dataset["splits"][0]["path"])
-    assert split["scenarios"] and all(
-        s["reply"].startswith("reply") for s in split["scenarios"]
-    )
+    manifest = yaml.safe_load((folder / "manifest.yml").read_text())
+    assert manifest["source"] == "reviews" and manifest["seed"] == 7
+    # Eight reviewed answers; a note alone is not a verdict.
+    assert sum(s["scenario_count"] for s in dataset["splits"]) == 8
+    assert sum(s["positives"] for s in dataset["splits"]) == 4
+
+    def assignment():
+        out = {}
+        for split in SPLIT_NAMES:
+            for example in yaml.safe_load((folder / f"{split}.yml").read_text())[
+                "scenarios"
+            ]:
+                out[example["id"]] = split
+        return out
+
+    before = assignment()
+    split = workspace.judge_dataset_split(dataset["splits"][1]["path"])
+    for example in split["scenarios"]:
+        assert example["reply"].startswith("reply")
+        assert example["label"] is (
+            "wrong_units" in workspace.review(example["id"])["failure_categories"]
+        )
+
+    # More reviews add examples and move none of the earlier ones.
+    for group in groups[9:]:
+        workspace.save_review(group, reviewer="bo", verdict="acceptable")
+    workspace.create_judge_dataset("wrong_units", seed=7)
+    after = assignment()
+    assert len(after) == 11
+    assert all(after[key] == split for key, split in before.items())
 
     workspace.remove_judge_dataset("wrong_units")
     assert workspace.judge_datasets() == [] and not folder.exists()
+
+
+def test_a_judge_dataset_built_from_scenario_labels_is_refused(project):
+    folder = project / "evaluations/judge-datasets/wrong_units"
+    _write(folder / "manifest.yml", "set: generated/batch1/scenarios.yml\n")
+    with pytest.raises(EvalWorkspaceError, match="built from scenario labels"):
+        EvalWorkspace(project).judge_datasets()
+
+
+def test_a_run_is_kept_as_a_committed_baseline(project, monkeypatch):
+    workspace = EvalWorkspace(project)
+    run = _saved_run(workspace, monkeypatch, [True, False])
+
+    kept = workspace.keep_run(run["path"], "before-rewrite")
+    folder = project / "evaluations/baselines/before-rewrite"
+    assert kept["baseline"] == "before-rewrite"
+    assert (folder / "results.json").is_file() and (
+        folder / "agent/agent.yml"
+    ).is_file()
+    with pytest.raises(EvalWorkspaceError, match="exists"):
+        workspace.keep_run(run["path"], "before-rewrite")
+    with pytest.raises(EvalWorkspaceError, match="letters, digits"):
+        workspace.keep_run(run["path"], "no spaces")
+    with pytest.raises(EvalWorkspaceError, match="Only a saved run"):
+        workspace.keep_run(kept["path"], "again")
+
+    # Listed and compared with the runs, and still there once the run is not.
+    import shutil
+
+    shutil.rmtree(Path(run["path"]).parent)
+    later = _saved_run(workspace, monkeypatch, [True, True])
+    listed = {entry["path"]: entry["baseline"] for entry in workspace.runs()}
+    assert listed == {kept["path"]: "before-rewrite", later["path"]: None}
+    assert workspace.compare_runs(kept["path"], later["path"])["comparable"]
+
+    # A review of a baseline's answer is filed under the original run id.
+    group = workspace.read_run(kept["path"])["runs"][1]["trace_group_id"]
+    workspace.save_review(group, reviewer="ana", verdict="unacceptable")
+    assert (
+        project / "evaluations/reviews" / f"{run['metadata']['id']}.jsonl"
+    ).is_file()
+
+    workspace.remove_baseline("before-rewrite")
+    assert not folder.exists()
 
 
 def test_holdout_is_created_and_selects_the_suite(project, monkeypatch):
@@ -367,9 +498,9 @@ def test_holdout_is_created_and_selects_the_suite(project, monkeypatch):
         return _engine_result([True])
 
     monkeypatch.setattr(pipeline, "run_evaluation", fake_run)
-    train = yaml.safe_load(
-        (project / "evaluations/holdout/train.yml").read_text()
-    )["scenarios"]
+    train = yaml.safe_load((project / "evaluations/holdout/train.yml").read_text())[
+        "scenarios"
+    ]
     workspace.run(split="train", include_unmeasured=True)
     assert split_used["split"] == "train"
     assert len(split_used["names"]) == len(train)
@@ -377,7 +508,10 @@ def test_holdout_is_created_and_selects_the_suite(project, monkeypatch):
 
 def test_a_judge_defined_by_reference_edits_the_referenced_files(project):
     shared = project / "evaluations/shared"
-    _write(shared / "tone_agent.yml", "agent:\n  model: gpt-5.5\n  instructions_file: tone.md\n")
+    _write(
+        shared / "tone_agent.yml",
+        "agent:\n  model: gpt-5.5\n  instructions_file: tone.md\n",
+    )
     _write(shared / "tone.md", "Judge the tone.")
     _write(
         project / "evaluations/judges/tone/judge.yml",
@@ -398,36 +532,3 @@ def test_an_old_layout_is_refused_as_a_workspace_error(project):
         workspace.scenario_sets()
     with pytest.raises(EvalWorkspaceError, match="laid out the old way"):
         workspace.config()
-
-
-def test_labels_come_from_the_reviews_of_the_sets_newest_run(project, monkeypatch):
-    from omniagents.core.eval import annotate
-
-    workspace = EvalWorkspace(project)
-    generated = project / "evaluations/generated/batch1/scenarios.yml"
-    with pytest.raises(EvalWorkspaceError, match="no saved run"):
-        workspace.annotate_from_reviews(generated, "traces")
-
-    def fake_run(agent_path, **kwargs):
-        return {**_engine_result([True]), "workflow_name": f"wf{len(read)}"}
-
-    monkeypatch.setattr(pipeline, "run_evaluation", fake_run)
-    read = []
-    workspace.run(scenario_set=generated)
-    read.append("older")
-    workspace.run(scenario_set=generated)
-    read.append("newest")
-    workspace.run()  # wf2: newer, but the suite's run is not the set's
-
-    def labels(project_name, workflow_name):
-        read.append((project_name, workflow_name))
-        return {"g2": ["wrong_units"]}
-
-    monkeypatch.setattr(annotate, "review_labels", labels)
-    result = workspace.annotate_from_reviews(generated, "traces")
-
-    assert read[-1] == ("traces", "wf1")
-    by_id = {s["id"]: s for s in result["set"]["scenarios"]}
-    assert by_id["g2"]["failure_categories"] == ["wrong_units"]
-    assert "failure_categories" not in by_id["g1"]  # no review, no label
-    assert not list(generated.parent.glob("*.bak*"))

@@ -473,30 +473,6 @@ def main():
         help="Run every scenario in this set (a generated set's name, or a "
         "scenario file's path) instead of the project's suite",
     )
-    scen_ann = scen_sub.add_parser(
-        "annotate",
-        help="Label a set's scenarios with the failure categories their "
-        "conversations were given in review, in the set's newest saved run",
-    )
-    scen_ann.add_argument(
-        "--project",
-        "-P",
-        required=False,
-        help="Path to project.yml (defaults to project.yml in CWD)",
-    )
-    scen_ann.add_argument(
-        "--agent", "-a", default="", help="Agent key (defaults to entrypoint)"
-    )
-    scen_ann.add_argument(
-        "--set",
-        dest="scenario_set",
-        required=True,
-        help="The set: a generated set's name, or a scenario file's path",
-    )
-    scen_ann.add_argument("--studio-project", dest="studio_project", default=None)
-    scen_ann.add_argument("-q", "--quiet", action="count", default=0)
-    scen_ann.add_argument("-v", "--verbose", action="count", default=0)
-
     scen_holdout = scen_sub.add_parser(
         "holdout",
         help="Create a seeded, stratified train/dev/test holdout of the scenarios for evaluating an agent",
@@ -525,6 +501,20 @@ def main():
     scen_holdout.add_argument("--seed", type=int, default=42)
     scen_holdout.add_argument("-q", "--quiet", action="count", default=0)
     scen_holdout.add_argument("-v", "--verbose", action="count", default=0)
+
+    eval_baseline = eval_sub.add_parser(
+        "baseline",
+        help="Keep a saved run as a committed baseline (evaluations/baselines/<name>/), "
+        "the evidence for a number you report",
+    )
+    eval_baseline.add_argument(
+        "--project",
+        "-P",
+        required=False,
+        help="Path to project.yml (defaults to project.yml in CWD)",
+    )
+    eval_baseline.add_argument("run", help="The run's id (or its results.json)")
+    eval_baseline.add_argument("--name", required=True, help="The baseline's name")
 
     ls_parser = subparsers.add_parser(
         "ls", help="List compiled resources from target/graph.json"
@@ -926,9 +916,10 @@ def main():
     judge_sub = judge_parser.add_subparsers(dest="judge_cmd")
     judge_dataset = judge_sub.add_parser(
         "dataset",
-        help="Build a judge's train/dev/test dataset for a failure category from a "
-        "reviewed generated scenario set (scenarios labelled with the category are "
-        "positives)",
+        help="Build (or rebuild) a failure category's judge dataset from every "
+        "reviewed answer: those reviewers saw the category in are positives. An "
+        "answer's split depends only on it and --seed, so rebuilding keeps "
+        "earlier examples where they were",
     )
     judge_dataset.add_argument(
         "--project",
@@ -936,18 +927,11 @@ def main():
         required=False,
         help="Path to project.yml (defaults to project.yml in CWD)",
     )
-    judge_dataset.add_argument(
-        "--set",
-        dest="scenario_set",
-        required=True,
-        help="The reviewed generated set: its name, or its scenarios.yml",
-    )
     judge_dataset.add_argument("--category", "-c", required=True)
     judge_dataset.add_argument("--train", type=float, default=0.15)
     judge_dataset.add_argument("--dev", type=float, default=0.425)
     judge_dataset.add_argument("--test", type=float, default=0.425)
     judge_dataset.add_argument("--seed", type=int, default=42)
-    judge_dataset.add_argument("--negatives-ratio", type=float, default=None)
     judge_run = judge_sub.add_parser(
         "run", help="Evaluate an LLM-as-Judge over a split"
     )
@@ -990,13 +974,6 @@ def main():
     judge_run.add_argument("--run-max-turns", type=int, default=None)
     judge_run.add_argument(
         "--replay-mode", choices=["replay", "auto", "record", "live"], default="replay"
-    )
-    judge_run.add_argument(
-        "--runs-file",
-        dest="runs_file",
-        default=None,
-        help="A saved run's results.json to read the conversations from "
-        "(default: the newest saved runs of the set the dataset was drawn from)",
     )
     judge_run.add_argument("--output", "-o", default="")
     judge_run.add_argument(
@@ -1070,13 +1047,6 @@ def main():
         "-j",
         default=None,
         help="Judge key; if omitted and exactly one judge is configured, it will be used",
-    )
-    judge_opt.add_argument(
-        "--runs-file",
-        dest="runs_file",
-        default=None,
-        help="A saved run's results.json to read the conversations from "
-        "(default: the newest saved runs of the set the dataset was drawn from)",
     )
     judge_opt.add_argument(
         "--source",
@@ -2076,62 +2046,6 @@ def main():
                 sys.exit(1)
         elif (
             args.eval_cmd == "scenarios"
-            and getattr(args, "scen_cmd", None) == "annotate"
-        ):
-            try:
-                from omniagents.core.eval.workspace import (
-                    EvalWorkspace,
-                    EvalWorkspaceError,
-                )
-
-                proj_path = getattr(args, "project", None)
-                if not proj_path:
-                    p = Path.cwd() / "project.yml"
-                    if p.is_file():
-                        proj_path = str(p)
-                    else:
-                        print(
-                            "Error: Provide --project <project.yml> (or run from a directory containing a project.yml)."
-                        )
-                        sys.exit(2)
-                workspace = EvalWorkspace(proj_path)
-                studio_project = str(getattr(args, "studio_project") or "").strip()
-                if not studio_project:
-                    candidate = workspace.config().tracing_config.get("project")
-                    if isinstance(candidate, str) and candidate.strip():
-                        studio_project = candidate.strip()
-                if not studio_project:
-                    print(
-                        "Error: Unable to determine Studio project; set tracing.project in project.yml or provide --studio-project."
-                    )
-                    sys.exit(2)
-                try:
-                    result = workspace.annotate_from_reviews(
-                        workspace.resolve_set(str(args.scenario_set)), studio_project
-                    )
-                except EvalWorkspaceError as exc:
-                    print(f"Error: {exc}")
-                    sys.exit(2)
-                labelled = sum(
-                    1
-                    for scenario in result["set"]["scenarios"]
-                    if scenario.get("failure_categories")
-                )
-                print(
-                    f"Labelled {labelled} of {len(result['set']['scenarios'])} "
-                    f"scenarios in {result['set']['path']} from {result['run']}"
-                )
-                sys.exit(0)
-            except SystemExit:
-                raise
-            except Exception as e:
-                print(f"Error annotating scenarios: {e}")
-                import traceback
-
-                traceback.print_exc()
-                sys.exit(1)
-        elif (
-            args.eval_cmd == "scenarios"
             and getattr(args, "scen_cmd", None) == "holdout"
         ):
             try:
@@ -2191,10 +2105,21 @@ def main():
             except Exception as e:
                 print(f"Error creating holdout: {e}")
                 sys.exit(1)
+        elif args.eval_cmd == "baseline":
+            from omniagents.core.eval.workspace import EvalWorkspace, EvalWorkspaceError
+
+            workspace = EvalWorkspace(getattr(args, "project", None) or Path.cwd())
+            run = Path(str(args.run))
+            if run.suffix != ".json":
+                run = workspace.layout.runs_dir / str(args.run) / "results.json"
+            try:
+                kept = workspace.keep_run(run, str(args.name))
+            except EvalWorkspaceError as exc:
+                print(f"Error: {exc}")
+                sys.exit(2)
+            print(f"Kept {kept['id']} as baseline {kept['baseline']}: {kept['path']}")
         elif args.eval_cmd == "scenarios":
-            print(
-                "Error: Provide a scenarios subcommand: generate | run | annotate | holdout"
-            )
+            print("Error: Provide a scenarios subcommand: generate | run | holdout")
             sys.exit(2)
         else:
             eval_parser.print_help()
@@ -2205,18 +2130,16 @@ def main():
             workspace = EvalWorkspace(getattr(args, "project", None) or Path.cwd())
             try:
                 dataset = workspace.create_judge_dataset(
-                    workspace.resolve_set(str(args.scenario_set)),
                     args.category,
                     fractions=(args.train, args.dev, args.test),
                     seed=args.seed,
-                    negatives_ratio=args.negatives_ratio,
                 )
             except EvalWorkspaceError as exc:
                 print(f"Error: {exc}")
                 sys.exit(2)
             for split in dataset["splits"]:
                 print(
-                    f"{split['split']}: {split['scenario_count']} scenarios "
+                    f"{split['split']}: {split['scenario_count']} answers "
                     f"({split['positives']} positive, {split['negatives']} negative) "
                     f"-> {split['path']}"
                 )
@@ -2361,11 +2284,6 @@ def main():
                         ),
                         show=int(args.show),
                         replay_mode=str(getattr(args, "replay_mode", "auto") or "auto"),
-                        runs_file=(
-                            str(getattr(args, "runs_file"))
-                            if getattr(args, "runs_file", None)
-                            else None
-                        ),
                         progress_cb=_progress_cb,
                         eval_config=eval_cfg,
                     )
@@ -2640,7 +2558,6 @@ def main():
                     dev_file=getattr(args, "dev_file", None),
                     test_file=getattr(args, "test_file", None),
                     judge_key=(str(getattr(args, "judge", "") or "") or None),
-                    runs_file=getattr(args, "runs_file", None),
                     source=str(
                         getattr(args, "source", "final_assistant_text")
                         or "final_assistant_text"

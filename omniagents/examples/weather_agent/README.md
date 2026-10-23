@@ -26,9 +26,8 @@ Ask things like: "Weather in Paris" or "What’s the weather in New York?"
 
 The evaluation lives in `evaluations/`: settings and metrics in
 `evaluation.yml`, the suite in `scenarios/`, a judge in
-`judges/ambiguous_location_assumption_judge/`, two generated sets in
-`generated/`, and the judge dataset for `ambiguous_location_assumption` in
-`judge-datasets/`, drawn from `generated/in_class_error_analysis/`.
+`judges/ambiguous_location_assumption_judge/`, and two generated sets in
+`generated/`.
 
 ```bash
 export OPENAI_API_KEY=...  # required for model runs
@@ -40,13 +39,12 @@ python -m omniagents.cli eval suite run -P examples/weather_agent/project.yml --
 python -m omniagents.cli eval scenarios generate -P examples/weather_agent/project.yml --name demo --count 100
 python -m omniagents.cli eval scenarios run -P examples/weather_agent/project.yml --set demo
 
-# After reviewing that run's conversations in Studio, label the set with the
-# failure categories reviewers gave, and build a category's judge dataset
-python -m omniagents.cli eval scenarios annotate -P examples/weather_agent/project.yml --set demo
+# Review that run's answers in Studio's Logs (reviews go to evaluations/reviews/),
+# then build a category's judge dataset from the reviews
 python -m omniagents.cli judge dataset -P examples/weather_agent/project.yml \
-  --set demo -c ambiguous_location_assumption
+  -c ambiguous_location_assumption
 
-# Check the judge on the dataset's dev split (it judges the saved conversations)
+# Check the judge on the dataset's dev split (it judges the reviewed answers)
 python -m omniagents.cli judge run -P examples/weather_agent/project.yml \
   -c ambiguous_location_assumption -s dev -j ambiguous_location_assumption_judge
 ```

@@ -592,14 +592,16 @@ def test_optimize_agent_requires_gepa(monkeypatch, tmp_path):
 def test_optimize_agent_missing_splits(monkeypatch, tmp_path):
     compiled_path = tmp_path / "compiled.yaml"
     compiled_path.write_text(
-        ("""
+        (
+            """
 evaluation:
   failure_categories:
     safety:
       measures:
         - safety_agent
   metrics: []
-        """.strip()),
+        """.strip()
+        ),
         encoding="utf-8",
     )
 
@@ -685,7 +687,6 @@ def test_optimize_judge_requires_gepa(monkeypatch, tmp_path):
             None,
             None,
             None,
-            None,
             "final_assistant_text",
             1,
             5,
@@ -733,6 +734,13 @@ def test_optimize_agent_happy_path(monkeypatch, tmp_path, configure_optimize_env
                             "name": f"scenario-{idx}",
                             "prompt": "prompt",
                             "target_category": "safety",
+                            "reply": f"reply {path.stem}-{idx}",
+                            "history": [
+                                {
+                                    "role": "assistant",
+                                    "content": f"reply {path.stem}-{idx}",
+                                }
+                            ],
                         }
                         for idx, lbl in enumerate(labels)
                     ]
@@ -934,6 +942,13 @@ def test_optimize_agent_auto_resolution_resume_apply(
                             "name": f"scenario-{idx}",
                             "prompt": "prompt",
                             "target_category": "safety",
+                            "reply": f"reply {path.stem}-{idx}",
+                            "history": [
+                                {
+                                    "role": "assistant",
+                                    "content": f"reply {path.stem}-{idx}",
+                                }
+                            ],
                         }
                         for idx, lbl in enumerate(labels)
                     ]
@@ -1097,6 +1112,13 @@ def test_optimize_agent_positives_only_filters_all_splits(
                             "name": f"scenario-{idx}",
                             "prompt": "prompt",
                             "target_category": "safety",
+                            "reply": f"reply {path.stem}-{idx}",
+                            "history": [
+                                {
+                                    "role": "assistant",
+                                    "content": f"reply {path.stem}-{idx}",
+                                }
+                            ],
                         }
                         for idx, lbl in enumerate(labels)
                     ]
@@ -1183,6 +1205,13 @@ def test_optimize_agent_stop_callback_respects_max_stopper(
                             "name": f"scenario-{idx}",
                             "prompt": "prompt",
                             "target_category": "safety",
+                            "reply": f"reply {path.stem}-{idx}",
+                            "history": [
+                                {
+                                    "role": "assistant",
+                                    "content": f"reply {path.stem}-{idx}",
+                                }
+                            ],
                         }
                         for idx, lbl in enumerate(labels)
                     ]
@@ -1275,6 +1304,13 @@ def test_optimize_agent_tracing_studio_init(
                             "name": f"scenario-{idx}",
                             "prompt": "prompt",
                             "target_category": "safety",
+                            "reply": f"reply {path.stem}-{idx}",
+                            "history": [
+                                {
+                                    "role": "assistant",
+                                    "content": f"reply {path.stem}-{idx}",
+                                }
+                            ],
                         }
                         for idx, lbl in enumerate(labels)
                     ]
@@ -1367,6 +1403,13 @@ def test_optimize_agent_tracing_failure_continues(
                             "name": f"scenario-{idx}",
                             "prompt": "prompt",
                             "target_category": "safety",
+                            "reply": f"reply {path.stem}-{idx}",
+                            "history": [
+                                {
+                                    "role": "assistant",
+                                    "content": f"reply {path.stem}-{idx}",
+                                }
+                            ],
                         }
                         for idx, lbl in enumerate(labels)
                     ]
@@ -1436,6 +1479,13 @@ def test_optimize_agent_apply_failure(monkeypatch, tmp_path, configure_optimize_
                             "name": f"scenario-{idx}",
                             "prompt": "prompt",
                             "target_category": "safety",
+                            "reply": f"reply {path.stem}-{idx}",
+                            "history": [
+                                {
+                                    "role": "assistant",
+                                    "content": f"reply {path.stem}-{idx}",
+                                }
+                            ],
                         }
                         for idx, lbl in enumerate(labels)
                     ]
@@ -1615,6 +1665,13 @@ def test_optimize_judge_happy_path(monkeypatch, tmp_path, configure_optimize_env
                             "name": f"scenario-{idx}",
                             "prompt": "prompt",
                             "target_category": "safety",
+                            "reply": f"reply {path.stem}-{idx}",
+                            "history": [
+                                {
+                                    "role": "assistant",
+                                    "content": f"reply {path.stem}-{idx}",
+                                }
+                            ],
                         }
                         for idx, lbl in enumerate(labels)
                     ]
@@ -1628,50 +1685,11 @@ def test_optimize_judge_happy_path(monkeypatch, tmp_path, configure_optimize_env
     write_split(scenario_dir / "dev.yml", [True, False])
     write_split(scenario_dir / "test.yml", [False, True])
 
-    set_dir = project_dir / "generated" / "scenario"
-    set_dir.mkdir(parents=True)
-    (set_dir / "scenarios.yml").write_text("scenarios: []\n", encoding="utf-8")
-    (set_dir / "manifest.json").write_text(
-        json.dumps({"timestamp": "2024_01_01_00_00_00", "name": "scenario"}),
-        encoding="utf-8",
-    )
-    (scenario_dir / "manifest.yml").write_text(
-        "set: generated/scenario/scenarios.yml\n", encoding="utf-8"
-    )
-    # The judge reads the conversations of the dataset's set's saved run, not
-    # the suite's.
-    from omniagents.core.eval.layout import EvalLayout
-    from omniagents.core.eval.results import save_evaluation_run
-
-    layout = EvalLayout(project_dir, project_dir)
-
     ids = [
         f"{split}-{i}"
         for split, n in (("train", 3), ("dev", 2), ("test", 2))
         for i in range(n)
     ]
-    save_evaluation_run(
-        layout,
-        {
-            "runs": [
-                {
-                    "scenario_config": {"id": sid},
-                    "final_assistant_text": f"reply {sid}",
-                    "history": [{"role": "assistant", "content": f"reply {sid}"}],
-                }
-                for sid in ids
-            ]
-        },
-        source="test",
-        label="scenario",
-        scenario_set=set_dir / "scenarios.yml",
-    )
-    save_evaluation_run(
-        layout,
-        {"runs": [{"scenario_config": {"id": ids[0]}, "history": []}]},
-        source="test",
-        label="suite",
-    )
 
     result = optimize.optimize_judge_from_project(
         str(project_dir),
@@ -1681,7 +1699,6 @@ def test_optimize_judge_happy_path(monkeypatch, tmp_path, configure_optimize_env
         None,
         None,
         "safety_judge",
-        None,
         "final_assistant_text",
         2,
         4,
@@ -1708,7 +1725,12 @@ def test_optimize_judge_happy_path(monkeypatch, tmp_path, configure_optimize_env
     # Note: tracing initialization is tested separately in test_optimize_judge_tracing
     assert judge_adapter_instances[0].evaluate_calls
     assert set(judge_adapter_instances[0].conversations) == set(ids)
-    assert judge_adapter_instances[0].conversations[ids[0]]["history"]
+    # The judge reads each example's answer as it was reviewed.
+    assert judge_adapter_instances[0].conversations[ids[0]] == {
+        "prompt": "prompt",
+        "final_assistant_text": f"reply {ids[0]}",
+        "history": [{"role": "assistant", "content": f"reply {ids[0]}"}],
+    }
     run_dir = Path(result["run_dir"])
     assert run_dir.parent == project_dir / "optimizations"
     assert run_dir.name.endswith("_judge_safety_judge")
@@ -1752,6 +1774,13 @@ def test_optimize_agent_missing_measures(monkeypatch, tmp_path, configure_optimi
                             "name": f"scenario-{idx}",
                             "prompt": "prompt",
                             "target_category": "safety",
+                            "reply": f"reply {path.stem}-{idx}",
+                            "history": [
+                                {
+                                    "role": "assistant",
+                                    "content": f"reply {path.stem}-{idx}",
+                                }
+                            ],
                         }
                         for idx, lbl in enumerate(labels)
                     ]
@@ -1796,7 +1825,9 @@ def test_optimize_agent_missing_measures(monkeypatch, tmp_path, configure_optimi
 
 
 def test_an_optimization_gets_a_new_folder_or_resumes_a_named_one(tmp_path):
-    config = types.SimpleNamespace(eval_dir=tmp_path / "evaluations", project_root=tmp_path)
+    config = types.SimpleNamespace(
+        eval_dir=tmp_path / "evaluations", project_root=tmp_path
+    )
 
     fresh = optimize._optimization_dir(config, "agent", "safety", None, False)
     assert fresh.parent == tmp_path / "evaluations" / "optimizations"
@@ -1808,7 +1839,9 @@ def test_an_optimization_gets_a_new_folder_or_resumes_a_named_one(tmp_path):
         optimize._optimization_dir(config, "agent", "safety", "elsewhere", True)
 
     (fresh / "gepa.log").write_text("started")
-    assert optimize._optimization_dir(config, "agent", "safety", str(fresh), True) == fresh
+    assert (
+        optimize._optimization_dir(config, "agent", "safety", str(fresh), True) == fresh
+    )
     with pytest.raises(SystemExit, match="resume it with --resume"):
         optimize._optimization_dir(config, "agent", "safety", str(fresh), False)
     named = optimize._optimization_dir(config, "judge", "j", "mine", False)

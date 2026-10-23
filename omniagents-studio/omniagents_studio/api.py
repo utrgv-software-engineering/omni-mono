@@ -1,9 +1,11 @@
 """FastAPI routes for the React UI"""
 
 import csv
+import getpass
 import io
 import json
 import logging
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Literal
@@ -43,7 +45,6 @@ from omniagents.core.tracing.storage import SQLiteStorage
 from omniagents.core.eval.workspace import (
     EvalWorkspace,
     EvalWorkspaceError,
-    NotFound,
     slugify,
 )
 
@@ -627,171 +628,169 @@ def create_api_app(
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
+    def _evaluation_workspace(
+        group_id: Optional[str] = None,
+    ) -> Optional[EvalWorkspace]:
+        """The project's evaluation, when there is one and (given a
+        ``group_id``) that conversation is an answer of a saved evaluation
+        run: its review then lives in the evaluations directory's
+        ``reviews/``, committed. Any other conversation's review stays in
+        this machine's trace database."""
+        try:
+            workspace = EvalWorkspace(_get_manifest_path())
+            if group_id is None or workspace.is_reviewable(group_id):
+                return workspace
+        except (HTTPException, EvalWorkspaceError):
+            return None
+        return None
+
+    def _reviewer() -> Optional[str]:
+        """Who is reviewing: the project's git user, else this login."""
+        try:
+            root = _get_manifest_path().parent
+            name = subprocess.run(
+                ["git", "config", "user.name"],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            ).stdout.strip()
+            if name:
+                return name
+        except (HTTPException, OSError, subprocess.SubprocessError):
+            pass
+        return getpass.getuser()
+
+    def _review_view(review: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        review = review or {}
+        return {
+            "markedForAnalysis": bool(review.get("marked")),
+            "judgment": review.get("verdict"),
+            "notes": review.get("notes") or "",
+            "analyzedAt": review.get("reviewed_at"),
+        }
+
+    def _save_review(workspace: EvalWorkspace, group_id: str, **changes: Any):
+        try:
+            return workspace.save_review(group_id, reviewer=_reviewer(), **changes)
+        except EvalWorkspaceError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     @app.get("/api/analysis/{project}")
     async def get_all_analysis(project: str, workflow_name: Optional[str] = None):
-        """Get all analysis data for a project, optionally filtered by workflow name"""
+        """Every review: those of evaluation answers from ``reviews/``, the
+        rest from the trace database; optionally only one run's."""
         try:
             storage = storage_manager.get_storage(project)
-            analysis_data = storage.get_all_analysis(project)
-
-            if workflow_name:
-                rows = storage.conn.execute(
-                    """
-                    SELECT DISTINCT COALESCE(group_id, trace_id) AS gkey
-                    FROM traces
-                    WHERE LOWER(workflow_name) = LOWER(?)
-                    """,
-                    (workflow_name,),
-                )
-                allowed_group_ids = {r["gkey"] for r in rows}
-                analysis_data = [
-                    a for a in analysis_data if a.get("group_id") in allowed_group_ids
-                ]
-
-            # Convert to frontend format
-            result = {}
-            for item in analysis_data:
-                result[item["group_id"]] = {
-                    "markedForAnalysis": bool(item["marked_for_analysis"]),
-                    "judgment": item["judgment"],
-                    "notes": item["notes"] or "",
-                    "analyzedAt": item["analyzed_at"],
-                }
-
-            return result
         except ValueError:
             raise HTTPException(status_code=404, detail="Project not found")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+        analysis_data = storage.get_all_analysis(project)
+        if workflow_name:
+            rows = storage.conn.execute(
+                """
+                SELECT DISTINCT COALESCE(group_id, trace_id) AS gkey
+                FROM traces
+                WHERE LOWER(workflow_name) = LOWER(?)
+                """,
+                (workflow_name,),
+            )
+            allowed_group_ids = {r["gkey"] for r in rows}
+            analysis_data = [
+                a for a in analysis_data if a.get("group_id") in allowed_group_ids
+            ]
+        result = {
+            item["group_id"]: {
+                "markedForAnalysis": bool(item["marked_for_analysis"]),
+                "judgment": item["judgment"],
+                "notes": item["notes"] or "",
+                "analyzedAt": item["analyzed_at"],
+            }
+            for item in analysis_data
+        }
+        workspace = _evaluation_workspace()
+        for review in workspace.reviews() if workspace else []:
+            if workflow_name and str(review.get("workflow") or "").lower() != (
+                workflow_name.lower()
+            ):
+                continue
+            result[review["group_id"]] = _review_view(review)
+        return result
 
     @app.get("/api/analysis/{project}/{group_id}")
     async def get_analysis(project: str, group_id: str):
-        """Get analysis data for a specific conversation"""
+        """A conversation's review."""
+        workspace = _evaluation_workspace(group_id)
+        if workspace is not None:
+            return _review_view(workspace.review(group_id))
         try:
             storage = storage_manager.get_storage(project)
-            analysis = storage.get_analysis(project, group_id)
-
-            if not analysis:
-                return {
-                    "markedForAnalysis": False,
-                    "judgment": None,
-                    "notes": "",
-                    "analyzedAt": None,
-                }
-
-            return {
-                "markedForAnalysis": bool(analysis["marked_for_analysis"]),
-                "judgment": analysis["judgment"],
-                "notes": analysis["notes"] or "",
-                "analyzedAt": analysis["analyzed_at"],
-            }
         except ValueError:
             raise HTTPException(status_code=404, detail="Project not found")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-
-    def _sync_scenario_annotations(
-        project: str, group_id: str, analysis_payload: Optional[Dict[str, Any]] = None
-    ) -> None:
-        """Copy a review onto the scenario its conversation ran, when it was
-        an evaluation run of one of the project's scenario sets: the
-        failure categories become the scenario's labels (what a judge
-        dataset is built from) and the judgment and notes its ``analysis``."""
-        try:
-            storage = storage_manager.get_storage(project)
-            workspace = EvalWorkspace(_get_manifest_path())
-        except (ValueError, HTTPException, NotFound):
-            return
-        scenario: Dict[str, Any] = {}
-        workflow_name: Optional[str] = None
-        for trace in storage.get_traces_by_group(group_id):
-            metadata = trace.get("metadata")
-            if isinstance(metadata, str):
-                try:
-                    metadata = json.loads(metadata)
-                except ValueError:
-                    metadata = {}
-            found = ((metadata or {}).get("omniagents") or {}).get("scenario") or {}
-            if found:
-                scenario = found
-                workflow_name = trace.get("workflow_name")
-                break
-        set_path = scenario.get("path") or scenario.get("source_path")
-        if not set_path or not (scenario.get("id") or scenario.get("name")):
-            return
-        if analysis_payload is None:
-            record = storage.get_analysis(project, group_id) or {}
-            analysis_payload = {
-                "judgment": record.get("judgment"),
-                "notes": record.get("notes") or "",
-                "analyzedAt": record.get("analyzed_at"),
-            }
-        review = {
-            "group_id": group_id,
-            "judgment": analysis_payload.get("judgment"),
-            "notes": analysis_payload.get("notes") or None,
-            "analyzed_at": analysis_payload.get("analyzedAt"),
-            "workflow": workflow_name,
+        analysis = storage.get_analysis(project, group_id)
+        if not analysis:
+            return _review_view(None)
+        return {
+            "markedForAnalysis": bool(analysis["marked_for_analysis"]),
+            "judgment": analysis["judgment"],
+            "notes": analysis["notes"] or "",
+            "analyzedAt": analysis["analyzed_at"],
         }
-        try:
-            workspace.label_scenario(
-                set_path,
-                failure_categories=storage.get_analysis_categories(group_id) or [],
-                review=review if review["judgment"] or review["notes"] else None,
-                scenario_id=str(scenario["id"]) if scenario.get("id") else None,
-                name=None if scenario.get("id") else scenario.get("name"),
-            )
-        except EvalWorkspaceError:
-            # The set has changed or is gone; the review stays with Studio.
-            return
 
     @app.put("/api/analysis/{project}/{group_id}")
     async def update_analysis(
         project: str, group_id: str, analysis_data: Dict[str, Any]
     ):
-        """Update or create analysis data for a conversation"""
+        """Record a conversation's judgment, notes and mark."""
+        workspace = _evaluation_workspace(group_id)
+        if workspace is not None:
+            return _review_view(
+                _save_review(
+                    workspace,
+                    group_id,
+                    verdict=analysis_data.get("judgment"),
+                    notes=analysis_data.get("notes"),
+                    marked=analysis_data.get("markedForAnalysis", False),
+                )
+            )
         try:
             storage = storage_manager.get_storage(project)
-            storage.upsert_analysis(project, group_id, analysis_data)
-            _sync_scenario_annotations(project, group_id, analysis_data)
-
-            # Return the updated data
-            return {
-                "markedForAnalysis": analysis_data.get("markedForAnalysis", False),
-                "judgment": analysis_data.get("judgment"),
-                "notes": analysis_data.get("notes", ""),
-                "analyzedAt": analysis_data.get("analyzedAt"),
-            }
         except ValueError:
             raise HTTPException(status_code=404, detail="Project not found")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+        storage.upsert_analysis(project, group_id, analysis_data)
+        return {
+            "markedForAnalysis": analysis_data.get("markedForAnalysis", False),
+            "judgment": analysis_data.get("judgment"),
+            "notes": analysis_data.get("notes", ""),
+            "analyzedAt": analysis_data.get("analyzedAt"),
+        }
 
     @app.delete("/api/analysis/{project}/{group_id}")
     async def delete_analysis(project: str, group_id: str):
-        """Delete analysis data for a conversation"""
+        """Delete a conversation's review."""
+        workspace = _evaluation_workspace(group_id)
+        if workspace is not None:
+            if workspace.review(group_id) is not None:
+                workspace.remove_review(group_id)
+            return {"message": "Analysis deleted successfully"}
         try:
             storage = storage_manager.get_storage(project)
-            storage.delete_analysis(group_id)
-            return {"message": "Analysis deleted successfully"}
         except ValueError:
             raise HTTPException(status_code=404, detail="Project not found")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-
-    # Evaluation Results Endpoints
+        storage.delete_analysis(group_id)
+        return {"message": "Analysis deleted successfully"}
 
     @app.get("/api/analysis/{project}/{group_id}/categories")
     async def get_analysis_categories(project: str, group_id: str):
-        """Get categories for a specific analysis"""
+        """The failure categories a reviewer saw in a conversation."""
+        workspace = _evaluation_workspace(group_id)
+        if workspace is not None:
+            review = workspace.review(group_id) or {}
+            return {"categoryIds": review.get("failure_categories") or []}
         try:
             storage = storage_manager.get_storage(project)
-            category_ids = storage.get_analysis_categories(group_id)
-            return {"categoryIds": category_ids}
         except ValueError:
             raise HTTPException(status_code=404, detail="Project not found")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+        return {"categoryIds": storage.get_analysis_categories(group_id)}
 
     @app.put("/api/analysis/{project}/{group_id}/categories")
     async def update_analysis_categories(
@@ -816,12 +815,15 @@ def create_api_app(
                 )
             if category_id not in normalized:
                 normalized.append(category_id)
+        workspace = _evaluation_workspace(group_id)
+        if workspace is not None:
+            _save_review(workspace, group_id, failure_categories=normalized)
+            return {"categoryIds": normalized}
         try:
             storage = storage_manager.get_storage(project)
         except ValueError:
             raise HTTPException(status_code=404, detail="Project not found")
         storage.set_analysis_categories(project, group_id, normalized)
-        _sync_scenario_annotations(project, group_id)
         return {"categoryIds": normalized}
 
     @app.get("/api/export/{project}/{trace_id}")

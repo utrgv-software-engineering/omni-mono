@@ -4,6 +4,7 @@ the reason, and long work runs as jobs a page follows."""
 
 from __future__ import annotations
 
+import json
 import time
 
 import yaml
@@ -120,6 +121,8 @@ def _fake_engine(monkeypatch, passes):
                     "measures": [{"name": "response_coherence", "passed": passed}],
                     "answered": True,
                     "history": [],
+                    "final_assistant_text": f"reply to {s['name']}",
+                    "trace_group_id": f"{s['name']}-group",
                 }
                 for s, passed in zip(scenarios, passes)
             ],
@@ -188,41 +191,92 @@ def test_a_job_socket_follows_the_job_to_its_end(studio_api_env, monkeypatch):
     assert states[-1] == "completed"
 
 
-def test_a_review_labels_the_scenario_its_conversation_ran(studio_api_env):
+def test_a_review_of_an_evaluation_answer_is_committed_with_it(
+    studio_api_env, monkeypatch
+):
     env = studio_api_env
-    project_set = _project_set(env)
-    name, storage = _storage(env)
-    storage.insert_trace(
-        {
-            "id": "trace-1",
-            "workflow_name": "suite",
-            "group_id": "run-1",
-            "metadata": {
-                "omniagents": {
-                    "scenario": {
-                        "id": "abc123",
-                        "name": "initial",
-                        "path": project_set["path"],
-                    }
-                }
-            },
-        }
+    _fake_engine(monkeypatch, [False])
+    run = _wait(
+        env,
+        env.client.post(
+            "/api/evaluation/jobs", json={"kind": "run"}, headers=AUTH
+        ).json()["id"],
     )
+    name, storage = _storage(env)
 
+    judged = env.client.put(
+        f"/api/analysis/{name}/initial-group",
+        json={
+            "judgment": "unacceptable",
+            "notes": "off topic",
+            "markedForAnalysis": True,
+        },
+        headers=AUTH,
+    )
     labelled = env.client.put(
-        f"/api/analysis/{name}/run-1/categories",
+        f"/api/analysis/{name}/initial-group/categories",
         json={"categoryIds": ["Quality Issues"]},
         headers=AUTH,
     )
     unknown = env.client.put(
-        f"/api/analysis/{name}/run-1/categories",
+        f"/api/analysis/{name}/initial-group/categories",
         json={"categoryIds": ["not a category"]},
         headers=AUTH,
     )
+    # Any other conversation's review stays in this machine's trace database.
+    elsewhere = env.client.put(
+        f"/api/analysis/{name}/session_abc",
+        json={"judgment": "acceptable", "notes": "", "markedForAnalysis": False},
+        headers=AUTH,
+    )
 
+    assert judged.json()["judgment"] == "unacceptable"
     assert labelled.json() == {"categoryIds": ["quality_issues"]}
-    assert unknown.status_code == 400
+    assert unknown.status_code == 400 and elsewhere.status_code == 200
+    run_id = run["result"]["path"].split("/")[-2]
+    [line] = (
+        (env.project_dir / f"evaluations/reviews/{run_id}.jsonl")
+        .read_text()
+        .splitlines()
+    )
+    review = json.loads(line)
+    assert review["verdict"] == "unacceptable" and review["notes"] == "off topic"
+    assert review["failure_categories"] == ["quality_issues"]
+    assert review["reply"] == "reply to initial" and review["reviewer"]
+    assert storage.get_analysis(name, "initial-group") is None
+    assert storage.get_analysis(name, "session_abc")["judgment"] == "acceptable"
+    # The scenario keeps only what people wrote.
     [scenario] = yaml.safe_load(
         (env.project_dir / "evaluations/scenarios/main.yml").read_text()
     )["scenarios"]
-    assert scenario["failure_categories"] == ["quality_issues"]
+    assert "analysis" not in scenario
+
+    everything = _get(env, f"/api/analysis/{name}")
+    assert everything["initial-group"]["judgment"] == "unacceptable"
+    assert everything["session_abc"]["judgment"] == "acceptable"
+    assert _get(env, f"/api/analysis/{name}/initial-group/categories") == {
+        "categoryIds": ["quality_issues"]
+    }
+    [quality] = _get(env, "/api/evaluation/categories")["categories"]
+    assert quality["review_count"] == 1
+
+    dataset = env.client.post(
+        "/api/evaluation/judge-datasets",
+        json={"category": "quality_issues"},
+        headers=AUTH,
+    )
+    assert dataset.status_code == 200, dataset.text
+    assert sum(s["positives"] for s in dataset.json()["splits"]) == 1
+
+    kept = env.client.post(
+        "/api/evaluation/baselines",
+        json={"path": run["result"]["path"], "name": "first"},
+        headers=AUTH,
+    )
+    assert kept.status_code == 200, kept.text
+    # Listed beside the run it copies (both carry the run's time).
+    listed = _get(env, "/api/evaluation/runs")["runs"]
+    assert sorted(r["baseline"] or "" for r in listed) == ["", "first"]
+
+    env.client.delete(f"/api/analysis/{name}/initial-group", headers=AUTH)
+    assert not (env.project_dir / f"evaluations/reviews/{run_id}.jsonl").exists()

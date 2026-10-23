@@ -1,3 +1,4 @@
+import { Badge } from '@omniagents/ui/badge'
 import { Button } from '@omniagents/ui/button'
 import { Checkbox } from '@omniagents/ui/checkbox'
 import { Input } from '@omniagents/ui/input'
@@ -51,7 +52,13 @@ export function RunsTab({
           <ArrowLeft /> All runs
         </Button>
         {open ? (
-          <RunDetail path={open} onOpenConversation={onOpenConversation} />
+          <>
+            <Baseline
+              entry={runs.data?.runs.find((r) => r.path === open) ?? null}
+              onRemoved={() => setOpen(null)}
+            />
+            <RunDetail path={open} onOpenConversation={onOpenConversation} />
+          </>
         ) : (
           <RunComparisonView a={ordered[0]!} b={ordered[1]!} />
         )}
@@ -132,6 +139,11 @@ function RunRow({
       </TableCell>
       <TableCell className="text-xs">{when(entry.timestamp)}</TableCell>
       <TableCell className="text-xs">
+        {entry.baseline ? (
+          <Badge variant="secondary" className="mr-1" title="Kept in baselines/ (committed)">
+            {entry.baseline}
+          </Badge>
+        ) : null}
         {entry.label}
         <span className="ml-1 text-muted-foreground">({total})</span>
         {entry.manifest?.split ? <span className="ml-1 text-muted-foreground">· {entry.manifest.split}</span> : null}
@@ -267,5 +279,62 @@ function HoldoutCard() {
       </Button>
       {create.error ? <p className="text-xs text-destructive">{(create.error as Error).message}</p> : null}
     </section>
+  )
+}
+
+/**
+ * Keeping a run as a baseline copies it, with the agent it tested, into
+ * baselines/ (committed): the evidence for a number someone reports. Runs
+ * themselves stay on this machine.
+ */
+function Baseline({ entry, onRemoved }: { entry: SavedRunEntry | null; onRemoved: () => void }) {
+  const queryClient = useQueryClient()
+  const [name, setName] = useState('')
+  const refresh = () => void queryClient.invalidateQueries({ queryKey: ['evaluation', 'runs'] })
+  const keep = useMutation({ mutationFn: () => api.keepRun(entry!.path, name.trim()), onSuccess: refresh })
+  const remove = useMutation({
+    mutationFn: () => api.removeBaseline(entry!.baseline!),
+    onSuccess: () => {
+      refresh()
+      onRemoved()
+    },
+  })
+  if (!entry) return null
+  if (entry.baseline) {
+    return (
+      <div className="flex items-center gap-2 text-sm">
+        <Badge variant="secondary">Baseline {entry.baseline}</Badge>
+        <span className="text-xs text-muted-foreground">Kept in baselines/, committed with the project.</span>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={remove.isPending}
+          onClick={() => window.confirm(`Delete the baseline ${entry.baseline}?`) && remove.mutate()}
+        >
+          Delete baseline
+        </Button>
+      </div>
+    )
+  }
+  return (
+    <div className="flex flex-wrap items-end gap-2">
+      <div className="grid gap-1">
+        <Label htmlFor="baseline-name" className="text-xs">
+          Keep as baseline
+        </Label>
+        <Input
+          id="baseline-name"
+          className="h-8 w-56"
+          placeholder="e.g. before-prompt-rewrite"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+      </div>
+      <Button size="sm" variant="outline" disabled={!name.trim() || keep.isPending} onClick={() => keep.mutate()}>
+        Keep
+      </Button>
+      {keep.error ? <span className="text-xs text-destructive">{(keep.error as Error).message}</span> : null}
+      {keep.isSuccess ? <span className="text-xs text-muted-foreground">Kept in baselines/.</span> : null}
+    </div>
   )
 }

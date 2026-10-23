@@ -24,9 +24,15 @@ evaluations/runs/<run id>/agent/          # agent.yml and instructions as they w
 evaluations/runs/index.json               # every run, newest first
 ```
 
-`runs/` is local (gitignored). Where everything else in this directory
-goes (scenarios, judges, generated sets, the holdout, judge datasets,
-optimizations) is `omniagents/core/eval/layout.py`.
+`runs/` is local (gitignored); keep a run that backs a number you report
+with `omniagents eval baseline <run id> --name <name>` (committed, in
+`baselines/`). Reviews made in Studio's Logs (`reviews/`), generated sets,
+the holdout and judge datasets are committed too. Where everything in this
+directory goes is `omniagents/core/eval/layout.py`.
+
+**Scenarios must be synthetic.** Reviews and generated sets hold the agent's
+answers and are committed, so never put real patient or personal data in a
+scenario, fixture or prompt.
 
 For multi-run scenarios (see "Multiple runs" below), all N runs land in
 the same `results.json` under `runs[]`.

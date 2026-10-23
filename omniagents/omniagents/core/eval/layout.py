@@ -13,17 +13,26 @@ Written by people, committed::
     optimizers/<key>/optimizer.yml
     scenarios/**/*.yml          the scenarios a suite runs
 
-Produced by the tools::
+Produced by people and tools, committed::
 
+    reviews/<run id>.jsonl      people's verdicts on a run's answers, each
+                                with the answer it judges
     generated/<set>/            a generated set: scenarios.yml, manifest.json
-                                (committed: regenerating costs model calls)
+                                (regenerating costs model calls and never
+                                gives the same set)
     holdout/                    the suite's train/dev/test assignment
-    judge-datasets/<category>/  a judge's labelled train/dev/test scenarios
+    judge-datasets/<category>/  a category's reviewed answers, split into
+                                train/dev/test for its judge
+    baselines/<name>/           a run kept as evidence for a number reported
+
+Local results, kept out of the repository by the scaffolded ``.gitignore``::
+
     runs/                       every saved run: index.json, <run id>/
     optimizations/<id>/         agent and judge optimizations
 
-``runs/`` and ``optimizations/`` are local results; the scaffolded
-``.gitignore`` keeps them out of the repository.
+What is committed is everything expensive or impossible to make again, and
+everything a reported number depends on. It includes agents' answers, so
+evaluation inputs must be synthetic.
 
 Nothing is read from anywhere else. A project laid out the old way is
 refused by :func:`check_layout` with what to move where, rather than half
@@ -53,6 +62,8 @@ DATASET_MANIFEST = "manifest.yml"
 RUNS = "runs"
 RUNS_INDEX = "index.json"
 OPTIMIZATIONS = "optimizations"
+REVIEWS = "reviews"
+BASELINES = "baselines"
 SPLIT_NAMES = ("train", "dev", "test")
 
 
@@ -146,6 +157,17 @@ class EvalLayout:
     def optimizations_dir(self) -> Path:
         return self.eval_dir / OPTIMIZATIONS
 
+    @property
+    def reviews_dir(self) -> Path:
+        return self.eval_dir / REVIEWS
+
+    def review_file(self, run_id: str) -> Path:
+        return self.reviews_dir / f"{run_id}.jsonl"
+
+    @property
+    def baselines_dir(self) -> Path:
+        return self.eval_dir / BASELINES
+
     def relative(self, path: Path) -> str:
         """``path`` as written in records: relative to the evaluations
         directory when inside it."""
@@ -194,6 +216,17 @@ def layout_problems(layout: EvalLayout) -> List[str]:
         "generated sets are evaluations/generated/<set>/scenarios.yml, judge "
         "datasets evaluations/judge-datasets/<category>/",
     )
+    if layout.judge_datasets_dir.is_dir():
+        for manifest in sorted(layout.judge_datasets_dir.glob(f"*/{DATASET_MANIFEST}")):
+            try:
+                data = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
+            except yaml.YAMLError:
+                data = {}
+            if not isinstance(data, dict) or data.get("source") != "reviews":
+                problems.append(
+                    f"{manifest.parent} was built from scenario labels; judge "
+                    "datasets are built from reviews: delete it and build it again"
+                )
     settings = _evaluation_settings(layout.evaluation_file)
     if settings.get("judges"):
         problems.append(

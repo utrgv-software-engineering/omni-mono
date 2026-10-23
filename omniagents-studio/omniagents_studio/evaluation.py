@@ -66,11 +66,21 @@ def _call(action: Callable[[], Any]) -> Any:
 
 
 def _review_usage(request: Request) -> dict[str, int]:
+    """How many reviews saw each category: those of evaluation answers
+    (``reviews/``) and of other conversations (the trace database)."""
+    usage: dict[str, int] = {}
     project = _project_name(request)
-    if not project:
-        return {}
-    storage = request.app.state.storage_manager.get_storage(project)
-    return storage.get_analysis_category_usage(project)
+    if project:
+        storage = request.app.state.storage_manager.get_storage(project)
+        usage.update(storage.get_analysis_category_usage(project))
+    try:
+        reviews = _workspace(request).reviews()
+    except (HTTPException, EvalWorkspaceError):
+        reviews = []
+    for review in reviews:
+        for category in review.get("failure_categories") or []:
+            usage[category] = usage.get(category, 0) + 1
+    return usage
 
 
 # -- dimensions ---------------------------------------------------------------
@@ -324,11 +334,9 @@ def delete_judge(request: Request, key: str) -> dict[str, Any]:
 
 
 class NewJudgeDataset(BaseModel):
-    set_path: str
     category: str
     fractions: tuple[float, float, float] = (0.15, 0.425, 0.425)
     seed: int = 42
-    negatives_ratio: float | None = None
 
 
 @router.get("/judge-datasets")
@@ -340,11 +348,7 @@ def get_judge_datasets(request: Request) -> dict[str, Any]:
 def post_judge_dataset(request: Request, body: NewJudgeDataset) -> dict[str, Any]:
     return _call(
         lambda: _workspace(request).create_judge_dataset(
-            body.set_path,
-            body.category,
-            fractions=body.fractions,
-            seed=body.seed,
-            negatives_ratio=body.negatives_ratio,
+            body.category, fractions=body.fractions, seed=body.seed
         )
     )
 
@@ -413,6 +417,22 @@ def compare_runs(
     return _call(lambda: _workspace(request).compare_runs(a, b))
 
 
+class KeepRun(BaseModel):
+    path: str
+    name: str
+
+
+@router.post("/baselines")
+def post_baseline(request: Request, body: KeepRun) -> dict[str, Any]:
+    return _call(lambda: _workspace(request).keep_run(body.path, body.name))
+
+
+@router.delete("/baselines/{name}")
+def delete_baseline(request: Request, name: str) -> dict[str, Any]:
+    _call(lambda: _workspace(request).remove_baseline(name))
+    return {"removed": name}
+
+
 # -- jobs -------------------------------------------------------------------------
 
 
@@ -436,12 +456,6 @@ class GenerateJob(BaseModel):
     dimension_values: dict[str, list[str]] | None = None
 
 
-class AnnotateJob(BaseModel):
-    kind: Literal["annotate"]
-    set_path: str
-    agent: str | None = None
-
-
 class OptimizeJudgeJob(BaseModel):
     kind: Literal["optimize_judge"]
     judge: str
@@ -459,7 +473,7 @@ class OptimizeAgentJob(BaseModel):
     seed: int = 0
 
 
-JobRequest = RunJob | GenerateJob | AnnotateJob | OptimizeJudgeJob | OptimizeAgentJob
+JobRequest = RunJob | GenerateJob | OptimizeJudgeJob | OptimizeAgentJob
 
 
 def _run_work(workspace: EvalWorkspace, body: RunJob):
@@ -512,22 +526,6 @@ def _generate_work(workspace: EvalWorkspace, body: GenerateJob):
             progress_cb=progress,
         )
         return {"set_path": generated["path"], "count": len(generated["scenarios"])}
-
-    return work
-
-
-def _annotate_work(workspace: EvalWorkspace, body: AnnotateJob, project: str | None):
-    async def work(report: JobReporter) -> dict[str, Any]:
-        if not project:
-            raise EvalWorkspaceError("Studio has no trace project to read reviews from")
-        result = await asyncio.to_thread(
-            workspace.annotate_from_reviews, body.set_path, project
-        )
-        labelled = sum(
-            1 for s in result["set"]["scenarios"] if s.get("failure_categories")
-        )
-        report.log(f"Labelled {labelled} scenarios from the run {result['run']}")
-        return {"set_path": result["set"]["path"], "run": result["run"]}
 
     return work
 
@@ -622,8 +620,6 @@ async def start_job(request: Request, body: JobRequest) -> dict[str, Any]:
         work = _run_work(workspace, body)
     elif isinstance(body, GenerateJob):
         work = _generate_work(workspace, body)
-    elif isinstance(body, AnnotateJob):
-        work = _annotate_work(workspace, body, _project_name(request))
     elif isinstance(body, OptimizeJudgeJob):
         work = _optimize_judge_work(workspace, body)
     else:

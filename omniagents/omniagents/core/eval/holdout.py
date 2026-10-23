@@ -1,7 +1,7 @@
 """Stratified holdout for agent evaluation.
 
-Distinct from :mod:`omniagents.core.eval.split`, which partitions scenarios by
-a failure-category *label* to train and test a judge. This partitions a
+Distinct from a judge dataset (:mod:`omniagents.core.eval.reviews`), which
+splits reviewed answers by failure category to train and test a judge. This partitions a
 scenario set for evaluating an *agent*: a seeded, stratified train/dev/test
 assignment by scenario name, written as an assignment (names only, never a
 copy of the scenarios) in the evaluations directory's ``holdout/``, and selected at

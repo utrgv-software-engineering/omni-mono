@@ -17,6 +17,7 @@ only, so a run saved by one is complete in the others.
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import shutil
 from datetime import UTC, datetime
@@ -156,13 +157,99 @@ def run_path(layout: EvalLayout, run_id: str) -> Path:
     return layout.runs_dir / run_id / "results.json"
 
 
+BASELINE_ENTRY = "entry.json"
+_BASELINE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+
+
+def _baselines(layout: EvalLayout) -> list[dict[str, Any]]:
+    if not layout.baselines_dir.is_dir():
+        return []
+    entries = []
+    for folder in sorted(layout.baselines_dir.iterdir()):
+        entry_path = folder / BASELINE_ENTRY
+        if entry_path.is_file():
+            entry = json.loads(entry_path.read_text(encoding="utf-8"))
+            entries.append({**entry, "path": str(folder / "results.json")})
+    return entries
+
+
 def list_runs(layout: EvalLayout) -> list[dict[str, Any]]:
-    """Every saved run, newest first, each with its ``path``."""
-    return [
-        {**entry, "path": str(run_path(layout, str(entry.get("id"))))}
+    """Every saved run and every baseline, newest first, each with its
+    ``path``; a baseline carries its name as ``baseline``. A run whose folder
+    was deleted is not listed."""
+    runs = [
+        {**entry, "baseline": None, "path": str(run_path(layout, str(entry["id"])))}
         for entry in _read_index(layout).get("runs") or []
-        if entry.get("id")
+        if entry.get("id") and run_path(layout, str(entry["id"])).is_file()
     ]
+    return sorted(
+        runs + _baselines(layout),
+        key=lambda entry: str(entry.get("timestamp") or ""),
+        reverse=True,
+    )
+
+
+def keep_run(layout: EvalLayout, run_id: str, name: str) -> dict[str, Any]:
+    """Copy a saved run, with the agent it tested, into ``baselines/<name>/``,
+    which is committed: the evidence for a number someone reports."""
+    if not _BASELINE_NAME.fullmatch(name or ""):
+        raise ValueError(
+            "A baseline's name is letters, digits, - and _ (it names its folder)"
+        )
+    target = layout.baselines_dir / name
+    if target.exists():
+        raise ValueError(f"A baseline named {name!r} exists")
+    entry = next(
+        (e for e in _read_index(layout).get("runs") or [] if e.get("id") == run_id),
+        None,
+    )
+    if entry is None:
+        raise FileNotFoundError(f"No saved run {run_id!r}")
+    shutil.copytree(layout.runs_dir / run_id, target)
+    kept = {**entry, "baseline": name}
+    (target / BASELINE_ENTRY).write_text(json.dumps(kept, indent=2), encoding="utf-8")
+    return {**kept, "path": str(target / "results.json")}
+
+
+def remove_baseline(layout: EvalLayout, name: str) -> None:
+    target = layout.baselines_dir / name
+    if not (target / BASELINE_ENTRY).is_file():
+        raise FileNotFoundError(f"No baseline {name!r}")
+    shutil.rmtree(target)
+
+
+#: results.json path -> (modification time, trace group ids of its records)
+_GROUPS: dict[str, tuple[float, dict[str, int]]] = {}
+
+
+def _groups_of(results_path: Path) -> dict[str, int]:
+    stamp = results_path.stat().st_mtime
+    cached = _GROUPS.get(str(results_path))
+    if cached and cached[0] == stamp:
+        return cached[1]
+    data = json.loads(results_path.read_text(encoding="utf-8"))
+    groups = {
+        str(record["trace_group_id"]): index
+        for index, record in enumerate(data.get("runs") or [])
+        if record.get("trace_group_id")
+    }
+    _GROUPS[str(results_path)] = (stamp, groups)
+    return groups
+
+
+def find_conversation(layout: EvalLayout, group_id: str) -> dict[str, Any] | None:
+    """The saved run record of the conversation traced as ``group_id`` (an
+    evaluation run's conversation), with the run's index entry; ``None``
+    when no saved run or baseline has it."""
+    for entry in list_runs(layout):
+        path = Path(entry["path"])
+        if not path.is_file():
+            continue
+        index = _groups_of(path).get(group_id)
+        if index is not None:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return {"entry": entry, "record": data["runs"][index]}
+    return None
 
 
 def read_run(results_path: Path) -> dict[str, Any]:
@@ -275,38 +362,3 @@ def compare_runs(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
         },
         "scenarios": changed,
     }
-
-
-def latest_conversations(
-    layout: EvalLayout, scenario_set: Path | None
-) -> dict[str, dict[str, Any]]:
-    """The newest saved run record, with its conversation, of each scenario
-    run from ``scenario_set`` (``None``: the suite), keyed by
-    :func:`scenario_key`. What a judge is trained and checked against."""
-    wanted = layout.relative(scenario_set) if scenario_set else None
-    found: dict[str, dict[str, Any]] = {}
-    for entry in _read_index(layout).get("runs") or []:
-        if entry.get("set") != wanted:
-            continue
-        path = run_path(layout, str(entry.get("id")))
-        if not path.is_file():
-            continue
-        for run in json.loads(path.read_text(encoding="utf-8")).get("runs") or []:
-            key = scenario_key(run)
-            if key and key not in found and run.get("history") is not None:
-                found[key] = run
-    return found
-
-
-def conversations_for(
-    layout: EvalLayout, scenario_set: Path | None, runs_file: Path | None = None
-) -> dict[str, dict[str, Any]]:
-    """Run records with their conversations, keyed by :func:`scenario_key`:
-    from ``runs_file`` (a saved ``results.json`` or any ``{"runs": [...]}``)
-    when given, else the newest saved run of each scenario in
-    ``scenario_set``. A judge is checked and optimized against these."""
-    if runs_file is None:
-        return latest_conversations(layout, scenario_set)
-    data = json.loads(Path(runs_file).read_text(encoding="utf-8"))
-    runs = data.get("runs") if isinstance(data, dict) else data
-    return {scenario_key(run): run for run in runs or [] if scenario_key(run)}

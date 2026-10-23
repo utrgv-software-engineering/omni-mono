@@ -32,7 +32,6 @@ export interface Scenario {
   dimensions?: Record<string, string>
   expect?: Record<string, JsonValue>
   label?: boolean
-  analysis?: Record<string, JsonValue>
   [field: string]: JsonValue | undefined
 }
 
@@ -76,19 +75,18 @@ export interface JudgeDatasetSplit {
   updated_at: string | null
 }
 
-/** The judge dataset of a failure category, drawn from one generated set. */
+/** A failure category's judge dataset: every reviewed answer, labelled
+ * positive when reviewers saw the category, split into train/dev/test. */
 export interface JudgeDataset {
   category: string
-  /** The generated set it was drawn from; null when that set is gone. */
-  set: string | null
-  set_path: string | null
-  manifest: Record<string, JsonValue>
+  manifest: { seed?: number; fractions?: number[]; built_at?: string; [field: string]: JsonValue | undefined }
   splits: JudgeDatasetSplit[]
 }
 
 export interface JudgeDatasetSplitDetail extends JudgeDataset {
   split: JudgeDatasetSplit
-  scenarios: Array<Scenario & { reply: string | null }>
+  /** Each reviewed answer: the scenario, its label and the reply as reviewed. */
+  scenarios: Array<Scenario & { reply: string | null; scenario_id: string }>
 }
 
 export interface Holdout {
@@ -150,6 +148,8 @@ export interface SavedRunEntry {
   /** The set file it ran, relative to the evaluations directory; null for the suite. */
   set: string | null
   label: string
+  /** The name it is kept under in baselines/ (committed); null for a run. */
+  baseline: string | null
   workflow_name?: string | null
   agent: string | null
   /** Older runs carry only the counts. */
@@ -225,7 +225,7 @@ export interface RunComparison {
   scenarios: Array<{ scenario: string; name: string | null; a: number | null; b: number | null }>
 }
 
-export type JobKind = 'run' | 'generate' | 'annotate' | 'optimize_judge' | 'optimize_agent'
+export type JobKind = 'run' | 'generate' | 'optimize_judge' | 'optimize_agent'
 
 export interface Job {
   id: string
@@ -255,7 +255,6 @@ export type JobRequest =
       name?: string | null
     }
   | { kind: 'generate'; name: string; count?: number | null; seed?: number | null; dimension_values?: Record<string, string[]> | null }
-  | { kind: 'annotate'; set_path: string; agent?: string | null }
   | { kind: 'optimize_judge'; judge: string; category: string; max_metric_calls?: number; seed?: number }
   | {
       kind: 'optimize_agent'
