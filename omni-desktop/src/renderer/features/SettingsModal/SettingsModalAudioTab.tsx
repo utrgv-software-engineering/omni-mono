@@ -1,13 +1,13 @@
 import { useStore } from '@nanostores/react';
+import { Button } from '@omniagents/ui/button';
+import { Card, CardContent } from '@omniagents/ui/card';
+import { Field, FieldLabel } from '@omniagents/ui/field';
+import { NativeSelect as Select } from '@omniagents/ui/native-select';
+import { Progress } from '@omniagents/ui/progress';
+import { Switch } from '@omniagents/ui/switch';
 import type { ChangeEvent } from 'react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
-import { Button } from '@/renderer/ds/ui/button';
-import { Card, CardContent } from '@/renderer/ds/ui/card';
-import { Field, FieldLabel } from '@/renderer/ds/ui/field';
-import { NativeSelect as Select } from '@/renderer/ds/ui/native-select';
-import { Progress } from '@/renderer/ds/ui/progress';
-import { Switch } from '@/renderer/ds/ui/switch';
 import {
   settingsCardContentClassName,
   SettingsPane,

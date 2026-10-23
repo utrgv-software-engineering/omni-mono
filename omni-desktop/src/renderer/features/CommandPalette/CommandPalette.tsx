@@ -11,12 +11,7 @@
 import './CommandPalette.css';
 
 import { useStore } from '@nanostores/react';
-import { atom } from 'nanostores';
-import { memo, useCallback, useMemo, useState } from 'react';
-import { useHotkeys } from 'react-hotkeys-hook';
-
-import { $viewportDebug } from '@/renderer/common/ViewportDebug';
-import { Button } from '@/renderer/ds/ui/button';
+import { Button } from '@omniagents/ui/button';
 import {
   CommandDialog,
   CommandEmpty,
@@ -25,10 +20,15 @@ import {
   CommandItem,
   CommandList,
   CommandShortcut,
-} from '@/renderer/ds/ui/command';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/renderer/ds/ui/dialog';
-import { Field, FieldLabel } from '@/renderer/ds/ui/field';
-import { Input } from '@/renderer/ds/ui/input';
+} from '@omniagents/ui/command';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@omniagents/ui/dialog';
+import { Field, FieldLabel } from '@omniagents/ui/field';
+import { Input } from '@omniagents/ui/input';
+import { atom } from 'nanostores';
+import { memo, useCallback, useMemo, useState } from 'react';
+import { useHotkeys } from 'react-hotkeys-hook';
+
+import { $viewportDebug } from '@/renderer/common/ViewportDebug';
 import { codeApi } from '@/renderer/features/Code/state';
 import { projectsApi } from '@/renderer/features/Projects/state';
 import { goToProject } from '@/renderer/features/Projects/view-state';

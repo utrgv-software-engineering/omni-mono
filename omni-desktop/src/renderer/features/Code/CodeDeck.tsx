@@ -2,6 +2,14 @@ import { DndContext, type DragEndEvent, PointerSensor, useSensor, useSensors } f
 import { arrayMove, horizontalListSortingStrategy, SortableContext, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useStore } from '@nanostores/react';
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@omniagents/ui/dropdown-menu';
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@omniagents/ui/empty';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@omniagents/ui/resizable';
+import { SidebarTrigger, useSidebar } from '@omniagents/ui/sidebar';
+import { Tabs } from '@omniagents/ui/tabs';
+import { Toggle } from '@omniagents/ui/toggle';
 import { motion } from 'framer-motion';
 import { Archive, Ellipsis, PanelRight, Plus, RefreshCw } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -9,19 +17,6 @@ import { createPortal } from 'react-dom';
 import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels';
 
 import { ClosableTab, ClosableTabsList } from '@/renderer/ds/ClosableTabs';
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/renderer/ds/ui/dropdown-menu';
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@/renderer/ds/ui/empty';
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/renderer/ds/ui/resizable';
-import { SidebarTrigger, useSidebar } from '@/renderer/ds/ui/sidebar';
-import { Tabs } from '@/renderer/ds/ui/tabs';
-import { Toggle } from '@/renderer/ds/ui/toggle';
 import { AgentsSurface } from '@/renderer/features/Agents';
 import { $appLaunchRequest, clearAppLaunchRequest } from '@/renderer/features/AppControl/app-launch-bridge';
 import { BrowserView } from '@/renderer/features/Browser/BrowserView';

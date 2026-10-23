@@ -1,12 +1,5 @@
 import { useStore } from '@nanostores/react';
-import { Plus, Trash2 } from 'lucide-react';
-import type { ChangeEvent } from 'react';
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
-
-import { modelProvider } from '@/lib/agent-config';
-import { buildCodexConfig, probeForProvider } from '@/lib/provider-config';
-import { SaveBar } from '@/renderer/ds/SaveBar';
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/renderer/ds/ui/accordion';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@omniagents/ui/accordion';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -16,16 +9,23 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/renderer/ds/ui/alert-dialog';
-import { Button } from '@/renderer/ds/ui/button';
-import { Card, CardContent } from '@/renderer/ds/ui/card';
-import { Checkbox } from '@/renderer/ds/ui/checkbox';
-import { Field, FieldLabel } from '@/renderer/ds/ui/field';
-import { Input } from '@/renderer/ds/ui/input';
-import { NativeSelect as Select } from '@/renderer/ds/ui/native-select';
-import { RadioGroup, RadioGroupItem } from '@/renderer/ds/ui/radio-group';
-import { Skeleton } from '@/renderer/ds/ui/skeleton';
-import { Spinner } from '@/renderer/ds/ui/spinner';
+} from '@omniagents/ui/alert-dialog';
+import { Button } from '@omniagents/ui/button';
+import { Card, CardContent } from '@omniagents/ui/card';
+import { Checkbox } from '@omniagents/ui/checkbox';
+import { Field, FieldLabel } from '@omniagents/ui/field';
+import { Input } from '@omniagents/ui/input';
+import { NativeSelect as Select } from '@omniagents/ui/native-select';
+import { RadioGroup, RadioGroupItem } from '@omniagents/ui/radio-group';
+import { Skeleton } from '@omniagents/ui/skeleton';
+import { Spinner } from '@omniagents/ui/spinner';
+import { Plus, Trash2 } from 'lucide-react';
+import type { ChangeEvent } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+
+import { modelProvider } from '@/lib/agent-config';
+import { buildCodexConfig, probeForProvider } from '@/lib/provider-config';
+import { SaveBar } from '@/renderer/ds/SaveBar';
 import {
   settingsCardContentClassName,
   SettingsPane,

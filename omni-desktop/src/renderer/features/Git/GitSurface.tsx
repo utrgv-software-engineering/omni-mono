@@ -6,12 +6,7 @@ import {
   type GitStatusResult,
   type WorkspaceRepo,
 } from '@omniagents/client/rpc/git';
-import { PanelLeftIcon, RefreshCwIcon, TriangleAlert } from 'lucide-react';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-
-import { cn } from '@/renderer/ds/cn';
-import { Alert, AlertDescription, AlertTitle } from '@/renderer/ds/ui/alert';
+import { Alert, AlertDescription, AlertTitle } from '@omniagents/ui/alert';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,14 +16,19 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/renderer/ds/ui/alert-dialog';
-import { Button } from '@/renderer/ds/ui/button';
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/renderer/ds/ui/empty';
-import { NativeSelect } from '@/renderer/ds/ui/native-select';
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/renderer/ds/ui/resizable';
-import { Spinner } from '@/renderer/ds/ui/spinner';
-import { Toggle } from '@/renderer/ds/ui/toggle';
-import { ToggleGroup, ToggleGroupItem } from '@/renderer/ds/ui/toggle-group';
+} from '@omniagents/ui/alert-dialog';
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@omniagents/ui/empty';
+import { NativeSelect } from '@omniagents/ui/native-select';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@omniagents/ui/resizable';
+import { Spinner } from '@omniagents/ui/spinner';
+import { Toggle } from '@omniagents/ui/toggle';
+import { ToggleGroup, ToggleGroupItem } from '@omniagents/ui/toggle-group';
+import { PanelLeftIcon, RefreshCwIcon, TriangleAlert } from 'lucide-react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+
 import { useRPCClient, useRPCConnected } from '@/renderer/omniagents-ui/rpc-context';
 
 import { mergeUntracked, repositoryLabel } from './diff-model';

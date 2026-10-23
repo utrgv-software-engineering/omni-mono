@@ -1,9 +1,9 @@
+import { cn } from '@omniagents/ui/cn';
+import { Spinner } from '@omniagents/ui/spinner';
 import { motion } from 'framer-motion';
 import { ChevronRight } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';
 
-import { cn } from '@/renderer/ds/cn';
-import { Spinner } from '@/renderer/ds/ui/spinner';
 import { localEmitter } from '@/renderer/services/ipc';
 import type { WslDistro } from '@/shared/types';
 

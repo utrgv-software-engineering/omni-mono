@@ -1,13 +1,13 @@
 import { useStore } from '@nanostores/react';
+import { Button } from '@omniagents/ui/button';
+import { Input } from '@omniagents/ui/input';
+import { Skeleton } from '@omniagents/ui/skeleton';
+import { ToggleGroup, ToggleGroupItem } from '@omniagents/ui/toggle-group';
 import { Download, Globe, PlugZap } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useIsDesktop } from '@/renderer/common/use-is-desktop';
 import { PageHeader } from '@/renderer/ds/PageHeader';
-import { Button } from '@/renderer/ds/ui/button';
-import { Input } from '@/renderer/ds/ui/input';
-import { Skeleton } from '@/renderer/ds/ui/skeleton';
-import { ToggleGroup, ToggleGroupItem } from '@/renderer/ds/ui/toggle-group';
 import { ConnectorConfigDialog } from '@/renderer/features/Plugins/ConnectorConfigDialog';
 import { ExploreSection, FEATURED_MARKETPLACES, installKeyOf } from '@/renderer/features/Plugins/ExploreSection';
 import { InstalledSection } from '@/renderer/features/Plugins/InstalledSection';

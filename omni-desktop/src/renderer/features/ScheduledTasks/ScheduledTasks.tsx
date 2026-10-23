@@ -1,12 +1,5 @@
 import { useStore } from '@nanostores/react';
-import { Edit, Ellipsis, ExternalLink, Play, Plus, Trash2 } from 'lucide-react';
-import { memo, useCallback, useId, useMemo, useState } from 'react';
-
-import { formatDuration, formatTimestamp } from '@/lib/format-time';
-import { useIsDesktop } from '@/renderer/common/use-is-desktop';
-import { cn } from '@/renderer/ds/cn';
-import { TopAppBar } from '@/renderer/ds/TopAppBar';
-import { Alert, AlertDescription } from '@/renderer/ds/ui/alert';
+import { Alert, AlertDescription } from '@omniagents/ui/alert';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -16,22 +9,29 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/renderer/ds/ui/alert-dialog';
-import { Badge } from '@/renderer/ds/ui/badge';
-import { Button } from '@/renderer/ds/ui/button';
+} from '@omniagents/ui/alert-dialog';
+import { Badge } from '@omniagents/ui/badge';
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/renderer/ds/ui/dropdown-menu';
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@/renderer/ds/ui/empty';
-import { Field, FieldDescription, FieldLabel } from '@/renderer/ds/ui/field';
-import { Input } from '@/renderer/ds/ui/input';
-import { NativeSelect as Select } from '@/renderer/ds/ui/native-select';
-import { Switch } from '@/renderer/ds/ui/switch';
-import { Textarea } from '@/renderer/ds/ui/textarea';
+} from '@omniagents/ui/dropdown-menu';
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@omniagents/ui/empty';
+import { Field, FieldDescription, FieldLabel } from '@omniagents/ui/field';
+import { Input } from '@omniagents/ui/input';
+import { NativeSelect as Select } from '@omniagents/ui/native-select';
+import { Switch } from '@omniagents/ui/switch';
+import { Textarea } from '@omniagents/ui/textarea';
+import { Edit, Ellipsis, ExternalLink, Play, Plus, Trash2 } from 'lucide-react';
+import { memo, useCallback, useId, useMemo, useState } from 'react';
+
+import { formatDuration, formatTimestamp } from '@/lib/format-time';
+import { useIsDesktop } from '@/renderer/common/use-is-desktop';
+import { TopAppBar } from '@/renderer/ds/TopAppBar';
 import { toast } from '@/renderer/features/Toast/state';
 import { scheduledTaskApi } from '@/renderer/services/scheduled-tasks';
 import { persistedStoreApi } from '@/renderer/services/store';

@@ -1,10 +1,7 @@
 import './Sidebar.css';
 
-import { Archive, MessageCircle, MoreHorizontal, Pencil, Pin, PinOff, Plus, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
-
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
 import {
   Dialog,
   DialogClose,
@@ -13,16 +10,16 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/renderer/ds/ui/dialog';
+} from '@omniagents/ui/dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/renderer/ds/ui/dropdown-menu';
-import { Input } from '@/renderer/ds/ui/input';
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/renderer/ds/ui/sheet';
+} from '@omniagents/ui/dropdown-menu';
+import { Input } from '@omniagents/ui/input';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@omniagents/ui/sheet';
 // Pick desktop vs mobile layout via matchMedia rather than relying on
 // `hidden md:flex` / `md:hidden` utilities. Those patterns are broken in this
 // app because a pre-compiled shadcn/ai-elements CSS bundle ships a plain
@@ -41,8 +38,11 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
-} from '@/renderer/ds/ui/sidebar';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/renderer/ds/ui/tooltip';
+} from '@omniagents/ui/sidebar';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@omniagents/ui/tooltip';
+import { Archive, MessageCircle, MoreHorizontal, Pencil, Pin, PinOff, Plus, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+
 import { formatRelativeTime, generateSessionTitle } from '@/renderer/omniagents-ui/lib/utils';
 
 import type { SessionItem } from './SessionList';

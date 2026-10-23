@@ -10,14 +10,14 @@
  * scope guidance + a "Create token" link, so non-OAuth providers (Azure DevOps
  * especially) are discoverable here instead of only in source-picker contexts.
  */
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@omniagents/ui/dialog';
+import { Input } from '@omniagents/ui/input';
+import { NativeSelect as Select } from '@omniagents/ui/native-select';
 import { ExternalLink } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';
 
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/renderer/ds/ui/dialog';
-import { Input } from '@/renderer/ds/ui/input';
-import { NativeSelect as Select } from '@/renderer/ds/ui/native-select';
 import { emitter } from '@/renderer/services/ipc';
 import { defaultUsernameForHost } from '@/shared/git-credentials';
 

@@ -1,8 +1,8 @@
+import { Button } from '@omniagents/ui/button';
+import { Spinner } from '@omniagents/ui/spinner';
 import { memo, useCallback, useEffect, useState } from 'react';
 
 import { buildCodexConfig } from '@/lib/provider-config';
-import { Button } from '@/renderer/ds/ui/button';
-import { Spinner } from '@/renderer/ds/ui/spinner';
 import {
   runtimeModelListFromManagement,
   useProductManagementRefresh,

@@ -8,11 +8,11 @@ import {
   type WorkersKillResult,
 } from '@omniagents/client/transcript/activity-store';
 import type { TaskSummary } from '@omniagents/client/transcript/canonical-plan-tasks';
+import { Button } from '@omniagents/ui/button';
+import { Popover, PopoverContent, PopoverTrigger } from '@omniagents/ui/popover';
 import { ArrowUpRightIcon, BotIcon, ListChecksIcon, SquareIcon, SquareTerminalIcon, XIcon } from 'lucide-react';
 import React from 'react';
 
-import { Button } from '@/renderer/ds/ui/button';
-import { Popover, PopoverContent, PopoverTrigger } from '@/renderer/ds/ui/popover';
 import {
   jobDotClass,
   jobLabel,

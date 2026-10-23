@@ -1,7 +1,7 @@
 import { useStore } from '@nanostores/react';
+import { Input } from '@omniagents/ui/input';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 
-import { Input } from '@/renderer/ds/ui/input';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { ProjectId } from '@/shared/types';
 

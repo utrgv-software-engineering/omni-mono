@@ -6,12 +6,12 @@
  */
 import './Banner.css';
 
+import { Alert, AlertDescription, AlertTitle } from '@omniagents/ui/alert';
+import { Button } from '@omniagents/ui/button';
 import { TriangleAlert } from 'lucide-react';
 import { memo, useCallback } from 'react';
 
 import { classifyAgentError } from '@/lib/provider-config';
-import { Alert, AlertDescription, AlertTitle } from '@/renderer/ds/ui/alert';
-import { Button } from '@/renderer/ds/ui/button';
 import { openSettingsTab } from '@/renderer/features/SettingsModal/settings-nav';
 import type { AgentProcessStatus, WithTimestamp } from '@/shared/types';
 

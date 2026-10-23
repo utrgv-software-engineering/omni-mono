@@ -7,11 +7,7 @@ import {
 import { getConversationDraft, updateConversationDraft } from '@omniagents/client/session/conversation-drafts';
 import type { ConversationSession } from '@omniagents/client/session/conversation-session';
 import { SessionPanelStore } from '@omniagents/client/session/session-panels';
-import { BrainIcon, ChevronDownIcon, ListChecksIcon, ShieldCheckIcon, SparklesIcon } from 'lucide-react';
-import { useEffect, useMemo } from 'react';
-
-import { modelProvider } from '@/lib/agent-config';
-import { Button } from '@/renderer/ds/ui/button';
+import { Button } from '@omniagents/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,7 +16,11 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/renderer/ds/ui/dropdown-menu';
+} from '@omniagents/ui/dropdown-menu';
+import { BrainIcon, ChevronDownIcon, ListChecksIcon, ShieldCheckIcon, SparklesIcon } from 'lucide-react';
+import { useEffect, useMemo } from 'react';
+
+import { modelProvider } from '@/lib/agent-config';
 import { useSessionStoreField } from '@/renderer/omniagents-ui/hooks/use-chat-session';
 
 const REASONING_EFFORTS = new Set<ReasoningEffort>(['low', 'medium', 'high', 'xhigh']);

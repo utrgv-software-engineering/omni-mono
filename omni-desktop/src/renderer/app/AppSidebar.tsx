@@ -1,10 +1,6 @@
 import { useStore } from '@nanostores/react';
-import { Beaker, CalendarClock, Ellipsis, Puzzle, Search, Settings, SquarePen } from 'lucide-react';
-import { memo, useCallback, useEffect } from 'react';
-
-import { OmniLogo } from '@/renderer/common/AsciiLogo';
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
 /**
  * The unified app sidebar (desktop): one persistent nav replacing the rail
  * and the per-tab sidebars. Three zones — a fixed New chat row;
@@ -20,7 +16,7 @@ import { Button } from '@/renderer/ds/ui/button';
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from '@/renderer/ds/ui/dropdown-menu';
+} from '@omniagents/ui/dropdown-menu';
 import {
   Sidebar,
   SIDEBAR_WIDTH,
@@ -33,7 +29,11 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   useSidebar,
-} from '@/renderer/ds/ui/sidebar';
+} from '@omniagents/ui/sidebar';
+import { Beaker, CalendarClock, Ellipsis, Puzzle, Search, Settings, SquarePen } from 'lucide-react';
+import { memo, useCallback, useEffect } from 'react';
+
+import { OmniLogo } from '@/renderer/common/AsciiLogo';
 import { RecentsSection } from '@/renderer/features/Code/SessionsSection';
 import { codeApi } from '@/renderer/features/Code/state';
 import { useRecentConversations } from '@/renderer/features/Code/use-recent-conversations';

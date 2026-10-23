@@ -1,10 +1,13 @@
+import { useStore } from '@nanostores/react';
+import { Toaster } from '@omniagents/ui/sonner';
+import { isThemeDark } from '@omniagents/ui/themes';
 import { CopyIcon } from 'lucide-react';
 import { memo, useCallback, useEffect } from 'react';
 import { toast } from 'sonner';
 
-import { Toaster } from '@/renderer/ds/ui/sonner';
 import type { ToastAction, ToastLevel } from '@/renderer/features/Toast/state';
 import { $toasts, removeToast } from '@/renderer/features/Toast/state';
+import { persistedStoreApi } from '@/renderer/services/store';
 
 const copyToClipboard = async (text: string): Promise<void> => {
   try {
@@ -77,6 +80,7 @@ export const ToastContainer = memo(() => {
     return $toasts.subscribe((entries) => entries.forEach(dispatch));
   }, [dispatch]);
 
-  return <Toaster position="bottom-right" closeButton richColors />;
+  const theme = useStore(persistedStoreApi.$atom).theme ?? 'omni';
+  return <Toaster theme={isThemeDark(theme) ? 'dark' : 'light'} position="bottom-right" closeButton richColors />;
 });
 ToastContainer.displayName = 'ToastContainer';

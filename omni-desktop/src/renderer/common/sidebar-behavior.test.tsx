@@ -1,9 +1,9 @@
+import { Sidebar, SidebarMenu, SidebarProvider, SidebarTrigger } from '@omniagents/ui/sidebar';
 import { atom } from 'nanostores';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { Sidebar, SidebarMenu, SidebarProvider, SidebarTrigger } from '@/renderer/ds/ui/sidebar';
 import type { Project } from '@/shared/types';
 
 import { NavSection } from './NavSection';

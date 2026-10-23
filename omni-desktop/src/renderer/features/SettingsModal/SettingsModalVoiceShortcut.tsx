@@ -5,12 +5,12 @@
  */
 
 import { useStore } from '@nanostores/react';
+import { Button } from '@omniagents/ui/button';
+import { Card, CardContent } from '@omniagents/ui/card';
+import { Field, FieldContent, FieldDescription, FieldLabel } from '@omniagents/ui/field';
+import { Kbd } from '@omniagents/ui/kbd';
 import { useCallback, useEffect, useState } from 'react';
 
-import { Button } from '@/renderer/ds/ui/button';
-import { Card, CardContent } from '@/renderer/ds/ui/card';
-import { Field, FieldContent, FieldDescription, FieldLabel } from '@/renderer/ds/ui/field';
-import { Kbd } from '@/renderer/ds/ui/kbd';
 import { settingsCardContentClassName, SettingsSection } from '@/renderer/features/SettingsModal/SettingsLayout';
 import { persistedStoreApi } from '@/renderer/services/store';
 

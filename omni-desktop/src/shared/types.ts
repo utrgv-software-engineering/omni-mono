@@ -1,4 +1,5 @@
 import type { RunOverrides } from '@omniagents/client/rpc/execution';
+import type { OmniTheme } from '@omniagents/ui/themes';
 import type { Rectangle } from 'electron/main';
 import type { Schema } from 'electron-store';
 
@@ -18,8 +19,6 @@ export type WindowProps = {
  * Data stored in the electron store.
  */
 export type LayoutMode = 'work' | 'chat' | 'routines' | 'plugins' | 'settings' | 'gallery';
-export type OmniTheme =
-  'omni' | 'teams-light' | 'teams-dark' | 'default' | 'tokyo-night' | 'vscode-dark' | 'vscode-light' | 'utrgv';
 
 export type AudioSettings = {
   /** mediaDevices deviceId for the input mic. Null = OS default. */

@@ -27,15 +27,15 @@ import type { RunDiffItem } from '@omniagents/client/transcript/chat-types';
 import { createVoiceMergeLedger, mergeVoiceTranscript } from '@omniagents/client/transcript/merge-voice-transcript';
 import { publishRunDiff } from '@omniagents/client/transcript/run-diff-store';
 import { uuidv4 } from '@omniagents/client/util/uuid';
+import { Button } from '@omniagents/ui/button';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@omniagents/ui/resizable';
+import { Spinner } from '@omniagents/ui/spinner';
 import { useSelector } from '@xstate/react';
 import { AnimatePresence, motion } from 'framer-motion';
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { waitFor } from 'xstate';
 
 import { MAX_CHAT_CONVERSATIONS } from '@/lib/chat-conversations';
-import { Button } from '@/renderer/ds/ui/button';
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/renderer/ds/ui/resizable';
-import { Spinner } from '@/renderer/ds/ui/spinner';
 import { toast } from '@/renderer/features/Toast/state';
 import { useAutoRetry } from '@/renderer/hooks/use-auto-retry';
 import { clearColumnActivity, publishColumnActivity } from '@/renderer/services/column-activity';

@@ -1,8 +1,8 @@
 import { useStore } from '@nanostores/react';
+import { Button } from '@omniagents/ui/button';
 import { MessageSquare, MessageSquarePlus } from 'lucide-react';
 import { memo, useCallback, useMemo } from 'react';
 
-import { Button } from '@/renderer/ds/ui/button';
 import { codeApi } from '@/renderer/features/Code/state';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { ChatConversation, CodeTab, ProjectId } from '@/shared/types';

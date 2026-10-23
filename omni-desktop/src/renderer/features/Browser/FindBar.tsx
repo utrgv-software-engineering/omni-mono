@@ -4,11 +4,11 @@
  * `WebviewHandle`. The parent (BrowserView) owns open/close state and passes
  * in the webview ref.
  */
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@omniagents/ui/input-group';
 import { ChevronDown, ChevronUp, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
 import type { WebviewHandle } from '@/renderer/common/Webview';
-import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/renderer/ds/ui/input-group';
 
 export const FindBar = memo(
   ({

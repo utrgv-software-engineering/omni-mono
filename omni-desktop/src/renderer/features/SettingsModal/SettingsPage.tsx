@@ -1,9 +1,6 @@
 import { useStore } from '@nanostores/react';
-import { ArrowLeft, Box, GitBranch, Palette, Puzzle, Settings, SlidersHorizontal, SquareTerminal } from 'lucide-react';
-import { memo, useCallback, useEffect, useState } from 'react';
-
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
 import {
   SidebarContent,
   SidebarGroup,
@@ -13,7 +10,10 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarTrigger,
-} from '@/renderer/ds/ui/sidebar';
+} from '@omniagents/ui/sidebar';
+import { ArrowLeft, Box, GitBranch, Palette, Puzzle, Settings, SlidersHorizontal, SquareTerminal } from 'lucide-react';
+import { memo, useCallback, useEffect, useState } from 'react';
+
 import { openPlugins } from '@/renderer/features/Plugins/plugins-nav';
 import { $settingsInitialTab } from '@/renderer/features/SettingsModal/settings-nav';
 import { SettingsModalAiTab } from '@/renderer/features/SettingsModal/SettingsModalAiTab';

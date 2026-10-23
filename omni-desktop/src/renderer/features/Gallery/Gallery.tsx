@@ -1,9 +1,9 @@
 import type { ToolItem } from '@omniagents/client/transcript/chat-types';
+import { Button } from '@omniagents/ui/button';
+import { TooltipProvider } from '@omniagents/ui/tooltip';
 import { CodeIcon, FileTextIcon, GlobeIcon, SendHorizontalIcon } from 'lucide-react';
 import { memo, useState } from 'react';
 
-import { Button } from '@/renderer/ds/ui/button';
-import { TooltipProvider } from '@/renderer/ds/ui/tooltip';
 import type { ToolState } from '@/renderer/omniagents-ui/ai-types';
 import {
   Artifact,

@@ -4,10 +4,10 @@
  * for a private-looking host (with an inline "Add token"), or an SSH URL that
  * the runtime silently downgrades to unauthenticated HTTPS. Self-contained.
  */
+import { Button } from '@omniagents/ui/button';
 import { CircleCheck, Lock, TriangleAlert } from 'lucide-react';
 import { memo, useCallback } from 'react';
 
-import { Button } from '@/renderer/ds/ui/button';
 import { gitHostFromUrl, isSshRemote, resolveCredentialForUrl } from '@/shared/git-credentials';
 import type { GitCredential } from '@/shared/types';
 

@@ -1,24 +1,11 @@
 import { useStore } from '@nanostores/react';
+import { Button } from '@omniagents/ui/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@omniagents/ui/dropdown-menu';
+import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from '@omniagents/ui/item';
 import { Ellipsis, Folder, Globe, Plus } from 'lucide-react';
 import { memo, useCallback, useMemo, useState } from 'react';
 
 import { sourceLabel, sourceLocation } from '@/lib/source-label';
-import { Button } from '@/renderer/ds/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/renderer/ds/ui/dropdown-menu';
-import {
-  Item,
-  ItemActions,
-  ItemContent,
-  ItemDescription,
-  ItemGroup,
-  ItemMedia,
-  ItemTitle,
-} from '@/renderer/ds/ui/item';
 import { AddSourceDialog } from '@/renderer/features/Projects/AddSourceDialog';
 import { CredentialStatus } from '@/renderer/features/Projects/CredentialStatus';
 import { EditSourceDialog } from '@/renderer/features/Projects/EditSourceDialog';

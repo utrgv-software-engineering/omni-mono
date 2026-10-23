@@ -1,10 +1,10 @@
 import { useStore } from '@nanostores/react';
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@omniagents/ui/tabs';
 import { Plus, SquareTerminal, X } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo } from 'react';
 
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/renderer/ds/ui/tabs';
 import { ConsoleXterm } from '@/renderer/features/Console/ConsoleXterm';
 import type { TerminalState } from '@/renderer/features/Console/state';
 import {

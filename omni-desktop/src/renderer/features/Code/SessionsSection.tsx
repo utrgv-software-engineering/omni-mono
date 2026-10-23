@@ -1,20 +1,10 @@
 import { useStore } from '@nanostores/react';
-import { Archive, ArchiveRestore, Ellipsis, FolderArchive, LoaderCircle } from 'lucide-react';
-import { memo, useCallback, useMemo, useState } from 'react';
-
-import { NavSection } from '@/renderer/common/NavSection';
-import { SidebarRow, SidebarRowActions } from '@/renderer/common/SidebarRow';
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/renderer/ds/ui/dialog';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/renderer/ds/ui/dropdown-menu';
-import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from '@/renderer/ds/ui/item';
-import { ScrollArea } from '@/renderer/ds/ui/scroll-area';
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@omniagents/ui/dialog';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@omniagents/ui/dropdown-menu';
+import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from '@omniagents/ui/item';
+import { ScrollArea } from '@omniagents/ui/scroll-area';
 import {
   SidebarGroupAction,
   SidebarMenu,
@@ -23,8 +13,13 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSub,
-} from '@/renderer/ds/ui/sidebar';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/renderer/ds/ui/tooltip';
+} from '@omniagents/ui/sidebar';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@omniagents/ui/tooltip';
+import { Archive, ArchiveRestore, Ellipsis, FolderArchive, LoaderCircle } from 'lucide-react';
+import { memo, useCallback, useMemo, useState } from 'react';
+
+import { NavSection } from '@/renderer/common/NavSection';
+import { SidebarRow, SidebarRowActions } from '@/renderer/common/SidebarRow';
 import { $columnActivity, activityStatusText } from '@/renderer/services/column-activity';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { ChatConversation, CodeTab, ProjectId } from '@/shared/types';

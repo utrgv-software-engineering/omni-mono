@@ -1,7 +1,7 @@
+import { Button } from '@omniagents/ui/button';
+import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from '@omniagents/ui/item';
 import React from 'react';
 
-import { Button } from '@/renderer/ds/ui/button';
-import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from '@/renderer/ds/ui/item';
 import { formatRelativeTime, generateSessionTitle } from '@/renderer/omniagents-ui/lib/utils';
 
 export type SessionItem = {

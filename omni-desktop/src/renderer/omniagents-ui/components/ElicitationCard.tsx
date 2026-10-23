@@ -1,13 +1,12 @@
 import type { ElicitationRequest, ElicitationResponse } from '@omniagents/client/rpc/elicitation';
+import { Button } from '@omniagents/ui/button';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@omniagents/ui/card';
+import { Checkbox } from '@omniagents/ui/checkbox';
+import { Input } from '@omniagents/ui/input';
+import { Label } from '@omniagents/ui/label';
+import { RadioGroup, RadioGroupItem } from '@omniagents/ui/radio-group';
 import { ExternalLinkIcon, ShieldQuestionIcon } from 'lucide-react';
 import { useMemo, useState } from 'react';
-
-import { Button } from '@/renderer/ds/ui/button';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/renderer/ds/ui/card';
-import { Checkbox } from '@/renderer/ds/ui/checkbox';
-import { Input } from '@/renderer/ds/ui/input';
-import { Label } from '@/renderer/ds/ui/label';
-import { RadioGroup, RadioGroupItem } from '@/renderer/ds/ui/radio-group';
 
 type Props = {
   request: ElicitationRequest;

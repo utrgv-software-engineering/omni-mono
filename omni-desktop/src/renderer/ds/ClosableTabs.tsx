@@ -1,3 +1,6 @@
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
+import { TabsList, TabsTrigger } from '@omniagents/ui/tabs';
 import { XIcon } from 'lucide-react';
 import {
   type ComponentProps,
@@ -7,10 +10,6 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react';
-
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
-import { TabsList, TabsTrigger } from '@/renderer/ds/ui/tabs';
 
 /**
  * The launcher's one app-tab language: compact closable chips in a

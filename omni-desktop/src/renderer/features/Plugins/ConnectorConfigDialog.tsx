@@ -1,12 +1,12 @@
+import { Button } from '@omniagents/ui/button';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@omniagents/ui/dialog';
+import { Field, FieldLabel } from '@omniagents/ui/field';
+import { Input } from '@omniagents/ui/input';
+import { NativeSelect as Select } from '@omniagents/ui/native-select';
+import { Spinner } from '@omniagents/ui/spinner';
 import { Plus, Trash2 } from 'lucide-react';
 import { memo, useEffect, useState } from 'react';
 
-import { Button } from '@/renderer/ds/ui/button';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/renderer/ds/ui/dialog';
-import { Field, FieldLabel } from '@/renderer/ds/ui/field';
-import { Input } from '@/renderer/ds/ui/input';
-import { NativeSelect as Select } from '@/renderer/ds/ui/native-select';
-import { Spinner } from '@/renderer/ds/ui/spinner';
 import type { McpServerEntry } from '@/shared/types';
 
 const SERVER_TYPES: NonNullable<McpServerEntry['type']>[] = ['stdio', 'sse', 'http', 'streamable_http'];

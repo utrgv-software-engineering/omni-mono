@@ -1,15 +1,15 @@
 import { useStore } from '@nanostores/react';
 import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
 import { uuidv4 } from '@omniagents/client/util/uuid';
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
+import { Spinner } from '@omniagents/ui/spinner';
 import { motion } from 'framer-motion';
 import { FolderOpen } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { conversationTitle } from '@/lib/chat-conversations';
 import { buildSessionVariables } from '@/lib/client-tools';
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
-import { Spinner } from '@/renderer/ds/ui/spinner';
 import { SessionStatusBanner } from '@/renderer/features/Banner/SessionStatusBanner';
 import { buildClientToolHandler } from '@/renderer/features/Code/client-tool-handler';
 import { $pendingPlan, resolvePlanApproval } from '@/renderer/features/Code/plan-approval-bridge';

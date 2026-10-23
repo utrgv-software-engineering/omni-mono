@@ -1,6 +1,6 @@
+import { Card, CardContent } from '@omniagents/ui/card';
 import { memo } from 'react';
 
-import { Card, CardContent } from '@/renderer/ds/ui/card';
 import {
   settingsCardContentClassName,
   SettingsPane,

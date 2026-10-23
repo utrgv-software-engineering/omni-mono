@@ -1,11 +1,10 @@
 import type { GitStatusEntry, GitStatusResult } from '@omniagents/client/rpc/git';
+import { Button } from '@omniagents/ui/button';
+import { Checkbox } from '@omniagents/ui/checkbox';
+import { cn } from '@omniagents/ui/cn';
+import { ScrollArea } from '@omniagents/ui/scroll-area';
+import { Textarea } from '@omniagents/ui/textarea';
 import { memo, useMemo, useState } from 'react';
-
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
-import { Checkbox } from '@/renderer/ds/ui/checkbox';
-import { ScrollArea } from '@/renderer/ds/ui/scroll-area';
-import { Textarea } from '@/renderer/ds/ui/textarea';
 
 import { statusBadge } from './diff-model';
 import type { GitMutations } from './use-git-mutations';

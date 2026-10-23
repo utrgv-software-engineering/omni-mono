@@ -1,9 +1,9 @@
 import { useStore } from '@nanostores/react';
+import { Checkbox } from '@omniagents/ui/checkbox';
+import { Field, FieldLabel } from '@omniagents/ui/field';
 import { TriangleAlert } from 'lucide-react';
 import { memo, useCallback, useState } from 'react';
 
-import { Checkbox } from '@/renderer/ds/ui/checkbox';
-import { Field, FieldLabel } from '@/renderer/ds/ui/field';
 import { requestNotificationPermission } from '@/renderer/services/agent-attention';
 import { persistedStoreApi } from '@/renderer/services/store';
 

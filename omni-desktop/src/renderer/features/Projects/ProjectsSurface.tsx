@@ -1,8 +1,8 @@
 import { useStore } from '@nanostores/react';
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@omniagents/ui/empty';
 import { memo, useMemo } from 'react';
 
 import { TopAppBar } from '@/renderer/ds/TopAppBar';
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/renderer/ds/ui/empty';
 import { persistedStoreApi } from '@/renderer/services/store';
 
 import { ProjectHome } from './ProjectHome';

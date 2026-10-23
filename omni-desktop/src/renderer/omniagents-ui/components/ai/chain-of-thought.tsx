@@ -1,12 +1,11 @@
+import { Badge } from '@omniagents/ui/badge';
+import { cn } from '@omniagents/ui/cn';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@omniagents/ui/collapsible';
 import { useControllableState } from '@radix-ui/react-use-controllable-state';
 import { cva } from 'class-variance-authority';
 import { BrainIcon, ChevronDownIcon, DotIcon, type LucideIcon } from 'lucide-react';
 import type { ComponentProps, ReactNode } from 'react';
 import { createContext, memo, useContext, useMemo } from 'react';
-
-import { cn } from '@/renderer/ds/cn';
-import { Badge } from '@/renderer/ds/ui/badge';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/renderer/ds/ui/collapsible';
 
 type ChainOfThoughtContextValue = {
   isOpen: boolean;

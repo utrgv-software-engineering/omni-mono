@@ -1,0 +1,24 @@
+{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "new-york",
+  "rsc": false,
+  "tsx": true,
+  "tailwind": {
+    "config": "",
+    "css": "src/theme.css",
+    "baseColor": "neutral",
+    "cssVariables": true,
+    "prefix": ""
+  },
+  "iconLibrary": "lucide",
+  "aliases": {
+    "components": "@omniagents/ui",
+    "utils": "@omniagents/ui/cn",
+    "ui": "@omniagents/ui",
+    "lib": "@omniagents/ui",
+    "hooks": "@omniagents/ui/hooks"
+  },
+  "registries": {
+    "@ai-elements": "https://ai-sdk.dev/elements/api/registry/{name}.json"
+  }
+}

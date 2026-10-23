@@ -1,14 +1,14 @@
 import type { ProviderDescriptor } from '@omniagents/client/rpc/model-catalog';
+import { Button } from '@omniagents/ui/button';
+import { Card, CardContent } from '@omniagents/ui/card';
+import { cn } from '@omniagents/ui/cn';
+import { Input } from '@omniagents/ui/input';
+import { Spinner } from '@omniagents/ui/spinner';
 import { CircleCheck, CircleHelp, CircleX } from 'lucide-react';
 import type { ChangeEvent } from 'react';
 import { memo, useCallback, useEffect, useState } from 'react';
 
 import { maskApiKey, probeForProvider } from '@/lib/provider-config';
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
-import { Card, CardContent } from '@/renderer/ds/ui/card';
-import { Input } from '@/renderer/ds/ui/input';
-import { Spinner } from '@/renderer/ds/ui/spinner';
 import { probeFailureCopy } from '@/renderer/features/Onboarding/probe-copy';
 import { emitter } from '@/renderer/services/ipc';
 import type { ModelsConfig, ProviderEntry, ProviderProbeResult } from '@/shared/types';

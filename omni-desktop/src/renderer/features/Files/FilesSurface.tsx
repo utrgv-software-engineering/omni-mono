@@ -1,12 +1,7 @@
 import { useStore } from '@nanostores/react';
 import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
 import { FsClient, WatchRegistry } from '@omniagents/client/rpc/fs';
-import { useSelector } from '@xstate/react';
-import { PanelLeftIcon, TriangleAlert } from 'lucide-react';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-
-import { Alert, AlertDescription, AlertTitle } from '@/renderer/ds/ui/alert';
+import { Alert, AlertDescription, AlertTitle } from '@omniagents/ui/alert';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -16,16 +11,21 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/renderer/ds/ui/alert-dialog';
-import { Button } from '@/renderer/ds/ui/button';
-import { ButtonGroup } from '@/renderer/ds/ui/button-group';
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/renderer/ds/ui/empty';
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/renderer/ds/ui/resizable';
-import { Spinner } from '@/renderer/ds/ui/spinner';
-import { Toggle } from '@/renderer/ds/ui/toggle';
+} from '@omniagents/ui/alert-dialog';
+import { Button } from '@omniagents/ui/button';
+import { ButtonGroup } from '@omniagents/ui/button-group';
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@omniagents/ui/empty';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@omniagents/ui/resizable';
+import { Spinner } from '@omniagents/ui/spinner';
+import { isThemeDark } from '@omniagents/ui/themes';
+import { Toggle } from '@omniagents/ui/toggle';
+import { useSelector } from '@xstate/react';
+import { PanelLeftIcon, TriangleAlert } from 'lucide-react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+
 import { useRPCClient, useRPCConnected } from '@/renderer/omniagents-ui/rpc-context';
 import { persistedStoreApi } from '@/renderer/services/store';
-import { isThemeDark } from '@/renderer/theme/themes';
 import { type FileEditorLease, FileEditorRegistry } from '@/shared/machines/file-editor-registry';
 import type { WorkspaceMountDescriptor } from '@/shared/types';
 

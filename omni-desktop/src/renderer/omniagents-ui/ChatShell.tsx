@@ -1,12 +1,11 @@
+import { Alert, AlertDescription, AlertTitle } from '@omniagents/ui/alert';
+import { Badge } from '@omniagents/ui/badge';
+import { Button } from '@omniagents/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@omniagents/ui/card';
+import { Spinner } from '@omniagents/ui/spinner';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { ReactNode } from 'react';
 import { memo, useCallback, useState } from 'react';
-
-import { Alert, AlertDescription, AlertTitle } from '@/renderer/ds/ui/alert';
-import { Badge } from '@/renderer/ds/ui/badge';
-import { Button } from '@/renderer/ds/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/renderer/ds/ui/card';
-import { Spinner } from '@/renderer/ds/ui/spinner';
 
 import { ConversationComposer } from './components/ConversationComposer';
 import { getGreeting } from './greeting';

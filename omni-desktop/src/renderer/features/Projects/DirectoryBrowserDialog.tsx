@@ -1,14 +1,14 @@
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@omniagents/ui/dialog';
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '@omniagents/ui/empty';
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@omniagents/ui/input-group';
+import { Item, ItemContent, ItemGroup, ItemMedia, ItemTitle } from '@omniagents/ui/item';
+import { ScrollArea } from '@omniagents/ui/scroll-area';
+import { Skeleton } from '@omniagents/ui/skeleton';
 import { ArrowUp, Folder, Home } from 'lucide-react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/renderer/ds/ui/dialog';
-import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from '@/renderer/ds/ui/empty';
-import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/renderer/ds/ui/input-group';
-import { Item, ItemContent, ItemGroup, ItemMedia, ItemTitle } from '@/renderer/ds/ui/item';
-import { ScrollArea } from '@/renderer/ds/ui/scroll-area';
-import { Skeleton } from '@/renderer/ds/ui/skeleton';
 import { emitter } from '@/renderer/services/ipc';
 
 type DirectoryEntry = { name: string; path: string; isDirectory: boolean };

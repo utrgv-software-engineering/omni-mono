@@ -1,10 +1,10 @@
 import { useStore } from '@nanostores/react';
+import { Alert, AlertDescription } from '@omniagents/ui/alert';
+import { Button } from '@omniagents/ui/button';
+import { Card, CardContent } from '@omniagents/ui/card';
+import { Field, FieldLabel } from '@omniagents/ui/field';
 import { memo, useCallback, useEffect, useState } from 'react';
 
-import { Alert, AlertDescription } from '@/renderer/ds/ui/alert';
-import { Button } from '@/renderer/ds/ui/button';
-import { Card, CardContent } from '@/renderer/ds/ui/card';
-import { Field, FieldLabel } from '@/renderer/ds/ui/field';
 import { $launcherVersion } from '@/renderer/features/Banner/state';
 import { $omniInstallProcessStatus, $omniRuntimeInfo, omniInstallApi } from '@/renderer/features/Omni/state';
 import { RemoteBackendCard } from '@/renderer/features/SettingsModal/RemoteBackendCard';

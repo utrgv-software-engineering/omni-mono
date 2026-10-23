@@ -1,10 +1,10 @@
+import { Badge } from '@omniagents/ui/badge';
+import { cn } from '@omniagents/ui/cn';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@omniagents/ui/collapsible';
 import { CheckCircleIcon, ChevronDownIcon, CircleIcon, ClockIcon, WrenchIcon, XCircleIcon } from 'lucide-react';
 import type { ComponentProps, ReactNode } from 'react';
 import { isValidElement } from 'react';
 
-import { cn } from '@/renderer/ds/cn';
-import { Badge } from '@/renderer/ds/ui/badge';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/renderer/ds/ui/collapsible';
 import type { DynamicToolUIPart, ToolUIPart } from '@/renderer/omniagents-ui/ai-types';
 
 import { CodeBlock } from './code-block';

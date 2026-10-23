@@ -7,6 +7,11 @@ import {
 } from '@omniagents/client/transcript/activity-store';
 import type { TaskSummary } from '@omniagents/client/transcript/canonical-plan-tasks';
 import { oneLine } from '@omniagents/client/util/text';
+import { Badge } from '@omniagents/ui/badge';
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
+import { Item, ItemContent, ItemDescription, ItemMedia, ItemTitle } from '@omniagents/ui/item';
+import { Spinner } from '@omniagents/ui/spinner';
 import { ArrowLeftIcon, ChevronRightIcon, SquareIcon } from 'lucide-react';
 import {
   Fragment,
@@ -21,11 +26,6 @@ import {
 import { toast } from 'sonner';
 
 import { formatElapsed } from '@/lib/format-time';
-import { cn } from '@/renderer/ds/cn';
-import { Badge } from '@/renderer/ds/ui/badge';
-import { Button } from '@/renderer/ds/ui/button';
-import { Item, ItemContent, ItemDescription, ItemMedia, ItemTitle } from '@/renderer/ds/ui/item';
-import { Spinner } from '@/renderer/ds/ui/spinner';
 
 /**
  * The one presentation vocabulary for background activity — status colors,

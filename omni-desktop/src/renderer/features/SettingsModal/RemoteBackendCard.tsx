@@ -17,16 +17,16 @@
  * Electron-only (linking is meaningless in server mode — the web app IS the
  * remote client). The card hides itself on the browser build.
  */
+import { Button } from '@omniagents/ui/button';
+import { Card, CardContent } from '@omniagents/ui/card';
+import { cn } from '@omniagents/ui/cn';
+import { Field, FieldContent, FieldDescription, FieldLabel } from '@omniagents/ui/field';
+import { Input } from '@omniagents/ui/input';
+import { NativeSelect as Select } from '@omniagents/ui/native-select';
+import { Switch } from '@omniagents/ui/switch';
+import { ToggleGroup, ToggleGroupItem } from '@omniagents/ui/toggle-group';
 import { memo, useCallback, useEffect, useState } from 'react';
 
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
-import { Card, CardContent } from '@/renderer/ds/ui/card';
-import { Field, FieldContent, FieldDescription, FieldLabel } from '@/renderer/ds/ui/field';
-import { Input } from '@/renderer/ds/ui/input';
-import { NativeSelect as Select } from '@/renderer/ds/ui/native-select';
-import { Switch } from '@/renderer/ds/ui/switch';
-import { ToggleGroup, ToggleGroupItem } from '@/renderer/ds/ui/toggle-group';
 import { settingsCardContentClassName } from '@/renderer/features/SettingsModal/SettingsLayout';
 import {
   bootstrapPlatform,

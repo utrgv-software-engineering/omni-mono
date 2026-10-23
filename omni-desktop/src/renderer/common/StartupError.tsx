@@ -1,5 +1,5 @@
-import { Alert, AlertDescription, AlertTitle } from '@/renderer/ds/ui/alert';
-import { Button } from '@/renderer/ds/ui/button';
+import { Alert, AlertDescription, AlertTitle } from '@omniagents/ui/alert';
+import { Button } from '@omniagents/ui/button';
 
 export function StartupError({ title, error }: { title: string; error: string }) {
   return (

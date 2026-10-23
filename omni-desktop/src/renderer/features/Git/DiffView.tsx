@@ -1,14 +1,14 @@
 import './DiffView.css';
 
+import { Badge } from '@omniagents/ui/badge';
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@omniagents/ui/collapsible';
 import { ChevronRightIcon, SquareArrowOutUpRightIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import type { ThemedToken } from 'shiki';
 
-import { cn } from '@/renderer/ds/cn';
-import { Badge } from '@/renderer/ds/ui/badge';
-import { Button } from '@/renderer/ds/ui/button';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/renderer/ds/ui/collapsible';
 import { highlightCode, type TokenizedCode, TokenSpan } from '@/renderer/omniagents-ui/components/ai/code-block';
 
 import { type ChangeBadge, type DiffLine, languageForPath } from './diff-model';

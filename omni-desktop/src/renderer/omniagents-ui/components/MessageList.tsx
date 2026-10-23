@@ -4,6 +4,10 @@ import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import type { ActivityGroupData } from '@omniagents/client/transcript/activity-group';
 import { formatArgsPreview, groupItems } from '@omniagents/client/transcript/activity-group';
 import { messageKey } from '@omniagents/client/transcript/message-key';
+import { Button } from '@omniagents/ui/button';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@omniagents/ui/collapsible';
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@omniagents/ui/input-group';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@omniagents/ui/table';
 import { motion } from 'framer-motion';
 import {
   CheckCircleIcon,
@@ -22,10 +26,6 @@ import {
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-import { Button } from '@/renderer/ds/ui/button';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/renderer/ds/ui/collapsible';
-import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/renderer/ds/ui/input-group';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/renderer/ds/ui/table';
 import { getGreeting } from '@/renderer/omniagents-ui/greeting';
 import { useRPCClient } from '@/renderer/omniagents-ui/rpc-context';
 

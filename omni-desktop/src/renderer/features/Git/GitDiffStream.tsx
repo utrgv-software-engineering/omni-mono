@@ -5,11 +5,10 @@ import type {
   GitSelection,
   GitStatusEntry,
 } from '@omniagents/client/rpc/git';
+import { Button } from '@omniagents/ui/button';
+import { ButtonGroup } from '@omniagents/ui/button-group';
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@omniagents/ui/empty';
 import { memo, useCallback } from 'react';
-
-import { Button } from '@/renderer/ds/ui/button';
-import { ButtonGroup } from '@/renderer/ds/ui/button-group';
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/renderer/ds/ui/empty';
 
 import { type ChangeBadge, humanFileStatus, linesFromHunk, statusBadge } from './diff-model';
 import { DiffLines, DiffSection, useDiffTokens } from './DiffView';

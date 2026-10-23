@@ -1,9 +1,8 @@
 import type { LoopTaskSnapshot } from '@omniagents/client/session/panel-types';
 import { truncateOneLine } from '@omniagents/client/util/text';
+import { Button } from '@omniagents/ui/button';
+import { Card } from '@omniagents/ui/card';
 import React from 'react';
-
-import { Button } from '@/renderer/ds/ui/button';
-import { Card } from '@/renderer/ds/ui/card';
 
 const PROMPT_TRUNCATE = 100;
 

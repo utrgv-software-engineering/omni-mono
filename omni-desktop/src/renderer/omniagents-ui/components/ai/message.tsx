@@ -1,3 +1,6 @@
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@omniagents/ui/tooltip';
 import { cjk } from '@streamdown/cjk';
 import { code } from '@streamdown/code';
 import { math } from '@streamdown/math';
@@ -6,9 +9,6 @@ import type { ComponentProps, HTMLAttributes } from 'react';
 import { memo } from 'react';
 import { Streamdown } from 'streamdown';
 
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/renderer/ds/ui/tooltip';
 import type { UIMessage } from '@/renderer/omniagents-ui/ai-types';
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {

@@ -1,10 +1,10 @@
+import { Card } from '@omniagents/ui/card';
+import { Progress } from '@omniagents/ui/progress';
 import { AnimatePresence, motion } from 'framer-motion';
 import { memo, useCallback, useState } from 'react';
 
 import { buildProviderConfig, maskApiKey } from '@/lib/provider-config';
 import { OmniMark } from '@/renderer/common/OmniMark';
-import { Card } from '@/renderer/ds/ui/card';
-import { Progress } from '@/renderer/ds/ui/progress';
 import { OnboardingChatGptStep } from '@/renderer/features/Onboarding/OnboardingChatGptStep';
 import type { IdentityKind } from '@/renderer/features/Onboarding/OnboardingChooseStep';
 import { OnboardingChooseStep } from '@/renderer/features/Onboarding/OnboardingChooseStep';

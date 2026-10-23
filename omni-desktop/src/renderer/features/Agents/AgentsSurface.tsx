@@ -11,16 +11,16 @@ import {
 import type { TaskSummary } from '@omniagents/client/transcript/canonical-plan-tasks';
 import type { MessageItem } from '@omniagents/client/transcript/chat-types';
 import { uuidv4 } from '@omniagents/client/util/uuid';
+import { Alert, AlertDescription, AlertTitle } from '@omniagents/ui/alert';
+import { Button } from '@omniagents/ui/button';
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@omniagents/ui/empty';
+import { ScrollArea } from '@omniagents/ui/scroll-area';
+import { Spinner } from '@omniagents/ui/spinner';
 import { BotIcon } from 'lucide-react';
 import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { formatTimestamp } from '@/lib/format-time';
-import { Alert, AlertDescription, AlertTitle } from '@/renderer/ds/ui/alert';
-import { Button } from '@/renderer/ds/ui/button';
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/renderer/ds/ui/empty';
-import { ScrollArea } from '@/renderer/ds/ui/scroll-area';
-import { Spinner } from '@/renderer/ds/ui/spinner';
 import { OmniAgentsApp } from '@/renderer/omniagents-ui';
 import {
   ActivityBackButton,

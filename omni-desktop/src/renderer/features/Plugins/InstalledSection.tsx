@@ -1,6 +1,3 @@
-import { Lightbulb, PlugZap, Settings, Trash2 } from 'lucide-react';
-import { memo, useState } from 'react';
-
 import {
   AlertDialog,
   AlertDialogAction,
@@ -10,20 +7,15 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/renderer/ds/ui/alert-dialog';
-import { Badge } from '@/renderer/ds/ui/badge';
-import { Button } from '@/renderer/ds/ui/button';
-import {
-  Item,
-  ItemActions,
-  ItemContent,
-  ItemDescription,
-  ItemGroup,
-  ItemMedia,
-  ItemTitle,
-} from '@/renderer/ds/ui/item';
-import { Spinner } from '@/renderer/ds/ui/spinner';
-import { Switch } from '@/renderer/ds/ui/switch';
+} from '@omniagents/ui/alert-dialog';
+import { Badge } from '@omniagents/ui/badge';
+import { Button } from '@omniagents/ui/button';
+import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from '@omniagents/ui/item';
+import { Spinner } from '@omniagents/ui/spinner';
+import { Switch } from '@omniagents/ui/switch';
+import { Lightbulb, PlugZap, Settings, Trash2 } from 'lucide-react';
+import { memo, useState } from 'react';
+
 import type { InstalledPlugin, PluginKind } from '@/renderer/features/Plugins/plugin-cards';
 import { emitter } from '@/renderer/services/ipc';
 import type { BundleUpdateInfo, McpServerEntry, SkillEntry } from '@/shared/types';

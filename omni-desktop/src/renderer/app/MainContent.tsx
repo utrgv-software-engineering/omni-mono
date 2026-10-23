@@ -1,9 +1,9 @@
 import { useStore } from '@nanostores/react';
+import { cn } from '@omniagents/ui/cn';
+import { SidebarInset, SidebarProvider } from '@omniagents/ui/sidebar';
 import { memo, useCallback, useEffect, useState } from 'react';
 
 import { AppSidebar } from '@/renderer/app/AppSidebar';
-import { cn } from '@/renderer/ds/cn';
-import { SidebarInset, SidebarProvider } from '@/renderer/ds/ui/sidebar';
 import { Code } from '@/renderer/features/Code/Code';
 import { Gallery } from '@/renderer/features/Gallery/Gallery';
 import { OnboardingWizard } from '@/renderer/features/Onboarding/OnboardingWizard';

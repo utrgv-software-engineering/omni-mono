@@ -1,3 +1,4 @@
+import { cn } from '@omniagents/ui/cn';
 import { ChevronRightIcon } from 'lucide-react';
 import {
   createContext,
@@ -10,8 +11,6 @@ import {
   useContext,
   useMemo,
 } from 'react';
-
-import { cn } from '@/renderer/ds/cn';
 
 export type TreeItemOpenChangeData = { openItems: Set<unknown>; value: unknown; open: boolean };
 export type TreeProps = HTMLAttributes<HTMLDivElement> & {

@@ -1,10 +1,10 @@
+import { Command, CommandItem, CommandList } from '@omniagents/ui/command';
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@omniagents/ui/input-group';
+import { Popover, PopoverAnchor, PopoverContent } from '@omniagents/ui/popover';
 import { Bookmark, Globe, History, Lock, Search, Unlock } from 'lucide-react';
 import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useRef, useState } from 'react';
 
 import { normalizeAddress, parseOrigin } from '@/lib/url';
-import { Command, CommandItem, CommandList } from '@/renderer/ds/ui/command';
-import { InputGroup, InputGroupAddon, InputGroupInput } from '@/renderer/ds/ui/input-group';
-import { Popover, PopoverAnchor, PopoverContent } from '@/renderer/ds/ui/popover';
 import { browserApi } from '@/renderer/features/Browser/state';
 import type { BrowserSuggestion } from '@/shared/types';
 

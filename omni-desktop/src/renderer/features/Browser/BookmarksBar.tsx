@@ -1,15 +1,15 @@
-import { Star, Trash2 } from 'lucide-react';
-import { memo, useCallback } from 'react';
-
-import { fallbackTitle } from '@/lib/url';
-import { Button } from '@/renderer/ds/ui/button';
+import { Button } from '@omniagents/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/renderer/ds/ui/dropdown-menu';
+} from '@omniagents/ui/dropdown-menu';
+import { Star, Trash2 } from 'lucide-react';
+import { memo, useCallback } from 'react';
+
+import { fallbackTitle } from '@/lib/url';
 import { browserApi } from '@/renderer/features/Browser/state';
 import type { BrowserBookmark } from '@/shared/types';
 

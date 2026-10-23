@@ -278,15 +278,6 @@ export default [
   },
 
   {
-    files: ['src/renderer/ds/ui/field.tsx'],
-    rules: {
-      // This file is registry-owned and pinned byte-for-byte to shadcn. Keep
-      // upstream's intentional loose comparison without weakening app code.
-      eqeqeq: 'off',
-    },
-  },
-
-  {
     files: ['src/renderer/omniagents-ui/**/*'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',

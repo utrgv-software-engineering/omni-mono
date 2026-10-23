@@ -1,8 +1,8 @@
+import { Button } from '@omniagents/ui/button';
+import { Field, FieldLabel } from '@omniagents/ui/field';
+import { Input } from '@omniagents/ui/input';
 import { useState } from 'react';
 
-import { Button } from '@/renderer/ds/ui/button';
-import { Field, FieldLabel } from '@/renderer/ds/ui/field';
-import { Input } from '@/renderer/ds/ui/input';
 import { useRPCClient } from '@/renderer/omniagents-ui/rpc-context';
 
 export type Retention = {

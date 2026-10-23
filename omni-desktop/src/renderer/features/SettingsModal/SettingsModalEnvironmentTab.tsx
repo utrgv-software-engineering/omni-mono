@@ -1,11 +1,11 @@
+import { Button } from '@omniagents/ui/button';
+import { Card, CardContent } from '@omniagents/ui/card';
+import { Input } from '@omniagents/ui/input';
 import { Plus, Trash2 } from 'lucide-react';
 import type { ChangeEvent } from 'react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
 import { SaveBar } from '@/renderer/ds/SaveBar';
-import { Button } from '@/renderer/ds/ui/button';
-import { Card, CardContent } from '@/renderer/ds/ui/card';
-import { Input } from '@/renderer/ds/ui/input';
 import { SettingsPane, SettingsSection } from '@/renderer/features/SettingsModal/SettingsLayout';
 import { agentConfigApi, configApi } from '@/renderer/services/config';
 import { isElectron } from '@/renderer/services/ipc';

@@ -1,8 +1,8 @@
+import { Alert, AlertDescription } from '@omniagents/ui/alert';
+import { Button } from '@omniagents/ui/button';
+import { Spinner } from '@omniagents/ui/spinner';
 import { memo, useCallback, useState } from 'react';
 
-import { Alert, AlertDescription } from '@/renderer/ds/ui/alert';
-import { Button } from '@/renderer/ds/ui/button';
-import { Spinner } from '@/renderer/ds/ui/spinner';
 import { emitter } from '@/renderer/services/ipc';
 
 type Props = {

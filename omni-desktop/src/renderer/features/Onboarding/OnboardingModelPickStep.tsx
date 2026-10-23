@@ -1,11 +1,11 @@
+import { Badge } from '@omniagents/ui/badge';
+import { Button } from '@omniagents/ui/button';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@omniagents/ui/collapsible';
+import { Input } from '@omniagents/ui/input';
+import { RadioGroup, RadioGroupItem } from '@omniagents/ui/radio-group';
 import type { ChangeEvent } from 'react';
 import { memo, useCallback, useMemo, useState } from 'react';
 
-import { Badge } from '@/renderer/ds/ui/badge';
-import { Button } from '@/renderer/ds/ui/button';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/renderer/ds/ui/collapsible';
-import { Input } from '@/renderer/ds/ui/input';
-import { RadioGroup, RadioGroupItem } from '@/renderer/ds/ui/radio-group';
 import type { ModelChoice } from '@/shared/model-catalog';
 import { DEFAULT_MAX_INPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS } from '@/shared/model-catalog';
 

@@ -12,14 +12,14 @@
  * project page's ⋯ menu, so source management lives where sources are shown.
  */
 import { useStore } from '@nanostores/react';
+import { Button } from '@omniagents/ui/button';
+import { Checkbox } from '@omniagents/ui/checkbox';
+import { cn } from '@omniagents/ui/cn';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@omniagents/ui/dialog';
+import { Input } from '@omniagents/ui/input';
+import { NativeSelect as Select } from '@omniagents/ui/native-select';
 import { memo, useCallback, useEffect, useState } from 'react';
 
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
-import { Checkbox } from '@/renderer/ds/ui/checkbox';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/renderer/ds/ui/dialog';
-import { Input } from '@/renderer/ds/ui/input';
-import { NativeSelect as Select } from '@/renderer/ds/ui/native-select';
 import { DirectoryBrowserDialog } from '@/renderer/features/Projects/DirectoryBrowserDialog';
 import { GitCredentialDialog } from '@/renderer/features/SettingsModal/GitCredentialDialog';
 import { emitter } from '@/renderer/services/ipc';

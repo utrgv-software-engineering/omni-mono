@@ -1,9 +1,9 @@
+import { Button } from '@omniagents/ui/button';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@omniagents/ui/dialog';
+import { Input } from '@omniagents/ui/input';
+import { Spinner } from '@omniagents/ui/spinner';
 import { memo, useCallback, useEffect, useState } from 'react';
 
-import { Button } from '@/renderer/ds/ui/button';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/renderer/ds/ui/dialog';
-import { Input } from '@/renderer/ds/ui/input';
-import { Spinner } from '@/renderer/ds/ui/spinner';
 import type { ExploreContext } from '@/renderer/features/Plugins/ExploreSection';
 import { ExploreCard, installKeyOf } from '@/renderer/features/Plugins/ExploreSection';
 import type { ExplorePlugin } from '@/renderer/features/Plugins/plugin-cards';

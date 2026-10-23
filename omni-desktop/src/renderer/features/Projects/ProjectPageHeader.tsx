@@ -1,7 +1,6 @@
+import { cn } from '@omniagents/ui/cn';
 import type { ReactNode } from 'react';
 import { memo } from 'react';
-
-import { cn } from '@/renderer/ds/cn';
 
 type ProjectPageHeaderProps = {
   /** The page's real title. Strings render at the standard page-title scale;

@@ -1,11 +1,10 @@
 import type { ArtifactItem } from '@omniagents/client/transcript/chat-types';
+import { Button } from '@omniagents/ui/button';
+import { Item, ItemContent, ItemMedia, ItemTitle } from '@omniagents/ui/item';
+import { ScrollArea } from '@omniagents/ui/scroll-area';
+import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle } from '@omniagents/ui/sheet';
 import { CodeIcon, FileTextIcon, GlobeIcon, ImageIcon, XIcon } from 'lucide-react';
 import React, { useMemo } from 'react';
-
-import { Button } from '@/renderer/ds/ui/button';
-import { Item, ItemContent, ItemMedia, ItemTitle } from '@/renderer/ds/ui/item';
-import { ScrollArea } from '@/renderer/ds/ui/scroll-area';
-import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle } from '@/renderer/ds/ui/sheet';
 export type { ArtifactItem } from '@omniagents/client/transcript/chat-types';
 
 const MODE_ICON: Record<string, React.ComponentType<{ className?: string }>> = {

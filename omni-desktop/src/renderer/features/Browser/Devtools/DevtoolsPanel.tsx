@@ -6,13 +6,13 @@
  * Tabs: Network, Console, Storage, Elements. Resizable via a top-edge drag
  * handle. Closed by default; toggled with `Cmd+Alt+I` from BrowserView.
  */
+import { Button } from '@omniagents/ui/button';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@omniagents/ui/resizable';
+import { Tabs, TabsList, TabsTrigger } from '@omniagents/ui/tabs';
 import { X } from 'lucide-react';
 import { memo, useState } from 'react';
 
 import type { ConsoleMessage } from '@/renderer/common/Webview';
-import { Button } from '@/renderer/ds/ui/button';
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/renderer/ds/ui/resizable';
-import { Tabs, TabsList, TabsTrigger } from '@/renderer/ds/ui/tabs';
 import { ConsoleTab } from '@/renderer/features/Browser/Devtools/ConsoleTab';
 import { ElementsTab } from '@/renderer/features/Browser/Devtools/ElementsTab';
 import { NetworkTab } from '@/renderer/features/Browser/Devtools/NetworkTab';

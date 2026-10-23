@@ -7,17 +7,16 @@ import type {
   GitWorktree,
   WorkspaceRepo,
 } from '@omniagents/client/rpc/git';
+import { Alert, AlertDescription } from '@omniagents/ui/alert';
+import { Badge } from '@omniagents/ui/badge';
+import { Button } from '@omniagents/ui/button';
+import { Checkbox } from '@omniagents/ui/checkbox';
+import { Input } from '@omniagents/ui/input';
+import { NativeSelect } from '@omniagents/ui/native-select';
+import { ScrollArea } from '@omniagents/ui/scroll-area';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@omniagents/ui/tabs';
 import { TriangleAlert } from 'lucide-react';
 import { useEffect, useState } from 'react';
-
-import { Alert, AlertDescription } from '@/renderer/ds/ui/alert';
-import { Badge } from '@/renderer/ds/ui/badge';
-import { Button } from '@/renderer/ds/ui/button';
-import { Checkbox } from '@/renderer/ds/ui/checkbox';
-import { Input } from '@/renderer/ds/ui/input';
-import { NativeSelect } from '@/renderer/ds/ui/native-select';
-import { ScrollArea } from '@/renderer/ds/ui/scroll-area';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/renderer/ds/ui/tabs';
 
 import type { GitMutations } from './use-git-mutations';
 

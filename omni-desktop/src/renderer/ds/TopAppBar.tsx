@@ -1,9 +1,8 @@
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
+import { SidebarTrigger } from '@omniagents/ui/sidebar';
 import { ArrowLeft } from 'lucide-react';
 import type { ReactNode } from 'react';
-
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
-import { SidebarTrigger } from '@/renderer/ds/ui/sidebar';
 
 type TopAppBarProps = {
   title: ReactNode;

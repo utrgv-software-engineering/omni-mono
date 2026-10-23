@@ -1,28 +1,23 @@
 import { useStore } from '@nanostores/react';
-import { Edit, Ellipsis, Folder, FolderOpen, Pin, PinOff, Plus } from 'lucide-react';
-import { atom } from 'nanostores';
-import { memo, useCallback, useMemo, useState } from 'react';
-
-import { NavSection } from '@/renderer/common/NavSection';
-import { SidebarRowActions, SidebarRowLayout } from '@/renderer/common/SidebarRow';
-import { cn } from '@/renderer/ds/cn';
-import { ButtonGroup } from '@/renderer/ds/ui/button-group';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/renderer/ds/ui/collapsible';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/renderer/ds/ui/dropdown-menu';
-import { Input } from '@/renderer/ds/ui/input';
+import { ButtonGroup } from '@omniagents/ui/button-group';
+import { cn } from '@omniagents/ui/cn';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@omniagents/ui/collapsible';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@omniagents/ui/dropdown-menu';
+import { Input } from '@omniagents/ui/input';
 import {
   SidebarGroupAction,
   SidebarMenu,
   SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
-} from '@/renderer/ds/ui/sidebar';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/renderer/ds/ui/tooltip';
+} from '@omniagents/ui/sidebar';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@omniagents/ui/tooltip';
+import { Edit, Ellipsis, Folder, FolderOpen, Pin, PinOff, Plus } from 'lucide-react';
+import { atom } from 'nanostores';
+import { memo, useCallback, useMemo, useState } from 'react';
+
+import { NavSection } from '@/renderer/common/NavSection';
+import { SidebarRowActions, SidebarRowLayout } from '@/renderer/common/SidebarRow';
 import { ProjectSessionRows } from '@/renderer/features/Code/SessionsSection';
 import { ProjectCreateDialog } from '@/renderer/features/Projects/ProjectCreateDialog';
 import { persistedStoreApi } from '@/renderer/services/store';

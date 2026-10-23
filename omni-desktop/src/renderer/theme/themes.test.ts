@@ -1,11 +1,10 @@
 /**
  * Theme system invariants (UI/UX gameplan Phase 10).
  */
+import { isThemeDark, themeDefNames } from '@omniagents/ui/themes';
 import { describe, expect, it } from 'vitest';
 
 import { schema } from '@/shared/types';
-
-import { isThemeDark, themeDefNames } from './themes';
 
 describe('theme schema parity', () => {
   it('every theme def is in the store schema enum (clearInvalidConfig wipes stores otherwise)', () => {

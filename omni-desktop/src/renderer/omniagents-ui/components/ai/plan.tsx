@@ -1,19 +1,10 @@
+import { Button } from '@omniagents/ui/button';
+import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@omniagents/ui/card';
+import { cn } from '@omniagents/ui/cn';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@omniagents/ui/collapsible';
 import { ChevronsUpDownIcon } from 'lucide-react';
 import type { ComponentProps } from 'react';
 import { createContext, useContext, useMemo } from 'react';
-
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from '@/renderer/ds/ui/card';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/renderer/ds/ui/collapsible';
 
 import { Shimmer } from './shimmer';
 

@@ -1,9 +1,9 @@
 import { useStore } from '@nanostores/react';
+import { cn } from '@omniagents/ui/cn';
 import { memo, useMemo } from 'react';
 
 import utrgvLogo from '@/renderer/assets/logo-uthealthrgv.jpg';
 import { OmniMark } from '@/renderer/common/OmniMark';
-import { cn } from '@/renderer/ds/cn';
 import { persistedStoreApi } from '@/renderer/services/store';
 
 const ASCII_CHARS: Record<string, [string, string, string]> = {

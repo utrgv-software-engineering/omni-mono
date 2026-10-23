@@ -1,6 +1,5 @@
+import { Button } from '@omniagents/ui/button';
 import { Navigation, PanelRight } from 'lucide-react';
-
-import { Button } from '@/renderer/ds/ui/button';
 
 export function Header({
   agentName: _agentName,

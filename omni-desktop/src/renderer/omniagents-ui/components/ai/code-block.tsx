@@ -1,9 +1,8 @@
+import { cn } from '@omniagents/ui/cn';
 import type { CSSProperties, HTMLAttributes } from 'react';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { BundledLanguage, BundledTheme, HighlighterGeneric, ThemedToken } from 'shiki';
 import { createHighlighter } from 'shiki';
-
-import { cn } from '@/renderer/ds/cn';
 
 // Shiki uses bitflags for font styles: 1=italic, 2=bold, 4=underline
 

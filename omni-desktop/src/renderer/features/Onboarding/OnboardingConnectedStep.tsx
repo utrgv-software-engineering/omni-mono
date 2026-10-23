@@ -1,8 +1,7 @@
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
 import { motion } from 'framer-motion';
 import { memo } from 'react';
-
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
 
 type Props = {
   providerLabel: string;

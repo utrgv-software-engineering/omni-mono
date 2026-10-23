@@ -1,7 +1,7 @@
+import { ToggleGroup, ToggleGroupItem } from '@omniagents/ui/toggle-group';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@omniagents/ui/tooltip';
 import { memo, useCallback } from 'react';
 
-import { ToggleGroup, ToggleGroupItem } from '@/renderer/ds/ui/toggle-group';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/renderer/ds/ui/tooltip';
 import type { AppDescriptor, AppId } from '@/shared/app-registry';
 
 import { AppIcon } from './AppIcon';

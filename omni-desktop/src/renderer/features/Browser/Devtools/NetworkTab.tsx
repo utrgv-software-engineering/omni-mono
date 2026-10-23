@@ -2,15 +2,15 @@
  * Network tab — polls `app:network-log` while mounted and renders a live
  * table of requests. Click a row to inspect request/response detail.
  */
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@omniagents/ui/input-group';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@omniagents/ui/table';
+import { ToggleGroup, ToggleGroupItem } from '@omniagents/ui/toggle-group';
 import { Search, Trash2 } from 'lucide-react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
 import type { NetworkLogEntry } from '@/main/app-control-cdp';
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
-import { InputGroup, InputGroupAddon, InputGroupInput } from '@/renderer/ds/ui/input-group';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/renderer/ds/ui/table';
-import { ToggleGroup, ToggleGroupItem } from '@/renderer/ds/ui/toggle-group';
 import { emitter } from '@/renderer/services/ipc';
 import type { AppHandleId } from '@/shared/app-control-types';
 

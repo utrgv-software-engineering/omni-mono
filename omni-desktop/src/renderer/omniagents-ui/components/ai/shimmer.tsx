@@ -1,9 +1,8 @@
+import { cn } from '@omniagents/ui/cn';
 import type { MotionProps } from 'motion/react';
 import { motion } from 'motion/react';
 import type { ElementType, JSX } from 'react';
 import { memo } from 'react';
-
-import { cn } from '@/renderer/ds/cn';
 
 type MotionHTMLProps = MotionProps & Record<string, unknown>;
 

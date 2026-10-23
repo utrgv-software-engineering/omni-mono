@@ -1,14 +1,14 @@
 import { DndContext, type DragEndEvent, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, horizontalListSortingStrategy, SortableContext, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@omniagents/ui/context-menu';
 import { Globe, Pin, PinOff, Plus } from 'lucide-react';
 import { memo, useCallback, useMemo, useRef } from 'react';
 
 import { fallbackTitle } from '@/lib/url';
 import { ClosableTabChip } from '@/renderer/ds/ClosableTabs';
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/renderer/ds/ui/context-menu';
 import { browserApi } from '@/renderer/features/Browser/state';
 import type { BrowserTab, BrowserTabId, BrowserTabset } from '@/shared/types';
 

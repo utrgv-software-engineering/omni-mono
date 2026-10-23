@@ -1,9 +1,8 @@
+import { Button } from '@omniagents/ui/button';
 import { PanelLeft } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { createContext, useCallback, useContext, useMemo, useRef, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-
-import { Button } from '@/renderer/ds/ui/button';
 
 type HeaderActionsContextValue = {
   showArtifactsButton: boolean;

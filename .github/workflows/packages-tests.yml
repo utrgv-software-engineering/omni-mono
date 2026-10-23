@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [client]
+        package: [client, ui]
     defaults:
       run:
         working-directory: packages/${{ matrix.package }}

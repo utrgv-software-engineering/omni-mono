@@ -1,17 +1,12 @@
 import { useStore } from '@nanostores/react';
+import { Button } from '@omniagents/ui/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@omniagents/ui/dropdown-menu';
+import { Tabs } from '@omniagents/ui/tabs';
 import { Ellipsis, MessageSquarePlus, Pin, PinOff } from 'lucide-react';
 import { memo, type ReactNode, useCallback, useMemo } from 'react';
 
 import { useIsDesktop } from '@/renderer/common/use-is-desktop';
 import { PageTabsList, PageTabsTrigger } from '@/renderer/ds/PageTabs';
-import { Button } from '@/renderer/ds/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/renderer/ds/ui/dropdown-menu';
-import { Tabs } from '@/renderer/ds/ui/tabs';
 import { codeApi } from '@/renderer/features/Code/state';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { ProjectId } from '@/shared/types';

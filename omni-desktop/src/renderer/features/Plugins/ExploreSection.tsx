@@ -1,10 +1,10 @@
+import { Badge } from '@omniagents/ui/badge';
+import { Button } from '@omniagents/ui/button';
+import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle } from '@omniagents/ui/item';
+import { Spinner } from '@omniagents/ui/spinner';
 import { Lightbulb, PlugZap } from 'lucide-react';
 import { memo } from 'react';
 
-import { Badge } from '@/renderer/ds/ui/badge';
-import { Button } from '@/renderer/ds/ui/button';
-import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle } from '@/renderer/ds/ui/item';
-import { Spinner } from '@/renderer/ds/ui/spinner';
 import { AppIcon } from '@/renderer/features/Code/AppIcon';
 import { formatUpdateSummary } from '@/renderer/features/Plugins/InstalledSection';
 import type { ExplorePlugin, PluginKind } from '@/renderer/features/Plugins/plugin-cards';

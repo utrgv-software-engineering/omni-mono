@@ -1,5 +1,3 @@
-import { memo, useCallback, useState } from 'react';
-
 import {
   AlertDialog,
   AlertDialogAction,
@@ -9,8 +7,10 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/renderer/ds/ui/alert-dialog';
-import { Button } from '@/renderer/ds/ui/button';
+} from '@omniagents/ui/alert-dialog';
+import { Button } from '@omniagents/ui/button';
+import { memo, useCallback, useState } from 'react';
+
 import { persistedStoreApi } from '@/renderer/services/store';
 
 export const SettingsModalResetButton = memo(() => {
