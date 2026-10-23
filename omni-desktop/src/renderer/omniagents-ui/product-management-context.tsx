@@ -1,10 +1,14 @@
+import { RPCClient } from '@omniagents/client/rpc/client';
+import {
+  ManagementRepository,
+  type ManagementSnapshot,
+  type ManagementTransport,
+} from '@omniagents/client/rpc/management-repository';
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 
 import { emitter, wsEmitter } from '@/renderer/services/ipc';
 import type { AgentRuntimeConnection, ReasoningEffort, RuntimeModelList } from '@/shared/types';
 
-import { RPCClient } from './rpc/client';
-import { ManagementRepository, type ManagementSnapshot, type ManagementTransport } from './rpc/management-repository';
 import { resolveUiConfig } from './ui-config';
 
 export type ProductManagementBootstrapStatus = 'starting' | 'connecting' | 'ready' | 'error';

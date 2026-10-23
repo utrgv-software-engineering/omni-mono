@@ -1,11 +1,5 @@
+import type { EscalationInfo } from '@omniagents/client/session/panel-types';
 import React from 'react';
-
-export type EscalationInfo = {
-  request_id: string;
-  message: string;
-  session_id?: string;
-  run_id?: string;
-};
 
 type Props = {
   escalation: EscalationInfo | null;

@@ -1,6 +1,5 @@
+import type { McpServerSnapshot } from '@omniagents/client/rpc/mcp-management';
 import { describe, expect, it } from 'vitest';
-
-import type { McpServerSnapshot } from '@/renderer/omniagents-ui/rpc/mcp-management';
 
 import { mcpCreateInput, mcpServerEntryFromSnapshot, mcpUpdateInput } from './mcp-config-adapter';
 

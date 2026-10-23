@@ -1,8 +1,7 @@
+import type { GitDiffFile, GitStatusEntry } from '@omniagents/client/rpc/git';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-import type { GitDiffFile, GitStatusEntry } from '@/renderer/omniagents-ui/rpc/git';
 
 import { GitDiffStream } from './GitDiffStream';
 

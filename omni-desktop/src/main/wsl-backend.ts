@@ -22,9 +22,9 @@ import { randomBytes } from 'node:crypto';
 import { createReadStream, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { uuidv4 } from '@omniagents/client/util/uuid';
 import { app } from 'electron';
 
-import { uuidv4 } from '@/lib/uuid';
 import { signWsToken } from '@/server/ws-token';
 import type { RemoteBackend, WslBackend, WslBackendStatus, WslDetectResult } from '@/shared/types';
 

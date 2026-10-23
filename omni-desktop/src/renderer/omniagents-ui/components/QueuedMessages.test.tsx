@@ -1,8 +1,7 @@
+import type { QueuedMessage } from '@omniagents/client/rpc/client';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { expect, it, vi } from 'vitest';
-
-import type { QueuedMessage } from '@/renderer/omniagents-ui/rpc/client';
 
 import { QueuedMessages } from './QueuedMessages';
 

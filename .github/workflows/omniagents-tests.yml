@@ -5,10 +5,16 @@ on:
     branches: [main, dev]
     paths:
       - 'omniagents/**'
+      - 'packages/**'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/omniagents-tests.yml'
   pull_request:
     paths:
       - 'omniagents/**'
+      - 'packages/**'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/omniagents-tests.yml'
   workflow_dispatch:
 

@@ -7,7 +7,8 @@ import {
   ReconnectController,
   WS_CLOSE_FORBIDDEN,
   WS_CLOSE_UNAUTHENTICATED,
-} from '@/shared/lifecycle';
+} from '@omniagents/client/lifecycle';
+
 import type { TransportEmitter, TransportListener } from '@/shared/transport';
 import type { IpcEvents, IpcRendererEvents } from '@/shared/types';
 
@@ -52,7 +53,7 @@ const LOCAL_LIFECYCLE_POLICY: LifecyclePolicy = {
   reconnectMaxAttempts: Number.POSITIVE_INFINITY,
 };
 
-import { uuidv4 } from '@/lib/uuid';
+import { uuidv4 } from '@omniagents/client/util/uuid';
 
 /**
  * Optional remote-backend configuration. When set, ``WsTransportEmitter``

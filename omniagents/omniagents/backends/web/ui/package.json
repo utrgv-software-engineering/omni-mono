@@ -12,6 +12,7 @@
     "lint": "eslint ."
   },
   "dependencies": {
+    "@omniagents/client": "*",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "clsx": "^2.1.1",
@@ -30,18 +31,15 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
-    "@open-rpc/meta-schema": "^1.14.9",
     "@tailwindcss/typography": "^0.5.15",
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
     "@vitejs/plugin-react": "^5.0.0",
-    "ajv": "^8.17.1",
     "autoprefixer": "^10.4.21",
     "eslint": "^9.39.5",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.26",
     "globals": "^16.5.0",
-    "json-schema-to-typescript": "^15.0.4",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
     "typescript": "~5.8.3",

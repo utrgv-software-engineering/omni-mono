@@ -1,9 +1,8 @@
+import type { GitClient, WorkspaceRepo } from '@omniagents/client/rpc/git';
+import { workspaceRepo } from '@omniagents/client/rpc/git';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-import type { GitClient, WorkspaceRepo } from '@/renderer/omniagents-ui/rpc/git';
-import { workspaceRepo } from '@/renderer/omniagents-ui/rpc/git';
 
 import { type GitRepositoryCapabilities, type GitSyncOptions, GitToolsPanel } from './GitToolsPanel';
 import { describeConfirmation, useGitMutations } from './use-git-mutations';

@@ -1,15 +1,15 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-
+import { OmniagentsRpcError } from '@omniagents/client/protocol/errors';
 import type {
   FsClient,
   FsListResult,
   TextFileReadResult,
   WatchCallbacks,
   WatchRegistry,
-} from '@/renderer/omniagents-ui/rpc/fs';
+} from '@omniagents/client/rpc/fs';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
 import type { FileEditorSaveInput, FileEditorWatchEvent } from '@/shared/machines/file-editor.machine';
 import { FileEditorSaveConflictError } from '@/shared/machines/file-editor.machine';
-import { OmniagentsRpcError } from '@/shared/omniagents-rpc';
 
 import { BinaryFileEditorError, FsFileEditorIO } from './fs-file-editor-io';
 

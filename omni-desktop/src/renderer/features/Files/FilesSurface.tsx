@@ -1,4 +1,6 @@
 import { useStore } from '@nanostores/react';
+import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
+import { FsClient, WatchRegistry } from '@omniagents/client/rpc/fs';
 import { useSelector } from '@xstate/react';
 import { PanelLeftIcon, TriangleAlert } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -21,12 +23,11 @@ import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTi
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/renderer/ds/ui/resizable';
 import { Spinner } from '@/renderer/ds/ui/spinner';
 import { Toggle } from '@/renderer/ds/ui/toggle';
-import { FsClient, WatchRegistry } from '@/renderer/omniagents-ui/rpc/fs';
 import { useRPCClient, useRPCConnected } from '@/renderer/omniagents-ui/rpc-context';
 import { persistedStoreApi } from '@/renderer/services/store';
 import { isThemeDark } from '@/renderer/theme/themes';
 import { type FileEditorLease, FileEditorRegistry } from '@/shared/machines/file-editor-registry';
-import type { ExecutionTarget, WorkspaceMountDescriptor } from '@/shared/types';
+import type { WorkspaceMountDescriptor } from '@/shared/types';
 
 import { CodeMirrorEditor } from './CodeMirrorEditor';
 import { FileTabs } from './FileTabs';

@@ -1,3 +1,12 @@
+import {
+  type ListModelsResult,
+  ModelCatalogClient,
+  type ModelCatalogRpcTransport,
+  type ReasoningEffort,
+} from '@omniagents/client/rpc/model-catalog';
+import { getConversationDraft, updateConversationDraft } from '@omniagents/client/session/conversation-drafts';
+import type { ConversationSession } from '@omniagents/client/session/conversation-session';
+import { SessionPanelStore } from '@omniagents/client/session/session-panels';
 import { BrainIcon, ChevronDownIcon, ListChecksIcon, ShieldCheckIcon, SparklesIcon } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
 
@@ -12,16 +21,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/renderer/ds/ui/dropdown-menu';
-import { getConversationDraft, updateConversationDraft } from '@/renderer/omniagents-ui/conversation-drafts';
 import { useSessionStoreField } from '@/renderer/omniagents-ui/hooks/use-chat-session';
-import {
-  type ListModelsResult,
-  ModelCatalogClient,
-  type ModelCatalogRpcTransport,
-  type ReasoningEffort,
-} from '@/renderer/omniagents-ui/rpc/model-catalog';
-import type { ConversationSession } from '@/renderer/omniagents-ui/session/conversation-session';
-import { SessionPanelStore } from '@/renderer/omniagents-ui/session/session-panels';
 
 const REASONING_EFFORTS = new Set<ReasoningEffort>(['low', 'medium', 'high', 'xhigh']);
 

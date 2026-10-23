@@ -1,3 +1,12 @@
+import type {
+  GitBranch,
+  GitClient,
+  GitCommitSummary,
+  GitConflict,
+  GitResetMode,
+  GitWorktree,
+  WorkspaceRepo,
+} from '@omniagents/client/rpc/git';
 import { TriangleAlert } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -9,15 +18,6 @@ import { Input } from '@/renderer/ds/ui/input';
 import { NativeSelect } from '@/renderer/ds/ui/native-select';
 import { ScrollArea } from '@/renderer/ds/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/renderer/ds/ui/tabs';
-import type {
-  GitBranch,
-  GitClient,
-  GitCommitSummary,
-  GitConflict,
-  GitResetMode,
-  GitWorktree,
-  WorkspaceRepo,
-} from '@/renderer/omniagents-ui/rpc/git';
 
 import type { GitMutations } from './use-git-mutations';
 

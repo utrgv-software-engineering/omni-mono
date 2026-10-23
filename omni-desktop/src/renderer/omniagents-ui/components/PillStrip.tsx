@@ -1,3 +1,13 @@
+import {
+  type BashJobsKillResult,
+  type BashJobSummary,
+  jobItemId,
+  requestActivityFocus,
+  subagentItemId,
+  type SubagentSummary,
+  type WorkersKillResult,
+} from '@omniagents/client/transcript/activity-store';
+import type { TaskSummary } from '@omniagents/client/transcript/canonical-plan-tasks';
 import { ArrowUpRightIcon, BotIcon, ListChecksIcon, SquareIcon, SquareTerminalIcon, XIcon } from 'lucide-react';
 import React from 'react';
 
@@ -15,16 +25,6 @@ import {
   SubagentTail,
   useStopController,
 } from '@/renderer/omniagents-ui/activity-presentation';
-import {
-  type BashJobsKillResult,
-  type BashJobSummary,
-  jobItemId,
-  requestActivityFocus,
-  subagentItemId,
-  type SubagentSummary,
-  type WorkersKillResult,
-} from '@/renderer/omniagents-ui/activity-store';
-import type { TaskSummary } from '@/renderer/omniagents-ui/canonical-plan-tasks';
 
 /**
  * The composer's status row: session controls (children) followed by

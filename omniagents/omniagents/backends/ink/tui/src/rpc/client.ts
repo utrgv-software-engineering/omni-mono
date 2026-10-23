@@ -20,12 +20,12 @@ import type {
   InitializeResult,
   RpcMethodMap as GeneratedRpcMethodMap,
   RpcNotificationMap as GeneratedRpcNotificationMap,
-} from "../protocol/generated/gui-v2.js";
+} from "@omniagents/client/protocol/gui-v2";
 import {
   GUI_PROTOCOL_VERSION,
   isGuiInitializeResult,
   supportsGuiProtocolVersion,
-} from "../protocol/generated/gui-v2.js";
+} from "@omniagents/client/protocol/gui-v2";
 import {
   classifyCloseCode,
   classifyRpcErrorCode,

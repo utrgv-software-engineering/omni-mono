@@ -1,7 +1,7 @@
+import { uuidv4 } from '@omniagents/client/util/uuid';
 import { nanoid } from 'nanoid';
 
 import { pruneConversations, upsertConversation } from '@/lib/chat-conversations';
-import { uuidv4 } from '@/lib/uuid';
 import type { ChatConversation, CodeTab, CodeTabId, ProjectId, StoreData } from '@/shared/types';
 import { isChatColumn } from '@/shared/types';
 

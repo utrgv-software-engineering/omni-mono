@@ -1,3 +1,11 @@
+import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
+import {
+  GitClient,
+  type GitDiffResult,
+  type GitListRepositoriesResult,
+  type GitStatusResult,
+  type WorkspaceRepo,
+} from '@omniagents/client/rpc/git';
 import { PanelLeftIcon, RefreshCwIcon, TriangleAlert } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -21,15 +29,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/renderer
 import { Spinner } from '@/renderer/ds/ui/spinner';
 import { Toggle } from '@/renderer/ds/ui/toggle';
 import { ToggleGroup, ToggleGroupItem } from '@/renderer/ds/ui/toggle-group';
-import {
-  GitClient,
-  type GitDiffResult,
-  type GitListRepositoriesResult,
-  type GitStatusResult,
-  type WorkspaceRepo,
-} from '@/renderer/omniagents-ui/rpc/git';
 import { useRPCClient, useRPCConnected } from '@/renderer/omniagents-ui/rpc-context';
-import type { ExecutionTarget } from '@/shared/types';
 
 import { mergeUntracked, repositoryLabel } from './diff-model';
 import { GitDiffStream, type GitStreamMode } from './GitDiffStream';

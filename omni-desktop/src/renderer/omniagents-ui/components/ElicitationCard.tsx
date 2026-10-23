@@ -1,3 +1,4 @@
+import type { ElicitationRequest, ElicitationResponse } from '@omniagents/client/rpc/elicitation';
 import { ExternalLinkIcon, ShieldQuestionIcon } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
@@ -7,7 +8,6 @@ import { Checkbox } from '@/renderer/ds/ui/checkbox';
 import { Input } from '@/renderer/ds/ui/input';
 import { Label } from '@/renderer/ds/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/renderer/ds/ui/radio-group';
-import type { ElicitationRequest, ElicitationResponse } from '@/renderer/omniagents-ui/rpc/elicitation';
 
 type Props = {
   request: ElicitationRequest;

@@ -1,15 +1,15 @@
-import { memo, useCallback } from 'react';
-
-import { Button } from '@/renderer/ds/ui/button';
-import { ButtonGroup } from '@/renderer/ds/ui/button-group';
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/renderer/ds/ui/empty';
 import type {
   GitDiffFile,
   GitDiffHunk,
   GitFileSelection,
   GitSelection,
   GitStatusEntry,
-} from '@/renderer/omniagents-ui/rpc/git';
+} from '@omniagents/client/rpc/git';
+import { memo, useCallback } from 'react';
+
+import { Button } from '@/renderer/ds/ui/button';
+import { ButtonGroup } from '@/renderer/ds/ui/button-group';
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/renderer/ds/ui/empty';
 
 import { type ChangeBadge, humanFileStatus, linesFromHunk, statusBadge } from './diff-model';
 import { DiffLines, DiffSection, useDiffTokens } from './DiffView';

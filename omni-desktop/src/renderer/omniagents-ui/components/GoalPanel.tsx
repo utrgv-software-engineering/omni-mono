@@ -1,6 +1,7 @@
+import type { GoalSnapshot } from '@omniagents/client/session/panel-types';
+import { truncateOneLine } from '@omniagents/client/util/text';
 import React from 'react';
 
-import { truncateOneLine } from '@/lib/text';
 import { Button } from '@/renderer/ds/ui/button';
 import { Card } from '@/renderer/ds/ui/card';
 
@@ -8,18 +9,6 @@ import { Card } from '@/renderer/ds/ui/card';
 // snapshot=null means no goal is set on this session (panel renders nothing).
 // "paused" is a non-terminal hold state — the periodic tick is off but
 // the goal can be resumed via /goal.resume.
-export type GoalSnapshot = {
-  goal: string;
-  turn: number;
-  max_turns: number;
-  tick_interval?: number;
-  last_reason: string | null;
-  status: 'active' | 'completed' | 'cancelled' | 'paused';
-  started_at: number;
-  completion_reason: string | null;
-  // Auditable artifact attached on terminal states (achieved/blocked).
-  evidence?: string | null;
-};
 
 const GOAL_TRUNCATE = 100;
 

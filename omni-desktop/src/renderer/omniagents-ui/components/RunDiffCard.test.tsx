@@ -1,8 +1,7 @@
+import type { RunDiffFile, RunDiffItem } from '@omniagents/client/transcript/chat-types';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-import type { RunDiffFile, RunDiffItem } from '@/shared/chat-types';
 
 import { RunDiffCard } from './RunDiffCard';
 

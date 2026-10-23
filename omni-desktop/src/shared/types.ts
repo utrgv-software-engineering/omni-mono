@@ -1,3 +1,4 @@
+import type { RunOverrides } from '@omniagents/client/rpc/execution';
 import type { Rectangle } from 'electron/main';
 import type { Schema } from 'electron-store';
 
@@ -708,19 +709,6 @@ export type OmniInstallProcessStatus = Status<
 export type AgentRuntimeConnection = {
   baseUrl: string;
   authToken?: string;
-};
-
-/**
- * Complete address of a materialized AgentHost execution environment.
- *
- * The generation is part of the address: re-materializing an environment can
- * reuse its id with a newer generation, and Omniagents rejects stale callers
- * when this value is supplied. Workspace RPCs must carry all three fields.
- */
-export type ExecutionTarget = {
-  workspaceId: string;
-  environmentId: string;
-  environmentGeneration: number;
 };
 
 /** Result of retiring one execution environment or its owning AgentHost. */
@@ -1514,23 +1502,6 @@ type ProjectIpcEvents = Namespaced<
     // Project file listing
   }
 >;
-
-/**
- * Per-dispatch run intent shipped with a bridge-driven run. The column merges
- * it onto its locally owned variables.
- */
-export type RunOverrides = {
-  /** Prepended to the column's existing additional_instructions. */
-  additionalInstructions?: string;
-  /** Session approval reviewer: 'auto' routes approvals to the guardian. */
-  approvalsReviewer?: 'user' | 'auto';
-  /** Approval policy override; replaces the column's default. */
-  safeToolOverrides?: {
-    safe_tool_names?: string[];
-    safe_tool_patterns?: string[];
-    safe_mcp_tools?: { server_label: string; tool_name: string }[];
-  };
-};
 
 /**
  * Routine bridge for scheduled tasks (Routines). When a routine fires, main asks the renderer

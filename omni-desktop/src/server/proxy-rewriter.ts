@@ -1,9 +1,9 @@
 import { Readable } from 'node:stream';
 
+import { uuidv4 } from '@omniagents/client/util/uuid';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { WebSocket as WsWebSocket } from 'ws';
 
-import { uuidv4 } from '@/lib/uuid';
 import type { WsHandler } from '@/server/ws-handler';
 
 const DYNAMIC_PROXY_TTL_MS = 30 * 60 * 1000;

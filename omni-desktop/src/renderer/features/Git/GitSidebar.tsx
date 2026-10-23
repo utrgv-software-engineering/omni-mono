@@ -1,3 +1,4 @@
+import type { GitStatusEntry, GitStatusResult } from '@omniagents/client/rpc/git';
 import { memo, useMemo, useState } from 'react';
 
 import { cn } from '@/renderer/ds/cn';
@@ -5,7 +6,6 @@ import { Button } from '@/renderer/ds/ui/button';
 import { Checkbox } from '@/renderer/ds/ui/checkbox';
 import { ScrollArea } from '@/renderer/ds/ui/scroll-area';
 import { Textarea } from '@/renderer/ds/ui/textarea';
-import type { GitStatusEntry, GitStatusResult } from '@/renderer/omniagents-ui/rpc/git';
 
 import { statusBadge } from './diff-model';
 import type { GitMutations } from './use-git-mutations';

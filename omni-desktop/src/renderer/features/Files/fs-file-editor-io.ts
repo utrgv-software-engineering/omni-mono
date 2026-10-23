@@ -1,3 +1,4 @@
+import { OmniagentsRpcError } from '@omniagents/client/protocol/errors';
 import type {
   ExecutionTargetInput,
   FsClient,
@@ -5,7 +6,8 @@ import type {
   WatchCallbacks,
   WatchEvent,
   WatchRegistry,
-} from '@/renderer/omniagents-ui/rpc/fs';
+} from '@omniagents/client/rpc/fs';
+
 import {
   type FileEditorFile,
   type FileEditorIdentity,
@@ -13,7 +15,6 @@ import {
   FileEditorSaveConflictError,
   type FileEditorWatchEvent,
 } from '@/shared/machines/file-editor.machine';
-import { OmniagentsRpcError } from '@/shared/omniagents-rpc';
 
 export class BinaryFileEditorError extends Error {
   constructor(readonly path: string) {

@@ -12,8 +12,9 @@
  * renderer writes on mount and the client-tool handler reads.
  */
 
+import type { MessageItem } from '@omniagents/client/transcript/chat-types';
+
 import type { SessionItem } from '@/renderer/omniagents-ui/components/SessionList';
-import type { MessageItem } from '@/shared/chat-types';
 
 /**
  * Stable, monotonic id for a transcript entry — survives the only two mutations

@@ -6,7 +6,7 @@ on:
     tags: ['omni-desktop-v*']
     paths:
       - 'omni-desktop/**'
-      - 'omniagents/omniagents/backends/web/ui/src/protocol/generated/**'
+      - 'packages/**'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/omni-desktop-build.yml'
@@ -14,7 +14,7 @@ on:
     types: [ready_for_review, opened, synchronize]
     paths:
       - 'omni-desktop/**'
-      - 'omniagents/omniagents/backends/web/ui/src/protocol/generated/**'
+      - 'packages/**'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/omni-desktop-build.yml'

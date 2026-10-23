@@ -1,13 +1,8 @@
+import type { NotificationInfo } from '@omniagents/client/session/panel-types';
 import React from 'react';
 
 import { Button } from '@/renderer/ds/ui/button';
 import { Card } from '@/renderer/ds/ui/card';
-
-export type NotificationInfo = {
-  id: string;
-  message: string;
-  timestamp: number;
-};
 
 type Props = {
   notifications: NotificationInfo[];

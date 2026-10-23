@@ -1,12 +1,11 @@
-import { act } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
 import {
   conversationDrafts,
   getConversationDraft,
   updateConversationDraft,
-} from '@/renderer/omniagents-ui/conversation-drafts';
+} from '@omniagents/client/session/conversation-drafts';
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ConversationComposer, ConversationComposerProvider } from './ConversationComposer';
 import { Input } from './Input';

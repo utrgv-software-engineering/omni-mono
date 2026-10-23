@@ -1,6 +1,9 @@
 import { AppRenderer } from '@mcp-ui/client';
 import type { CallToolResult, ReadResourceResult } from '@modelcontextprotocol/sdk/types.js';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
+import type { ActivityGroupData } from '@omniagents/client/transcript/activity-group';
+import { formatArgsPreview, groupItems } from '@omniagents/client/transcript/activity-group';
+import { messageKey } from '@omniagents/client/transcript/message-key';
 import { motion } from 'framer-motion';
 import {
   CheckCircleIcon,
@@ -26,8 +29,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { getGreeting } from '@/renderer/omniagents-ui/greeting';
 import { useRPCClient } from '@/renderer/omniagents-ui/rpc-context';
 
-import type { ActivityGroupData } from './activity-group';
-import { formatArgsPreview, groupItems } from './activity-group';
 import { ActivityChain } from './ActivityChain';
 import {
   Artifact,
@@ -43,7 +44,6 @@ import { Plan, PlanContent, PlanDescription, PlanFooter, PlanHeader, PlanTitle }
 import { Shimmer } from './ai/shimmer';
 import { Tool, ToolContent, ToolHeader, ToolInput, ToolOutput } from './ai/tool';
 import { ChatContainerContent, ChatContainerRoot, ChatContainerScrollAnchor } from './ChatContainer';
-import { messageKey } from './message-key';
 import { Markdown } from './promptkit/markdown';
 import { RetainedToolOutput, type Retention } from './RetainedToolOutput';
 import { RunDiffCard } from './RunDiffCard';
@@ -59,7 +59,7 @@ export type {
   RunDiffItem,
   StructuredItem,
   ToolItem,
-} from '@/shared/chat-types';
+} from '@omniagents/client/transcript/chat-types';
 import type {
   ApprovalItem,
   ArtifactItem,
@@ -71,7 +71,7 @@ import type {
   RunDiffItem,
   StructuredItem,
   ToolItem,
-} from '@/shared/chat-types';
+} from '@omniagents/client/transcript/chat-types';
 
 // Portal target for maximized artifacts. App.tsx provides the chat-column
 // element so a maximized artifact can absolute-position-fill the pane between

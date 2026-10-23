@@ -1,13 +1,9 @@
+import type { RecapInfo } from '@omniagents/client/session/panel-types';
 import React from 'react';
 
 import { Button } from '@/renderer/ds/ui/button';
 import { Card } from '@/renderer/ds/ui/card';
 import { ScrollArea } from '@/renderer/ds/ui/scroll-area';
-
-export type RecapInfo = {
-  text: string;
-  timestamp: number;
-};
 
 type Props = {
   recap: RecapInfo | null;

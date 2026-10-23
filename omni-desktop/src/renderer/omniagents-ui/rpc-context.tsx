@@ -1,10 +1,9 @@
+import type { RPCClientActor } from '@omniagents/client/machines/rpc-client.machine';
+import { RPCClient } from '@omniagents/client/rpc/client';
+import { getSessionRegistry } from '@omniagents/client/session/session-registry';
 import { useSelector } from '@xstate/react';
 import { createContext, type ReactNode, useContext, useEffect, useMemo } from 'react';
 
-import type { RPCClientActor } from '@/shared/machines/rpc-client.machine';
-
-import { RPCClient } from './rpc/client';
-import { getSessionRegistry } from './session/session-registry';
 import { useUiConfig } from './ui-config';
 
 // ---------------------------------------------------------------------------

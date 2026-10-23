@@ -66,10 +66,12 @@ def test_v2_generation_is_separate_and_checked_in():
 
 
 def test_generated_typescript_supports_strict_indexed_access():
-    ui = ROOT / "omniagents/backends/web/ui"
-    compiler = ui / "node_modules/.bin" / ("tsc.cmd" if os.name == "nt" else "tsc")
+    client = ROOT.parent / "packages/client"
+    compiler = (
+        ROOT.parent / "node_modules/.bin" / ("tsc.cmd" if os.name == "nt" else "tsc")
+    )
     if not compiler.exists():
-        pytest.skip("Install web UI dependencies to verify generated TypeScript")
+        pytest.skip("Install the npm workspace to verify generated TypeScript")
     result = subprocess.run(
         [
             str(compiler),
@@ -83,9 +85,9 @@ def test_generated_typescript_supports_strict_indexed_access():
             "bundler",
             "--module",
             "esnext",
-            "src/protocol/generated/gui-v2.ts",
+            "src/protocol/gui-v2.ts",
         ],
-        cwd=ui,
+        cwd=client,
         capture_output=True,
         text=True,
         timeout=60,

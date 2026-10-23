@@ -1,3 +1,21 @@
+import type { ActivityGroupData, ToolKind } from '@omniagents/client/transcript/activity-group';
+import {
+  categorizeTool,
+  computeGroupSummary,
+  formatArgsPreview,
+  formatGroupFailures,
+  formatGroupSummary,
+  guardianReviewSummary,
+  reasoningDurationSeconds,
+  toolTouchedFile,
+  workflowReviewSummary,
+} from '@omniagents/client/transcript/activity-group';
+import type {
+  GuardianReviewItem,
+  ReasoningItem,
+  ToolItem,
+  WorkflowReviewItem,
+} from '@omniagents/client/transcript/chat-types';
 import { cjk } from '@streamdown/cjk';
 import { code } from '@streamdown/code';
 import { math } from '@streamdown/math';
@@ -20,20 +38,6 @@ import {
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Streamdown } from 'streamdown';
 
-import type { GuardianReviewItem, ReasoningItem, ToolItem, WorkflowReviewItem } from '@/shared/chat-types';
-
-import type { ActivityGroupData, ToolKind } from './activity-group';
-import {
-  categorizeTool,
-  computeGroupSummary,
-  formatArgsPreview,
-  formatGroupFailures,
-  formatGroupSummary,
-  guardianReviewSummary,
-  reasoningDurationSeconds,
-  toolTouchedFile,
-  workflowReviewSummary,
-} from './activity-group';
 import {
   ChainOfThought,
   ChainOfThoughtContent,

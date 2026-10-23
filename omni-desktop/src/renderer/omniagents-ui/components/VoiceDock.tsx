@@ -13,11 +13,11 @@
  * the chat's normal approval cards over /ws; the dock needs no approval UI.
  * Tapping the orb while it speaks interrupts (barge-in).
  */
+import { voiceActive, voiceOrbState, voicePhase } from '@omniagents/client/machines/voice-session.machine';
 import { useSelector } from '@xstate/react';
 
 import type { RealtimeVoice } from '@/renderer/omniagents-ui/hooks/use-realtime-voice';
 import { realtimeVoiceLevel } from '@/renderer/services/realtime-voice';
-import { voiceActive, voiceOrbState, voicePhase } from '@/shared/machines/voice-session.machine';
 
 import Orb from './Orb';
 

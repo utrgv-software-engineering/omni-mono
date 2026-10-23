@@ -1,11 +1,11 @@
-import type { RpcMethodMap, RpcNotificationMap } from '@omniagents/protocol/gui-v2';
+import type { RpcMethodMap, RpcNotificationMap } from '@omniagents/client/protocol/gui-v2';
+import type { RPCClient, RPCConnectionState } from '@omniagents/client/rpc/client';
+import { getSessionRegistry } from '@omniagents/client/session/session-registry';
 import { act, StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { RPCClient, RPCConnectionState } from './rpc/client';
 import { RPCClientProvider, useRPCClient } from './rpc-context';
-import { getSessionRegistry } from './session/session-registry';
 
 const config = vi.hoisted(() => ({ wsBaseUrl: 'ws://runtime.test/gui', token: 'ticket-secret' }));
 

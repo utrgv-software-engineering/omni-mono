@@ -1,9 +1,9 @@
+import type { RunDiffFile, RunDiffItem } from '@omniagents/client/transcript/chat-types';
 import { FileDiffIcon } from 'lucide-react';
 import React from 'react';
 
 import { cn } from '@/renderer/ds/cn';
 import { Button } from '@/renderer/ds/ui/button';
-import type { RunDiffFile, RunDiffItem } from '@/shared/chat-types';
 
 import { Artifact, ArtifactContent, ArtifactHeader, ArtifactTitle } from './ai/artifact';
 

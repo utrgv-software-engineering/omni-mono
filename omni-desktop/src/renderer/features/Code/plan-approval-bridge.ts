@@ -5,9 +5,8 @@
  * until the user clicks approve/reject in the UI. The React side reads `$pendingPlan`
  * and calls `resolvePlanApproval()` when the user decides.
  */
+import type { PlanStep } from '@omniagents/client/transcript/chat-types';
 import { atom } from 'nanostores';
-
-import type { PlanStep } from '@/shared/chat-types';
 
 export type PendingPlan = {
   type: 'plan';

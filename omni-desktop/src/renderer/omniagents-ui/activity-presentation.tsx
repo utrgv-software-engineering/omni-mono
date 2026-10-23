@@ -1,4 +1,12 @@
 import { useStore } from '@nanostores/react';
+import {
+  $activityFocus,
+  type BashJobSummary,
+  clearActivityFocus,
+  type SubagentSummary,
+} from '@omniagents/client/transcript/activity-store';
+import type { TaskSummary } from '@omniagents/client/transcript/canonical-plan-tasks';
+import { oneLine } from '@omniagents/client/util/text';
 import { ArrowLeftIcon, ChevronRightIcon, SquareIcon } from 'lucide-react';
 import {
   Fragment,
@@ -13,15 +21,11 @@ import {
 import { toast } from 'sonner';
 
 import { formatElapsed } from '@/lib/format-time';
-import { oneLine } from '@/lib/text';
 import { cn } from '@/renderer/ds/cn';
 import { Badge } from '@/renderer/ds/ui/badge';
 import { Button } from '@/renderer/ds/ui/button';
 import { Item, ItemContent, ItemDescription, ItemMedia, ItemTitle } from '@/renderer/ds/ui/item';
 import { Spinner } from '@/renderer/ds/ui/spinner';
-
-import { $activityFocus, type BashJobSummary, clearActivityFocus, type SubagentSummary } from './activity-store';
-import type { TaskSummary } from './canonical-plan-tasks';
 
 /**
  * The one presentation vocabulary for background activity — status colors,

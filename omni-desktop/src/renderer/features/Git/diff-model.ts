@@ -1,6 +1,5 @@
+import type { GitDiffHunk, GitRepository, GitStatusEntry, GitStatusResult } from '@omniagents/client/rpc/git';
 import type { BundledLanguage } from 'shiki';
-
-import type { GitDiffHunk, GitRepository, GitStatusEntry, GitStatusResult } from '@/renderer/omniagents-ui/rpc/git';
 
 /**
  * Presentation logic shared by the Git and Review sidecar apps: one display

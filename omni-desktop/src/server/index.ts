@@ -11,7 +11,8 @@ import { join, resolve } from 'path';
 // Server mode always runs as "development" so util.ts resolves paths from project root
 process.env.NODE_ENV = process.env.NODE_ENV || 'development';
 
-import { uuidv4 } from '@/lib/uuid';
+import { uuidv4 } from '@omniagents/client/util/uuid';
+
 import { wireClientManagers, wireGlobalHandlers } from '@/server/managers';
 import { redactProxyUrlForLog, setupProxyRewriter } from '@/server/proxy-rewriter';
 import { ServerStore } from '@/server/store';

@@ -1,9 +1,9 @@
+import { classifyCloseCode, DEFAULT_LIFECYCLE_POLICY } from '@omniagents/client/lifecycle';
 import { WebSocket } from 'ws';
 
 import { wsAuthOptions } from '@/lib/ws-auth';
 import { initializeMainRpcConnection } from '@/main/omniagents-rpc-handshake';
 import type { ProcessManager } from '@/main/process-manager';
-import { classifyCloseCode, DEFAULT_LIFECYCLE_POLICY } from '@/shared/lifecycle';
 import type { IpcRendererEvents } from '@/shared/types';
 
 /**

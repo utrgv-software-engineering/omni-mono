@@ -1,5 +1,7 @@
+import type { RunOverrides } from '@omniagents/client/rpc/execution';
+
 import type { IIpcListener } from '@/shared/ipc-listener';
-import type { IpcRendererEvents, RoutineBridgeEvent, RoutineBridgeRequest, RunOverrides } from '@/shared/types';
+import type { IpcRendererEvents, RoutineBridgeEvent, RoutineBridgeRequest } from '@/shared/types';
 
 // Inlined to avoid a type-level cycle (deps → bridge → deps). Matches the
 // `IWindowSender` exported by the manager deps exactly.

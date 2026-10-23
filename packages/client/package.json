@@ -1,0 +1,37 @@
+{
+  "name": "@omniagents/client",
+  "private": true,
+  "version": "0.0.0",
+  "description": "The OmniAgents GUI protocol client shared by every OmniAgents UI: protocol types, the RPC connection, conversation sessions and the transcript model.",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "lint": "eslint --max-warnings=0 . && prettier --check src",
+    "fix": "eslint --fix . && prettier --write src",
+    "test": "vitest run",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "nanostores": "^1.0.1",
+    "xstate": "^5.30.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.32.0",
+    "@open-rpc/meta-schema": "^1.14.9",
+    "@typescript-eslint/eslint-plugin": "^8.39.0",
+    "@typescript-eslint/parser": "^8.39.0",
+    "ajv": "^8.17.1",
+    "eslint": "^9.32.0",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-simple-import-sort": "^12.1.1",
+    "eslint-plugin-unused-imports": "^4.1.4",
+    "globals": "^16.3.0",
+    "jsdom": "^26.1.0",
+    "json-schema-to-typescript": "^15.0.4",
+    "prettier": "^3.6.2",
+    "typescript": "5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

@@ -1,4 +1,4 @@
-import { validateFsPath } from '@/renderer/omniagents-ui/rpc/fs';
+import { validateFsPath } from '@omniagents/client/rpc/fs';
 
 export type OpenFileIntentSource = 'git-diff' | 'tool-result' | 'code-block' | 'artifact' | 'unknown';
 

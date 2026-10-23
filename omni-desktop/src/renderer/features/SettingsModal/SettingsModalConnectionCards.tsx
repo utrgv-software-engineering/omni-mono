@@ -1,3 +1,4 @@
+import type { ProviderDescriptor } from '@omniagents/client/rpc/model-catalog';
 import { CircleCheck, CircleHelp, CircleX } from 'lucide-react';
 import type { ChangeEvent } from 'react';
 import { memo, useCallback, useEffect, useState } from 'react';
@@ -9,7 +10,6 @@ import { Card, CardContent } from '@/renderer/ds/ui/card';
 import { Input } from '@/renderer/ds/ui/input';
 import { Spinner } from '@/renderer/ds/ui/spinner';
 import { probeFailureCopy } from '@/renderer/features/Onboarding/probe-copy';
-import type { ProviderDescriptor } from '@/renderer/omniagents-ui/rpc/model-catalog';
 import { emitter } from '@/renderer/services/ipc';
 import type { ModelsConfig, ProviderEntry, ProviderProbeResult } from '@/shared/types';
 

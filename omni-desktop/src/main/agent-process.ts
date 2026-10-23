@@ -4,7 +4,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
-import type { RpcMethodMap } from '@omniagents/protocol/gui-v2';
+import type { RpcMethodMap } from '@omniagents/client/protocol/gui-v2';
+import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
 import c from 'ansi-colors';
 import { shellEnvSync } from 'shell-env';
 import { assert } from 'tsafe';
@@ -23,7 +24,6 @@ import type {
   AgentProcessStatus,
   AgentProcessStopResult,
   AgentRuntimeConnection,
-  ExecutionTarget,
   WithTimestamp,
   WorkspaceMountDescriptor,
 } from '@/shared/types';

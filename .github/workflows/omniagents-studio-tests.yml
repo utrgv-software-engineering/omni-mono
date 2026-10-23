@@ -9,11 +9,17 @@ on:
     paths:
       - 'omniagents-studio/**'
       - 'omniagents/**'
+      - 'packages/**'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/omniagents-studio-tests.yml'
   pull_request:
     paths:
       - 'omniagents-studio/**'
       - 'omniagents/**'
+      - 'packages/**'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/omniagents-studio-tests.yml'
   workflow_dispatch:
 

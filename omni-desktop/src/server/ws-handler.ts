@@ -1,6 +1,6 @@
+import { uuidv4 } from '@omniagents/client/util/uuid';
 import type { WebSocket } from 'ws';
 
-import { uuidv4 } from '@/lib/uuid';
 import type { IpcRendererEvents } from '@/shared/types';
 
 type InvokeMessage = {

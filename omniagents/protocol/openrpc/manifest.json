@@ -2,9 +2,8 @@
   "artifacts": [
     "omniagents/rpc/generated/gui_v1/models.py",
     "omniagents/rpc/generated/gui_v1/schema_models.py",
-    "omniagents/backends/web/ui/src/protocol/generated/gui-v1.ts",
-    "omniagents/backends/ink/tui/src/protocol/generated/gui-v1.ts",
-    "omniagents/backends/web/ui/src/protocol/generated/schema-types.ts"
+    "../packages/client/src/protocol/gui-v1.ts",
+    "../packages/client/src/protocol/schema-types.ts"
   ],
   "canonical_sha256": "90fae9ecb7c2b82725c9f494368d2408d1dbfb651cd992b9610829a01a34cd27",
   "generator": "scripts.protocol.generate_gui_protocol",

@@ -1,7 +1,7 @@
-import type { RpcMethodMap } from '@omniagents/protocol/gui-v2';
+import type { RpcMethodMap } from '@omniagents/client/protocol/gui-v2';
+import { AccountManagementClient } from '@omniagents/client/rpc/account-management';
+import { McpManagementClient } from '@omniagents/client/rpc/mcp-management';
 
-import { AccountManagementClient } from '@/renderer/omniagents-ui/rpc/account-management';
-import { McpManagementClient } from '@/renderer/omniagents-ui/rpc/mcp-management';
 import { emitter } from '@/renderer/services/ipc';
 import { isManagementAdminMethod, type ManagementAdminRequest } from '@/shared/management-admin';
 

@@ -1,3 +1,4 @@
+import type { MessageItem } from '@omniagents/client/transcript/chat-types';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -9,7 +10,6 @@ import {
   type SessionController,
   transcriptPage,
 } from '@/renderer/services/session-control';
-import type { MessageItem } from '@/shared/chat-types';
 
 const stub = (over?: Partial<SessionController>): SessionController => ({
   sendMessage: () => {},

@@ -12,10 +12,10 @@
  * by the orb's RAF loop — 60fps updates never touch React state (same
  * pattern as `voice-recording.ts`'s `voiceLevel`).
  */
+import { voiceSessionMachine } from '@omniagents/client/machines/voice-session.machine';
+import { RealtimeRPCClient } from '@omniagents/client/rpc/realtime';
 import { type Actor, createActor } from 'xstate';
 
-import { RealtimeRPCClient } from '@/renderer/omniagents-ui/rpc/realtime';
-import { voiceSessionMachine } from '@/shared/machines/voice-session.machine';
 import type { AudioSettings } from '@/shared/types';
 
 /** Live mic/output level (0..1) for the orb; a plain holder, not a store. */

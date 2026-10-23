@@ -1,3 +1,4 @@
+import type { ArtifactItem } from '@omniagents/client/transcript/chat-types';
 import { CodeIcon, FileTextIcon, GlobeIcon, ImageIcon, XIcon } from 'lucide-react';
 import React, { useMemo } from 'react';
 
@@ -5,8 +6,7 @@ import { Button } from '@/renderer/ds/ui/button';
 import { Item, ItemContent, ItemMedia, ItemTitle } from '@/renderer/ds/ui/item';
 import { ScrollArea } from '@/renderer/ds/ui/scroll-area';
 import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle } from '@/renderer/ds/ui/sheet';
-import type { ArtifactItem } from '@/shared/chat-types';
-export type { ArtifactItem } from '@/shared/chat-types';
+export type { ArtifactItem } from '@omniagents/client/transcript/chat-types';
 
 const MODE_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
   markdown: FileTextIcon,

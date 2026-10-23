@@ -1,11 +1,11 @@
 // @vitest-environment node
 import type { AddressInfo } from 'node:net';
 
+import type { OmniagentsRpcError } from '@omniagents/client/protocol/errors';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocketServer } from 'ws';
 
 import { AgentHostControlClient, agentHostControlTimeoutMs } from '@/main/agent-host-control-client';
-import type { OmniagentsRpcError } from '@/shared/omniagents-rpc';
 
 describe('AgentHostControlClient', () => {
   let server: WebSocketServer | undefined;
@@ -118,4 +118,4 @@ describe('AgentHostControlClient', () => {
     client.close();
   });
 });
-import { guiInitializeResult } from 'tests/unit/gui-initialize';
+import { guiInitializeResult } from '@omniagents/client/testing/gui-initialize';

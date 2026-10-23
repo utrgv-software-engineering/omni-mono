@@ -185,4 +185,4 @@ describe('TerminalProxy dials', () => {
     expect(serve.connections.every((c) => c.authorization === undefined)).toBe(true);
   });
 });
-import { guiInitializeResult } from 'tests/unit/gui-initialize';
+import { guiInitializeResult } from '@omniagents/client/testing/gui-initialize';

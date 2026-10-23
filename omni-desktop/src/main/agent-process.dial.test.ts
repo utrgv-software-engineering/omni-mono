@@ -243,4 +243,4 @@ describe('AgentProcess dial auth (serve mode)', () => {
     expect(serve.connections[0]!.authorization).toBeUndefined();
   });
 });
-import { guiInitializeResult } from 'tests/unit/gui-initialize';
+import { guiInitializeResult } from '@omniagents/client/testing/gui-initialize';

@@ -1,4 +1,5 @@
 import { useStore } from '@nanostores/react';
+import { createMachineLogger } from '@omniagents/client/machines/machine-logger';
 import { useActorRef, useSelector } from '@xstate/react';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { fromCallback } from 'xstate';
@@ -13,7 +14,6 @@ import { $agentStatuses, agentProcessApi, clearStatus } from '@/renderer/service
 import { emitter } from '@/renderer/services/ipc';
 import { $initialized, persistedStoreApi } from '@/renderer/services/store';
 import { type AutoLaunchEvent, autoLaunchMachine, type AutoLaunchPhase } from '@/shared/machines/auto-launch.machine';
-import { createMachineLogger } from '@/shared/machines/machine-logger';
 
 export type { AutoLaunchPhase };
 

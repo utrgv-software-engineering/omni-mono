@@ -9,21 +9,20 @@
  * more `cancelled` flags, no more stale fetches producing HISTORY_ERROR
  * after unmount.
  */
-import { useActorRef, useSelector } from '@xstate/react';
-import { useCallback, useEffect, useMemo } from 'react';
-import { fromCallback } from 'xstate';
-
-import { probeRealtimeCapabilities } from '@/renderer/omniagents-ui/realtime-capabilities';
-import type { RPCClient } from '@/renderer/omniagents-ui/rpc/client';
 import {
   type ChatBootCapabilities,
   type ChatBootEvent,
   chatBootMachine,
   type ChatBootPhase,
   isBootReady,
-} from '@/shared/machines/chat-boot.machine';
-import { createMachineLogger } from '@/shared/machines/machine-logger';
-import type { ExecutionTarget } from '@/shared/types';
+} from '@omniagents/client/machines/chat-boot.machine';
+import { createMachineLogger } from '@omniagents/client/machines/machine-logger';
+import type { RPCClient } from '@omniagents/client/rpc/client';
+import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
+import { probeRealtimeCapabilities } from '@omniagents/client/rpc/realtime-capabilities';
+import { useActorRef, useSelector } from '@xstate/react';
+import { useCallback, useEffect, useMemo } from 'react';
+import { fromCallback } from 'xstate';
 
 import type { UseChatSessionReturn } from './use-chat-session';
 

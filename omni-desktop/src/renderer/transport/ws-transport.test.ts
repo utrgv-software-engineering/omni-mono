@@ -1,7 +1,7 @@
+import type { ConnectionState } from '@omniagents/client/lifecycle';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { WsTransportEmitter } from '@/renderer/transport/ws-transport';
-import type { ConnectionState } from '@/shared/lifecycle';
 
 /**
  * Minimal browser-WebSocket stand-in. Tests drive the server side via

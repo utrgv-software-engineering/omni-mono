@@ -1,9 +1,8 @@
+import type { GitDiffResult, GitStatusResult, WorkspaceRepo } from '@omniagents/client/rpc/git';
+import { GitClient, workspaceRepo } from '@omniagents/client/rpc/git';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-import type { GitDiffResult, GitStatusResult, WorkspaceRepo } from '@/renderer/omniagents-ui/rpc/git';
-import { GitClient, workspaceRepo } from '@/renderer/omniagents-ui/rpc/git';
 
 import { GitSurface } from './GitSurface';
 
@@ -49,8 +48,8 @@ vi.mock('@/renderer/omniagents-ui/rpc-context', () => ({
   useRPCConnected: () => mocks.connected,
 }));
 
-vi.mock('@/renderer/omniagents-ui/rpc/git', async (importOriginal) => {
-  const original = await importOriginal<typeof import('@/renderer/omniagents-ui/rpc/git')>();
+vi.mock('@omniagents/client/rpc/git', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@omniagents/client/rpc/git')>();
   return { ...original, GitClient: vi.fn(() => mocks.git) };
 });
 

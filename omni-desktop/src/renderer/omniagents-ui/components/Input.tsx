@@ -1,5 +1,11 @@
 import { useStore } from '@nanostores/react';
 import {
+  conversationDrafts,
+  getConversationDraft,
+  updateConversationDraft,
+} from '@omniagents/client/session/conversation-drafts';
+import { uuidv4 } from '@omniagents/client/util/uuid';
+import {
   ArrowUpIcon,
   AudioLinesIcon,
   FolderIcon,
@@ -14,16 +20,10 @@ import {
 } from 'lucide-react';
 import React, { useCallback, useId, useMemo, useRef, useState } from 'react';
 
-import { uuidv4 } from '@/lib/uuid';
 import { configuredVoiceMode } from '@/lib/voice-mode';
 import { Button } from '@/renderer/ds/ui/button';
 import { Toggle } from '@/renderer/ds/ui/toggle';
 import { toast } from '@/renderer/features/Toast/state';
-import {
-  conversationDrafts,
-  getConversationDraft,
-  updateConversationDraft,
-} from '@/renderer/omniagents-ui/conversation-drafts';
 import { $modelsConfig } from '@/renderer/services/config';
 import { persistedStoreApi } from '@/renderer/services/store';
 

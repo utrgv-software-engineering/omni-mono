@@ -1,4 +1,5 @@
-import type { McpServerSnapshot } from '@/renderer/omniagents-ui/rpc/mcp-management';
+import type { McpServerSnapshot } from '@omniagents/client/rpc/mcp-management';
+
 import type { McpConfig, McpServerEntry } from '@/shared/types';
 
 const MCP_TYPES = new Set(['stdio', 'sse', 'http', 'streamable_http']);

@@ -1,3 +1,6 @@
+import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
+import type { FsClient, FsEntry, FsListResult, WatchCallbacks } from '@omniagents/client/rpc/fs';
+import { WatchRegistry } from '@omniagents/client/rpc/fs';
 import { EllipsisIcon, File, FilePlus, Folder, FolderOpen, FolderPlus, RefreshCw } from 'lucide-react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
@@ -33,9 +36,7 @@ import {
 } from '@/renderer/ds/ui/dropdown-menu';
 import { Input } from '@/renderer/ds/ui/input';
 import { Spinner } from '@/renderer/ds/ui/spinner';
-import type { FsClient, FsEntry, FsListResult, WatchCallbacks } from '@/renderer/omniagents-ui/rpc/fs';
-import { WatchRegistry } from '@/renderer/omniagents-ui/rpc/fs';
-import type { ExecutionTarget, WorkspaceMountDescriptor } from '@/shared/types';
+import type { WorkspaceMountDescriptor } from '@/shared/types';
 
 export interface WorkspaceTreeWatchRegistry {
   subscribe(path: string, callbacks: WatchCallbacks): Promise<() => Promise<void>>;

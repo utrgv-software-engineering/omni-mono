@@ -12,10 +12,12 @@
  * No session id or tool-call routing lives here — the column owns both.
  */
 
+import type { RunOverrides } from '@omniagents/client/rpc/execution';
+
 import { ensureRoutineSessionTab } from '@/renderer/features/ScheduledTasks/routine-session';
 import { emitter, ipc } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
-import type { RoutineBridgeEvent, RoutineBridgeRequest, RunOverrides } from '@/shared/types';
+import type { RoutineBridgeEvent, RoutineBridgeRequest } from '@/shared/types';
 
 export type RoutineActor = {
   taskId: string;

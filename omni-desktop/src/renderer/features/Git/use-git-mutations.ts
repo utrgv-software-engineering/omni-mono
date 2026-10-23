@@ -1,5 +1,3 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-
 import type {
   GitClient,
   GitConfirmation,
@@ -8,7 +6,8 @@ import type {
   GitResetMode,
   GitSelection,
   WorkspaceRepo,
-} from '@/renderer/omniagents-ui/rpc/git';
+} from '@omniagents/client/rpc/git';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 /**
  * One mutation pipeline for the whole Git app: every write (stage, commit,

@@ -1,4 +1,11 @@
 import { useStore } from '@nanostores/react';
+import {
+  $activityActionsBySession,
+  $activityBySession,
+  type ActivityActions,
+  type BashJobSummary,
+  jobItemId,
+} from '@omniagents/client/transcript/activity-store';
 import { ActivityIcon, RefreshCwIcon } from 'lucide-react';
 import { Fragment, memo, useCallback, useEffect, useMemo, useState } from 'react';
 
@@ -25,13 +32,6 @@ import {
   useStickToBottom,
   useStopController,
 } from '@/renderer/omniagents-ui/activity-presentation';
-import {
-  $activityActionsBySession,
-  $activityBySession,
-  type ActivityActions,
-  type BashJobSummary,
-  jobItemId,
-} from '@/renderer/omniagents-ui/activity-store';
 
 /**
  * The Jobs sidecar app: the session's background bash jobs as a master

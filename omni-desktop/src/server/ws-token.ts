@@ -12,7 +12,7 @@
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
-import { uuidv4 } from '@/lib/uuid';
+import { uuidv4 } from '@omniagents/client/util/uuid';
 
 const DEFAULT_TTL_SEC = 12 * 60 * 60; // 12h — comfortably longer than a session.
 

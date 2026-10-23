@@ -1,10 +1,10 @@
+import { loadCanonicalSessionList, threadToSessionSummary } from '@omniagents/client/rpc/canonical-session-list';
+import type { RPCClient } from '@omniagents/client/rpc/client';
+import { ConversationOrganizationClient } from '@omniagents/client/rpc/conversation-organization';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { MAX_CHAT_CONVERSATIONS } from '@/lib/chat-conversations';
 import type { SessionItem } from '@/renderer/omniagents-ui/components/SessionList';
-import { loadCanonicalSessionList, threadToSessionSummary } from '@/renderer/omniagents-ui/rpc/canonical-session-list';
-import type { RPCClient } from '@/renderer/omniagents-ui/rpc/client';
-import { ConversationOrganizationClient } from '@/renderer/omniagents-ui/rpc/conversation-organization';
 
 const SEARCH_DEBOUNCE_MS = 200;
 

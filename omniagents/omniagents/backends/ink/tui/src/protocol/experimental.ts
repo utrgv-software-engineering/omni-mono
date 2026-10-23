@@ -20,7 +20,7 @@
  *   experimental operation fails vitest until this file is updated.
  */
 
-import type { RpcMethodMap, RpcNotificationMap } from "./generated/gui-v2.js";
+import type { RpcMethodMap, RpcNotificationMap } from "@omniagents/client/protocol/gui-v2";
 
 export const EXPERIMENTAL_REQUESTS = [
   // Session control

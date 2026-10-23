@@ -1,13 +1,12 @@
 import { useStore } from '@nanostores/react';
+import { type ChatSessionPhase, isThinking } from '@omniagents/client/machines/chat-session.machine';
+import type { RPCClient } from '@omniagents/client/rpc/client';
+import type { ConversationSession } from '@omniagents/client/session/conversation-session';
+import type { SessionPanels, SessionPanelStore } from '@omniagents/client/session/session-panels';
+import { getSessionRegistry } from '@omniagents/client/session/session-registry';
+import type { Attachment } from '@omniagents/client/transcript/chat-types';
 import { useSelector } from '@xstate/react';
 import { useCallback, useEffect, useMemo } from 'react';
-
-import type { RPCClient } from '@/renderer/omniagents-ui/rpc/client';
-import type { ConversationSession } from '@/renderer/omniagents-ui/session/conversation-session';
-import type { SessionPanels, SessionPanelStore } from '@/renderer/omniagents-ui/session/session-panels';
-import { getSessionRegistry } from '@/renderer/omniagents-ui/session/session-registry';
-import type { Attachment } from '@/shared/chat-types';
-import { type ChatSessionPhase, isThinking } from '@/shared/machines/chat-session.machine';
 
 function flattenPhase(value: unknown): ChatSessionPhase {
   if (typeof value === 'string') {

@@ -1,8 +1,7 @@
+import type { ElicitationRequest } from '@omniagents/client/rpc/elicitation';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-import type { ElicitationRequest } from '@/renderer/omniagents-ui/rpc/elicitation';
 
 import { ElicitationCard } from './ElicitationCard';
 

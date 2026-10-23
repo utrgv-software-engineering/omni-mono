@@ -1,8 +1,7 @@
+import type { TaskSummary } from '@omniagents/client/transcript/canonical-plan-tasks';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-import type { TaskSummary } from '@/renderer/omniagents-ui/canonical-plan-tasks';
 
 import { PillStrip } from './PillStrip';
 

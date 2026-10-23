@@ -81,6 +81,7 @@
     "@modelcontextprotocol/sdk": "^1.28.0",
     "@nanostores/react": "^1.0.0",
     "@observ33r/object-equals": "^1.1.6",
+    "@omniagents/client": "*",
     "@playwright/test": "^1.60.0",
     "@radix-ui/react-collapsible": "^1.1.12",
     "@radix-ui/react-dropdown-menu": "^2.1.16",

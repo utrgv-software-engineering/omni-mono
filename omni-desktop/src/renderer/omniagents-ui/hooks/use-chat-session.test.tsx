@@ -1,10 +1,9 @@
+import type { RPCClient } from '@omniagents/client/rpc/client';
+import { getSessionRegistry } from '@omniagents/client/session/session-registry';
+import { deferred, fakeSessionClient, historyPage } from '@omniagents/client/session/session-test-support';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-
-import type { RPCClient } from '@/renderer/omniagents-ui/rpc/client';
-import { getSessionRegistry } from '@/renderer/omniagents-ui/session/session-registry';
-import { deferred, fakeSessionClient, historyPage } from '@/renderer/omniagents-ui/session/session-test-support';
 
 import { useChatSession } from './use-chat-session';
 

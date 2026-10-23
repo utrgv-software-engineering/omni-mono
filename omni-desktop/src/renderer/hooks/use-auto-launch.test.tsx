@@ -65,7 +65,7 @@ vi.mock('@/renderer/features/Toast/state', () => ({
   },
 }));
 
-vi.mock('@/shared/machines/machine-logger', () => ({
+vi.mock('@omniagents/client/machines/machine-logger', () => ({
   createMachineLogger,
 }));
 

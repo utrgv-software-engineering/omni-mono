@@ -9,7 +9,6 @@ export default mergeConfig(
     resolve: {
       alias: {
         '@': resolve(__dirname, './src'),
-        '@omniagents/protocol': resolve(__dirname, '../omniagents/omniagents/backends/web/ui/src/protocol/generated'),
         tests: resolve(__dirname, './tests'),
         // Tests run in plain Node — no Electron runtime. Reuse the server
         // mode shim so main-process modules that import from 'electron' can

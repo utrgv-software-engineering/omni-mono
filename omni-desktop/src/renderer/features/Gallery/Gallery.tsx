@@ -1,3 +1,4 @@
+import type { ToolItem } from '@omniagents/client/transcript/chat-types';
 import { CodeIcon, FileTextIcon, GlobeIcon, SendHorizontalIcon } from 'lucide-react';
 import { memo, useState } from 'react';
 
@@ -39,7 +40,6 @@ import {
   PromptInputActions,
   PromptInputTextarea,
 } from '@/renderer/omniagents-ui/components/promptkit/PromptInput';
-import type { ToolItem } from '@/shared/chat-types';
 
 const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
   <section className="mb-12">

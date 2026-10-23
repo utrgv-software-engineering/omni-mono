@@ -17,12 +17,12 @@
 import './Banner.css';
 
 import { useStore } from '@nanostores/react';
+import { WS_CLOSE_FORBIDDEN, WS_CLOSE_UNAUTHENTICATED } from '@omniagents/client/lifecycle';
 import { TriangleAlert } from 'lucide-react';
 import { memo, useCallback } from 'react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/renderer/ds/ui/alert';
 import { Button } from '@/renderer/ds/ui/button';
-import { WS_CLOSE_FORBIDDEN, WS_CLOSE_UNAUTHENTICATED } from '@/shared/lifecycle';
 
 import { $wsConnectionState } from './state';
 

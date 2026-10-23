@@ -1,10 +1,21 @@
 import { useStore } from '@nanostores/react';
+import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
+import {
+  $activityActionsBySession,
+  $activityBySession,
+  $subagentTranscriptsBySession,
+  type ActivityActions,
+  subagentItemId,
+  type SubagentSummary,
+} from '@omniagents/client/transcript/activity-store';
+import type { TaskSummary } from '@omniagents/client/transcript/canonical-plan-tasks';
+import type { MessageItem } from '@omniagents/client/transcript/chat-types';
+import { uuidv4 } from '@omniagents/client/util/uuid';
 import { BotIcon } from 'lucide-react';
 import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { formatTimestamp } from '@/lib/format-time';
-import { uuidv4 } from '@/lib/uuid';
 import { Alert, AlertDescription, AlertTitle } from '@/renderer/ds/ui/alert';
 import { Button } from '@/renderer/ds/ui/button';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/renderer/ds/ui/empty';
@@ -30,20 +41,10 @@ import {
   useActivityDetail,
   useStopController,
 } from '@/renderer/omniagents-ui/activity-presentation';
-import {
-  $activityActionsBySession,
-  $activityBySession,
-  $subagentTranscriptsBySession,
-  type ActivityActions,
-  subagentItemId,
-  type SubagentSummary,
-} from '@/renderer/omniagents-ui/activity-store';
-import type { TaskSummary } from '@/renderer/omniagents-ui/canonical-plan-tasks';
 import { MessageList } from '@/renderer/omniagents-ui/components/MessageList';
 import { serverOrigin } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
-import type { MessageItem } from '@/shared/chat-types';
-import type { AgentRuntimeConnection, ExecutionTarget } from '@/shared/types';
+import type { AgentRuntimeConnection } from '@/shared/types';
 
 /** Stable empty reference — a fresh literal per render would defeat memo. */
 const EMPTY_ITEMS: MessageItem[] = [];

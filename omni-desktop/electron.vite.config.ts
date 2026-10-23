@@ -2,7 +2,6 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react-swc';
 import { defineConfig } from 'electron-vite';
 import { resolve } from 'path';
-import { searchForWorkspaceRoot } from 'vite';
 import { createHtmlPlugin } from 'vite-plugin-html';
 import tsconfigPaths from 'vite-tsconfig-paths';
 
@@ -34,15 +33,6 @@ export default defineConfig({
   },
   renderer: {
     root: '.',
-    server: {
-      // The GUI protocol module is imported from omniagents (tsconfig paths).
-      fs: {
-        allow: [
-          searchForWorkspaceRoot(process.cwd()),
-          resolve('../omniagents/omniagents/backends/web/ui/src/protocol/generated'),
-        ],
-      },
-    },
     // Pre-bundle streamdown + its plugins at server start. They lazy-load
     // inner chunks (e.g. streamdown's `highlighted-body`), so if Vite
     // discovers them on first markdown render it re-optimizes mid-session,

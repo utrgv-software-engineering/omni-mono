@@ -1,6 +1,7 @@
+import type { WakeupSnapshot } from '@omniagents/client/session/panel-types';
+import { truncateOneLine } from '@omniagents/client/util/text';
 import React from 'react';
 
-import { truncateOneLine } from '@/lib/text';
 import { Button } from '@/renderer/ds/ui/button';
 import { Card } from '@/renderer/ds/ui/card';
 
@@ -9,16 +10,6 @@ import { Card } from '@/renderer/ds/ui/card';
 // active on this session (panel renders nothing). The server emits a
 // final snapshot=null on cancel/exhaustion so the panel disappears
 // server-driven — no client-side dismissal needed.
-export type WakeupSnapshot = {
-  message: string;
-  interval_seconds: number;
-  recurring: boolean;
-  end_at: number | null;
-  end_after: number | null;
-  fires: number;
-  started_at: number;
-  status: 'active' | 'cancelled';
-};
 
 const MESSAGE_TRUNCATE = 100;
 

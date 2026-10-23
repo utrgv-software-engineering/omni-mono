@@ -1,11 +1,12 @@
 import { useStore } from '@nanostores/react';
+import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
+import { uuidv4 } from '@omniagents/client/util/uuid';
 import { motion } from 'framer-motion';
 import { FolderOpen } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { conversationTitle } from '@/lib/chat-conversations';
 import { buildSessionVariables } from '@/lib/client-tools';
-import { uuidv4 } from '@/lib/uuid';
 import { cn } from '@/renderer/ds/cn';
 import { Button } from '@/renderer/ds/ui/button';
 import { Spinner } from '@/renderer/ds/ui/spinner';
@@ -25,7 +26,7 @@ import { emitter, serverOrigin } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
 import { $hoveredVoiceScope, VoiceScopeContext } from '@/renderer/services/voice-recording';
 import type { AppId } from '@/shared/app-registry';
-import type { CodeTab, CodeTabId, ExecutionTarget, WorkspaceMountDescriptor } from '@/shared/types';
+import type { CodeTab, CodeTabId, WorkspaceMountDescriptor } from '@/shared/types';
 import { firstSource, isChatColumn } from '@/shared/types';
 import { getActivePersona } from '@/shared/voice-personas';
 

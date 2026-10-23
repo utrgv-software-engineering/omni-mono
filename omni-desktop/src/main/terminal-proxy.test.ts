@@ -241,4 +241,4 @@ describe('TerminalProxy lifecycle', () => {
     expect(settled).toBe(true);
   });
 });
-import { guiInitializeResult } from 'tests/unit/gui-initialize';
+import { guiInitializeResult } from '@omniagents/client/testing/gui-initialize';

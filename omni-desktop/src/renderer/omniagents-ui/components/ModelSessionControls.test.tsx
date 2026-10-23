@@ -1,10 +1,9 @@
+import type { ModelCatalogRpcTransport } from '@omniagents/client/rpc/model-catalog';
+import { SessionRegistry } from '@omniagents/client/session/session-registry';
+import { deferred, fakeSessionClient } from '@omniagents/client/session/session-test-support';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-import type { ModelCatalogRpcTransport } from '@/renderer/omniagents-ui/rpc/model-catalog';
-import { SessionRegistry } from '@/renderer/omniagents-ui/session/session-registry';
-import { deferred, fakeSessionClient } from '@/renderer/omniagents-ui/session/session-test-support';
 
 import { ModelSessionControls } from './ModelSessionControls';
 

@@ -1,7 +1,3 @@
-import { act } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
 import {
   $subagentTranscriptsBySession,
   type ActivityActions,
@@ -11,8 +7,11 @@ import {
   requestActivityFocus,
   subagentItemId,
   type SubagentSummary,
-} from '@/renderer/omniagents-ui/activity-store';
-import type { TaskSummary } from '@/renderer/omniagents-ui/canonical-plan-tasks';
+} from '@omniagents/client/transcript/activity-store';
+import type { TaskSummary } from '@omniagents/client/transcript/canonical-plan-tasks';
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentsSurface } from './AgentsSurface';
 

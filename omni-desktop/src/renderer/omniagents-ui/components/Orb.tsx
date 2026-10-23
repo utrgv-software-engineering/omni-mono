@@ -15,10 +15,9 @@
  */
 import './Orb.css';
 
+import type { VoiceOrbState } from '@omniagents/client/machines/voice-session.machine';
 import { Mesh, Program, Renderer, Triangle, Vec3 } from 'ogl';
 import { useEffect, useRef } from 'react';
-
-import type { VoiceOrbState } from '@/shared/machines/voice-session.machine';
 
 type OrbProps = {
   state: VoiceOrbState;

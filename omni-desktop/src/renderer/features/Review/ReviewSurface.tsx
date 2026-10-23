@@ -1,4 +1,14 @@
 import { useStore } from '@nanostores/react';
+import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
+import {
+  GitClient,
+  type GitDiffResult,
+  type GitListRepositoriesResult,
+  type GitStatusResult,
+  type WorkspaceRepo,
+} from '@omniagents/client/rpc/git';
+import type { RunDiffFile, RunDiffItem } from '@omniagents/client/transcript/chat-types';
+import { $runDiffBySession } from '@omniagents/client/transcript/run-diff-store';
 import { Folder, FolderOpen, PanelLeftIcon, RefreshCwIcon } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -28,17 +38,7 @@ import {
   treeDirPaths,
 } from '@/renderer/features/Git/diff-model';
 import { DiffLines, DiffSection, useDiffTokens } from '@/renderer/features/Git/DiffView';
-import {
-  GitClient,
-  type GitDiffResult,
-  type GitListRepositoriesResult,
-  type GitStatusResult,
-  type WorkspaceRepo,
-} from '@/renderer/omniagents-ui/rpc/git';
 import { useRPCClient, useRPCConnected } from '@/renderer/omniagents-ui/rpc-context';
-import { $runDiffBySession } from '@/renderer/omniagents-ui/run-diff-store';
-import type { RunDiffFile, RunDiffItem } from '@/shared/chat-types';
-import type { ExecutionTarget } from '@/shared/types';
 
 /**
  * The Review sidecar app: a read-only, review-oriented pass over what

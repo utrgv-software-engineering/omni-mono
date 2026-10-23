@@ -7,9 +7,7 @@
     "sourceMap": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"],
-      // The GUI protocol types are generated inside omniagents.
-      "@omniagents/protocol/*": ["../omniagents/omniagents/backends/web/ui/src/protocol/generated/*"]
+      "@/*": ["src/*"]
     },
     "outDir": "dist",
     "resolveJsonModule": true,

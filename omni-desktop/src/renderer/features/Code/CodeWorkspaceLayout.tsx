@@ -1,3 +1,4 @@
+import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
 import { memo, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 
 import { dispatchOpenFileIntent, WorkspaceFilesPortal } from '@/renderer/features/Files';
@@ -14,7 +15,7 @@ import {
 } from '@/renderer/services/session-control';
 import type { AppId } from '@/shared/app-registry';
 import { APP_REGISTRY } from '@/shared/app-registry';
-import type { AgentRuntimeConnection, ExecutionTarget, WorkspaceMountDescriptor } from '@/shared/types';
+import type { AgentRuntimeConnection, WorkspaceMountDescriptor } from '@/shared/types';
 
 import { EnvironmentDock } from './EnvironmentDock';
 import { codeApi } from './state';
@@ -32,7 +33,7 @@ type CodeWorkspaceLayoutProps = {
   headerActionsCompact?: boolean;
   composerExtras?: ReactNode;
   onClientToolCall?: ClientToolCallHandler;
-  pendingPlan?: import('@/shared/chat-types').PlanItem | null;
+  pendingPlan?: import('@omniagents/client/transcript/chat-types').PlanItem | null;
   onPlanDecision?: (approved: boolean) => void;
   /** Chat mode: time-of-day greeting shown on the empty conversation. */
   greeting?: string;

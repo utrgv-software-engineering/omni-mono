@@ -37,7 +37,7 @@ import type {
 import type {
   ClientRequestResolvedParams,
   ItemUpdatedParams,
-} from "../protocol/generated/gui-v2.js";
+} from "@omniagents/client/protocol/gui-v2";
 
 export interface UseMessagesOptions {
   client: RPCClient | null;

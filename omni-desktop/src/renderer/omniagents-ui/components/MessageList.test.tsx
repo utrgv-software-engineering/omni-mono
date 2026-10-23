@@ -1,7 +1,3 @@
-import { act } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
 import type {
   CanonicalItemEnvelope,
   GuardianReviewItem,
@@ -9,7 +5,10 @@ import type {
   ReasoningItem,
   ToolItem,
   WorkflowReviewItem,
-} from '@/shared/chat-types';
+} from '@omniagents/client/transcript/chat-types';
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApprovalCard, MessageList } from './MessageList';
 

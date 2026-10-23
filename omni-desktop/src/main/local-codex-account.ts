@@ -3,7 +3,7 @@
  * the Codex OAuth store; this class only maps the desktop's `codex:*` IPC onto
  * `account_*` management calls.
  */
-import type { RpcMethodMap } from '@omniagents/protocol/gui-v2';
+import type { RpcMethodMap } from '@omniagents/client/protocol/gui-v2';
 
 import type { ManagementAdminRequest } from '@/shared/management-admin';
 import type { CodexAuthStatus, CodexDeviceCode } from '@/shared/types';

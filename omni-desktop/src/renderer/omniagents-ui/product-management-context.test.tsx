@@ -1,4 +1,4 @@
-import type { RpcMethodMap, RpcNotificationMap } from '@omniagents/protocol/gui-v2';
+import type { RpcMethodMap, RpcNotificationMap } from '@omniagents/client/protocol/gui-v2';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -18,6 +18,9 @@ vi.mock('@/renderer/services/ipc', () => ({
   },
 }));
 
+import type { RPCConnectionState } from '@omniagents/client/rpc/client';
+import type { ManagementSnapshot } from '@omniagents/client/rpc/management-repository';
+
 import {
   type ProductManagementClient,
   ProductManagementProvider,
@@ -25,8 +28,6 @@ import {
   useProductManagement,
   useProductManagementSnapshot,
 } from './product-management-context';
-import type { RPCConnectionState } from './rpc/client';
-import type { ManagementSnapshot } from './rpc/management-repository';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 

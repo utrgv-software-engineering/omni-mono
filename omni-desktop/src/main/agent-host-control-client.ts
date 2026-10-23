@@ -1,9 +1,9 @@
-import type { JsonRpcError, RpcMethodMap } from '@omniagents/protocol/gui-v2';
+import { OmniagentsRpcError } from '@omniagents/client/protocol/errors';
+import type { JsonRpcError, RpcMethodMap } from '@omniagents/client/protocol/gui-v2';
 import { WebSocket } from 'ws';
 
 import { wsAuthOptions } from '@/lib/ws-auth';
 import { initializeMainRpcConnection } from '@/main/omniagents-rpc-handshake';
-import { OmniagentsRpcError } from '@/shared/omniagents-rpc';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MATERIALIZATION_TIMEOUT_MS = 15 * 60_000;

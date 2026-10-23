@@ -1,25 +1,9 @@
+import type { LoopTaskSnapshot } from '@omniagents/client/session/panel-types';
+import { truncateOneLine } from '@omniagents/client/util/text';
 import React from 'react';
 
-import { truncateOneLine } from '@/lib/text';
 import { Button } from '@/renderer/ds/ui/button';
 import { Card } from '@/renderer/ds/ui/card';
-
-export type LoopTaskSnapshot = {
-  id: string;
-  prompt: string;
-  mode: 'dynamic' | 'fixed_interval' | 'fixed_cron';
-  cron: string | null;
-  interval_seconds: number | null;
-  recurring: boolean;
-  created_at: number;
-  expires_at: number | null;
-  next_fire_at: number | null;
-  fires: number;
-  status: 'active' | 'cancelled' | 'expired' | 'completed';
-  last_fire_at: number | null;
-  last_reason: string | null;
-  jitter_seconds: number;
-};
 
 const PROMPT_TRUNCATE = 100;
 

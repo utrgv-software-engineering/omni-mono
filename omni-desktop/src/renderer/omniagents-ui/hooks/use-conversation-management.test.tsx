@@ -1,8 +1,7 @@
+import type { RPCClient } from '@omniagents/client/rpc/client';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-import type { RPCClient } from '@/renderer/omniagents-ui/rpc/client';
 
 import { useConversationManagement } from './use-conversation-management';
 

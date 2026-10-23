@@ -1,10 +1,11 @@
+import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
+import type { PlanItem } from '@omniagents/client/transcript/chat-types';
 import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 
 import { serverOrigin } from '@/renderer/services/ipc';
 import type { SessionController } from '@/renderer/services/session-control';
-import type { PlanItem } from '@/shared/chat-types';
-import type { AgentRuntimeConnection, ExecutionTarget } from '@/shared/types';
+import type { AgentRuntimeConnection } from '@/shared/types';
 
 import type { ClientToolCallHandler } from './App';
 import { App as OmniAgentsCore } from './App';

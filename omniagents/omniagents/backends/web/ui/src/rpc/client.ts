@@ -5,8 +5,8 @@ import type {
   InitializeResult,
   RpcMethodMap,
   RpcNotificationMap,
-} from '../protocol/generated/gui-v2'
-import { GUI_PROTOCOL_VERSION, isGuiInitializeResult, supportsGuiProtocolVersion } from '../protocol/generated/gui-v2'
+} from '@omniagents/client/protocol/gui-v2'
+import { GUI_PROTOCOL_VERSION, isGuiInitializeResult, supportsGuiProtocolVersion } from '@omniagents/client/protocol/gui-v2'
 import {
   classifyCloseCode,
   ConnectionClosedError,

@@ -1,6 +1,7 @@
+import type { QueuedMessage } from '@omniagents/client/rpc/client';
+
 import { Button } from '@/renderer/ds/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/renderer/ds/ui/card';
-import type { QueuedMessage } from '@/renderer/omniagents-ui/rpc/client';
 
 type Props = {
   items: QueuedMessage[];

@@ -1,11 +1,38 @@
 import { useStore } from '@nanostores/react';
+import { voiceActive } from '@omniagents/client/machines/voice-session.machine';
+import { respondToApproval } from '@omniagents/client/rpc/approval-response';
+import { loadCanonicalSessionList } from '@omniagents/client/rpc/canonical-session-list';
+import type { ElicitationRequest, ElicitationResponse } from '@omniagents/client/rpc/elicitation';
+import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
+import { parsePlanResult } from '@omniagents/client/rpc/plans-and-diffs';
+import { getConversationDraft, updateConversationDraft } from '@omniagents/client/session/conversation-drafts';
+import { conversationIsReady } from '@omniagents/client/session/conversation-readiness';
+import {
+  $activityBySession,
+  type BashJobsKillResult,
+  type BashJobsTailResult,
+  type BashJobSummary,
+  mergeWorkersSnapshot,
+  normalizeSubagentSnapshot,
+  publishBashJobs,
+  registerActivityActions,
+  type WorkersKillResult,
+} from '@omniagents/client/transcript/activity-store';
+import {
+  negotiatedPlanTasks,
+  rpcPlanTasks,
+  type TaskSummary,
+} from '@omniagents/client/transcript/canonical-plan-tasks';
+import type { RunDiffItem } from '@omniagents/client/transcript/chat-types';
+import { createVoiceMergeLedger, mergeVoiceTranscript } from '@omniagents/client/transcript/merge-voice-transcript';
+import { publishRunDiff } from '@omniagents/client/transcript/run-diff-store';
+import { uuidv4 } from '@omniagents/client/util/uuid';
 import { useSelector } from '@xstate/react';
 import { AnimatePresence, motion } from 'framer-motion';
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { waitFor } from 'xstate';
 
 import { MAX_CHAT_CONVERSATIONS } from '@/lib/chat-conversations';
-import { uuidv4 } from '@/lib/uuid';
 import { Button } from '@/renderer/ds/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/renderer/ds/ui/resizable';
 import { Spinner } from '@/renderer/ds/ui/spinner';
@@ -22,22 +49,7 @@ import {
 } from '@/renderer/services/session-control';
 import { persistedStoreApi } from '@/renderer/services/store';
 import { VoiceScopeContext } from '@/renderer/services/voice-recording';
-import type { RunDiffItem } from '@/shared/chat-types';
-import { voiceActive } from '@/shared/machines/voice-session.machine';
-import type { ExecutionTarget } from '@/shared/types';
 
-import {
-  $activityBySession,
-  type BashJobsKillResult,
-  type BashJobsTailResult,
-  type BashJobSummary,
-  mergeWorkersSnapshot,
-  normalizeSubagentSnapshot,
-  publishBashJobs,
-  registerActivityActions,
-  type WorkersKillResult,
-} from './activity-store';
-import { negotiatedPlanTasks, rpcPlanTasks, type TaskSummary } from './canonical-plan-tasks';
 import type { PendingMessage } from './ChatShell';
 import { type ArtifactItem, ArtifactsPanel } from './components/ArtifactsPanel';
 import { ConversationComposer } from './components/ConversationComposer';
@@ -56,20 +68,12 @@ import { SessionList } from './components/SessionList';
 import { Sidebar } from './components/Sidebar';
 import { VoiceDock } from './components/VoiceDock';
 import { WakeupPanel } from './components/WakeupPanel';
-import { getConversationDraft, updateConversationDraft } from './conversation-drafts';
-import { conversationIsReady } from './conversation-readiness';
 import { OmniAgentsHeaderActionsPortal, OmniAgentsHeaderActionsProvider } from './header-actions';
 import { useChatBoot } from './hooks/use-chat-boot';
 import { useChatSession, useSessionField } from './hooks/use-chat-session';
 import { useConversationManagement } from './hooks/use-conversation-management';
 import { useRealtimeVoice } from './hooks/use-realtime-voice';
-import { respondToApproval } from './lib/approval-response';
-import { createVoiceMergeLedger, mergeVoiceTranscript } from './merge-voice-transcript';
-import { loadCanonicalSessionList } from './rpc/canonical-session-list';
-import type { ElicitationRequest, ElicitationResponse } from './rpc/elicitation';
-import { parsePlanResult } from './rpc/plans-and-diffs';
 import { useRPCClient, useRPCConnected } from './rpc-context';
-import { publishRunDiff } from './run-diff-store';
 import { useUiConfig } from './ui-config';
 
 type UIState = 'connecting' | 'resume' | 'chat' | 'error';
@@ -101,7 +105,7 @@ type AppProps = {
   onController?: (controller: SessionController | null) => void;
   onRunEnd?: (info: { runId?: string; reason?: string }) => void;
   onRunStarted?: (runId: string) => void;
-  pendingPlan?: import('@/shared/chat-types').PlanItem | null;
+  pendingPlan?: import('@omniagents/client/transcript/chat-types').PlanItem | null;
   onPlanDecision?: (approved: boolean) => void;
   /** Routine (scheduled task) id when this column hosts a routine run. */
   routineId?: string;
@@ -790,7 +794,7 @@ function SessionView({
     async (
       text: string,
       files?: File[],
-      runOverrides?: import('@/shared/types').RunOverrides,
+      runOverrides?: import('@omniagents/client/rpc/execution').RunOverrides,
       inputId?: string
     ): Promise<{ runId: string } | undefined> => {
       const submittingSession = actor.getSnapshot();
