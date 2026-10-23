@@ -8,11 +8,11 @@ import subprocess
 import time
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Optional
 from urllib.error import HTTPError, URLError
 
 from omniagents.core.paths import get_traces_dir
-from omniagents.core.project.runtime import build_spec_from_project, load_project
+from omniagents.core.project.runtime import load_project
 from omniagents.core.tracing.storage import SQLiteStorage
 
 from .api import create_api_app
@@ -91,21 +91,11 @@ def serve(
     if manifest_path:
         try:
             project_context = load_project(manifest_path)
-            agent_specs: Dict[str, Any] = {}
-            for agent_key in sorted(project_context.agents_map.keys()):
-                try:
-                    agent_specs[agent_key] = build_spec_from_project(
-                        project_context, agent_key
-                    )
-                except Exception as agent_exc:
-                    logger.warning(
-                        "Unable to load agent '%s': %s", agent_key, agent_exc
-                    )
+            # The project's agents are loaded by AgentRuntimes, which keeps
+            # each one's load error to show beside it.
             project_resources = {
                 "project_name": project or project_context.product.slug,
                 "manifest_path": manifest_path,
-                "agent_specs": agent_specs,
-                "entry_agent_key": project_context.entrypoint,
             }
         except Exception as exc:
             logger.warning("Unable to load project manifest: %s", exc)

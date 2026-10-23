@@ -57,7 +57,6 @@ from .telemetry import build_telemetry, scenario_timer
 __all__ = [
     "run_scenario",
     "run_suite",
-    "run_scenarios_against_agent",
     "is_synthetic",
     "is_scripted_multi_turn",
     "expand_failure_categories",
@@ -129,6 +128,9 @@ def _evaluation_metadata(
     except Exception:
         catalog_id = None
     scenario_meta = {"id": scenario.get("id"), "name": scenario.get("name")}
+    if scenario.get("_source_path"):
+        # The file the scenario is written in, so a review can label it.
+        scenario_meta["path"] = scenario["_source_path"]
     if scenario.get("goal"):
         scenario_meta["goal"] = scenario.get("goal")
     expected = scenario.get("expect")
@@ -790,96 +792,3 @@ async def run_suite(
         out["environment_error"] = env_error
         out["warnings"] = warnings
     return out
-
-
-async def run_scenarios_against_agent(
-    agent_yaml: Path,
-    scenarios: List[Dict[str, Any]],
-    max_turns: int | None = None,
-    include_history: bool = False,
-    workflow_name: str | None = None,
-    progress_cb: Optional[ProgressCallback] = None,
-    scenario_source_path: Optional[Path] = None,
-    concurrency: int = 5,
-    eval_config: Any | None = None,
-) -> List[Dict[str, Any]]:
-    """Run an explicit scenario list against a project agent (Studio's scenario runs).
-
-    The same engine as :func:`run_suite` (every scenario runs, measured or
-    not), returned as Studio's flat per-run rows.
-    """
-    from .pipeline import run_evaluation_async
-
-    if eval_config is not None:
-        cfg = dict(eval_config.config or {})
-    else:
-        import yaml
-
-        raw = yaml.safe_load(Path(agent_yaml).read_text(encoding="utf-8")) or {}
-        cfg = dict(raw.get("evaluation") or {})
-    if scenario_source_path:
-        for sc in scenarios:
-            sc.setdefault("_source_path", str(scenario_source_path))
-    cfg["scenarios"] = scenarios
-    if max_turns is not None:
-        cfg["defaults"] = {**(cfg.get("defaults") or {}), "max_turns": max_turns}
-
-    failed = 0
-
-    def _progress(ev: Dict[str, Any]) -> None:
-        if not progress_cb:
-            return
-        if ev.get("event") == "progress":
-            ev = {**ev, "current": ev.get("index")}
-        progress_cb(ev)
-
-    data = await run_evaluation_async(
-        Path(agent_yaml),
-        eval_config=eval_config,
-        eval_cfg=cfg,
-        workflow_name=workflow_name,
-        include_unmeasured=True,
-        progress_cb=_progress,
-        concurrency=concurrency,
-        include_history=include_history,
-    )
-    rows: List[Dict[str, Any]] = []
-    for run in data["runs"]:
-        sc = run.get("scenario_config") or {}
-        row = {
-            "scenario_id": sc.get("id"),
-            "scenario_name": sc.get("name") or run.get("scenario"),
-            "prompt": sc.get("prompt") or run.get("prompt"),
-            "session_id": run.get("session_id"),
-            "final_assistant_text": run.get("final_assistant_text") or "",
-            "history_len": run.get("history_len", 0),
-            "measures": run.get("measures", []),
-            "passed": run.get("passed"),
-            "answered": run.get("answered"),
-            "type": run.get("type", "scripted"),
-            "exchanges": run.get("exchanges", 1),
-            "trial": run.get("trial"),
-            "metadata": run.get("metadata"),
-            "trace_group_id": run.get("trace_group_id"),
-        }
-        if include_history:
-            row["history"] = run.get("history", [])
-        if scenario_source_path:
-            row["scenario_path"] = str(scenario_source_path)
-        if run.get("error"):
-            row["error"] = run["error"]
-            failed += 1
-        if run.get("type") == "synthetic":
-            row["goal"] = run.get("goal")
-            row["user_completed"] = run.get("user_completed")
-            row["user_completion_reason"] = run.get("user_completion_reason")
-        rows.append(row)
-    if progress_cb:
-        try:
-            done: Dict[str, Any] = {"event": "done", "count": len(rows)}
-            if failed:
-                done["failed"] = failed
-            progress_cb(done)
-        except Exception:
-            pass
-    return rows

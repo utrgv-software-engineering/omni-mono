@@ -547,3 +547,37 @@ def test_evaluations_record_traces_unless_the_manifest_names_a_provider(tmp_path
     data["tracing"] = {"provider": "none"}
     _write_yaml(manifest, data)
     assert load_eval_config(str(manifest)).tracing_config["provider"] == "none"
+
+
+def test_scenarios_record_their_file_and_includes_resolve_beside_it(
+    tmp_path, monkeypatch
+):
+    root = _create_project(tmp_path, scenarios=[{"name": "base", "prompt": "p"}])
+    nested = root / "evaluations" / "scenarios" / "more.yml"
+    shared = root / "evaluations" / "shared" / "extra.yml"
+    _write_yaml(
+        nested, {"scenarios": ["../shared/extra.yml", {"name": "local", "prompt": "q"}]}
+    )
+    _write_yaml(shared, {"scenarios": [{"name": "extra", "prompt": "r"}]})
+    monkeypatch.chdir(tmp_path)  # includes do not depend on where you run from
+
+    scenarios = {s["name"]: s for s in load_eval_config(str(root)).config["scenarios"]}
+
+    assert scenarios["local"]["_source_path"] == str(nested.resolve())
+    assert scenarios["extra"]["_source_path"] == str(shared.resolve())
+
+
+@pytest.mark.parametrize(
+    "content",
+    ["scenarios: [unclosed", "scenarios:\n  - missing/elsewhere.yml\n"],
+)
+def test_a_scenarios_file_that_cannot_be_read_is_an_error(tmp_path, content):
+    root = _create_project(tmp_path, scenarios=[{"name": "base", "prompt": "p"}])
+    broken = root / "evaluations" / "scenarios" / "broken.yml"
+    broken.parent.mkdir(parents=True, exist_ok=True)
+    broken.write_text(content, encoding="utf-8")
+
+    with pytest.raises(
+        (ValueError, FileNotFoundError), match="broken.yml|elsewhere.yml"
+    ):
+        load_eval_config(str(root))

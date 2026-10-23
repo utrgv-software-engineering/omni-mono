@@ -350,3 +350,19 @@ def test_holdout_is_created_and_selects_the_suite(project, monkeypatch):
     workspace.run(split="train", include_unmeasured=True)
     assert split_used["split"] == "train"
     assert len(split_used["names"]) == len(train)
+
+
+def test_a_judge_defined_by_reference_edits_the_referenced_files(project):
+    shared = project / "evaluations/shared"
+    _write(shared / "tone_agent.yml", "agent:\n  model: gpt-5.5\n  instructions_file: tone.md\n")
+    _write(shared / "tone.md", "Judge the tone.")
+    _write(
+        project / "evaluations/evaluation.yml",
+        EVALUATION_YML + "  judges:\n    tone:\n      agent_ref: shared/tone_agent.yml\n",
+    )
+    workspace = EvalWorkspace(project)
+
+    assert workspace.judge("tone")["instructions"] == "Judge the tone."
+    workspace.update_judge("tone", instructions="Judge the tone strictly.")
+
+    assert (shared / "tone.md").read_text() == "Judge the tone strictly."

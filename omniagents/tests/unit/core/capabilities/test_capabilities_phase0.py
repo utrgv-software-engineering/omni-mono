@@ -26,7 +26,10 @@ from omniagents.core.capabilities import (
     parse_capability_spec,
     discover_capabilities_in_dir,
 )
-from omniagents.core.config.loader import load_agent_spec_from_yaml
+from omniagents.core.config.loader import (
+    collect_config_problems,
+    load_agent_spec_from_yaml,
+)
 
 
 def _write(path: Path, content: str) -> None:
@@ -310,7 +313,7 @@ def test_loader_tool_name_conflict_across_capabilities(tmp_path):
         )
 
 
-def test_loader_unknown_capability_warns(tmp_path, capsys):
+def test_loader_unknown_capability_warns(tmp_path):
     agent_path = tmp_path / "agent.yml"
     _write(
         agent_path,
@@ -320,17 +323,18 @@ def test_loader_unknown_capability_warns(tmp_path, capsys):
         capabilities: [nonexistent]
         """,
     )
-    spec = load_agent_spec_from_yaml(
-        str(agent_path),
-        capability_registry={"filesystem": object()},
-    )
+    with collect_config_problems() as problems:
+        spec = load_agent_spec_from_yaml(
+            str(agent_path),
+            capability_registry={"filesystem": object()},
+        )
     assert spec.resolved_capabilities == []
-    out = capsys.readouterr().out
+    out = "\n".join(problems)
     assert "nonexistent" in out
     assert "filesystem" in out  # available list
 
 
-def test_loader_capabilities_without_registry_warns(tmp_path, capsys):
+def test_loader_capabilities_without_registry_warns(tmp_path):
     agent_path = tmp_path / "agent.yml"
     _write(
         agent_path,
@@ -340,9 +344,10 @@ def test_loader_capabilities_without_registry_warns(tmp_path, capsys):
         capabilities: [filesystem]
         """,
     )
-    spec = load_agent_spec_from_yaml(str(agent_path))  # no capability_registry
+    with collect_config_problems() as problems:
+        spec = load_agent_spec_from_yaml(str(agent_path))  # no capability_registry
     assert spec.resolved_capabilities == []
-    out = capsys.readouterr().out
+    out = "\n".join(problems)
     assert "filesystem" in out
     assert "capability_registry" in out
 

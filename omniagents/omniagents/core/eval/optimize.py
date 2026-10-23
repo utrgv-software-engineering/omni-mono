@@ -579,7 +579,7 @@ def optimize_judge_from_project(
     from omniagents.core.eval.gepa_judge_adapter import OmniAgentsJudgeAdapter
     from omniagents.core.eval.stratified_sampler import StratifiedBatchSampler
     from omniagents.core.eval.loader import load_eval_config
-    from omniagents.core.project.apply import apply_judge_updates
+    from omniagents.core.eval.workspace import EvalWorkspace
 
     _eval_config = load_eval_config(
         str(proj_path),
@@ -730,7 +730,9 @@ def optimize_judge_from_project(
     input_cfg = jcfg.get("input") or {}
     seed_instructions = agent_cfg.get("instructions") or ""
     if (not seed_instructions) and agent_cfg.get("instructions_file"):
-        seed_instructions = _P(agent_cfg["instructions_file"]).read_text(encoding="utf-8")
+        seed_instructions = _P(agent_cfg["instructions_file"]).read_text(
+            encoding="utf-8"
+        )
     seed_template = input_cfg.get("template") or ""
     if (not seed_template) and input_cfg.get("template_file"):
         seed_template = _P(input_cfg["template_file"]).read_text(encoding="utf-8")
@@ -1025,20 +1027,27 @@ def optimize_judge_from_project(
         encoding="utf-8",
     )
     print(f"Judge override written: {out_yml}")
+    applied = False
+    apply_error = None
     if bool(apply):
         try:
-            apply_judge_updates(
-                proj_path,
+            EvalWorkspace(proj_path).update_judge(
                 jkey,
-                (
+                instructions=(
                     best.get("instructions")
                     if isinstance(best.get("instructions"), str)
                     else None
                 ),
-                best.get("template") if isinstance(best.get("template"), str) else None,
+                template=(
+                    best.get("template")
+                    if isinstance(best.get("template"), str)
+                    else None
+                ),
             )
-        except Exception:
-            pass
+            applied = True
+        except Exception as exc:  # noqa: BLE001 - reported, the run's results stand
+            apply_error = str(exc)
+            print(f"Could not apply the optimized judge: {apply_error}")
     return {
         "run_dir": str(run_dir),
         "out_json": str(out_json),
@@ -1053,4 +1062,6 @@ def optimize_judge_from_project(
         "template": (
             best.get("template") if isinstance(best.get("template"), str) else None
         ),
+        "applied": applied,
+        "apply_error": apply_error,
     }

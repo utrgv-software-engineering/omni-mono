@@ -9,12 +9,17 @@ runtime, so neither can drift from what runs.
 
 Each runtime is mounted at ``/api/agents/<key>/runtime`` and built on first
 use, with the project directory as its workspace, as running the agent
-from that directory would.
+from that directory would. Editing an agent reloads the project's agents:
+the next connection gets a runtime built from the saved files (one already
+open keeps the runtime it has until it reconnects). An agent that does not
+load is listed with the reason, so it can be opened and fixed.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import FastAPI
@@ -23,6 +28,10 @@ from starlette.types import Receive, Scope, Send
 
 from omniagents.backends.server.app import build_app
 from omniagents.core.agents.service import AgentService
+from omniagents.core.project.agent_files import agent_paths
+from omniagents.core.project.runtime import build_spec_from_project, load_project
+
+logger = logging.getLogger(__name__)
 
 
 class AgentRuntimes:
@@ -31,16 +40,63 @@ class AgentRuntimes:
 
     def __init__(
         self,
-        specs: Dict[str, Any],
+        manifest_path: Optional[Path],
         *,
-        workspace_root: Optional[str],
         auth_token: Optional[str],
     ) -> None:
-        self._specs = specs
-        self._workspace_root = workspace_root
+        self._manifest = manifest_path
+        self._workspace_root = str(manifest_path.parent) if manifest_path else None
         self._auth_token = auth_token
+        self._specs: Dict[str, Any] = {}
+        self._errors: Dict[str, str] = {}
+        self._entrypoint: Optional[str] = None
         self._apps: Dict[str, FastAPI] = {}
         self._lock = asyncio.Lock()
+        self.reload()
+
+    def reload(self) -> None:
+        """Read the project's agents again; runtimes are rebuilt on next use."""
+        specs: Dict[str, Any] = {}
+        errors: Dict[str, str] = {}
+        entrypoint = None
+        if self._manifest is not None:
+            try:
+                project = load_project(str(self._manifest))
+            except Exception as exc:  # one agent's file can stop the project loading
+                logger.warning("Project does not load: %s", exc)
+                errors = {key: str(exc) for key in agent_paths(self._manifest)}
+                self._specs, self._errors, self._entrypoint = {}, errors, None
+                self._apps = {}
+                return
+            entrypoint = project.entrypoint
+            for key in sorted(project.agents_map):
+                try:
+                    specs[key] = build_spec_from_project(project, key)
+                except Exception as exc:  # shown beside the agent, to be fixed
+                    logger.warning("Agent '%s' does not load: %s", key, exc)
+                    errors[key] = str(exc)
+        self._specs, self._errors, self._entrypoint = specs, errors, entrypoint
+        self._apps = {}
+
+    def agents(self) -> list[dict[str, Any]]:
+        """Every agent in the project, the entrypoint first."""
+        listed = []
+        for key in sorted(set(self._specs) | set(self._errors)):
+            spec = self._specs.get(key)
+            listed.append(
+                {
+                    "key": key,
+                    "label": (
+                        getattr(spec, "label", None)
+                        or getattr(spec, "name", None)
+                        or key
+                    ),
+                    "description": getattr(spec, "description", None) or "",
+                    "is_entry": key == self._entrypoint,
+                    "error": self._errors.get(key),
+                }
+            )
+        return sorted(listed, key=lambda a: (not a["is_entry"], a["label"].lower()))
 
     async def app(self, agent_key: str) -> Optional[FastAPI]:
         spec = self._specs.get(agent_key)
@@ -68,11 +124,18 @@ class AgentRuntimes:
             return None
         return await service.describe_agent(workspace_root=self._workspace_root)
 
+    def load_error(self, agent_key: str) -> Optional[str]:
+        return self._errors.get(agent_key)
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         agent_key = (scope.get("path_params") or {}).get("agent_key", "")
         app = await self.app(agent_key)
         if app is None:
             if scope["type"] == "websocket":
+                # Accepted, then refused: a socket closed before acceptance
+                # reaches a browser as a failed handshake, not as 4404.
+                await receive()
+                await send({"type": "websocket.accept"})
                 await send({"type": "websocket.close", "code": 4404})
                 return
             response = JSONResponse(

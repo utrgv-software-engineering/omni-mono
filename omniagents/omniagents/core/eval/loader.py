@@ -102,68 +102,54 @@ def _ensure_list(x: Any) -> List[Any]:
 
 def load_scenarios_file(base_dir: Path, rel_or_abs: str) -> List[Dict[str, Any]]:
     """The scenarios in a scenarios file (a ``scenarios:`` list or a bare
-    list), with its includes expanded. Missing or unreadable: none."""
+    list), with its includes expanded relative to it. Each scenario carries
+    the file it is written in as ``_source_path``, which runs record so a
+    review can find it. A file that is named but missing, or does not
+    parse, raises: a suite silently missing scenarios measures less than
+    it claims."""
+    p = Path(rel_or_abs)
+    if not p.is_absolute():
+        p = (base_dir / rel_or_abs).resolve()
+    if not p.is_file():
+        raise FileNotFoundError(f"Scenarios file not found: {p}")
     try:
-        p = Path(rel_or_abs)
-        if not p.is_absolute():
-            p = (base_dir / rel_or_abs).resolve()
-        if not p.is_file():
-            return []
-        data = _read_yaml(p)
-        if isinstance(data, dict):
-            sc = data.get("scenarios")
-            if isinstance(sc, list):
-                return _expand_scenarios(p.parent, sc)
-            return []
-        if isinstance(data, list):
-            return _expand_scenarios(p.parent, data)
-        return []
-    except Exception:
-        return []
+        data = yaml.safe_load(p.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Scenarios file {p} does not parse: {exc}") from exc
+    if isinstance(data, dict):
+        data = data.get("scenarios")
+    return _expand_scenarios(p, data if isinstance(data, list) else [])
 
 
-def _expand_scenarios(base_dir: Path, scenarios: List[Any]) -> List[Dict[str, Any]]:
+def _expand_scenarios(source: Path, scenarios: List[Any]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for item in scenarios or []:
         if isinstance(item, str):
-            out.extend(load_scenarios_file(base_dir, item))
+            out.extend(load_scenarios_file(source.parent, item))
             continue
         if isinstance(item, dict) and ("include" in item or "file" in item):
             val = item.get("include") if "include" in item else item.get("file")
-            if isinstance(val, list):
-                for v in val:
-                    out.extend(load_scenarios_file(base_dir, str(v)))
-            elif isinstance(val, str):
-                out.extend(load_scenarios_file(base_dir, val))
+            for included in val if isinstance(val, list) else [val]:
+                if isinstance(included, str):
+                    out.extend(load_scenarios_file(source.parent, included))
             continue
         if isinstance(item, dict):
+            item.setdefault("_source_path", str(source))
             out.append(item)
     return out
 
 
 def _collect_scenarios(paths: List[Path]) -> List[Dict[str, Any]]:
-    all_items: List[Any] = []
+    files: List[Path] = []
     for p in paths:
         if p.is_file():
-            data = _read_yaml(p)
-            if isinstance(data, dict):
-                items = data.get("scenarios")
-                if isinstance(items, list):
-                    all_items.extend(items)
-            elif isinstance(data, list):
-                all_items.extend(data)
-            continue
-        if not p.is_dir():
-            continue
-        for y in sorted(list(p.rglob("*.yml"))):
-            data = _read_yaml(y)
-            if isinstance(data, dict):
-                items = data.get("scenarios")
-                if isinstance(items, list):
-                    all_items.extend(items)
-            elif isinstance(data, list):
-                all_items.extend(data)
-    return _expand_scenarios(Path.cwd(), all_items)
+            files.append(p)
+        elif p.is_dir():
+            files.extend(sorted(p.rglob("*.yml")))
+    scenarios: List[Dict[str, Any]] = []
+    for path in files:
+        scenarios.extend(load_scenarios_file(path.parent, str(path)))
+    return scenarios
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +166,19 @@ def _resolve_judge_agent_ref(base: Path, jcfg: Dict[str, Any]) -> Dict[str, Any]
             p = (base / p).resolve()
         data = _read_yaml(p)
         if isinstance(data, dict):
+            # Files named in the referenced file are relative to it.
+            for block, key in (
+                ("agent", "instructions_file"),
+                ("input", "template_file"),
+            ):
+                section = data.get(block)
+                value = section.get(key) if isinstance(section, dict) else None
+                if (
+                    isinstance(value, str)
+                    and value.strip()
+                    and not Path(value).is_absolute()
+                ):
+                    section[key] = str((p.parent / value).resolve())
             if "agent" in data and isinstance(data["agent"], dict):
                 jc.setdefault("agent", data["agent"])
             else:
@@ -622,7 +621,18 @@ def load_eval_config(
     optimizers = _collect_optimizers([s for s in optimizers_sources if s.exists()])
     metrics = _collect_metrics([s for s in metrics_sources if s.exists()])
 
-    _resolve_judge_files(judges, base_eval.get("judges"), judge_sources)
+    # Inline judges follow their agent_ref like judges/ ones do.
+    inline_judges = {
+        key: (
+            _resolve_judge_agent_ref(judge_sources[key].parent, cfg)
+            if key in judge_sources and isinstance(cfg, dict)
+            else cfg
+        )
+        for key, cfg in _inline_judges(base_eval.get("judges")).items()
+    }
+    if inline_judges:
+        base_eval["judges"] = inline_judges
+    _resolve_judge_files(judges, inline_judges, judge_sources)
 
     # Scenarios written inline in evaluation.yml are used when there are no
     # scenario files, and are selected and split like any others.

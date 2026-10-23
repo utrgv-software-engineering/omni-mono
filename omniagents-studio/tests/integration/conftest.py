@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from omniagents.core.project.runtime import build_spec_from_project, load_project
+from omniagents.core.project.runtime import load_project
 from omniagents_studio.api import create_api_app
 from omniagents.core.tracing.storage import SQLiteStorage
 
@@ -30,8 +30,6 @@ def studio_api_env(tmp_path: Path):
     app_resources = {
         "manifest_path": str(manifest_path),
         "project_name": ctx.product.slug,
-        "agent_specs": {ctx.entrypoint: build_spec_from_project(ctx)},
-        "entry_agent_key": ctx.entrypoint,
     }
     app = create_api_app(
         storage=storage,

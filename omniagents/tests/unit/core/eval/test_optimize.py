@@ -1606,13 +1606,14 @@ def test_optimize_judge_happy_path(monkeypatch, tmp_path, configure_optimize_env
 
     judge_apply_calls = []
 
-    def fake_apply_judge_updates(*args, **kwargs):
-        judge_apply_calls.append((args, kwargs))
+    class FakeWorkspace:
+        def __init__(self, project):
+            self.project = project
 
-    monkeypatch.setattr(
-        "omniagents.core.project.apply.apply_judge_updates",
-        fake_apply_judge_updates,
-    )
+        def update_judge(self, key, **changes):
+            judge_apply_calls.append((self.project, key, changes))
+
+    monkeypatch.setattr("omniagents.core.eval.workspace.EvalWorkspace", FakeWorkspace)
 
     scenario_dir = project_dir / "artifacts" / "eval" / "scenario" / "splits" / "safety"
     scenario_dir.mkdir(parents=True)
@@ -1694,7 +1695,14 @@ def test_optimize_judge_happy_path(monkeypatch, tmp_path, configure_optimize_env
     assert result["judge"] == "safety_judge"
     assert result["instructions"] == "judge"
     assert result["template"] == "tmpl"
-    assert judge_apply_calls
+    assert judge_apply_calls == [
+        (
+            str(project_dir),
+            "safety_judge",
+            {"instructions": "judge", "template": "tmpl"},
+        )
+    ]
+    assert result["applied"] is True
     # Note: tracing initialization is tested separately in test_optimize_judge_tracing
     assert judge_adapter_instances[0].evaluate_calls
     assert set(judge_adapter_instances[0].conversations) == set(ids)

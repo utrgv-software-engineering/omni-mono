@@ -165,3 +165,16 @@ def test_agents_are_created_and_deleted(tmp_path):
     delete_agent(manifest, "helper")
     with pytest.raises(AgentEditError, match="only agent"):
         delete_agent(manifest, "analyst")
+
+
+def test_an_agent_that_stops_the_project_loading_can_be_fixed(tmp_path):
+    manifest = _project(tmp_path)
+    helper = tmp_path / "agents/helper/agent.yml"
+    helper.write_text("model: [unclosed\n", encoding="utf-8")
+
+    # The broken file blocks nothing it did not already block.
+    update_agent(manifest, "main", changes={"label": "Still editable"})
+    assert read_agent(manifest, "helper").yaml_text == "model: [unclosed\n"
+
+    fixed = write_agent_yaml(manifest, "helper", "name: helper\ninstructions: Help.\n")
+    assert fixed.instructions == "Help."

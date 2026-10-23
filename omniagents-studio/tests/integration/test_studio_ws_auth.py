@@ -23,20 +23,12 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from omniagents.core.project.runtime import build_spec_from_project, load_project
+from omniagents.core.project.runtime import load_project
 from omniagents.rpc.auth import WS_CLOSE_UNAUTHENTICATED
 from omniagents.rpc.generated.gui_v2 import GUI_PROTOCOL_VERSION
 from omniagents_studio.api import create_api_app
 
 AUTH_HEADER = {"Authorization": "Bearer studio-secret"}
-
-JOB_WS_ROUTES = [
-    "/api/evaluation/suite/run/{job_id}/ws",
-    "/api/evaluation/scenarios/run/{job_id}/ws",
-    "/api/evaluation/scenarios/generate/{job_id}/ws",
-    "/api/evaluation/judges/optimize/{job_id}/ws",
-    "/api/evaluation/agents/optimize/{job_id}/ws",
-]
 
 
 def _build_client(monkeypatch, *, legacy: bool = False, **kwargs):
@@ -91,13 +83,15 @@ def _mint(client) -> str:
 # 4401 unauthenticated, 4404 authenticated (and no such job).
 # ---------------------------------------------------------------------------
 
-SOCKET = "/api/evaluation/suite/run/no-such-job/ws"
+SOCKET = "/api/evaluation/jobs/no-such-job/ws"
 
 
 def _dial(client, url: str = SOCKET, **kwargs) -> int:
+    """How the dial ended: refused before acceptance (4401) or accepted and
+    then closed (4404, no such job)."""
     with pytest.raises(WebSocketDisconnect) as exc:
-        with client.websocket_connect(url, **kwargs):
-            pass
+        with client.websocket_connect(url, **kwargs) as ws:
+            ws.receive_json()
     return exc.value.code
 
 
@@ -169,24 +163,15 @@ def test_invalid_ticket_rejected(auth_client):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("route", JOB_WS_ROUTES)
-def test_job_ws_requires_authentication(auth_client, route):
-    url = route.format(job_id="no-such-job")
+def test_job_ws_requires_authentication(auth_client):
     # Unauthenticated: refused before the job lookup (4401).
-    with pytest.raises(WebSocketDisconnect) as exc:
-        with auth_client.websocket_connect(url):
-            pass
-    assert exc.value.code == WS_CLOSE_UNAUTHENTICATED
+    assert _dial(auth_client) == WS_CLOSE_UNAUTHENTICATED
     # Authenticated: passes auth and reaches the job lookup (4404).
-    with pytest.raises(WebSocketDisconnect) as exc:
-        with auth_client.websocket_connect(url, headers=AUTH_HEADER):
-            pass
-    assert exc.value.code == 4404
+    assert _dial(auth_client, headers=AUTH_HEADER) == 4404
     # A correct query token is no longer a credential.
-    with pytest.raises(WebSocketDisconnect) as exc:
-        with auth_client.websocket_connect(f"{url}?token=studio-secret"):
-            pass
-    assert exc.value.code == WS_CLOSE_UNAUTHENTICATED
+    assert (
+        _dial(auth_client, f"{SOCKET}?token=studio-secret") == WS_CLOSE_UNAUTHENTICATED
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -222,11 +207,6 @@ def project_resources(tmp_path):
     context = load_project(str(manifest_path))
     return {
         "project_name": context.product.slug,
-        "agent_specs": {
-            key: build_spec_from_project(context, key)
-            for key in context.agents_map.keys()
-        },
-        "entry_agent_key": context.entrypoint,
         "manifest_path": str(manifest_path),
     }
 
@@ -239,7 +219,7 @@ def runtime_auth_client(monkeypatch, project_resources):
         project_resources=project_resources,
     )
     try:
-        yield client, project_resources["entry_agent_key"]
+        yield client, "primary"
     finally:
         client.close()
 
