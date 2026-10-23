@@ -24,6 +24,19 @@ def _no_ambient_product_discovery(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Pytest fixture: nothing is written into the developer's real home
+# ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def _isolated_omniagents_home(tmp_path, monkeypatch):
+    """Traces, sessions and anything else kept under ``~/.omniagents`` go to
+    a per-test directory. Without this, a test that records traces (an
+    evaluation run, scenario generation) left ``<project>.db`` files in the
+    developer's real ``~/.omniagents/traces``, where Studio lists them as
+    projects. A test that needs a particular home still sets its own."""
+    monkeypatch.setenv("OMNIAGENTS_HOME", str(tmp_path / "omniagents-home"))
+
+
+# ---------------------------------------------------------------------------
 # Pytest fixture: process-global product identity must not leak across tests
 # ---------------------------------------------------------------------------
 @pytest.fixture(autouse=True)
