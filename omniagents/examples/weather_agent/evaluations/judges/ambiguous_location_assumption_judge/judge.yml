@@ -20,8 +20,8 @@ judges:
         - reasoning
         - answer
         additionalProperties: false
-      instructions_file: ../evaluations/judges/ambiguous_location_assumption_judge/instructions.md
+      instructions_file: instructions.md
     input:
       source: final_assistant_text
-      template_file: ../evaluations/judges/ambiguous_location_assumption_judge/template.md
+      template_file: template.md
     failure_category: ambiguous_location_assumption

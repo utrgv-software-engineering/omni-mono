@@ -139,12 +139,16 @@ Scenario pipeline (optional)
 # Generate synthetic scenarios from dimensions into a named set
 python -m omniagents.cli eval scenarios generate -P path/to/project.yml --name myset --count 100
 
-# Annotate using Studio labels, then split train/dev/test
-python -m omniagents.cli eval annotate -P path/to/project.yml --name myset
-python -m omniagents.cli eval split -P path/to/project.yml --name myset -c <failure_category>
+# Run the set; each run keeps its conversation for review and for judges
+python -m omniagents.cli eval scenarios run -P path/to/project.yml --set artifacts/eval/myset/generated_scenarios.yml
 
-# Evaluate an LLM‑as‑Judge on a split
-python -m omniagents.cli eval judge run -P path/to/project.yml --name myset -c <category> -s dev -j <judge_key>
+# Label the set with the failure categories reviewers gave in Studio, then
+# build a judge dataset (train/dev/test) for one category
+python -m omniagents.cli eval scenarios annotate -P path/to/project.yml --name myset
+python -m omniagents.cli judge dataset -P path/to/project.yml --set myset -c <failure_category>
+
+# Evaluate an LLM‑as‑Judge on a dataset split (it judges the saved conversations)
+python -m omniagents.cli judge run -P path/to/project.yml --name myset -c <category> -s dev -j <judge_key>
 ```
 
 Notes
@@ -159,8 +163,8 @@ An agent's output varies run to run, so a single run is one draw from a pass rat
 - `evaluation.defaults.runs_per_prompt: N` fans out N runs per scenario; each run record carries `trial` (0-based) and `repeats`.
 - Each run carries `answered` - whether a final answer was produced. Unanswered runs count as failures by default; `answered_rate` (a metric type) reports how many there were, and `exclude_nonresponse: true` on a `pass_rate` metric drops them from that metric's denominator.
 - Every `pass_rate` carries a 95% Wilson `interval`. `slice_by: [expect.skin_tone, tags]` on a metric, or `evaluation.defaults.slice_by`, reports the rate per value of each field under `slices`; the CLI prints one informational line per slice.
-- `results/<run_id>/metadata.json` includes a `manifest`: model, resolved tools, instruction and agent-file hashes, framework version, `select`/`exclude`/`split`, repeats. Compare two runs by their manifests before comparing their numbers.
-- `omniagents eval scenarios holdout --strata expect.skin_tone,expect.malignant --fractions 0.5,0.25,0.25 --seed 42` writes `evaluations/splits/eval/{train,dev,test}.yml` (scenario names) and `manifest.yml` (seed, strata, counts per stratum). `eval suite run --split test` restricts a run to the split and records it in the manifest. This is an *agent-evaluation* holdout; `eval scenarios split` is the judge-training split by failure-category label and is unrelated.
+- Each saved run (`results/<run_id>/results.json`, indexed in `results/runs.json`) includes a `manifest`: model, resolved tools, instruction and agent-file hashes, framework version, `select`/`exclude`/`split`, repeats. Compare two runs by their manifests before comparing their numbers.
+- `omniagents eval scenarios holdout --strata expect.skin_tone,expect.malignant --fractions 0.5,0.25,0.25 --seed 42` writes `evaluations/splits/eval/{train,dev,test}.yml` (scenario names) and `manifest.yml` (seed, strata, counts per stratum). `eval suite run --split test` restricts a run to the split and records it in the manifest. This is an *agent-evaluation* holdout; `omniagents judge dataset` builds a judge's train/dev/test from failure-category labels and is unrelated.
 
 ```yaml
 # evaluations/metrics.yml

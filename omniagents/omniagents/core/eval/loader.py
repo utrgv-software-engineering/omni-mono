@@ -100,7 +100,9 @@ def _ensure_list(x: Any) -> List[Any]:
 # ---------------------------------------------------------------------------
 
 
-def _load_scenarios_file(base_dir: Path, rel_or_abs: str) -> List[Dict[str, Any]]:
+def load_scenarios_file(base_dir: Path, rel_or_abs: str) -> List[Dict[str, Any]]:
+    """The scenarios in a scenarios file (a ``scenarios:`` list or a bare
+    list), with its includes expanded. Missing or unreadable: none."""
     try:
         p = Path(rel_or_abs)
         if not p.is_absolute():
@@ -124,15 +126,15 @@ def _expand_scenarios(base_dir: Path, scenarios: List[Any]) -> List[Dict[str, An
     out: List[Dict[str, Any]] = []
     for item in scenarios or []:
         if isinstance(item, str):
-            out.extend(_load_scenarios_file(base_dir, item))
+            out.extend(load_scenarios_file(base_dir, item))
             continue
         if isinstance(item, dict) and ("include" in item or "file" in item):
             val = item.get("include") if "include" in item else item.get("file")
             if isinstance(val, list):
                 for v in val:
-                    out.extend(_load_scenarios_file(base_dir, str(v)))
+                    out.extend(load_scenarios_file(base_dir, str(v)))
             elif isinstance(val, str):
-                out.extend(_load_scenarios_file(base_dir, val))
+                out.extend(load_scenarios_file(base_dir, val))
             continue
         if isinstance(item, dict):
             out.append(item)
@@ -339,6 +341,52 @@ def _collect_base_eval(
     return result
 
 
+def _inline_judges(inline: Any) -> Dict[str, Any]:
+    """``evaluation.judges`` as a mapping (it may be written as a list)."""
+    if isinstance(inline, dict):
+        return {str(k): v for k, v in inline.items()}
+    if isinstance(inline, list):
+        return {
+            str(j.get("name") or j.get("key")): j
+            for j in inline
+            if isinstance(j, dict) and (j.get("name") or j.get("key"))
+        }
+    return {}
+
+
+def _resolve_judge_files(
+    judges: Dict[str, Any], inline: Any, sources: Dict[str, Path]
+) -> None:
+    """Make each judge's ``instructions_file`` and ``template_file`` absolute,
+    resolved against the YAML that declares the judge, in place.
+
+    A judge whose file is missing would otherwise run with generic
+    instructions and quietly score nothing in particular, so a missing file
+    is an error here, naming the path that was looked for.
+    """
+    declared = list(judges.items()) + list(_inline_judges(inline).items())
+    for key, cfg in declared:
+        if not isinstance(cfg, dict) or key not in sources:
+            continue
+        base = sources[key].parent
+        for block, key_name in (
+            ("agent", "instructions_file"),
+            ("input", "template_file"),
+        ):
+            section = cfg.get(block)
+            value = section.get(key_name) if isinstance(section, dict) else None
+            if not isinstance(value, str) or not value.strip():
+                continue
+            path = Path(value)
+            path = path if path.is_absolute() else (base / path).resolve()
+            if not path.is_file():
+                raise FileNotFoundError(
+                    f"Judge {key!r}: {key_name} not found: {path} "
+                    f"(relative paths are resolved from {sources[key]})"
+                )
+            section[key_name] = str(path)
+
+
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
@@ -470,6 +518,16 @@ def _uniq(ps: List[Path]) -> List[Path]:
     return out
 
 
+def evaluations_dir(project_root: Path, project_config: Dict[str, Any]) -> Path:
+    """The project's evaluations directory: ``paths.evaluations`` in
+    ``project.yml`` (the first, when it lists several), else
+    ``evaluations/``."""
+    configured = (project_config.get("paths") or {}).get("evaluations")
+    if isinstance(configured, list):
+        configured = configured[0] if configured else None
+    return (Path(project_root) / str(configured or "evaluations")).resolve()
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -519,8 +577,7 @@ def load_eval_config(
             )
 
     proj = _read_yaml(p if p.is_file() else (base_dir / "project.yml")) or {}
-    paths = proj.get("paths") or {}
-    eval_dir = (base_dir / str(paths.get("evaluations", "evaluations"))).resolve()
+    eval_dir = evaluations_dir(base_dir, proj)
 
     # Resolve agent via the project runtime
     prj = load_project(str(p))
@@ -565,6 +622,8 @@ def load_eval_config(
     optimizers = _collect_optimizers([s for s in optimizers_sources if s.exists()])
     metrics = _collect_metrics([s for s in metrics_sources if s.exists()])
 
+    _resolve_judge_files(judges, base_eval.get("judges"), judge_sources)
+
     # Scenarios written inline in evaluation.yml are used when there are no
     # scenario files, and are selected and split like any others.
     inline_scenarios = base_eval.pop("scenarios", None)
@@ -588,8 +647,11 @@ def load_eval_config(
     # Merge into single eval config dict
     compiled_eval: Dict[str, Any] = {}
     compiled_eval = _merge_dict(compiled_eval, base_eval)
-    if judges:
-        compiled_eval["judges"] = judges
+    # Judges declared inline in evaluation.yml and in judges/ are one set;
+    # a judges/ definition wins for the same key.
+    all_judges = {**_inline_judges(compiled_eval.get("judges")), **judges}
+    if all_judges:
+        compiled_eval["judges"] = all_judges
     if optimizers:
         compiled_eval["optimizers"] = optimizers
     if metrics:

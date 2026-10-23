@@ -1,5 +1,4 @@
 import asyncio
-import json
 import textwrap
 import types
 
@@ -39,11 +38,10 @@ def test_predict_label_returns_none_for_unknown(raw):
 
 
 def _write_adapter_files(tmp_path, config_text, runs):
+    """The judge's config file, and the saved runs it reads by scenario."""
     config_path = tmp_path / "compiled.yaml"
     config_path.write_text(textwrap.dedent(config_text), encoding="utf-8")
-    runs_path = tmp_path / "runs.json"
-    runs_path.write_text(json.dumps(runs), encoding="utf-8")
-    return config_path, runs_path
+    return config_path, {run["scenario_id"]: run for run in runs["runs"]}
 
 
 def test_evaluate_applies_scoring_matrix(monkeypatch, tmp_path):
@@ -66,8 +64,8 @@ def test_evaluate_applies_scoring_matrix(monkeypatch, tmp_path):
             {"scenario_id": "fn", "final_assistant_text": "four"},
         ]
     }
-    compiled_path, runs_path = _write_adapter_files(tmp_path, config_text, runs)
-    adapter = OmniAgentsJudgeAdapter(compiled_path, "accuracy", runs_path)
+    compiled_path, conversations = _write_adapter_files(tmp_path, config_text, runs)
+    adapter = OmniAgentsJudgeAdapter(compiled_path, "accuracy", conversations)
 
     async def fake_build(self, instructions):
         return object()
@@ -133,8 +131,10 @@ def test_build_judge_agent_renders_agent_metadata(monkeypatch, tmp_path):
           input:
             template: "{{ text }}"
     """
-    compiled_path, runs_path = _write_adapter_files(tmp_path, config_text, {"runs": []})
-    adapter = OmniAgentsJudgeAdapter(compiled_path, "accuracy", runs_path)
+    compiled_path, conversations = _write_adapter_files(
+        tmp_path, config_text, {"runs": []}
+    )
+    adapter = OmniAgentsJudgeAdapter(compiled_path, "accuracy", conversations)
     captured = {}
 
     async def fake_build(settings, mcp_servers, spec, approval_callback):

@@ -63,7 +63,7 @@ def _configure_pipeline(monkeypatch, history_text="final"):
         "compute_metrics",
         lambda runs, metrics_cfg, **kw: {"run_total": len(runs)},
     )
-    monkeypatch.setattr(pipeline, "_load_local_measures", lambda cfg, **kw: None)
+    monkeypatch.setattr(pipeline, "load_project_measures", lambda cfg, **kw: None)
 
 
 def test_pipeline_executes_multiple_judges_per_scenario(tmp_path, monkeypatch):

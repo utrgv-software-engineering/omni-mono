@@ -32,7 +32,7 @@ class OmniAgentsJudgeAdapter:
         self,
         compiled_yaml: Path,
         judge_key: str,
-        runs_file: Path,
+        conversations: Dict[str, Dict[str, Any]],
         *,
         category: Optional[str] = None,
         source: str = "final_assistant_text",
@@ -42,7 +42,6 @@ class OmniAgentsJudgeAdapter:
         eval_config: Any = None,
     ) -> None:
         self.judge_key = str(judge_key)
-        self.runs_file = Path(runs_file).resolve()
         self.category = category
         self.source = str(source)
         self.judge_max_turns = int(judge_max_turns)
@@ -81,11 +80,8 @@ class OmniAgentsJudgeAdapter:
             "description": self._cfg.get("description"),
             "tools": self._cfg.get("tools") or [],
         }
-        runs_blob = json.loads(self.runs_file.read_text(encoding="utf-8"))
-        runs_list = list(runs_blob.get("runs") or [])
-        self._runs_by_id: Dict[str, Dict[str, Any]] = {
-            str(r.get("scenario_id")): r for r in runs_list
-        }
+        # Each dataset scenario's saved run, by scenario id (or name).
+        self._runs_by_id: Dict[str, Dict[str, Any]] = dict(conversations)
 
         self._optimizer_cfg: Optional[Dict[str, Any]] = None
         self._optimizer_agent: Optional[Any] = None

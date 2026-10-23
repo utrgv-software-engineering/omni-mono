@@ -46,63 +46,83 @@ def _failure_category_map(eval_cfg: Dict[str, Any]) -> Dict[str, List[str]]:
     return out
 
 
-def _load_local_measures(
+_PROJECT_MEASURES = "omniagents_project_measures_"
+
+
+def load_project_measures(
     cfg_path: Path,
     project_root: Path | None = None,
     eval_dir: Path | None = None,
-) -> None:
-    try:
-        base_dir = cfg_path.parent
-        candidates = [
-            base_dir / "measures.py",
-            base_dir / "evaluation" / "measures.py",
-            base_dir / "eval" / "measures.py",
+) -> List[str]:
+    """Import the project's ``measures.py`` files; returns the measures they define.
+
+    They are looked for beside the agent file (and in its ``evaluation/`` and
+    ``eval/`` folders) and in the evaluations directory. Loading replaces
+    the project measures any earlier load registered, so an edited file
+    takes effect in a long-running process and two projects never share a
+    measure by name. A file that fails to import raises: a run without the
+    project's measures would score nothing it meant to.
+    """
+    import hashlib
+    import sys
+
+    from omniagents.core.evaluation.registry import _MEASURES
+
+    base_dir = Path(cfg_path).parent
+    candidates = [
+        base_dir / "measures.py",
+        base_dir / "evaluation" / "measures.py",
+        base_dir / "eval" / "measures.py",
+    ]
+    if eval_dir is not None:
+        candidates.append(Path(eval_dir) / "measures.py")
+    else:
+        root = project_root
+        if root is None:
+            for folder in [base_dir.resolve(), *base_dir.resolve().parents]:
+                if (folder / "project.yml").is_file():
+                    root = folder
+                    break
+        if root is not None:
+            from omniagents.core.eval.loader import evaluations_dir
+
+            project = yaml.safe_load(
+                (Path(root) / "project.yml").read_text(encoding="utf-8")
+            )
+            candidates.append(
+                evaluations_dir(Path(root), project or {}) / "measures.py"
+            )
+
+    # The registry holds one project's measures: what an earlier load
+    # registered (this project's, before an edit, or another project's) is
+    # replaced, never mixed in.
+    for key, function in list(_MEASURES.items()):
+        if str(getattr(function, "__module__", "")).startswith(_PROJECT_MEASURES):
+            del _MEASURES[key]
+    names: List[str] = []
+    seen: set[Path] = set()
+    for path in candidates:
+        if not path.is_file() or path.resolve() in seen:
+            continue
+        seen.add(path.resolve())
+        digest = hashlib.sha1(str(path.resolve()).encode("utf-8")).hexdigest()[:12]
+        module_name = f"{_PROJECT_MEASURES}{digest}"
+        spec = importlib.util.spec_from_file_location(module_name, str(path))
+        if spec is None or spec.loader is None:
+            continue
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        try:
+            spec.loader.exec_module(module)
+        except Exception as exc:
+            sys.modules.pop(module_name, None)
+            raise RuntimeError(f"Could not import measures from {path}: {exc}") from exc
+        names += [
+            key
+            for key, function in _MEASURES.items()
+            if getattr(function, "__module__", None) == module_name
         ]
-
-        prj_root = project_root
-
-        # Fall back to upward search when project_root not provided
-        if prj_root is None:
-            cur = base_dir.resolve()
-            while True:
-                if (cur / "project.yml").is_file():
-                    prj_root = cur
-                    break
-                if cur == cur.parent:
-                    break
-                cur = cur.parent
-
-        if eval_dir is not None:
-            candidates.append(Path(eval_dir).resolve() / "measures.py")
-        elif prj_root:
-            import yaml as _yaml
-
-            proj = (
-                _yaml.safe_load((prj_root / "project.yml").read_text(encoding="utf-8"))
-                or {}
-            )
-            paths = proj.get("paths") or {}
-            eval_paths = paths.get("evaluations", "evaluations")
-            eval_dirs_list = (
-                eval_paths if isinstance(eval_paths, list) else [eval_paths]
-            )
-            for ed in eval_dirs_list:
-                ep = Path(ed)
-                if not ep.is_absolute():
-                    ep = (prj_root / ep).resolve()
-                candidates.append(ep / "measures.py")
-        for py in candidates:
-            if py.is_file():
-                mod_name = f"eval_measures_{py.parent.name}"
-                spec = importlib.util.spec_from_file_location(mod_name, str(py))
-                if spec and spec.loader:
-                    module = importlib.util.module_from_spec(spec)
-                    import sys as _sys
-
-                    _sys.modules[mod_name] = module
-                    spec.loader.exec_module(module)  # type: ignore[attr-defined]
-    except Exception:
-        pass
+    return names
 
 
 def _derive_label(raw: Optional[str]) -> str:
@@ -452,7 +472,7 @@ async def run_evaluation_async(
         cfg = raw.get("evaluation") or {}
         agent_config = {k: v for k, v in raw.items() if k != "evaluation"}
 
-    _load_local_measures(cfg_path, project_root=project_root, eval_dir=eval_dir)
+    load_project_measures(cfg_path, project_root=project_root, eval_dir=eval_dir)
     if target is None:
         target = ProjectAgentTarget(
             cfg_path, project_root=project_root, agent_config=agent_config
@@ -479,8 +499,12 @@ def run_evaluation(
     include_unmeasured: bool = False,
     progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
     eval_config: Any | None = None,
+    *,
+    eval_cfg: Optional[Dict[str, Any]] = None,
+    include_history: bool = False,
 ) -> Dict[str, Any]:
-    """Synchronous :func:`run_evaluation_async` that also initializes studio tracing."""
+    """Synchronous :func:`run_evaluation_async` that also initializes studio
+    tracing; the result carries the traces' ``workflow_name``."""
     if eval_config is not None:
         cfg_path = Path(eval_config.agent_path)
         tracing_cfg = tracing_cfg or eval_config.tracing_config
@@ -508,7 +532,7 @@ def run_evaluation(
         workflow_name = None
 
     concurrency = int((tracing_cfg or {}).get("concurrency") or 5)
-    return asyncio.run(
+    data = asyncio.run(
         run_evaluation_async(
             compiled_yaml,
             workflow_name=workflow_name,
@@ -516,5 +540,9 @@ def run_evaluation(
             progress_cb=progress_cb,
             concurrency=concurrency,
             eval_config=eval_config,
+            eval_cfg=eval_cfg,
+            include_history=include_history,
         )
     )
+    data["workflow_name"] = workflow_name
+    return data

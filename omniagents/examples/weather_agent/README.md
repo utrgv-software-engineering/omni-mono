@@ -51,15 +51,16 @@ python -m omniagents.cli eval scenarios generate -P examples/weather_agent/proje
 After running scenarios to produce traces in Studio, annotate all scenarios with failure categories (keeps all scenarios, does not prune). The output goes to the same `<name>` folder as the input:
 
 ```bash
-python -m omniagents.cli eval annotate -P examples/weather_agent/project.yml \
+python -m omniagents.cli eval scenarios annotate -P examples/weather_agent/project.yml \
   --name demo \
   -o artifacts/eval/annotated_scenarios.yml
 
 To create train/dev/test splits for a failure category (writes under `artifacts/eval/<name>/splits/<category>/`):
 
 ```bash
-python -m omniagents.cli eval split \
-  --name demo \
+python -m omniagents.cli judge dataset \
+  -P examples/weather_agent/project.yml \
+  --set demo \
   -c out_of_scope_engagement
 ```
 
@@ -69,7 +70,7 @@ Evaluate an LLM-as-Judge on a split and report TPR/TNR (requires `OPENAI_API_KEY
 
 ```bash
 export OPENAI_API_KEY=...
-python -m omniagents.cli eval judge run \
+python -m omniagents.cli judge run \
   -P examples/weather_agent/project.yml \
   --name demo -c out_of_scope_engagement -s dev \
   -j out_of_scope_judge --max-turns 1 --run-max-turns 6

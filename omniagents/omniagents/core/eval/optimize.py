@@ -676,17 +676,26 @@ def optimize_judge_from_project(
     except Exception:
         pass
 
-    def _default_runs_path(sp: _P) -> _P:
-        return sp.parents[2] / "generated_runs.json"
+    from omniagents.core.eval.results import conversations_for
 
+    # The conversations the judge reads: the set's saved runs (the set is
+    # artifacts/eval/<set>/, its datasets splits/<category>/<split>.yml).
+    explicit_runs = None
     if runs_file:
-        rf = _P(runs_file)
-        runs_path = rf if rf.is_absolute() else (base / rf).resolve()
-    else:
-        runs_path = _default_runs_path(dv_path)
-    if not runs_path.exists():
+        explicit_runs = _P(runs_file)
+        if not explicit_runs.is_absolute():
+            explicit_runs = (base / explicit_runs).resolve()
+    conversations = conversations_for(dv_path.parents[2], explicit_runs)
+    wanted = {
+        item["id"] if item.get("id") not in (None, "None") else str(item.get("name"))
+        for item in trainset + devset + testset
+    }
+    missing = sorted(wanted - set(conversations))
+    if missing:
         raise SystemExit(
-            f"Missing generated runs fixtures: {runs_path}. Generate scenarios, then run with 'omniagents eval scenarios run'."
+            f"{len(missing)} scenario(s) in the judge dataset have no saved run "
+            f"with its conversation (e.g. {missing[0]}). Run the scenario set "
+            "first: omniagents eval scenarios run --set <its generated_scenarios.yml>"
         )
 
     jkey = judge_key
@@ -697,11 +706,7 @@ def optimize_judge_from_project(
                 _derive_judge_keys_from_measures as _derive_j,
             )
 
-            cfg_detect = (
-                yaml.safe_load(_P(compiled_cfg_path).read_text(encoding="utf-8")) or {}
-            )
-            ev = cfg_detect.get("evaluation") or {}
-            measures = list((_fcmap(ev) or {}).get(cat) or [])
+            measures = list((_fcmap(_eval_config.config) or {}).get(cat) or [])
             candidates = _derive_j(measures)
             uniq = sorted(set(candidates))
             if len(uniq) == 1:
@@ -717,31 +722,18 @@ def optimize_judge_from_project(
         except Exception:
             raise SystemExit("Provide --judge <key>.")
 
-    cfg = yaml.safe_load(_P(compiled_cfg_path).read_text(encoding="utf-8")) or {}
-    jcfg = ((cfg.get("evaluation") or {}).get("judges") or {}).get(jkey) or {}
-
-    def _read_text_file(base_dir: _P, rel: str) -> str:
-        p = _P(rel)
-        if not p.is_absolute():
-            p = (base_dir / p).resolve()
-        try:
-            return p.read_text(encoding="utf-8")
-        except Exception:
-            return ""
-
+    # The judge as the project defines it; the loader resolved its files.
+    jcfg = (_eval_config.config.get("judges") or {}).get(jkey)
+    if not isinstance(jcfg, dict):
+        raise SystemExit(f"Judge not found: {jkey}")
     agent_cfg = jcfg.get("agent") or {}
     input_cfg = jcfg.get("input") or {}
     seed_instructions = agent_cfg.get("instructions") or ""
     if (not seed_instructions) and agent_cfg.get("instructions_file"):
-        seed_instructions = _read_text_file(
-            _P(compiled_cfg_path).resolve().parent,
-            str(agent_cfg.get("instructions_file")),
-        )
+        seed_instructions = _P(agent_cfg["instructions_file"]).read_text(encoding="utf-8")
     seed_template = input_cfg.get("template") or ""
     if (not seed_template) and input_cfg.get("template_file"):
-        seed_template = _read_text_file(
-            _P(compiled_cfg_path).resolve().parent, str(input_cfg.get("template_file"))
-        )
+        seed_template = _P(input_cfg["template_file"]).read_text(encoding="utf-8")
     if not seed_template:
         seed_template = "{{ text }}"
     if not seed_instructions:
@@ -789,7 +781,7 @@ def optimize_judge_from_project(
     adapter = OmniAgentsJudgeAdapter(
         _P(compiled_cfg_path),
         jkey,
-        runs_path,
+        conversations,
         category=(str(cat) if cat else None),
         source=str(source or "final_assistant_text"),
         judge_max_turns=int(max_turns or 1),

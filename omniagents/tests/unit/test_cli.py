@@ -4,6 +4,7 @@ import types
 from pathlib import Path
 
 import pytest
+import yaml
 
 from omniagents.cli import main as cli_main
 from omniagents.core.eval.loader import EvalConfig
@@ -574,24 +575,37 @@ def test_agent_optimize_invokes_backend(monkeypatch, stub_runtime):
     assert recorded["reflection_model"] == "gpt-4"
 
 
+def _fake_workspace(monkeypatch, tmp_path, data, *, output=None, progress=()):
+    """Stand in for EvalWorkspace: ``run`` returns ``data`` as the saved run
+    and records how it was called."""
+    seen = {}
+
+    class FakeWorkspace:
+        def __init__(self, project, agent=None):
+            self.root = tmp_path
+            seen.update(project=project, agent=agent)
+
+        def run(self, **kwargs):
+            seen.update(kwargs)
+            for event in progress:
+                kwargs["progress_cb"](event)
+            saved = tmp_path / "results" / "results.json"
+            saved.parent.mkdir(exist_ok=True)
+            saved.write_text(json.dumps(data))
+            return {**data, "path": str(saved)}
+
+        def config(self):
+            return types.SimpleNamespace(config={"output": output} if output else {})
+
+    monkeypatch.setattr("omniagents.core.eval.workspace.EvalWorkspace", FakeWorkspace)
+    return seen
+
+
+def _suite_argv(*extra):
+    return ["omniagents", "eval", "suite", "run", "--project", "proj.yml", *extra]
+
+
 def test_eval_suite_run_tap_reporter(monkeypatch, tmp_path, capsys):
-    compiled_path = tmp_path / "compiled.yml"
-    compiled_path.write_text(
-        """
-tracing:
-  name: demo
-scenarios:
-  - id: case1
-    name: Case One
-  - id: case2
-    name: Case Two
-        """.strip() + "\n",
-        encoding="utf-8",
-    )
-
-    loader_module = _make_fake_loader_module(compiled_path)
-    monkeypatch.setitem(sys.modules, "omniagents.core.eval.loader", loader_module)
-
     data = {
         "runs": [
             {
@@ -630,34 +644,17 @@ scenarios:
             "measures_discovered": ["mystery"],
         },
     }
-
-    pipeline_module = types.ModuleType("omniagents.core.eval.pipeline")
-
-    def fake_run_evaluation(
-        path,
-        tracing_cfg=None,
-        workflow_base_name=None,
-        include_unmeasured=False,
-        progress_cb=None,
-        **kw,
-    ):
-        if progress_cb:
-            progress_cb({"event": "progress", "skipped": False, "failed": 0})
-            progress_cb({"event": "progress", "skipped": True, "failed": 1})
-        return data
-
-    pipeline_module.run_evaluation = fake_run_evaluation
-    monkeypatch.setitem(sys.modules, "omniagents.core.eval.pipeline", pipeline_module)
-
-    output_path = tmp_path / "results.json"
-
-    argv = [
-        "omniagents",
-        "eval",
-        "suite",
-        "run",
-        "--project",
-        "proj.yml",
+    seen = _fake_workspace(
+        monkeypatch,
+        tmp_path,
+        data,
+        progress=[
+            {"event": "progress", "skipped": False, "failed": 0},
+            {"event": "progress", "skipped": True, "failed": 1},
+        ],
+    )
+    output_path = tmp_path / "copy.json"
+    argv = _suite_argv(
         "--output",
         str(output_path),
         "--reporter",
@@ -666,7 +663,7 @@ scenarios:
         "never",
         "--name",
         "demo",
-    ]
+    )
     monkeypatch.setattr(sys, "argv", argv)
 
     with pytest.raises(SystemExit) as exc:
@@ -675,27 +672,12 @@ scenarios:
     assert exc.value.code == 1
     captured = capsys.readouterr().out
     assert "TAP version 13" in captured
-    assert output_path.is_file()
+    assert json.loads(output_path.read_text())["runs"] == data["runs"]
+    assert seen["name"] == "demo"
+    assert seen["include_unmeasured"] is False
 
 
 def test_eval_suite_run_pretty_reporter(monkeypatch, tmp_path, capsys):
-    compiled_path = tmp_path / "compiled.yml"
-    compiled_path.write_text(
-        """
-tracing:
-  name: demo
-evaluation:
-  output: alt.json
-scenarios:
-  - id: case1
-    name: Case One
-        """.strip() + "\n",
-        encoding="utf-8",
-    )
-
-    loader_module = _make_fake_loader_module(compiled_path)
-    monkeypatch.setitem(sys.modules, "omniagents.core.eval.loader", loader_module)
-
     data = {
         "runs": [
             {
@@ -727,68 +709,27 @@ scenarios:
             "measures_discovered": [],
         },
     }
-
-    pipeline_module = types.ModuleType("omniagents.core.eval.pipeline")
-
-    def fake_run_evaluation(
-        path,
-        tracing_cfg=None,
-        workflow_base_name=None,
-        include_unmeasured=False,
-        progress_cb=None,
-        **kw,
-    ):
-        return data
-
-    pipeline_module.run_evaluation = fake_run_evaluation
-    monkeypatch.setitem(sys.modules, "omniagents.core.eval.pipeline", pipeline_module)
-
-    argv = [
-        "omniagents",
-        "eval",
-        "suite",
-        "run",
-        "--project",
-        "proj.yml",
-        "--color",
-        "never",
-        "--reporter",
-        "pretty",
-    ]
-    monkeypatch.setattr(sys, "argv", argv)
+    _fake_workspace(monkeypatch, tmp_path, data, output="alt.json")
+    monkeypatch.setattr(
+        sys, "argv", _suite_argv("--color", "never", "--reporter", "pretty")
+    )
 
     cli_main()
 
     captured = capsys.readouterr().out
     assert "Running" in captured
     assert "Passed:" in captured
-    assert (compiled_path.parent / "alt.json").is_file()
+    # evaluation.output writes a copy beside the project.
+    assert (tmp_path / "alt.json").is_file()
 
 
 def test_eval_suite_run_pretty_verbose(monkeypatch, tmp_path, capsys):
-    compiled_path = tmp_path / "compiled.yml"
-    compiled_path.write_text(
-        """
-tracing:
-  name: demo
-scenarios:
-  - id: case1
-    name: Case One
-        """.strip() + "\n",
-        encoding="utf-8",
-    )
-
-    loader_module = _make_fake_loader_module(compiled_path)
-    monkeypatch.setitem(sys.modules, "omniagents.core.eval.loader", loader_module)
-
     data = {
         "runs": [
             {
                 "scenario": "case1",
                 "scenario_config": {"id": "case1", "name": "Case One"},
-                "measures": [
-                    {"name": "accuracy", "passed": True},
-                ],
+                "measures": [{"name": "accuracy", "passed": True}],
                 "prompt": "hello",
                 "final_assistant_text": "world",
             }
@@ -807,54 +748,20 @@ scenarios:
             "skipped_unmeasured": 0,
             "unknown_measures": {"mystery": 2},
             "measures_discovered_count": 12,
-            "measures_discovered": [
-                "m1",
-                "m2",
-                "m3",
-                "m4",
-                "m5",
-                "m6",
-                "m7",
-                "m8",
-                "m9",
-                "m10",
-                "m11",
-                "m12",
-            ],
+            "measures_discovered": [f"m{i}" for i in range(1, 13)],
         },
     }
-
-    pipeline_module = types.ModuleType("omniagents.core.eval.pipeline")
-
-    def fake_run_evaluation(
-        path,
-        tracing_cfg=None,
-        workflow_base_name=None,
-        include_unmeasured=False,
-        progress_cb=None,
-        **kw,
-    ):
-        if progress_cb:
-            progress_cb({"event": "progress", "skipped": False, "failed": 0})
-        return data
-
-    pipeline_module.run_evaluation = fake_run_evaluation
-    monkeypatch.setitem(sys.modules, "omniagents.core.eval.pipeline", pipeline_module)
-
-    argv = [
-        "omniagents",
-        "eval",
-        "suite",
-        "run",
-        "--project",
-        "proj.yml",
-        "--color",
-        "always",
-        "--reporter",
-        "pretty",
-        "-v",
-    ]
-    monkeypatch.setattr(sys, "argv", argv)
+    _fake_workspace(
+        monkeypatch,
+        tmp_path,
+        data,
+        progress=[{"event": "progress", "skipped": False, "failed": 0}],
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        _suite_argv("--color", "always", "--reporter", "pretty", "-v"),
+    )
 
     cli_main()
 
@@ -1258,84 +1165,97 @@ def test_eval_scenarios_holdout_writes_split_files(monkeypatch, tmp_path, capsys
     assert manifest["strata"] == ["expect.tone"] and manifest["seed"] == 3
 
 
-def test_eval_suite_run_accepts_split_and_stores_manifest(monkeypatch, tmp_path):
-    import yaml as _yaml
-
-    compiled = tmp_path / "agent.yml"
-    compiled.write_text(
-        _yaml.safe_dump(
-            {"name": "alpha", "model": "m", "evaluation": {"scenarios": []}}
-        ),
-        encoding="utf-8",
+def test_eval_runs_pass_their_selection_to_the_workspace(monkeypatch, tmp_path):
+    seen = _fake_workspace(
+        monkeypatch, tmp_path, {"runs": [], "metrics": [], "stats": {}}
     )
-    fake_loader = _make_fake_loader_module(compiled)
-    seen = {}
-    original_load = fake_loader.load_eval_config
-
-    def spy_load(*args, **kwargs):
-        seen.update(kwargs)
-        return original_load(*args, **kwargs)
-
-    fake_loader.load_eval_config = spy_load
-    monkeypatch.setitem(sys.modules, "omniagents.core.eval.loader", fake_loader)
-    pipeline_mod = types.ModuleType("omniagents.core.eval.pipeline")
-
-    def fake_run_evaluation(*args, **kwargs):
-        return {
-            "runs": [],
-            "metrics": [
-                {
-                    "name": "r",
-                    "label": "r",
-                    "type": "pass_rate",
-                    "value": 0.5,
-                    "interval": [0.2, 0.8],
-                    "runs": 4,
-                    "target": {"op": ">=", "value": 0.4},
-                    "meets_target": True,
-                    "slices": {
-                        "expect.tone": {
-                            "12": {"value": 1.0, "interval": [0.3, 1.0], "runs": 2}
-                        }
-                    },
-                }
-            ],
-            "stats": {},
-            "manifest": {"agent": "alpha", "model": "m"},
-        }
-
-    pipeline_mod.run_evaluation = fake_run_evaluation
-    pipeline_mod.__package__ = "omniagents.core.eval"
-    monkeypatch.setitem(sys.modules, "omniagents.core.eval.pipeline", pipeline_mod)
-    saved = {}
-
-    def fake_save(**kwargs):
-        saved.update(kwargs)
-        return tmp_path / "results.json"
-
-    monkeypatch.setattr("omniagents.cli.save_evaluation_run", fake_save)
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "omniagents",
             "eval",
-            "suite",
+            "scenarios",
             "run",
             "--project",
             str(tmp_path),
+            "--agent",
+            "alpha",
             "--split",
             "test",
+            "--select",
+            "tag:smoke",
+            "--set",
+            "artifacts/eval/b/generated_scenarios.yml",
             "--reporter",
             "tap",
             "--color",
             "never",
         ],
     )
+
     try:
         cli_main()
     except SystemExit as exc:  # a passing suite returns; a failing one exits non-zero
         assert exc.code in (0, None)
-    assert seen.get("split") == "test"
-    # The engine records the selection in the manifest; the CLI stores it as is.
-    assert saved["manifest"] == {"agent": "alpha", "model": "m"}
+
+    assert seen["agent"] == "alpha"
+    assert seen["split"] == "test"
+    assert seen["select"] == "tag:smoke"
+    assert seen["scenario_set"] == "artifacts/eval/b/generated_scenarios.yml"
+    # `eval scenarios run` includes unmeasured scenarios by default.
+    assert seen["include_unmeasured"] is True
+
+
+def test_judge_dataset_splits_a_reviewed_set(monkeypatch, tmp_path, capsys):
+    (tmp_path / "project.yml").write_text("name: demo\nagents:\n  entrypoint: main\n")
+    agent = tmp_path / "agents" / "main"
+    agent.mkdir(parents=True)
+    (agent / "agent.yml").write_text("name: main\ninstructions: Help.\n")
+    generated = tmp_path / "artifacts" / "eval" / "batch" / "generated_scenarios.yml"
+    generated.parent.mkdir(parents=True)
+    scenarios = [
+        {
+            "id": f"s{i}",
+            "name": f"s{i}",
+            "prompt": "p",
+            **({"failure_categories": ["tone"]} if i % 2 else {}),
+        }
+        for i in range(8)
+    ]
+    generated.write_text(json.dumps({"scenarios": scenarios}))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "omniagents",
+            "judge",
+            "dataset",
+            "--project",
+            str(tmp_path),
+            "--set",
+            "batch",
+            "--category",
+            "tone",
+            "--train",
+            "0.5",
+            "--dev",
+            "0.25",
+            "--test",
+            "0.25",
+        ],
+    )
+
+    cli_main()
+
+    out = capsys.readouterr().out
+    assert "train: 4 scenarios" in out
+    split_dir = generated.parent / "splits" / "tone"
+    labels = [
+        item["label"]
+        for split in ("train", "dev", "test")
+        for item in yaml.safe_load((split_dir / f"{split}.yml").read_text())[
+            "scenarios"
+        ]
+    ]
+    assert sorted(labels) == [False] * 4 + [True] * 4

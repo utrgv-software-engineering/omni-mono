@@ -4,6 +4,8 @@ import sys
 import textwrap
 import types
 
+import pytest
+
 from omniagents.core.eval import engine, pipeline, targets
 from omniagents.core.evaluation import registry
 
@@ -32,7 +34,7 @@ def test_run_evaluation_async_handles_failure_categories(monkeypatch, tmp_path):
     cfg_path = tmp_path / "compiled.yaml"
     cfg_path.write_text(config_text)
 
-    monkeypatch.setattr(pipeline, "_load_local_measures", lambda cfg, **kw: None)
+    monkeypatch.setattr(pipeline, "load_project_measures", lambda cfg, **kw: None)
     monkeypatch.setattr(
         engine,
         "compute_metrics",
@@ -186,7 +188,7 @@ def test_run_evaluation_async_progress_callback_exceptions(monkeypatch, tmp_path
     cfg_path = tmp_path / "compiled.yaml"
     cfg_path.write_text(config_text)
 
-    monkeypatch.setattr(pipeline, "_load_local_measures", lambda cfg, **kw: None)
+    monkeypatch.setattr(pipeline, "load_project_measures", lambda cfg, **kw: None)
     monkeypatch.setattr(
         engine, "compute_metrics", lambda runs, metrics_cfg, **kw: {"count": len(runs)}
     )
@@ -224,39 +226,38 @@ def test_run_evaluation_async_progress_callback_exceptions(monkeypatch, tmp_path
     assert progress_calls[1]["event"] == "progress"
 
 
-def test_load_local_measures_discovers_project_paths(tmp_path):
-    cfg_dir = tmp_path / "cfg"
-    cfg_dir.mkdir()
-    compiled = cfg_dir / "compiled.yaml"
-    compiled.write_text("{}", encoding="utf-8")
+def test_project_measures_load_from_the_configured_evaluations_dir(tmp_path):
+    from omniagents.core.evaluation.registry import _MEASURES
 
-    agents_dir = tmp_path / "project" / "agents"
+    project_root = tmp_path / "project"
+    agents_dir = project_root / "agents"
     agents_dir.mkdir(parents=True)
-    agent_file = agents_dir / "main.yaml"
-    agent_file.write_text("agent: {}")
+    (agents_dir / "main.yaml").write_text("agent: {}")
+    (project_root / "project.yml").write_text("paths:\n  evaluations:\n    - custom_eval\n")
+    measures_file = project_root / "custom_eval" / "measures.py"
+    measures_file.parent.mkdir()
+    body = (
+        "from omniagents.core.evaluation import evaluation_measure, pass_reason\n"
+        "@evaluation_measure\n"
+        "def custom_check(ctx):\n"
+        "    return pass_reason({reason!r})\n"
+    )
+    measures_file.write_text(body.format(reason="first"))
+    try:
+        loaded = pipeline.load_project_measures(agents_dir / "main.yaml")
+        assert loaded == ["custom_check"]
+        assert _MEASURES["custom_check"](None)["reason"] == "first"
 
-    project_root = agents_dir.parent
-    project_yaml = project_root / "project.yml"
-    project_yaml.write_text(textwrap.dedent("""
-            paths:
-              evaluations:
-                - custom_eval
-            """))
+        # An edited file replaces what it registered before.
+        measures_file.write_text(body.format(reason="second"))
+        pipeline.load_project_measures(agents_dir / "main.yaml")
+        assert _MEASURES["custom_check"](None)["reason"] == "second"
 
-    eval_dir = project_root / "custom_eval"
-    eval_dir.mkdir()
-    measures_file = eval_dir / "measures.py"
-    measures_file.write_text("MARKER = 'loaded'")
-
-    module_name = f"eval_measures_{eval_dir.name}"
-    sys.modules.pop(module_name, None)
-
-    pipeline._load_local_measures(compiled, project_root=project_root)
-
-    assert module_name in sys.modules
-    assert getattr(sys.modules[module_name], "MARKER") == "loaded"
-
-    sys.modules.pop(module_name, None)
+        measures_file.write_text("def broken(:\n")
+        with pytest.raises(RuntimeError, match="measures.py"):
+            pipeline.load_project_measures(agents_dir / "main.yaml")
+    finally:
+        _MEASURES.pop("custom_check", None)
 
 
 def test_run_judges_records_failure(monkeypatch, tmp_path):
@@ -519,7 +520,8 @@ def test_run_evaluation_with_studio_tracing(monkeypatch, tmp_path):
         include_unmeasured=True,
     )
 
-    assert result == {"ok": True}
+    # The result carries the traces' workflow name for whoever saves the run.
+    assert result == {"ok": True, "workflow_name": async_calls[0]["workflow_name"]}
     # Verify that run_evaluation_async was called with a workflow name
     assert async_calls
     assert async_calls[0]["include_unmeasured"] is True
@@ -585,7 +587,7 @@ def test_run_evaluation_with_environment_returns_error_on_failed_build(
     cfg_path.write_text(config_text)
 
     # _load_local_measures is imported from .pipeline inside the function
-    monkeypatch.setattr(pipeline, "_load_local_measures", lambda cfg, **kw: None)
+    monkeypatch.setattr(pipeline, "load_project_measures", lambda cfg, **kw: None)
 
     result = asyncio.run(
         pipeline.run_evaluation_async(cfg_path, include_unmeasured=True)
@@ -622,7 +624,7 @@ def test_run_evaluation_async_indexes_repeats_and_records_answered(
         """)
     cfg_path = tmp_path / "compiled.yaml"
     cfg_path.write_text(config_text)
-    monkeypatch.setattr(pipeline, "_load_local_measures", lambda cfg, **kw: None)
+    monkeypatch.setattr(pipeline, "load_project_measures", lambda cfg, **kw: None)
     monkeypatch.setattr(
         registry,
         "_MEASURES",

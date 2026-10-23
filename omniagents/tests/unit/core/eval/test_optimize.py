@@ -1585,10 +1585,10 @@ def test_optimize_judge_happy_path(monkeypatch, tmp_path, configure_optimize_env
     judge_adapter_instances = []
 
     class DummyJudgeAdapter:
-        def __init__(self, cfg_path, jkey, runs_path, **kwargs):
+        def __init__(self, cfg_path, jkey, conversations, **kwargs):
             self.cfg_path = cfg_path
             self.jkey = jkey
-            self.runs_path = runs_path
+            self.conversations = conversations
             self.kwargs = kwargs
             self.evaluate_calls = []
             judge_adapter_instances.append(self)
@@ -1646,7 +1646,28 @@ def test_optimize_judge_happy_path(monkeypatch, tmp_path, configure_optimize_env
         json.dumps({"timestamp": "2024_01_01_00_00_00", "name": "scenario"}),
         encoding="utf-8",
     )
-    (manifest_dir / "generated_runs.json").write_text("[]", encoding="utf-8")
+    # The judge reads the conversations of the set's saved run.
+    from omniagents.core.eval.results import save_evaluation_run
+
+    ids = [
+        f"{split}-{i}"
+        for split, n in (("train", 3), ("dev", 2), ("test", 2))
+        for i in range(n)
+    ]
+    save_evaluation_run(
+        manifest_dir / "generated_scenarios.yml",
+        {
+            "runs": [
+                {
+                    "scenario_config": {"id": sid},
+                    "final_assistant_text": f"reply {sid}",
+                    "history": [{"role": "assistant", "content": f"reply {sid}"}],
+                }
+                for sid in ids
+            ]
+        },
+        source="test",
+    )
 
     result = optimize.optimize_judge_from_project(
         str(project_dir),
@@ -1676,6 +1697,7 @@ def test_optimize_judge_happy_path(monkeypatch, tmp_path, configure_optimize_env
     assert judge_apply_calls
     # Note: tracing initialization is tested separately in test_optimize_judge_tracing
     assert judge_adapter_instances[0].evaluate_calls
+    assert set(judge_adapter_instances[0].conversations) == set(ids)
     env.engine_kwargs["evaluator"](
         [{"label": True}],
         {"instructions": "judge", "template": "tmpl"},

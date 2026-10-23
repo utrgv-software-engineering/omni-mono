@@ -20,7 +20,7 @@ judges:
           - reasoning
           - answer
         additionalProperties: false
-      instructions_file: ../evaluations/judges/{sanitized}/instructions.md
+      instructions_file: instructions.md
     input:
       source: {source}
-      template_file: ../evaluations/judges/{sanitized}/template.md
+      template_file: template.md

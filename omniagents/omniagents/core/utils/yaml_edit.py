@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from ruamel.yaml import YAML
-from ruamel.yaml.comments import CommentedMap
+from ruamel.yaml.comments import CommentedMap, CommentedSeq
 from ruamel.yaml.util import load_yaml_guess_indent
 
 
@@ -37,9 +37,10 @@ def _mapping_indent(text: str) -> int | None:
     return None
 
 
-def load_document(text: str) -> tuple[YAML, CommentedMap]:
-    """``text`` as an editable mapping, and the YAML that writes it back in
-    the file's own layout. Raises ``TypeError`` for anything but a mapping."""
+def load_document(text: str, *, sequence: bool = False) -> tuple[YAML, Any]:
+    """``text`` as an editable mapping (or, with ``sequence``, a mapping or
+    a list), and the YAML that writes it back in the file's own layout.
+    Raises ``TypeError`` for any other document."""
     # ruamel's guess describes block sequences: where an item's dash sits
     # (offset) and where its content starts (indent).
     _, sequence_indent, dash_offset = load_yaml_guess_indent(text)
@@ -55,12 +56,15 @@ def load_document(text: str) -> tuple[YAML, CommentedMap]:
     data = yaml.load(text)
     if data is None:
         data = CommentedMap()
-    if not isinstance(data, CommentedMap):
-        raise TypeError("expected a mapping of settings")
+    allowed = (CommentedMap, CommentedSeq) if sequence else (CommentedMap,)
+    if not isinstance(data, allowed):
+        raise TypeError(
+            "expected a mapping or a list" if sequence else "expected a mapping of settings"
+        )
     return yaml, data
 
 
-def dump_document(yaml: YAML, data: CommentedMap) -> str:
+def dump_document(yaml: YAML, data: Any) -> str:
     buffer = io.StringIO()
     yaml.dump(data, buffer)
     return buffer.getvalue()

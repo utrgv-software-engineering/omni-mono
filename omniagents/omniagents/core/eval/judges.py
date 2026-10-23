@@ -63,54 +63,21 @@ async def evaluate_split(
         except Exception:
             category_hint = None
 
-    def _default_runs_path(sp: Path) -> Path:
-        ts_dir = sp.parents[2]
-        return ts_dir / "generated_runs.json"
+    from omniagents.core.eval.results import conversations_for
 
-    def _resolve_runs_file(sp: Path, rf: str | None) -> Path | None:
-        if not rf:
-            return None
-        p = Path(rf)
-        if p.is_absolute():
-            return p
-        try:
-            return (sp.parents[2] / p).resolve()
-        except Exception:
-            return p.resolve()
-
-    def _load_runs(path: Path) -> Dict[str, Any] | None:
-        try:
-            if path.exists():
-                return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-        return None
-
-    rf_path = _resolve_runs_file(Path(split_path), runs_file)
-    default_path = _default_runs_path(Path(split_path))
-    expected_ids = [sc.get("id") for sc in scenarios]
-
-    picked = _load_runs(rf_path) if rf_path else None
-    if not picked:
-        picked = _load_runs(default_path)
-
-    if not picked:
-        raise SystemExit(
-            f"Missing generated_runs.json. Expected at: {default_path}. "
-            "Generate scenarios, then run: 'omniagents eval scenarios run'."
-        )
-
-    all_runs = list(picked.get("runs") or [])
-    want = set(expected_ids)
-    runs = [r for r in all_runs if r.get("scenario_id") in want]
-    have_ids = {r.get("scenario_id") for r in runs}
-    missing = list(want - have_ids)
+    # The conversations being judged: the set's saved runs (the dataset is
+    # artifacts/eval/<set>/splits/<category>/<split>.yml).
+    explicit_runs = Path(runs_file).resolve() if runs_file else None
+    conversations = conversations_for(Path(split_path).parents[2], explicit_runs)
+    expected_ids = [str(sc.get("id") or sc.get("name")) for sc in scenarios]
+    missing = [sid for sid in expected_ids if sid not in conversations]
     if missing:
         raise SystemExit(
-            f"Runs fixtures do not cover all scenarios in split. Missing {len(missing)} scenarios."
+            f"{len(missing)} scenario(s) in the split have no saved run with its "
+            f"conversation (e.g. {missing[0]}). Run the scenario set first: "
+            "omniagents eval scenarios run --set <its generated_scenarios.yml>"
         )
-
-    by_id = {r.get("scenario_id"): r for r in runs}
+    by_id = {sid: conversations[sid] for sid in expected_ids}
 
     from omniagents.core.agents.specs import AgentSpec
     from omniagents.core.agents.builder import _default_build_agent
@@ -295,9 +262,9 @@ async def evaluate_split(
     idx = 0
     tp = tn = fp = fn = 0
     for sc in scenarios:
-        sid = sc.get("id")
+        sid = str(sc.get("id") or sc.get("name"))
         label = bool(sc.get("label"))
-        run = by_id.get(sid) or {}
+        run = by_id[sid]
         if source == "history":
             text = json.dumps(run.get("history") or [])
         else:

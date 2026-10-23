@@ -68,12 +68,11 @@ from omniagents.core.eval.optimize import (
     optimize_judge_from_project,
     optimize_agent_from_project,
 )
-from omniagents.core.eval.pipeline import run_evaluation, _load_local_measures
+from omniagents.core.eval.pipeline import run_evaluation, load_project_measures
 from omniagents.core.eval.results import (
     generate_run_id,
     get_results_directory,
-    save_run_results,
-    update_runs_index,
+    save_evaluation_run,
 )
 from omniagents.core.evaluation.registry import _MEASURES as _REGISTERED_MEASURES
 from omniagents.core.project.scaffold import (
@@ -2433,7 +2432,7 @@ def create_api_app(
             _REGISTERED_MEASURES.clear()
             eval_file, exists = _resolve_eval_file(ctx, manifest_path)
             if exists and eval_file.is_file():
-                _load_local_measures(eval_file)
+                load_project_measures(eval_file)
             for key, fn in _REGISTERED_MEASURES.items():
                 module = getattr(fn, "__module__", None)
                 try:
@@ -4794,48 +4793,12 @@ def create_api_app(
                     getattr(app.state, "project_resources", {}) or {}
                 ).get("entry_agent_key")
 
-            # Save results using structured storage
-            run_metadata = {
-                "id": run_id,
-                "created_at": _utc_now(),
-                "finished_at": _utc_now(),
-                "workflow_name": workflow_name,
-                "source_path": str(Path(scenario_set.path).resolve()),
-                "agent": resolved_agent,
-                "filters": {
-                    "select": payload.select,
-                    "exclude": payload.exclude,
-                },
-                "summary": {
-                    "total_scenarios": len(runs),
-                    "passed": sum(
-                        1
-                        for r in runs
-                        if all(m.get("passed", False) for m in r.get("measures", []))
-                    ),
-                    "failed": sum(
-                        1
-                        for r in runs
-                        if not all(
-                            m.get("passed", False) for m in r.get("measures", [])
-                        )
-                    ),
-                },
-            }
-            results_path = save_run_results(results_dir, run_id, runs, run_metadata)
-
-            # Update runs index
-            update_runs_index(
-                results_dir,
-                {
-                    "id": run_id,
-                    "timestamp": run_metadata["created_at"],
-                    "path": str(results_path),
-                    "workflow_name": workflow_name,
-                    "agent": resolved_agent,
-                    "summary": run_metadata["summary"],
-                    "source": str(Path(scenario_set.path).resolve().parent.name),
-                },
+            results_path = save_evaluation_run(
+                Path(scenario_set.path),
+                {"runs": runs},
+                source="studio",
+                agent=resolved_agent,
+                workflow_name=workflow_name,
             )
 
             # Update manifest with workflow info

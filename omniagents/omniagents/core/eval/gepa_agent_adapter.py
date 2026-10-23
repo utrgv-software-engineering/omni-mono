@@ -21,7 +21,7 @@ from omniagents.core.evaluation import (
 )
 from omniagents.core.eval.pipeline import (
     _failure_category_map,
-    _load_local_measures,
+    load_project_measures,
     run_judges,
 )
 from omniagents.core.utils.jinja import render_template
@@ -84,7 +84,7 @@ class OmniAgentsAgentAdapter:
         }
         self._eval_cfg_dict = eval_cfg
 
-        _load_local_measures(
+        load_project_measures(
             self.compiled_yaml,
             project_root=(eval_config.project_root if eval_config else None),
             eval_dir=(eval_config.eval_dir if eval_config else None),

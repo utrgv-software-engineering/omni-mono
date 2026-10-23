@@ -2,6 +2,7 @@ import sys
 import argparse
 import json
 import os
+import shutil
 from pathlib import Path
 import yaml
 from dotenv import load_dotenv
@@ -22,7 +23,6 @@ from omniagents.core.eval.optimize import (
     optimize_judge_from_project,
 )
 from omniagents.core.eval.annotate import annotate_scenarios, write_annotation_output
-from omniagents.core.eval.results import save_evaluation_run
 from omniagents.core.runtime.runner import Runner
 from omniagents.core.debug import Debug
 from omniagents.core.session.cli import add_sessions_subparser, handle_sessions_command
@@ -475,6 +475,13 @@ def main():
         default=None,
         help="Optional scenario set name to include in tracing workflow base name",
     )
+    scen_run.add_argument(
+        "--set",
+        dest="scenario_set",
+        default="",
+        help="Run every scenario in this scenario set file (a generated set's "
+        "generated_scenarios.yml) instead of the project's scenarios",
+    )
     scen_ann = scen_sub.add_parser(
         "annotate", help="Annotate scenarios with Studio categories"
     )
@@ -499,31 +506,6 @@ def main():
     scen_ann.add_argument("--exclude", default="")
     scen_ann.add_argument("-q", "--quiet", action="count", default=0)
     scen_ann.add_argument("-v", "--verbose", action="count", default=0)
-
-    scen_split = scen_sub.add_parser(
-        "split", help="Create train/dev/test splits from annotated scenarios"
-    )
-    scen_split.add_argument(
-        "--project",
-        "-P",
-        required=False,
-        help="Path to project.yml (defaults to project.yml in CWD)",
-    )
-    scen_split.add_argument(
-        "--name",
-        default=None,
-        help="Scenario set name under artifacts/eval/<name>/ (alternative to --input)",
-    )
-    scen_split.add_argument("--input", "-i", required=False, default="")
-    scen_split.add_argument("--category", "-c", required=True)
-    scen_split.add_argument("--output-dir", "-o", default="")
-    scen_split.add_argument("--train", type=float, default=0.15)
-    scen_split.add_argument("--dev", type=float, default=0.425)
-    scen_split.add_argument("--test", type=float, default=0.425)
-    scen_split.add_argument("--seed", type=int, default=42)
-    scen_split.add_argument("--negatives-ratio", type=float, default=None)
-    scen_split.add_argument("-q", "--quiet", action="count", default=0)
-    scen_split.add_argument("-v", "--verbose", action="count", default=0)
 
     scen_holdout = scen_sub.add_parser(
         "holdout",
@@ -954,6 +936,31 @@ def main():
 
     judge_parser = subparsers.add_parser("judge", help="Judge utilities")
     judge_sub = judge_parser.add_subparsers(dest="judge_cmd")
+    judge_dataset = judge_sub.add_parser(
+        "dataset",
+        help="Build a judge's train/dev/test dataset for a failure category from a "
+        "reviewed generated scenario set (scenarios labelled with the category are "
+        "positives)",
+    )
+    judge_dataset.add_argument(
+        "--project",
+        "-P",
+        required=False,
+        help="Path to project.yml (defaults to project.yml in CWD)",
+    )
+    judge_dataset.add_argument(
+        "--set",
+        dest="scenario_set",
+        required=True,
+        help="The generated set: its name under artifacts/eval/ or its "
+        "generated_scenarios.yml",
+    )
+    judge_dataset.add_argument("--category", "-c", required=True)
+    judge_dataset.add_argument("--train", type=float, default=0.15)
+    judge_dataset.add_argument("--dev", type=float, default=0.425)
+    judge_dataset.add_argument("--test", type=float, default=0.425)
+    judge_dataset.add_argument("--seed", type=int, default=42)
+    judge_dataset.add_argument("--negatives-ratio", type=float, default=None)
     judge_run = judge_sub.add_parser(
         "run", help="Evaluate an LLM-as-Judge over a split"
     )
@@ -1006,7 +1013,8 @@ def main():
         "--runs-file",
         dest="runs_file",
         default=None,
-        help="Optional explicit runs fixtures JSON to use",
+        help="A saved run's results.json to read the conversations from "
+        "(default: the scenario set's newest saved runs)",
     )
     judge_run.add_argument("--output", "-o", default="")
     judge_run.add_argument(
@@ -1090,7 +1098,8 @@ def main():
         "--runs-file",
         dest="runs_file",
         default=None,
-        help="Path to generated_runs.json; defaults alongside split timestamp dir",
+        help="A saved run's results.json to read the conversations from "
+        "(default: the scenario set's newest saved runs)",
     )
     judge_opt.add_argument(
         "--source",
@@ -1575,18 +1584,7 @@ def main():
                             "Error: Provide --project <project.yml> (or run from a directory containing a project.yml)."
                         )
                         sys.exit(2)
-                eval_cfg = load_eval_config(
-                    str(proj_path),
-                    select=str(args.select or ""),
-                    exclude=str(args.exclude or ""),
-                    agent_key=(str(getattr(args, "agent", "") or "") or None),
-                    split=(str(getattr(args, "split", "") or "") or None),
-                )
-                from pathlib import Path as _P
-
-                compiled_cfg_path = eval_cfg.agent_path
-                tracing = eval_cfg.tracing_config
-                from omniagents.core.eval.pipeline import run_evaluation
+                from omniagents.core.eval.workspace import EvalWorkspace
 
                 qlvl_pre = int(getattr(args, "quiet", 0) or 0)
                 vlvl_pre = int(getattr(args, "verbose", 0) or 0)
@@ -1646,17 +1644,6 @@ def main():
                                 pass
                             line_count = 0
 
-                wf_base = None
-                try:
-                    if (getattr(args, "name", None) is not None) and str(
-                        getattr(args, "name")
-                    ).strip():
-                        base_name = tracing.get("name") or _P(compiled_cfg_path).stem
-                        wf_base = (
-                            f"{base_name}_scenarios_{str(getattr(args,'name')).strip()}"
-                        )
-                except Exception:
-                    wf_base = None
                 # eval scenarios run: include unmeasured by default
                 # eval suite run: exclude unmeasured by default
                 if is_scenarios_run:
@@ -1667,69 +1654,34 @@ def main():
                     include_unmeasured = bool(
                         getattr(args, "include_unmeasured", False)
                     )
-                data = run_evaluation(
-                    _P(compiled_cfg_path),
-                    tracing_cfg=tracing,
-                    workflow_base_name=wf_base,
-                    include_unmeasured=include_unmeasured,
-                    progress_cb=_progress_cb,
-                    eval_config=eval_cfg,
+                workspace = EvalWorkspace(
+                    proj_path, agent=(str(getattr(args, "agent", "") or "") or None)
                 )
-                run_manifest = data.get("manifest") if isinstance(data, dict) else None
-                # Determine output location
-                out_arg = str(getattr(args, "output", "") or "").strip()
-                yaml_output = (eval_cfg.config or {}).get("output") or ""
-                explicit_output = out_arg or yaml_output
-
-                base_proj = _P(proj_path).resolve()
-                if base_proj.is_file():
-                    base_proj = base_proj.parent
-                name_arg = str(getattr(args, "name", "") or "").strip()
-
+                scenario_set = str(getattr(args, "scenario_set", "") or "").strip()
+                data = workspace.run(
+                    scenario_set=scenario_set or None,
+                    select=str(args.select or "") or None,
+                    exclude=str(args.exclude or "") or None,
+                    split=(str(getattr(args, "split", "") or "") or None),
+                    include_unmeasured=include_unmeasured,
+                    name=str(getattr(args, "name", "") or "").strip() or None,
+                    source="cli",
+                    progress_cb=_progress_cb,
+                )
+                final_out = Path(data["path"])
+                print(f"Wrote results: {final_out}")
+                # --output (or evaluation.output) also writes the run as one
+                # JSON file, for scripts that read it from a fixed place.
+                explicit_output = str(getattr(args, "output", "") or "").strip() or (
+                    workspace.config().config.get("output") or ""
+                )
                 if explicit_output:
-                    # Explicit --output flag: write raw JSON (backwards compat)
-                    final_out = _P(explicit_output)
-                    if not final_out.is_absolute():
-                        final_out = (eval_cfg.project_root / final_out).resolve()
-                    final_out.parent.mkdir(parents=True, exist_ok=True)
-                    final_out.write_text(json.dumps(data, indent=2), encoding="utf-8")
-                    print(f"Wrote results: {final_out}")
-                else:
-                    # Use structured results storage
-                    if name_arg:
-                        scenario_dir = base_proj / "artifacts" / "eval" / name_arg
-                    else:
-                        scenario_dir = base_proj / "artifacts" / "eval"
-                    # Create a placeholder scenario path for results directory
-                    scenario_path = scenario_dir / "scenarios.yml"
-                    # Resolve "no --agent flag" to the actual entrypoint name
-                    # by reading the compiled agent YAML, so historical runs
-                    # are unambiguous about which agent was scored.
-                    _agent_arg = str(getattr(args, "agent", "") or "").strip()
-                    if not _agent_arg:
-                        try:
-                            import yaml as _yaml_mod
-
-                            _cfg = (
-                                _yaml_mod.safe_load(
-                                    _P(compiled_cfg_path).read_text(encoding="utf-8")
-                                )
-                                or {}
-                            )
-                            _agent_arg = str(_cfg.get("name") or "").strip()
-                        except Exception:
-                            _agent_arg = ""
-                    final_out = save_evaluation_run(
-                        scenario_path=scenario_path,
-                        data=data,
-                        source="cli",
-                        scenario_name=name_arg or "default",
-                        agent=_agent_arg or None,
-                        manifest=(
-                            run_manifest if isinstance(run_manifest, dict) else None
-                        ),
-                    )
-                    print(f"Wrote results: {final_out}")
+                    copy_path = Path(explicit_output)
+                    if not copy_path.is_absolute():
+                        copy_path = (workspace.root / copy_path).resolve()
+                    copy_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(final_out, copy_path)
+                    print(f"Wrote results: {copy_path}")
                 from omniagents.core.eval.measure_tiers import gates_ci, DEFAULT_TIER
 
                 checks = []
@@ -1866,57 +1818,6 @@ def main():
                     }
                     return f"{codes.get(color, '')}{s}{codes['reset']}"
 
-                # Compute scenario line numbers from compiled YAML for location display
-                sc_line_by_id = {}
-                sc_line_by_name = {}
-                try:
-                    comp_lines = (
-                        _P(compiled_cfg_path).read_text(encoding="utf-8").splitlines()
-                    )
-                    import re as _re
-
-                    collecting = False
-                    base_indent = 0
-                    for i, ln in enumerate(comp_lines, start=1):
-                        if not collecting:
-                            m = _re.match(r"^(\s*)scenarios\s*:", ln)
-                            if m:
-                                collecting = True
-                                base_indent = len(m.group(1))
-                            continue
-                        cur_indent = len(ln) - len(ln.lstrip(" "))
-                        if ln.strip() == "" or ln.strip().startswith("#"):
-                            continue
-                        if cur_indent <= base_indent and not ln.lstrip().startswith(
-                            "-"
-                        ):
-                            collecting = False
-                            continue
-                        m_id = _re.match(r"^\s*-\s*id\s*:\s*(.+?)\s*$", ln)
-                        if m_id:
-                            scid = m_id.group(1).strip().strip("\"'")
-                            if scid and scid not in sc_line_by_id:
-                                sc_line_by_id[scid] = i
-                            continue
-                        m_name = _re.match(r"^\s*-\s*name\s*:\s*(.+?)\s*$", ln)
-                        if m_name:
-                            nm = m_name.group(1).strip().strip("\"'")
-                            if nm and nm not in sc_line_by_name:
-                                sc_line_by_name[nm] = i
-                            continue
-                except Exception:
-                    sc_line_by_id = {}
-                    sc_line_by_name = {}
-                for c in checks:
-                    if c.get("type") == "measure":
-                        sid = c.get("scenario_id")
-                        sname = c.get("scenario_name")
-                        ln = (sc_line_by_id.get(sid) if sid else None) or (
-                            sc_line_by_name.get(sname) if sname else None
-                        )
-                        if ln:
-                            c["file"] = str(_P(compiled_cfg_path))
-                            c["line"] = int(ln)
                 reporter = args.reporter
                 if reporter == "auto":
                     reporter = "pretty" if _isatty() else "tap"
@@ -1933,10 +1834,6 @@ def main():
                             if c.get("reason"):
                                 print(f"# {c.get('reason')}")
                             if c.get("type") == "measure":
-                                fp = c.get("file")
-                                fl = c.get("line")
-                                if fp and fl:
-                                    print(f"# Location: {fp}:{fl}")
                                 p = c.get("prompt") or ""
                                 if p:
                                     pt = p if len(p) <= 300 else (p[:300] + "...")
@@ -2027,10 +1924,6 @@ def main():
                             print(_c("FAIL ", "red") + title)
                             rsn = f.get("reason")
                             if f.get("type") == "measure":
-                                fp = f.get("file")
-                                fl = f.get("line")
-                                if fp and fl:
-                                    print(f"  Location: {fp}:{fl}")
                                 prompt = f.get("prompt") or ""
                                 if prompt:
                                     p = (
@@ -2434,13 +2327,38 @@ def main():
                 sys.exit(1)
         elif args.eval_cmd == "scenarios":
             print(
-                "Error: Provide a scenarios subcommand: generate | run | annotate | split | holdout"
+                "Error: Provide a scenarios subcommand: generate | run | annotate | holdout"
             )
             sys.exit(2)
         else:
             eval_parser.print_help()
     elif args.command == "judge":
-        if getattr(args, "judge_cmd", None) == "run":
+        if getattr(args, "judge_cmd", None) == "dataset":
+            from omniagents.core.eval.workspace import EvalWorkspace, EvalWorkspaceError
+
+            workspace = EvalWorkspace(getattr(args, "project", None) or Path.cwd())
+            set_arg = str(args.scenario_set)
+            set_path = Path(set_arg)
+            if not set_path.suffix:
+                set_path = workspace.artifacts_dir / set_arg / "generated_scenarios.yml"
+            try:
+                dataset = workspace.create_judge_dataset(
+                    set_path,
+                    args.category,
+                    fractions=(args.train, args.dev, args.test),
+                    seed=args.seed,
+                    negatives_ratio=args.negatives_ratio,
+                )
+            except EvalWorkspaceError as exc:
+                print(f"Error: {exc}")
+                sys.exit(2)
+            for split in dataset["splits"]:
+                print(
+                    f"{split['split']}: {split['scenario_count']} scenarios "
+                    f"({split['positives']} positive, {split['negatives']} negative) "
+                    f"-> {split['path']}"
+                )
+        elif getattr(args, "judge_cmd", None) == "run":
             try:
                 from omniagents.core.eval.loader import load_eval_config
 

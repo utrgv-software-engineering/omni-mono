@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Optional
+from typing import List, Tuple, Optional
 import yaml
 from omniagents._version import __version__ as OMNIAGENTS_VERSION
 
@@ -441,10 +441,14 @@ def scaffold_judge(
     failure_category: Optional[str] = None,
     force: bool = False,
 ) -> Tuple[List[str], str]:
+    from omniagents.core.eval.loader import evaluations_dir
+
     root = _resolve_project_root(project_ref)
     sanitized = _sanitize_name(key)
-    eval_dir = root / "evaluations"
-    eval_dir.mkdir(exist_ok=True)
+    eval_dir = evaluations_dir(
+        root, yaml.safe_load((root / "project.yml").read_text(encoding="utf-8")) or {}
+    )
+    eval_dir.mkdir(parents=True, exist_ok=True)
     judges_root = eval_dir / "judges" / sanitized
     judges_root.mkdir(parents=True, exist_ok=True)
     created: List[str] = []
@@ -559,41 +563,48 @@ def scaffold_judge(
 
     if failure_category:
         evaluation_yml = eval_dir / "evaluation.yml"
-        base: Dict[str, Any] = {}
-        if evaluation_yml.exists():
-            try:
-                base = yaml.safe_load(evaluation_yml.read_text(encoding="utf-8")) or {}
-            except Exception:
-                base = {}
-        if not isinstance(base, dict):
-            base = {}
-        ev = base.get("evaluation") or {}
-        if not isinstance(ev, dict):
-            ev = {}
-        fcs = ev.get("failure_categories") or []
-        if not isinstance(fcs, list):
-            fcs = []
-        found = None
-        for it in fcs:
-            if isinstance(it, dict) and str(it.get("name")) == str(failure_category):
-                found = it
-                break
-        if found is None:
-            found = {"name": str(failure_category), "measures": [f"{sanitized}_agent"]}
-            fcs.append(found)
-        else:
-            ms = found.get("measures") or []
-            if f"{sanitized}_agent" not in ms:
-                ms.append(f"{sanitized}_agent")
-                found["measures"] = ms
-        ev["failure_categories"] = fcs
-        base["evaluation"] = ev
-        evaluation_yml.write_text(
-            yaml.safe_dump(base, sort_keys=False, allow_unicode=True), encoding="utf-8"
-        )
+        add_category_measure(evaluation_yml, failure_category, f"{sanitized}_agent")
         created.append(str(evaluation_yml))
 
     return created, str(root)
+
+
+def add_category_measure(evaluation_yml: Path, category: str, measure: str) -> None:
+    """List ``measure`` under failure category ``category`` in
+    ``evaluation.yml`` (adding the category when it is new), keeping the
+    rest of the file as it is."""
+    from omniagents.core.utils.yaml_edit import (
+        dump_document,
+        load_document,
+        replace_file,
+    )
+
+    text = evaluation_yml.read_text(encoding="utf-8") if evaluation_yml.exists() else ""
+    doc_yaml, doc = load_document(text)
+    block = doc.get("evaluation")
+    if not isinstance(block, dict):
+        block = doc["evaluation"] = {}
+    categories = block.get("failure_categories")
+    if not isinstance(categories, list):
+        categories = block["failure_categories"] = []
+    entry = next(
+        (
+            item
+            for item in categories
+            if isinstance(item, dict) and str(item.get("name")) == str(category)
+        ),
+        None,
+    )
+    if entry is None:
+        categories.append({"name": str(category), "measures": [measure]})
+    else:
+        measures = entry.get("measures")
+        if not isinstance(measures, list):
+            measures = entry["measures"] = []
+        if measure not in measures:
+            measures.append(measure)
+    evaluation_yml.parent.mkdir(parents=True, exist_ok=True)
+    replace_file(evaluation_yml, dump_document(doc_yaml, doc))
 
 
 def scaffold_optimizer(
