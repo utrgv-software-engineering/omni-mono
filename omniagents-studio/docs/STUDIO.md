@@ -83,7 +83,7 @@ desktop app, the web UI, the TUI, the Playground and evaluation runs.
   - CLI: `omniagents generate judge` scaffolds judge manifests tied to failure categories.
   - Studio: No judge authoring experience.
 - Optimize the LLM judge
-  - CLI: `omniagents eval judge optimize` runs GEPA loops over splits.
+  - CLI: `omniagents judge optimize` runs GEPA loops over splits.
   - Studio: Optimization flows are absent (lower priority).
 - Add golden scenarios
   - CLI: Manually edit `evaluations/scenarios.yml` or craft scripts.
@@ -92,7 +92,7 @@ desktop app, the web UI, the TUI, the Playground and evaluation runs.
   - CLI: `omniagents eval suite run` compiles and executes scenarios with TAP or JSON output.
   - Studio: Suite execution and reporting have not been surfaced.
 - Optimize the agent
-  - CLI: `omniagents eval agent optimize` (or `agent optimize`) iterates on instructions with optional apply.
+  - CLI: `omniagents agent optimize` iterates on instructions with optional apply.
   - Studio: No agent optimization tooling (lower priority).
 - Confirm golden scenarios pass
   - CLI: Rerun the suite and inspect results manually.
