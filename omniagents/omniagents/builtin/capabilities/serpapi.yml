@@ -8,5 +8,4 @@ instructions: |
   - `web_search` for general queries.
   - `scholar_search` for academic sources.
   - `youtube_search` for video.
-  Follow up search hits with `web_fetch` (from the `web` capability) to read
-  the underlying page.
+  Search results carry only snippets; fetch a hit's page to read it in full.

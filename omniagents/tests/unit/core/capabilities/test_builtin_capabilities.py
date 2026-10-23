@@ -184,3 +184,26 @@ def test_agent_uses_builtin_capability(tmp_path):
     spec = build_spec_from_project(proj)
     cap_names = [c.capability_name for c in spec.resolved_capabilities]
     assert cap_names == ["filesystem", "web"]
+
+
+def test_builtin_capability_instructions_name_only_their_own_tools(tmp_path):
+    """A pack's instructions are in the prompt whenever the pack is, so
+    they must not send the model to a tool another pack supplies: an agent
+    with `filesystem` but no `shell` has no `execute_bash` to call."""
+    import re
+
+    from omniagents.builtin import tools as builtin_tools
+
+    _make_min_project(tmp_path)
+    registry = load_project(str(tmp_path)).capability_registry
+    tool_names = set(dir(builtin_tools))
+
+    stray = {}
+    for name in registry:
+        cap = registry[name]
+        own = {t.name for t in cap.tools()}
+        mentioned = set(re.findall(r"`([a-z_]+)", getattr(cap, "instructions_text", None) or ""))
+        foreign = (mentioned & tool_names) - own
+        if foreign:
+            stray[name] = sorted(foreign)
+    assert stray == {}
