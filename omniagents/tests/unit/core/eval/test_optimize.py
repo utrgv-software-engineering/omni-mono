@@ -87,7 +87,7 @@ def configure_optimize_env(monkeypatch):
             env.apply_calls.append((args, kwargs))
 
         monkeypatch.setattr(
-            "omniagents.core.project.apply.apply_agent_instructions",
+            "omniagents.core.project.agent_files.update_agent",
             fake_apply,
         )
 
@@ -376,12 +376,12 @@ def setup_optimize_stubs(
         apply_calls.append((args, kwargs))
         return None
 
-    apply_module = types.ModuleType("omniagents.core.project.apply")
-    apply_module.apply_agent_instructions = fake_apply
+    apply_module = types.ModuleType("omniagents.core.project.agent_files")
+    apply_module.update_agent = fake_apply
     apply_module.__package__ = "omniagents.core.project"
     monkeypatch.setitem(
         sys.modules,
-        "omniagents.core.project.apply",
+        "omniagents.core.project.agent_files",
         apply_module,
     )
 
@@ -635,12 +635,12 @@ evaluation:
         loader_module,
     )
 
-    apply_module = types.ModuleType("omniagents.core.project.apply")
-    apply_module.apply_agent_instructions = lambda *args, **kwargs: None
+    apply_module = types.ModuleType("omniagents.core.project.agent_files")
+    apply_module.update_agent = lambda *args, **kwargs: None
     apply_module.__package__ = "omniagents.core.project"
     monkeypatch.setitem(
         sys.modules,
-        "omniagents.core.project.apply",
+        "omniagents.core.project.agent_files",
         apply_module,
     )
 
@@ -981,7 +981,8 @@ def test_optimize_agent_auto_resolution_resume_apply(
     assert env.apply_calls
     apply_args, apply_kwargs = env.apply_calls[0]
     assert apply_args[0] == str(project_dir)
-    assert apply_args[2] == "updated"
+    assert apply_kwargs == {"instructions": "updated"}
+    assert result["applied"] is True
     assert env.proposer_kwargs
     trainset = env.proposer_kwargs[0]["trainset"]
     assert all(item.get("label") is True for item in trainset)
@@ -1486,6 +1487,8 @@ def test_optimize_agent_apply_failure(monkeypatch, tmp_path, configure_optimize_
     assert result["instructions"] == env.instructions
     assert env.apply_attempts
     assert not env.apply_calls
+    assert result["applied"] is False
+    assert result["apply_error"] == "apply failed"
 
 
 def test_optimize_agent_apply_true(monkeypatch, tmp_path):
@@ -1536,7 +1539,9 @@ def test_optimize_agent_apply_true(monkeypatch, tmp_path):
         True,
     )
     assert result["instructions"] == "refined"
-    assert ctx.apply_calls == [((str(project_dir), "agent-main", "refined"), {})]
+    assert ctx.apply_calls == [
+        ((str(project_dir), "agent-main"), {"instructions": "refined"})
+    ]
 
 
 def test_optimize_judge_happy_path(monkeypatch, tmp_path, configure_optimize_env):

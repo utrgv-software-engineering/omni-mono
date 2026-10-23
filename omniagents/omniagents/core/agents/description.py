@@ -96,6 +96,63 @@ async def instructions(agent: Any, context: Any) -> dict[str, Any]:
         return {"text": "", "dynamic": True, "error": f"{type(exc).__name__}: {exc}"}
 
 
+def _guardrail_name(guardrail: Any) -> str:
+    get_name = getattr(guardrail, "get_name", None)
+    if callable(get_name):
+        return str(get_name())
+    return str(getattr(guardrail, "name", None) or type(guardrail).__name__)
+
+
+def guardrails(agent: Any) -> dict[str, list[str]]:
+    """The checks a run applies: to the user's input and the final output
+    (the agent's own), and to every tool call's arguments and result (set
+    on each tool)."""
+    tool_input: list[str] = []
+    tool_output: list[str] = []
+    for tool in getattr(agent, "tools", None) or []:
+        for name in map(
+            _guardrail_name, getattr(tool, "tool_input_guardrails", None) or []
+        ):
+            if name not in tool_input:
+                tool_input.append(name)
+        for name in map(
+            _guardrail_name, getattr(tool, "tool_output_guardrails", None) or []
+        ):
+            if name not in tool_output:
+                tool_output.append(name)
+    return {
+        "input": [
+            _guardrail_name(g) for g in getattr(agent, "input_guardrails", None) or []
+        ],
+        "output": [
+            _guardrail_name(g) for g in getattr(agent, "output_guardrails", None) or []
+        ],
+        "tool_input": tool_input,
+        "tool_output": tool_output,
+    }
+
+
+def output(agent: Any) -> dict[str, Any] | None:
+    """The structured output a run must end with, or ``None`` for text."""
+    output_type = getattr(agent, "output_type", None)
+    if output_type is None or output_type is str:
+        return None
+    from agents.agent_output import AgentOutputSchema, AgentOutputSchemaBase
+
+    schema = (
+        output_type
+        if isinstance(output_type, AgentOutputSchemaBase)
+        else AgentOutputSchema(output_type)
+    )
+    if schema.is_plain_text():
+        return None
+    return {
+        "name": schema.name(),
+        "strict": schema.is_strict_json_schema(),
+        "schema": schema.json_schema(),
+    }
+
+
 def subagent_name(config: Any) -> str:
     inline = getattr(config, "inline_spec", None)
     if inline is not None and getattr(inline, "name", None):

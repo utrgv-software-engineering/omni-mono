@@ -5,6 +5,7 @@ import textwrap
 import pytest
 
 from omniagents.core.config.loader import (
+    collect_config_problems,
     load_agent_spec_from_yaml,
     _parse_inline_agent_spec,
 )
@@ -118,11 +119,11 @@ def test_parse_inline_agent_spec_supports_nested_inline_handoffs(tmp_path):
     assert nested.tool_description_override == "Nested inline"
 
 
-def test_parse_inline_agent_spec_handles_invalid_tools_list(tmp_path, capsys):
+def test_parse_inline_agent_spec_handles_invalid_tools_list(tmp_path):
     config = {"instructions": "Inline", "tools": "alpha"}
-    spec = _parse_inline_agent_spec(config, tmp_path, set())
-    captured = capsys.readouterr()
-    assert "should be a list" in captured.out
+    with collect_config_problems() as problems:
+        spec = _parse_inline_agent_spec(config, tmp_path, set())
+    assert "should be a list" in "\n".join(problems)
     assert spec.available_tools == []
 
 
@@ -499,7 +500,7 @@ def test_loader_discovers_assets_and_applies_config(tmp_path):
                 sys.modules.pop(name, None)
 
 
-def test_loader_warns_for_missing_tools(tmp_path, capsys):
+def test_loader_warns_for_missing_tools(tmp_path):
     yaml_path = tmp_path / "agent.yaml"
     write(
         yaml_path,
@@ -510,14 +511,15 @@ def test_loader_warns_for_missing_tools(tmp_path, capsys):
           - not_a_tool
         """,
     )
-    spec = load_agent_spec_from_yaml(str(yaml_path))
-    captured = capsys.readouterr()
-    assert "were not found" in captured.out
-    assert "not_a_tool" in captured.out
+    with collect_config_problems() as problems:
+        spec = load_agent_spec_from_yaml(str(yaml_path))
+    reported = "\n".join(problems)
+    assert "were not found" in reported
+    assert "not_a_tool" in reported
     assert spec.available_tools == []
 
 
-def test_loader_warns_for_missing_guardrails(tmp_path, capsys):
+def test_loader_warns_for_missing_guardrails(tmp_path):
     yaml_path = tmp_path / "agent.yaml"
     write(
         yaml_path,
@@ -530,12 +532,13 @@ def test_loader_warns_for_missing_guardrails(tmp_path, capsys):
           - missing_output
         """,
     )
-    spec = load_agent_spec_from_yaml(str(yaml_path))
-    captured = capsys.readouterr()
-    assert "input guardrails listed" in captured.out
-    assert "missing_input" in captured.out
-    assert "output guardrails listed" in captured.out
-    assert "missing_output" in captured.out
+    with collect_config_problems() as problems:
+        spec = load_agent_spec_from_yaml(str(yaml_path))
+    reported = "\n".join(problems)
+    assert "input guardrails listed" in reported
+    assert "missing_input" in reported
+    assert "output guardrails listed" in reported
+    assert "missing_output" in reported
     assert spec.input_guardrails == []
     assert spec.output_guardrails == []
 
@@ -810,7 +813,7 @@ def test_realtime_config_with_env_vars(tmp_path, monkeypatch):
     assert spec.realtime_settings.temperature == 0.8
 
 
-def test_realtime_invalid_audio_format_uses_default(tmp_path, capsys):
+def test_realtime_invalid_audio_format_uses_default(tmp_path):
     """Test that invalid audio formats fall back to defaults with warning."""
     yaml_path = tmp_path / "agent.yaml"
     write(
@@ -824,15 +827,16 @@ def test_realtime_invalid_audio_format_uses_default(tmp_path, capsys):
           output_audio_format: also_invalid
         """,
     )
-    spec = load_agent_spec_from_yaml(str(yaml_path))
-    captured = capsys.readouterr()
-    assert "Invalid input_audio_format" in captured.out
-    assert "Invalid output_audio_format" in captured.out
+    with collect_config_problems() as problems:
+        spec = load_agent_spec_from_yaml(str(yaml_path))
+    reported = "\n".join(problems)
+    assert "Invalid input_audio_format" in reported
+    assert "Invalid output_audio_format" in reported
     assert spec.realtime_settings.input_audio_format == "pcm16"
     assert spec.realtime_settings.output_audio_format == "pcm16"
 
 
-def test_realtime_invalid_modalities_uses_default(tmp_path, capsys):
+def test_realtime_invalid_modalities_uses_default(tmp_path):
     """Test that invalid modalities fall back to defaults with warning."""
     yaml_path = tmp_path / "agent.yaml"
     write(
@@ -845,13 +849,14 @@ def test_realtime_invalid_modalities_uses_default(tmp_path, capsys):
           modalities: ["invalid", "modality"]
         """,
     )
-    spec = load_agent_spec_from_yaml(str(yaml_path))
-    captured = capsys.readouterr()
-    assert "Invalid modalities" in captured.out
+    with collect_config_problems() as problems:
+        spec = load_agent_spec_from_yaml(str(yaml_path))
+    reported = "\n".join(problems)
+    assert "Invalid modalities" in reported
     assert spec.realtime_settings.modalities == ["audio"]
 
 
-def test_realtime_mode_invalid_type_defaults_to_false(tmp_path, capsys):
+def test_realtime_mode_invalid_type_defaults_to_false(tmp_path):
     """Test that invalid realtime_mode type defaults to False with warning."""
     yaml_path = tmp_path / "agent.yaml"
     write(
@@ -862,13 +867,14 @@ def test_realtime_mode_invalid_type_defaults_to_false(tmp_path, capsys):
         realtime_mode: "yes"
         """,
     )
-    spec = load_agent_spec_from_yaml(str(yaml_path))
-    captured = capsys.readouterr()
-    assert "should be a boolean" in captured.out
+    with collect_config_problems() as problems:
+        spec = load_agent_spec_from_yaml(str(yaml_path))
+    reported = "\n".join(problems)
+    assert "should be a boolean" in reported
     assert spec.realtime_mode is False
 
 
-def test_realtime_settings_invalid_type_uses_defaults(tmp_path, capsys):
+def test_realtime_settings_invalid_type_uses_defaults(tmp_path):
     """Test that invalid realtime_settings type uses defaults with warning."""
     yaml_path = tmp_path / "agent.yaml"
     write(
@@ -880,9 +886,10 @@ def test_realtime_settings_invalid_type_uses_defaults(tmp_path, capsys):
         realtime_settings: "not a dict"
         """,
     )
-    spec = load_agent_spec_from_yaml(str(yaml_path))
-    captured = capsys.readouterr()
-    assert "should be a dictionary" in captured.out
+    with collect_config_problems() as problems:
+        spec = load_agent_spec_from_yaml(str(yaml_path))
+    reported = "\n".join(problems)
+    assert "should be a dictionary" in reported
     assert spec.realtime_settings is not None
     assert spec.realtime_settings.voice == "alloy"  # Default
 

@@ -6,64 +6,12 @@ import yaml
 
 from typing import Any
 
-from omniagents.core.project.runtime import load_project, resolve_agent
+from omniagents.core.project.runtime import load_project
 
 
 def _nonempty_str(value: Any) -> bool:
     """True when ``value`` is a non-blank string."""
     return isinstance(value, str) and bool(value.strip())
-
-
-def apply_agent_instructions(
-    proj_path: str, agent_key: str | None, new_instructions: str | None
-) -> None:
-    if new_instructions is None:
-        return
-    p = Path(proj_path)
-    if not p.exists():
-        cw = Path.cwd() / "project.yml"
-        if cw.is_file():
-            p = cw
-    prj = load_project(str(p))
-    key, agent_yaml_path = resolve_agent(prj, agent_key=agent_key)
-    ay = Path(agent_yaml_path)
-    doc = yaml.safe_load(ay.read_text(encoding="utf-8")) or {}
-    instr_file = (
-        doc.get("instructions_file")
-        if isinstance(doc.get("instructions_file"), str)
-        else None
-    )
-    if instr_file and str(instr_file).strip():
-        fp = Path(instr_file)
-        if not fp.is_absolute():
-            fp = (ay.parent / fp).resolve()
-        fp.write_text(new_instructions, encoding="utf-8")
-        print(f"Applied agent instructions: {fp}")
-    else:
-
-        class _LS(str):
-            pass
-
-        class _D(yaml.SafeDumper):
-            pass
-
-        def _rep(dumper, value):
-            return dumper.represent_scalar("tag:yaml.org,2002:str", value, style="|")
-
-        _D.add_representer(_LS, _rep)
-
-        def _lit(v):
-            return _LS(v) if isinstance(v, str) and "\n" in v else v
-
-        doc["instructions"] = new_instructions
-        blob = json.loads(json.dumps(doc))
-        if "instructions" in blob:
-            blob["instructions"] = _lit(blob["instructions"])
-        ay.write_text(
-            yaml.dump(blob, Dumper=_D, sort_keys=False, allow_unicode=True),
-            encoding="utf-8",
-        )
-        print(f"Applied agent instructions inline: {ay}")
 
 
 def apply_judge_updates(

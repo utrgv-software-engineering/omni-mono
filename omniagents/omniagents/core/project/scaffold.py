@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Optional
-import shutil
 import yaml
 from omniagents._version import __version__ as OMNIAGENTS_VERSION
 
@@ -387,48 +386,6 @@ def scaffold_agent(
         created,
     )
     return created, str(root), sanitized
-
-
-def delete_agent(project_ref: str, agent_key: str) -> Tuple[List[str], str, str]:
-    root = _resolve_project_root(project_ref)
-    agents_dir = root / "agents"
-    target_dir = agents_dir / agent_key
-    if not target_dir.exists() or not target_dir.is_dir():
-        raise FileNotFoundError(f"Agent directory not found: {target_dir}")
-    existing_keys = sorted(
-        p.name
-        for p in agents_dir.iterdir()
-        if p.is_dir() and (p / "agent.yml").is_file()
-    )
-    if agent_key not in existing_keys:
-        raise FileNotFoundError(f"Agent not found: {agent_key}")
-    if len(existing_keys) <= 1:
-        raise ValueError("Cannot delete the only agent in the project")
-    shutil.rmtree(target_dir)
-    removed = [str(target_dir)]
-    project_yml = root / "project.yml"
-    if project_yml.is_file():
-        data = yaml.safe_load(project_yml.read_text(encoding="utf-8")) or {}
-        if not isinstance(data, dict):
-            data = {}
-        agents_cfg = data.get("agents")
-        if not isinstance(agents_cfg, dict):
-            agents_cfg = {}
-        entry = agents_cfg.get("entrypoint")
-        if entry == agent_key:
-            # Prefer a non-battery agent for the new entrypoint — the
-            # conventional summarizer/worker agents are headless subagents.
-            battery_keys = {"recapper", "compactor", "session_summarizer", "worker"}
-            candidates = [k for k in existing_keys if k != agent_key]
-            preferred = [k for k in candidates if k not in battery_keys]
-            for candidate in preferred or candidates:
-                agents_cfg["entrypoint"] = candidate
-                break
-        data["agents"] = agents_cfg
-        project_yml.write_text(
-            yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
-        )
-    return removed, str(root), agent_key
 
 
 def scaffold_guardrail(

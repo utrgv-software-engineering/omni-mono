@@ -20,6 +20,8 @@ dependencies = [
     "pillow>=11",
     "pydantic==2.12.3",
     "PyYAML",
+    # Round-trip YAML: editing an agent.yml keeps its comments and layout.
+    "ruamel.yaml>=0.18",
     "Jinja2",
     "requests",
     "beautifulsoup4",

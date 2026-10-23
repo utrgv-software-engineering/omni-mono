@@ -42,7 +42,7 @@ def optimize_agent_from_project(
         )
     from omniagents.core.eval.gepa_agent_adapter import OmniAgentsAgentAdapter
     from omniagents.core.eval.loader import load_eval_config, filter_scenarios
-    from omniagents.core.project.apply import apply_agent_instructions
+    from omniagents.core.project.agent_files import update_agent
 
     _eval_config = load_eval_config(
         str(proj_path),
@@ -522,30 +522,29 @@ def optimize_agent_from_project(
         encoding="utf-8",
     )
     print(f"Agent override written: {out_yml}")
-    if bool(apply):
+    best_instructions = (
+        best.get("instructions") if isinstance(best.get("instructions"), str) else None
+    )
+    applied = False
+    apply_error = None
+    if bool(apply) and best_instructions is not None:
+        # The evaluated agent is agents/<key>/agent.yml.
+        key = agent_key or _eval_config.agent_path.parent.name
         try:
-            apply_agent_instructions(
-                proj_path,
-                agent_key,
-                (
-                    best.get("instructions")
-                    if isinstance(best.get("instructions"), str)
-                    else None
-                ),
-            )
-        except Exception:
-            pass
+            update_agent(proj_path, key, instructions=best_instructions)
+            applied = True
+        except Exception as exc:  # noqa: BLE001 - reported, the run's results stand
+            apply_error = str(exc)
+            logger.log(f"Could not apply the optimized instructions: {apply_error}")
     return {
         "run_dir": str(run_dir),
         "out_json": str(out_json),
         "dev_score": dev_acc,
         "test_score": test_acc,
         "category": cat,
-        "instructions": (
-            best.get("instructions")
-            if isinstance(best.get("instructions"), str)
-            else None
-        ),
+        "instructions": best_instructions,
+        "applied": applied,
+        "apply_error": apply_error,
         "log_file": str(log_path),
     }
 

@@ -6268,6 +6268,8 @@ class AgentService(RpcMethodsBase):
                 agent, self._runtime_context(session)
             ),
             "tools": description.tools(agent, agent_tool_names),
+            "guardrails": description.guardrails(agent),
+            "output": description.output(agent),
             "handoffs": description.handoffs(agent),
             "agent_tools": [
                 {

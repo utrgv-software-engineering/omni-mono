@@ -73,3 +73,50 @@ async def test_describing_starts_no_mcp_server_and_stores_nothing(
 
     assert described["mcp_servers"] == [{"name": "files", "type": "stdio"}]
     assert service._session_manager.list_sessions() == []
+
+
+@pytest.mark.asyncio
+async def test_describes_guardrails_and_structured_output(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    _write(
+        tmp_path / "guardrails" / "no_secrets.py",
+        """
+        from omniagents import input_guardrail, GuardrailFunctionOutput
+
+        @input_guardrail()
+        def no_secrets(context, agent, input):
+            return GuardrailFunctionOutput(output_info={}, tripwire_triggered=False)
+        """,
+    )
+    service = _service(
+        tmp_path,
+        """
+        name: main
+        model: gpt-5-mini
+        instructions: hi
+        input_guardrails: [no_secrets]
+        output_schema:
+          properties:
+            summary:
+              type: string
+        """,
+    )
+
+    described = await service.describe_agent()
+
+    assert described["guardrails"] == {
+        "input": ["no_secrets"],
+        "output": [],
+        "tool_input": [],
+        "tool_output": [],
+    }
+    assert described["output"]["strict"] is True
+    assert described["output"]["schema"]["properties"]["summary"]["type"] == "string"
+
+
+@pytest.mark.asyncio
+async def test_a_text_agent_has_no_structured_output(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    service = _service(tmp_path, "name: main\nmodel: gpt-5-mini\ninstructions: hi\n")
+
+    assert (await service.describe_agent())["output"] is None

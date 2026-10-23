@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 import yaml
 
-from omniagents.core.project.apply import apply_agent_instructions, apply_judge_updates
+from omniagents.core.project.apply import apply_judge_updates
 
 
 def _write(path: Path, content: str) -> None:
@@ -34,76 +33,6 @@ instructions: initial
 """,
     )
     return root
-
-
-def test_apply_agent_instructions_updates_file(tmp_path: Path):
-    root = _build_project(tmp_path)
-    agent_yaml = root / "agents" / "alpha" / "agent.yml"
-    agent_yaml.write_text(
-        """name: alpha
-model: gpt-4o
-instructions_file: instructions.txt
-""",
-        encoding="utf-8",
-    )
-    instructions_file = root / "agents" / "alpha" / "instructions.txt"
-    instructions_file.write_text("old", encoding="utf-8")
-    apply_agent_instructions(str(root), "alpha", "New instructions\nLine two")
-    assert instructions_file.read_text(encoding="utf-8") == "New instructions\nLine two"
-
-
-def test_apply_agent_instructions_updates_inline(tmp_path: Path):
-    root = _build_project(tmp_path)
-    apply_agent_instructions(str(root), "alpha", "Inline override\nNext line")
-    agent_yaml = root / "agents" / "alpha" / "agent.yml"
-    data = yaml.safe_load(agent_yaml.read_text(encoding="utf-8"))
-    assert data["instructions"] == "Inline override\nNext line"
-
-
-def test_apply_agent_instructions_noop_when_none(tmp_path: Path):
-    root = _build_project(tmp_path)
-    agent_yaml = root / "agents" / "alpha" / "agent.yml"
-    original = agent_yaml.read_text(encoding="utf-8")
-    apply_agent_instructions(str(root), "alpha", None)
-    assert agent_yaml.read_text(encoding="utf-8") == original
-
-
-def test_apply_agent_instructions_uses_cwd_fallback(tmp_path: Path, monkeypatch):
-    root = _build_project(tmp_path)
-    agent_yaml = root / "agents" / "alpha" / "agent.yml"
-    agent_yaml.write_text(
-        """name: alpha
-model: gpt-4o
-instructions_file: fallback.txt
-""",
-        encoding="utf-8",
-    )
-    monkeypatch.chdir(root)
-    apply_agent_instructions("missing/path.yml", "alpha", "Fallback text")
-    fallback_file = root / "agents" / "alpha" / "fallback.txt"
-    assert fallback_file.read_text(encoding="utf-8") == "Fallback text"
-
-
-def test_apply_agent_instructions_absolute_path(tmp_path: Path):
-    root = _build_project(tmp_path)
-    abs_file = tmp_path / "absolute.txt"
-    agent_yaml = root / "agents" / "alpha" / "agent.yml"
-    agent_yaml.write_text(
-        f"""name: alpha
-model: gpt-4o
-instructions_file: {abs_file}
-""",
-        encoding="utf-8",
-    )
-    apply_agent_instructions(str(root), "alpha", "Absolute update")
-    assert abs_file.read_text(encoding="utf-8") == "Absolute update"
-
-
-def test_apply_agent_instructions_missing_manifest_raises(tmp_path: Path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    missing = tmp_path / "nowhere"
-    with pytest.raises(FileNotFoundError):
-        apply_agent_instructions(str(missing), "alpha", "ignored")
 
 
 def _build_judges_fixture(tmp_path: Path) -> Path:

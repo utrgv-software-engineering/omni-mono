@@ -10,7 +10,10 @@ import textwrap
 
 import pytest
 
-from omniagents.core.config.loader import load_agent_spec_from_yaml
+from omniagents.core.config.loader import (
+    collect_config_problems,
+    load_agent_spec_from_yaml,
+)
 
 
 def _write(path, content):
@@ -145,7 +148,7 @@ def test_loader_parses_agent_tools_bare_string(tmp_path):
     assert cfg.yaml_path == str(sub_path.resolve())
 
 
-def test_loader_agent_tools_unknown_name_skips(tmp_path, capsys):
+def test_loader_agent_tools_unknown_name_skips(tmp_path):
     """Unknown agent name produces a clear warning and skips the entry."""
     main_path = tmp_path / "main.yaml"
     _write(
@@ -158,17 +161,18 @@ def test_loader_agent_tools_unknown_name_skips(tmp_path, capsys):
         """,
     )
 
-    spec = load_agent_spec_from_yaml(
-        str(main_path),
-        agents_map={"explorer": tmp_path / "explorer.yaml"},
-    )
+    with collect_config_problems() as problems:
+        spec = load_agent_spec_from_yaml(
+            str(main_path),
+            agents_map={"explorer": tmp_path / "explorer.yaml"},
+        )
     assert spec.agent_tool_configs == []
-    captured = capsys.readouterr()
-    assert "nonexistent" in captured.out
-    assert "explorer" in captured.out  # available agents listed
+    reported = "\n".join(problems)
+    assert "nonexistent" in reported
+    assert "explorer" in reported  # available agents listed
 
 
-def test_loader_agent_tools_no_registry_skips(tmp_path, capsys):
+def test_loader_agent_tools_no_registry_skips(tmp_path):
     """`agent: <name>` without an agents_map produces a clear warning,
     so callers loading standalone YAML get an actionable error."""
     main_path = tmp_path / "main.yaml"
@@ -182,11 +186,12 @@ def test_loader_agent_tools_no_registry_skips(tmp_path, capsys):
         """,
     )
 
-    spec = load_agent_spec_from_yaml(str(main_path))  # no agents_map
+    with collect_config_problems() as problems:
+        spec = load_agent_spec_from_yaml(str(main_path))  # no agents_map
     assert spec.agent_tool_configs == []
-    captured = capsys.readouterr()
-    assert "agent: explorer" in captured.out
-    assert "agents_map" in captured.out
+    reported = "\n".join(problems)
+    assert "agent: explorer" in reported
+    assert "agents_map" in reported
 
 
 def test_loader_parses_handoffs_by_name(tmp_path):
@@ -255,7 +260,7 @@ def test_loader_parses_handoffs_bare_string(tmp_path):
     assert cfg.yaml_path == str(sub_path.resolve())
 
 
-def test_loader_handoffs_unknown_name_skips(tmp_path, capsys):
+def test_loader_handoffs_unknown_name_skips(tmp_path):
     """Unknown handoff agent name produces a clear warning and skips."""
     main_path = tmp_path / "main.yaml"
     _write(
@@ -268,17 +273,18 @@ def test_loader_handoffs_unknown_name_skips(tmp_path, capsys):
         """,
     )
 
-    spec = load_agent_spec_from_yaml(
-        str(main_path),
-        agents_map={"explorer": tmp_path / "explorer.yaml"},
-    )
+    with collect_config_problems() as problems:
+        spec = load_agent_spec_from_yaml(
+            str(main_path),
+            agents_map={"explorer": tmp_path / "explorer.yaml"},
+        )
     assert spec.handoff_configs == []
-    captured = capsys.readouterr()
-    assert "nonexistent" in captured.out
-    assert "explorer" in captured.out
+    reported = "\n".join(problems)
+    assert "nonexistent" in reported
+    assert "explorer" in reported
 
 
-def test_loader_handoffs_no_registry_skips(tmp_path, capsys):
+def test_loader_handoffs_no_registry_skips(tmp_path):
     """`agent: <name>` in handoffs without an agents_map produces a clear warning."""
     main_path = tmp_path / "main.yaml"
     _write(
@@ -291,11 +297,12 @@ def test_loader_handoffs_no_registry_skips(tmp_path, capsys):
         """,
     )
 
-    spec = load_agent_spec_from_yaml(str(main_path))  # no agents_map
+    with collect_config_problems() as problems:
+        spec = load_agent_spec_from_yaml(str(main_path))  # no agents_map
     assert spec.handoff_configs == []
-    captured = capsys.readouterr()
-    assert "agent: explorer" in captured.out
-    assert "agents_map" in captured.out
+    reported = "\n".join(problems)
+    assert "agent: explorer" in reported
+    assert "agents_map" in reported
 
 
 # -- 2. is_enabled on handoffs and agent_tools --------------------------------

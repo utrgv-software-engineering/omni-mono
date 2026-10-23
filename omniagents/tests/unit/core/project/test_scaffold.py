@@ -11,7 +11,6 @@ from omniagents.core.project.scaffold import (
     scaffold_project,
     scaffold_agent,
     scaffold_tool,
-    delete_agent,
     scaffold_guardrail,
 )
 
@@ -236,32 +235,6 @@ def test_scaffold_tool_async_and_force(tmp_path):
     assert "async def" not in content_sync
     assert "def echo_tool" in content_sync
     assert any("echo_tool.py" in entry for entry in created_sync)
-
-
-def test_delete_agent_updates_entrypoint(tmp_path):
-    _, project_dir, base = scaffold_project("Delete Project", parent_dir=str(tmp_path))
-    _, _, other = scaffold_agent(project_dir, "Other Agent")
-    root = Path(project_dir)
-    project_yaml = root / "project.yml"
-    # The scaffolded manifest declares its entrypoint explicitly.
-    doc = yaml.safe_load(project_yaml.read_text(encoding="utf-8"))
-    assert doc["agents"]["entrypoint"] == base
-    removed, _, deleted = delete_agent(project_dir, base)
-    assert removed == [str(root / "agents" / base)]
-    assert deleted == base
-    assert not (root / "agents" / base).exists()
-    doc = yaml.safe_load(project_yaml.read_text(encoding="utf-8"))
-    assert doc["agents"]["entrypoint"] == other
-    # Deleting the last non-battery agent falls back to a battery agent
-    # for the entrypoint (the guard only prevents an agent-less project).
-    delete_agent(project_dir, other)
-    doc = yaml.safe_load(project_yaml.read_text(encoding="utf-8"))
-    battery = {"recapper", "compactor", "session_summarizer", "worker"}
-    assert doc["agents"]["entrypoint"] in battery
-    for key in ("recapper", "compactor", "session_summarizer"):
-        delete_agent(project_dir, key)
-    with pytest.raises(ValueError):
-        delete_agent(project_dir, "worker")
 
 
 def test_scaffold_guardrail_variants(tmp_path):
