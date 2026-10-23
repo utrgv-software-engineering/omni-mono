@@ -250,6 +250,9 @@ export function adaptCanonicalConversationItem(item: ConversationItem): MessageI
         request_id: requestId,
         tool: stringValue(content.tool) ?? '',
         argumentsText: stringify(content.arguments),
+        // The live prompt's display details (a diff preview) ride along in
+        // the snapshot, so a reconnected card renders like the original.
+        metadata: metadata(content),
         kind: approvalKind,
         server_label: stringValue(content.server_label),
         tool_label: stringValue(content.tool_label),

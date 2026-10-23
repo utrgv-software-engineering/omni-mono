@@ -45,6 +45,9 @@ export type ChatMessage = {
   type: 'chat';
   role: 'user' | 'assistant' | 'system';
   content: string;
+  /** Output of a slash command the user ran, not model text: the command's
+   * name, without the slash. */
+  command?: string;
   /** Provider identity shared by live output and its persisted canonical item. */
   message_id?: string;
   /**

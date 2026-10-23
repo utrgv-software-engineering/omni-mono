@@ -10,9 +10,9 @@ The Ink backend provides a full-featured terminal interface using React componen
 
 - **React Components**: Built with familiar React patterns (components, hooks, state management)
 - **TypeScript**: Full type safety and IDE support
-- **Auto-build**: Automatically builds on first run if Node.js is installed
 - **Prebuilt in Wheels**: Official release wheels include the built Ink bundle
-- **Same Protocol**: Uses the same JSON-RPC WebSocket protocol as other backends
+- **Shared client**: Connects through `@omniagents/client`, the same protocol
+  client and conversation layer the desktop app and web UI use
 - **Feature Parity**: Supports all features of the Bubble Tea backend
 
 ## Usage
@@ -32,28 +32,22 @@ omniagents run -P path/to/project.yml --mode tui
 
 ### Development
 
+The TUI is an npm workspace of the omni-mono repository; install once at the
+monorepo root.
+
 ```bash
-# Navigate to the TUI directory
-cd omniagents/backends/ink/tui
-
-# Install dependencies
-npm install
-
-# Build the TypeScript code
-npm run build
-
-# Run in development mode with hot reload
-npm run dev
+# From the monorepo root
+npm ci
+npm run build -w omni-ink-tui   # → omniagents/backends/ink/tui/dist/index.js
+npm run dev -w omni-ink-tui     # development mode with hot reload
 ```
 
 ## Requirements
 
-- For development: Node.js >= 18 and npm
-- For end users: No Node.js required when installing official wheels (the built Ink bundle is packaged)
-
-When running from source or editable installs, if the built bundle is missing,
-the backend will attempt an auto-build. If Node.js is not installed, it will
-display installation instructions.
+- Node.js 22 or newer on `PATH`: the TUI runs as `node dist/index.js` and
+  uses Node's built-in WebSocket. Official wheels include the built bundle.
+- From a source checkout, build the bundle as above; the backend reports how
+  when it is missing.
 
 ## Architecture
 
@@ -65,8 +59,8 @@ omniagents/backends/ink/
 │   │   ├── index.tsx        # Entry point
 │   │   ├── components/      # React components
 │   │   ├── hooks/           # Custom React hooks
-│   │   ├── rpc/             # JSON-RPC client
-│   │   └── types/           # TypeScript types
+│   │   ├── store/           # Terminal view state, mirrored from the shared session
+│   │   └── rpc/             # Host helpers and the integration-test fixtures
 │   ├── package.json
 │   └── tsconfig.json
 └── README.md
@@ -93,16 +87,14 @@ The TUI's colors are a theme: an [Omarchy](https://github.com/basecamp/omarchy)
 
 - `OMNI_THEME` — theme id to use when nothing is saved (see Theming)
 
-- `OMNI_INK_AUTO_BUILD`: Set to "0" or "false" to disable auto-build
 - `OMNI_DEBUG`: Enable debug logging
-- `OMNI_INK_TUI_PATH`: Full path to a prebuilt `dist/index.js` to skip build
+- `OMNI_INK_TUI_PATH`: Full path to a prebuilt `dist/index.js` to run instead
+  of the packaged one
 
 ## Packaging
 
-- Release pipelines build the Ink TUI (`npm ci && npm run build`) and include
-  `omniagents/backends/ink/tui/dist/index.js` in published wheels.
-- On install from PyPI, the backend will prefer the packaged bundle and will
-  not require Node/npm.
+- `make package-build` installs the workspace at the monorepo root and builds
+  the bundle; wheels include `omniagents/backends/ink/tui/dist/` only.
 
 ## Comparison with Bubble Tea Backend
 
@@ -120,19 +112,12 @@ The TUI's colors are a theme: an [Omarchy](https://github.com/basecamp/omarchy)
 
 When making changes to the Ink TUI:
 
-1. Edit files in `tui/src/`
-2. Test with `npm run dev`
-3. Build with `npm run build`
-4. Run type checking with `npm run type-check`
-5. Format code with `npm run format`
+1. Edit files in `tui/src/` (shared client behavior lives in `packages/client`)
+2. Test with `npm run dev -w omni-ink-tui`
+3. Build with `npm run build -w omni-ink-tui`
+4. Run type checking with `npm run type-check -w omni-ink-tui`
+5. Format code with `npm run format -w omni-ink-tui`
 
 ## Protocol
 
 The Ink backend uses the same JSON-RPC 2.0 WebSocket protocol as all other OmniAgents backends. See `/omniagents/rpc/protocol.md` for details.
-
-## Build Details
-
-- Auto-build runs in a per-user cache directory (e.g., `~/.cache/omniagents/ink/tui` on Linux) to avoid write-permission issues with system installs and pipx.
-- If a lockfile (`package-lock.json`) is present, `npm ci` is used; otherwise `npm install`.
-- Commit `omniagents/backends/ink/tui/package-lock.json` and keep it updated to ensure deterministic builds.
-- Set `OMNI_INK_TUI_PATH` to point to a prebuilt `dist/index.js` to bypass local builds entirely.

@@ -5,14 +5,16 @@
 
 import type {
   BashJobSummary,
+  SubagentSummary,
+} from "@omniagents/client/transcript/activity-store";
+import type {
   GoalSnapshot,
   LoopTaskSnapshot,
-  QueuedMessage,
-  TaskSummary,
   WakeupSnapshot,
-  SubagentSummary,
-} from "../store/appStore.js";
-import type { ConversationRunDiff } from "../types/conversation.js";
+} from "@omniagents/client/session/panel-types";
+import type { QueuedMessage } from "@omniagents/client/rpc/client";
+import type { TaskSummary } from "@omniagents/client/transcript/canonical-plan-tasks";
+import type { RunDiffItem } from "@omniagents/client/transcript/chat-types";
 
 export type StripTone = "info" | "warn" | "dim" | "success";
 export type StripToken = { text: string; tone: StripTone };
@@ -28,7 +30,7 @@ export interface StripState {
   goal: GoalSnapshot | null;
   wakeup: WakeupSnapshot | null;
   loops: LoopTaskSnapshot[];
-  runDiff: ConversationRunDiff | null;
+  runDiff: RunDiffItem | null;
 }
 
 function plural(n: number, noun: string): string {

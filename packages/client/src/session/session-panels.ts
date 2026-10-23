@@ -12,6 +12,17 @@ import type {
   WakeupSnapshot,
 } from './panel-types';
 
+/** The conversation's running token totals and the model's limits, from the
+ * `token` notification each response emits. */
+export type TokenUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  model?: string;
+  maxInputTokens?: number;
+  maxOutputTokens?: number;
+};
+
 export type SessionPanels = {
   models: ModelDescriptor[];
   activeModel: string | null;
@@ -30,6 +41,7 @@ export type SessionPanels = {
   recap: RecapInfo | null;
   escalation: EscalationInfo | null;
   queuedMessages: QueuedMessage[];
+  usage: TokenUsage | null;
   dismissedWorkerIds: Set<string>;
   dismissedJobIds: Set<string>;
   dismissedTaskIds: Set<string>;
@@ -58,6 +70,7 @@ export class SessionPanelStore {
     recap: null,
     escalation: null,
     queuedMessages: [],
+    usage: null,
     dismissedWorkerIds: new Set(),
     dismissedJobIds: new Set(),
     dismissedTaskIds: new Set(),

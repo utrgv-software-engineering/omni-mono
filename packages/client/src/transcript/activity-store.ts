@@ -29,6 +29,9 @@ export type SubagentSummary = {
   agent?: string;
   /** Present on worker entries only — the id ``workers.kill`` accepts. */
   worker_id?: string;
+  /** Swarm members are named and given a role. */
+  name?: string | null;
+  role?: string;
   status:
     | 'accepted'
     | 'provisioning'
@@ -39,6 +42,7 @@ export type SubagentSummary = {
     | 'blocked'
     | 'completed'
     | 'cancelled'
+    | 'closed'
     | 'error';
   recovered?: boolean;
   resumable?: boolean;
@@ -103,21 +107,16 @@ const EMPTY: SessionActivity = { subagents: [], jobs: [] };
 
 export const $activityBySession = map<Record<string, SessionActivity>>({});
 
-/** Legacy ``ui.workers.update`` entries (pinned older servers) carry no
- *  ``subagent_id``/``kind``; the unified bus always sets both. */
+/** The runtime's subagent snapshot (``ui.subagents.update``, ``workers.list``),
+ *  keeping only well-formed entries. */
 export function normalizeSubagentSnapshot(snapshot: unknown[]): SubagentSummary[] {
-  return snapshot
-    .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object')
-    .map((entry): SubagentSummary => {
-      const workerId = typeof entry.worker_id === 'string' ? entry.worker_id : undefined;
-      return {
-        ...(entry as unknown as SubagentSummary),
-        subagent_id: typeof entry.subagent_id === 'string' ? entry.subagent_id : (workerId ?? ''),
-        kind: entry.kind === 'agent_tool' ? 'agent_tool' : 'worker',
-        worker_id: workerId,
-      };
-    })
-    .filter((entry) => entry.subagent_id !== '');
+  return snapshot.filter(
+    (entry): entry is SubagentSummary =>
+      !!entry &&
+      typeof entry === 'object' &&
+      typeof (entry as { subagent_id?: unknown }).subagent_id === 'string' &&
+      (entry as { subagent_id: string }).subagent_id !== ''
+  );
 }
 
 export function publishSubagentsSnapshot(sessionId: string, subagents: SubagentSummary[]): void {

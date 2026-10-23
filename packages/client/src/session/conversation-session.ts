@@ -1,6 +1,6 @@
 import { createActor } from 'xstate';
 
-import { ConnectionClosedError, RpcTimeoutError } from '../lifecycle';
+import { isReplyLost } from '../lifecycle';
 import { type ChatSessionEvent, chatSessionMachine } from '../machines/chat-session.machine';
 import { createMachineLogger } from '../machines/machine-logger';
 import { adaptCanonicalConversationItems } from '../rpc/canonical-chat-history';
@@ -242,7 +242,6 @@ export class ConversationSession {
           publishBashJobs(this.id, args.snapshot);
         }
         break;
-      case 'ui.workers.update':
       case 'ui.subagents.update':
         this.workersRevision++;
         if (Array.isArray(args.snapshot)) {
@@ -430,24 +429,38 @@ export class ConversationSession {
     this.panelTarget = target;
     this.panelWorkspaceSupported = workspaceSupported;
     this.panelsInitialized = true;
+    // Goals, wakeups, loops and workers are product functions: a plain agent
+    // offers none of them, so only what the runtime lists is read.
+    const offered = new Set(
+      (await this.client.listServerFunctions().catch(() => [])).map((descriptor) => descriptor.name)
+    );
     const read = async (name: string) => (await this.client.serverCall(name, {}, this.id, target)) as any;
+    const product = (name: string, apply: () => Promise<unknown>) => (offered.has(name) ? apply() : Promise.resolve());
     const workersRevision = this.workersRevision;
     await Promise.allSettled([
       this.panels.refresh('queuedMessages', async () => (await this.client.listQueue(this.id)).items),
-      this.panels.refresh('goalSnapshot', async () => (await read('goal.status'))?.snapshot ?? null),
-      this.panels.refresh('wakeupSnapshot', async () => (await read('wakeup.status'))?.snapshot ?? null),
-      this.panels.refresh('loopTasks', async () => (await read('loop.status'))?.snapshot ?? []),
+      product('goal.status', () =>
+        this.panels.refresh('goalSnapshot', async () => (await read('goal.status'))?.snapshot ?? null)
+      ),
+      product('wakeup.status', () =>
+        this.panels.refresh('wakeupSnapshot', async () => (await read('wakeup.status'))?.snapshot ?? null)
+      ),
+      product('loop.status', () =>
+        this.panels.refresh('loopTasks', async () => (await read('loop.status'))?.snapshot ?? [])
+      ),
       workspaceSupported
         ? this.panels.refresh(
             'workspacePath',
             async () => (await read('fs_get_workspace_root'))?.path ?? this.panels.state.get().workspacePath
           )
         : Promise.resolve(),
-      read('workers.list').then((result) => {
-        if (!this.disposed && workersRevision === this.workersRevision && Array.isArray(result?.snapshot)) {
-          publishSubagentsSnapshot(this.id, normalizeSubagentSnapshot(result.snapshot));
-        }
-      }),
+      product('workers.list', () =>
+        read('workers.list').then((result) => {
+          if (!this.disposed && workersRevision === this.workersRevision && Array.isArray(result?.snapshot)) {
+            publishSubagentsSnapshot(this.id, normalizeSubagentSnapshot(result.snapshot));
+          }
+        })
+      ),
     ]);
   }
 
@@ -512,7 +525,7 @@ export class ConversationSession {
           ...(content ? { input_content: content } : {}),
         });
       } catch (error) {
-        if (error instanceof ConnectionClosedError || error instanceof RpcTimeoutError) {
+        if (isReplyLost(error)) {
           this.unconfirmedAnswer = { requestId, text };
         } else {
           this.unconfirmedAnswer = null;
@@ -559,7 +572,7 @@ export class ConversationSession {
           const recap = (result as { text?: unknown })?.text;
           return typeof recap === 'string' ? { text: recap, timestamp: Date.now() } : this.panels.state.get().recap;
         }
-        this.receive({ type: 'APPEND_RESPONSE', content: slashResultMessage(result) });
+        this.receive({ type: 'APPEND_RESPONSE', content: slashResultMessage(result), command: command.name });
         return null;
       };
       if (command.name === 'recap') {
@@ -657,7 +670,7 @@ export class ConversationSession {
     try {
       return await attempt();
     } catch (error) {
-      if (!(error instanceof ConnectionClosedError || error instanceof RpcTimeoutError)) {
+      if (!isReplyLost(error)) {
         throw error;
       }
       let receipt: { status?: string; result?: unknown } | undefined;

@@ -2,7 +2,7 @@ import React from "react";
 import stripAnsi from "strip-ansi";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { KeypressProvider } from "../../contexts/KeypressContext.js";
-import type { RPCClient } from "../../rpc/client.js";
+import type { RPCClient } from "@omniagents/client/rpc/client";
 import { filterSkills, nameColumnWidth, skillBody } from "../SkillsPanel.js";
 import { cleanup, render } from "ink-testing-library";
 

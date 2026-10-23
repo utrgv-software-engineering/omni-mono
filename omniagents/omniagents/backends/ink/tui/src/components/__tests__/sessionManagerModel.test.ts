@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   clampIndex,
-  extractMessageContent,
   filterRows,
   relativeTime,
   rowMeta,
   rowsFromSearch,
-  rowsFromSessions,
   rowsFromThreads,
   rowTitle,
   sortRows,
@@ -43,7 +41,6 @@ function row(overrides: Partial<SessionRow> = {}): SessionRow {
     active: false,
     pendingAttention: 0,
     preview: null,
-    organizable: true,
     ...overrides,
   };
 }
@@ -59,7 +56,6 @@ describe("rowsFromThreads", () => {
       messageCount: 12,
       pinned: false,
       archived: false,
-      organizable: true,
     });
   });
 
@@ -126,41 +122,6 @@ describe("rowsFromSearch", () => {
       results: [{ thread_id: "t-9", preview: "x" }],
     });
     expect(rows).toEqual([]);
-  });
-});
-
-describe("rowsFromSessions", () => {
-  it("normalizes the stable list_sessions surface as non-organizable", () => {
-    const rows = rowsFromSessions([
-      {
-        id: "s-1",
-        created_at: "2026-01-02T03:04:05Z",
-        archived: false,
-        message_count: 3,
-        last_message: { role: "user", content: "hello there" },
-      },
-    ]);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      id: "s-1",
-      title: "hello there",
-      messageCount: 3,
-      organizable: false,
-      pinned: false,
-    });
-    expect(rows[0]!.updatedAt).toBeGreaterThan(0);
-  });
-
-  it("leaves the title null when there is no message to preview", () => {
-    const rows = rowsFromSessions([
-      { id: "s-1", created_at: "2026-01-02T03:04:05Z", message_count: 0 },
-    ]);
-    expect(rows[0]!.title).toBeNull();
-  });
-
-  it("survives an unparseable created_at", () => {
-    const rows = rowsFromSessions([{ id: "s-1", created_at: "nonsense" }]);
-    expect(rows[0]!.updatedAt).toBe(0);
   });
 });
 
@@ -259,14 +220,7 @@ describe("rowTitle / rowMeta", () => {
   });
 });
 
-describe("extractMessageContent / truncate", () => {
-  it("reads strings, records and content-part arrays", () => {
-    expect(extractMessageContent("plain")).toBe("plain");
-    expect(extractMessageContent({ content: "wrapped" })).toBe("wrapped");
-    expect(extractMessageContent({ content: [{ text: "part" }] })).toBe("part");
-    expect(extractMessageContent(null)).toBe("");
-  });
-
+describe("truncate", () => {
   it("collapses whitespace and ellipsizes", () => {
     expect(truncate("  a\n  b  ", 40)).toBe("a b");
     expect(truncate("abcdefghij", 5)).toBe("abcd…");

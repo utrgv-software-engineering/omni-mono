@@ -1,41 +1,39 @@
 // Presentation logic for the git panel, kept out of the component so it is
 // unit-testable without an Ink render (same split as ./task-model).
 
-import { JSONRPCError } from "../rpc/client.js";
 import type {
   GitBranch,
+  GitConfirmation,
   GitConflict,
   GitDiffFile,
+  GitMutationOutcome,
   GitStatusEntry,
   GitStatusResult,
-} from "../rpc/client.js";
+} from "@omniagents/client/rpc/git";
 import { Theme } from "../theme.js";
 
-/** A parsed `-32093 git_confirmation_required` rejection. */
-export type GitConfirmation = {
-  /** Single-use token the retried operation must echo verbatim. */
-  token: string;
-  /** Paths the operation would irreversibly touch, when the server says. */
-  paths: string[];
-};
-
 /**
- * Parse a `-32093 git_confirmation_required` rejection, or null for any
- * other error. Guarded operations must be re-sent echoing exactly the
- * token; anything else is a real failure. The impact paths feed the
- * confirmation prompt so the user sees what dies before pressing y.
+ * The server's confirmation challenge when a guarded operation answered
+ * with one (`-32093 git_confirmation_required`), else null. The operation
+ * resumes by answering the challenge; anything else is a real outcome.
  */
-export function confirmationOf(error: unknown): GitConfirmation | null {
-  if (!(error instanceof JSONRPCError) || error.code !== -32093) return null;
-  const data = error.data as
-    | { confirmation_token?: unknown; impact?: { paths?: unknown } }
-    | undefined;
-  if (typeof data?.confirmation_token !== "string") return null;
-  const rawPaths = data.impact?.paths;
-  const paths = Array.isArray(rawPaths)
-    ? rawPaths.filter((p): p is string => typeof p === "string")
+export function confirmationOf(outcome: unknown): GitConfirmation | null {
+  const mutation = outcome as GitMutationOutcome<unknown> | null;
+  return mutation &&
+    typeof mutation === "object" &&
+    mutation.kind === "confirmation_required"
+    ? mutation.confirmation
+    : null;
+}
+
+/** The paths a challenged operation would irreversibly touch, as the server
+ * reports them: they feed the confirmation prompt so the user sees what dies
+ * before pressing y. */
+export function impactPaths(confirmation: GitConfirmation): string[] {
+  const paths = confirmation.impact.paths;
+  return Array.isArray(paths)
+    ? paths.filter((path): path is string => typeof path === "string")
     : [];
-  return { token: data.confirmation_token, paths };
 }
 
 /**

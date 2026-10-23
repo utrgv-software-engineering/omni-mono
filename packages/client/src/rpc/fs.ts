@@ -610,6 +610,7 @@ export class FsClient {
     for (let attempt = 0; ; attempt += 1) {
       const startEpoch = this.connectionEpoch;
       let transferId: string | null = null;
+      let committing = false;
       let committed = false;
       try {
         const opened = record(
@@ -650,6 +651,7 @@ export class FsClient {
             throw new FsProtocolError('fs_upload_chunk returned an invalid received offset');
           }
         }
+        committing = true;
         const result = record(
           await this.rpc.request('fs_upload_commit', { ...executionParams(target), transfer_id: transferId }),
           'fs_upload_commit result'
@@ -668,7 +670,22 @@ export class FsClient {
         committed = true;
         return parsed;
       } catch (error) {
-        if (attempt >= retries || !isRetryableDisconnect(this.rpc, startEpoch, this.connectionEpoch)) {
+        if (!isRetryableDisconnect(this.rpc, startEpoch, this.connectionEpoch)) {
+          throw error;
+        }
+        if (committing) {
+          // A write is never replayed: the commit may have landed and only its
+          // reply was lost. Read the file's digest back once the connection
+          // returns. If it holds exactly these bytes, the save happened;
+          // otherwise the outcome is reported as the original failure.
+          await this.waitForConnected(timeoutMs);
+          if ((await this.remoteDigest(target, requestedPath).catch(() => null)) === digest) {
+            committed = true;
+            return { path: requestedPath, size: uploadBytes.byteLength, sha256: digest };
+          }
+          throw error;
+        }
+        if (attempt >= retries) {
           throw error;
         }
         await this.waitForConnected(timeoutMs);
@@ -735,6 +752,19 @@ export class FsClient {
       ...options,
       maxBytes: options.maxBytes ?? DEFAULT_TEXT_FILE_LIMIT_BYTES,
     });
+  }
+
+  /** The server's digest of a file, read without transferring its bytes. */
+  private async remoteDigest(target: ExecutionTargetInput, path: string): Promise<string> {
+    const opened = record(
+      await this.rpc.request('fs_download_open', { ...executionParams(target), path }),
+      'fs_download_open result'
+    );
+    const transferId = stringField(opened, 'transfer_id', 'fs_download_open result');
+    await this.rpc
+      .request('fs_download_close', { ...executionParams(target), transfer_id: transferId })
+      .catch(() => {});
+    return validateSha256(stringField(opened, 'sha256', 'fs_download_open result'), 'fs_download_open result.sha256');
   }
 
   private async waitForConnected(timeoutMs: number): Promise<void> {

@@ -40,14 +40,11 @@ beforeAll(async () => {
 
 afterEach(() => {
   cleanup();
-  useAppStore.getState().actions.clearArtifacts();
+  useAppStore.getState().actions.setArtifacts([]);
 });
 
 function mount(artifacts: ArtifactEntry[], saveDir?: string) {
-  useAppStore.getState().actions.clearArtifacts();
-  for (const item of artifacts) {
-    useAppStore.getState().actions.addArtifact(item);
-  }
+  useAppStore.getState().actions.setArtifacts(artifacts);
   const onUnfocus = vi.fn();
   const instance = render(
     <KeypressProvider>
@@ -72,8 +69,8 @@ describe("ArtifactsPanel list", () => {
     expect(frame).toContain("markdown");
   });
 
-  it("replaces rather than appends when an id is re-emitted", async () => {
-    const { lastFrame } = mount([entry(), entry({ content: "revised" })]);
+  it("announces an artifact that was revised", async () => {
+    const { lastFrame } = mount([entry({ content: "revised", revision: 1 })]);
     await settle();
     const frame = plain(lastFrame());
     expect(frame).toContain("Artifacts");

@@ -22,12 +22,11 @@ import { useKeypress } from "../hooks/useKeypress.js";
 import { useTerminalSize } from "../hooks/useTerminalSize.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
 import { useRPC } from "../hooks/useRPC.js";
-import { useMessagesOptimized } from "../hooks/useMessagesNew.js";
+import { useConversation } from "../hooks/useConversation.js";
 import {
   useMessages,
   useThinking,
   useStatus,
-  useQueuedMessages,
   useApproval,
   useMcpApproval,
   useEscalation,
@@ -87,8 +86,14 @@ import {
   parseSlashArgs,
   parseSlashLine,
   unknownCommandMessage,
-  slashResultMessage,
-} from "../rpc/slash.js";
+} from "@omniagents/client/rpc/slash";
+import { ConversationOrganizationClient } from "@omniagents/client/rpc/conversation-organization";
+import { McpManagementClient } from "@omniagents/client/rpc/mcp-management";
+import {
+  mergeWorkersSnapshot,
+  normalizeSubagentSnapshot,
+} from "@omniagents/client/transcript/activity-store";
+import { uuidv4 } from "@omniagents/client/util/uuid";
 import {
   nextDismissedToken,
   tokenKey,
@@ -104,7 +109,6 @@ import {
   type ElicitationAnswer,
 } from "./ElicitationDialog.js";
 import { Notifications } from "./Notifications.js";
-import { resolveEscalation } from "../hooks/escalationBridge.js";
 import { MouseProvider } from "../contexts/MouseContext.js";
 import { ScrollProvider } from "../contexts/ScrollProvider.js";
 import { Theme } from "../theme.js";
@@ -333,21 +337,21 @@ export const App: React.FC<AppProps> = ({
   const { rows: terminalHeight } = useTerminalSize();
 
   // RPC connection
-  const { client, connected, rpcReady, error, sendMessage } = useRPC({
+  const { client, connected, rpcReady, error } = useRPC({
     url: serverUrl,
     token,
-    debug,
   });
 
   // Get state from atomic store
   const messages = useMessages();
   const thinking = useThinking();
-  const queuedMessages = useQueuedMessages();
   const approval = useApproval();
   const mcpApproval = useMcpApproval();
   const escalation = useEscalation();
   const elicitation = useElicitation();
-  const sessionId = useSessionId();
+  // A new chat has its id before its first message, as in every client.
+  const [launchSessionId] = useState(() => initialSessionId ?? uuidv4());
+  const sessionId = useSessionId() || launchSessionId;
   const currentRunId = useCurrentRunId();
   const bashJobs = useBashJobs();
   const actions = useActions();
@@ -466,121 +470,11 @@ export const App: React.FC<AppProps> = ({
       });
   }, [anyBashJobRunning, client, connected, sessionId]);
 
-  // Seed the goal panel on connect / session-switch. The /goal autopilot
-  // loop broadcasts ui.goal.update on every state change, but if a goal
-  // is already running when the TUI reconnects we'd otherwise show an
-  // empty panel until the next turn boundary. One read-only RPC fills it.
-  useEffect(() => {
-    if (!client || !rpcReady || !sessionId) return;
-    let cancelled = false;
-    const previous = useAppStore.getState().goal;
-    client
-      .serverCall("goal.status", {}, sessionId)
-      .then((res) => {
-        if (cancelled || useAppStore.getState().goal !== previous) return;
-        const snap = (res as { snapshot?: unknown } | undefined)?.snapshot;
-        if (snap === null || snap === undefined) {
-          actions.setGoal(null);
-        } else if (typeof snap === "object") {
-          actions.setGoal(snap as any);
-        }
-      })
-      .catch(() => {
-        // goal.status may not be registered on every agent — silently
-        // ignore so the panel just stays empty.
-        // A later reconnect will retry this read.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [client, rpcReady, sessionId, actions]);
-
-  // Seed the wakeup panel on connect / session-switch. Same rationale
-  // as the goal seed above — picks up an active schedule that was
-  // already running before we attached. wakeup.status may not be
-  // registered on every agent; silently ignore so the panel stays empty.
-  useEffect(() => {
-    if (!client || !rpcReady || !sessionId) return;
-    let cancelled = false;
-    const previous = useAppStore.getState().wakeup;
-    client
-      .serverCall("wakeup.status", {}, sessionId)
-      .then((res) => {
-        if (cancelled || useAppStore.getState().wakeup !== previous) return;
-        const snap = (res as { snapshot?: unknown } | undefined)?.snapshot;
-        if (snap === null || snap === undefined) {
-          actions.setWakeup(null);
-        } else if (typeof snap === "object") {
-          actions.setWakeup(snap as any);
-        }
-      })
-      .catch(() => {
-        // A later reconnect will retry this read.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [client, rpcReady, sessionId, actions]);
-
-  useEffect(() => {
-    if (!client || !rpcReady || !sessionId) return;
-    let cancelled = false;
-    const previous = useAppStore.getState().loops;
-    client
-      .serverCall("loop.status", {}, sessionId)
-      .then((res) => {
-        if (cancelled || useAppStore.getState().loops !== previous) return;
-        const snap = (res as { snapshot?: unknown } | undefined)?.snapshot;
-        if (Array.isArray(snap)) {
-          actions.setLoops(snap as any);
-        }
-      })
-      .catch(() => {
-        // A later reconnect will retry this read.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [client, rpcReady, sessionId, actions]);
-
-  // Seed the workers panel on connect / session-switch. Same rationale
-  // as the goal seed above — picks up workers that were already running
-  // before we attached. workers.list may not be registered on every
-  // agent; silently ignore so the panel stays empty.
-  useEffect(() => {
-    if (!client || !rpcReady || !sessionId) return;
-    let cancelled = false;
-    const previous = useAppStore.getState().subagents;
-    client
-      .serverCall("workers.list", {}, sessionId)
-      .then((res) => {
-        if (cancelled || useAppStore.getState().subagents !== previous) return;
-        const snap = (res as { snapshot?: unknown } | undefined)?.snapshot;
-        if (Array.isArray(snap)) {
-          actions.setSubagents(snap as any);
-        } else {
-          actions.setSubagents([]);
-        }
-      })
-      .catch(() => {
-        // A later reconnect will retry this read.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [client, rpcReady, sessionId, actions]);
-
   // Reset dock dismissal sets on session change so the freshly bound
   // session starts with the panels showing their full server-side
   // snapshot.
-  //
-  // Artifacts clear with them. They are session-scoped (the payload
-  // carries `session_id`) and are held only in memory — nothing refetches
-  // them for a resumed session — so keeping the previous session's
-  // artifacts would attribute one conversation's output to another.
   useEffect(() => {
     actions.resetDockDismissals();
-    actions.clearArtifacts();
   }, [sessionId, actions]);
 
   // The footer's height is whatever it is: the composer grows as you
@@ -636,20 +530,23 @@ export const App: React.FC<AppProps> = ({
   const ctrlCTimer = useRef<NodeJS.Timeout | null>(null);
   const [waitingForSecondCtrlC, setWaitingForSecondCtrlC] = useState(false);
 
-  // Setup message handlers with batching
+  // The conversation: the shared session layer every client uses.
+  const conversation = useConversation({ client, sessionId, rpcReady });
   const { approveToolCall, approveMcpToolCall, respondElicitation, cancelRun } =
-    useMessagesOptimized({
-      client,
-      sessionId: sessionId ?? initialSessionId,
-      rpcReady,
-    });
-
-  // Set initial session ID
+    conversation;
   useEffect(() => {
-    if (initialSessionId) {
-      actions.setSessionId(initialSessionId);
-    }
-  }, [initialSessionId]);
+    if (!useAppStore.getState().sessionId) actions.setSessionId(sessionId);
+  }, [sessionId, actions]);
+  /** A client command's output, recorded in the conversation's transcript. */
+  const appendCommandOutput = useCallback(
+    (command: string, content: string) =>
+      conversation.session?.receive({
+        type: "APPEND_RESPONSE",
+        content,
+        command,
+      }),
+    [conversation.session],
+  );
 
   // Load global user history from server when RPC is ready
   useEffect(() => {
@@ -660,7 +557,10 @@ export const App: React.FC<AppProps> = ({
     // Fetch global history (last 200 user messages across all sessions)
     const loadHistory = async () => {
       try {
-        const items = await client.getUserHistory(200, true);
+        const items = (await client.request("get_user_history", {
+          limit: 200,
+          include_archived: true,
+        })) as Array<{ content: string }>;
 
         // Extract content and deduplicate
         const historyItems: string[] = [];
@@ -729,11 +629,10 @@ export const App: React.FC<AppProps> = ({
     if (debug) {
       console.error("[DEBUG] Creating new session");
     }
-    // From chat, "new" means a fresh transcript too; the next send
-    // mints the session. At launch there is nothing to clear.
+    // From chat, "new" means a fresh conversation. At launch the
+    // conversation is already new.
     if (sessionsReturnable) {
-      actions.clearMessages();
-      actions.setSessionId(undefined);
+      actions.setSessionId(uuidv4());
     }
     setUIState("chat");
   }, [actions, debug, sessionsReturnable]);
@@ -791,7 +690,9 @@ export const App: React.FC<AppProps> = ({
   }, [client, rpcReady]);
 
   const handleSlashCommand = useCallback(
-    async (cmd: string): Promise<{ result?: string; restore?: boolean }> => {
+    async (
+      cmd: string,
+    ): Promise<{ result?: string; restore?: boolean; server?: boolean }> => {
       const parsed = parseSlashLine(cmd);
       if (!parsed) return {};
       const rows = await loadSlashCatalog();
@@ -863,8 +764,7 @@ export const App: React.FC<AppProps> = ({
             setActivePanel("artifacts");
             return {};
           case "new":
-            actions.clearMessages();
-            actions.setSessionId(undefined);
+            actions.setSessionId(uuidv4());
             return {};
           case "rename": {
             const title = String(args.args.title ?? "").trim();
@@ -875,12 +775,15 @@ export const App: React.FC<AppProps> = ({
               };
             if (!title)
               return { result: "Usage: /rename <title>", restore: true };
-            if (!client?.isGranted("update_thread"))
+            if (!client?.supportsExperimentalOperation("update_thread"))
               return {
                 result: "This server does not support renaming conversations.",
               };
             try {
-              await client.updateThread(sessionId, { title });
+              await new ConversationOrganizationClient(client).updateThread(
+                sessionId,
+                { title },
+              );
               return { result: `Renamed to “${title}”.` };
             } catch (err) {
               return { result: `Rename failed: ${err}` };
@@ -892,14 +795,14 @@ export const App: React.FC<AppProps> = ({
                 result: "Nothing to fork yet — send a message first.",
                 restore: true,
               };
-            if (!client?.isGranted("fork_session"))
+            if (!client?.supportsExperimentalOperation("fork_session"))
               return {
                 result: "This server does not support forking conversations.",
               };
             try {
-              const res = (await client.forkSession(sessionId)) as {
-                new_session_id?: unknown;
-              };
+              const res = (await new ConversationOrganizationClient(
+                client,
+              ).forkSession(sessionId)) as { new_session_id?: unknown };
               const id =
                 typeof res?.new_session_id === "string"
                   ? res.new_session_id
@@ -939,7 +842,9 @@ export const App: React.FC<AppProps> = ({
           }
           case "mcp": {
             try {
-              const res = await client!.mcpListServers(sessionId || undefined);
+              const res = await new McpManagementClient(client!).listServers(
+                sessionId,
+              );
               return { result: mcpLines(res.servers ?? []).join("\n") };
             } catch (err) {
               return { result: `Could not list MCP servers: ${err}` };
@@ -1009,34 +914,9 @@ export const App: React.FC<AppProps> = ({
         }
       }
 
-      try {
-        // Anchor a session before dispatching: a slash command may be the
-        // first thing the user does, and server functions like /goal start
-        // runs through the drainer rather than through sendMessage's
-        // mint-on-first-call.
-        let sid: string | undefined = sessionId || undefined;
-        if (!sid) {
-          try {
-            const ensured = (await client!.serverCall("session.ensure", {})) as
-              | { session_id?: unknown }
-              | undefined;
-            if (typeof ensured?.session_id === "string") {
-              sid = ensured.session_id;
-              actions.setSessionId(sid);
-            }
-          } catch {
-            /* best-effort — let the call attempt anyway */
-          }
-        }
-        const result = await client!.serverCall(
-          command.function ?? command.name,
-          args.args,
-          sid,
-        );
-        return { result: slashResultMessage(result) };
-      } catch (err) {
-        return { result: `Error: ${err}` };
-      }
+      // The runtime's commands run through the conversation session, as in
+      // every client.
+      return { server: true };
     },
     [
       client,
@@ -1053,7 +933,8 @@ export const App: React.FC<AppProps> = ({
     ],
   );
 
-  // Handle user input
+  // Handle user input. Resolves false when the text should stay in the
+  // composer.
   const handleSubmit = useCallback(
     async (message: string): Promise<boolean | void> => {
       if (!client || !connected) {
@@ -1067,64 +948,32 @@ export const App: React.FC<AppProps> = ({
       // commands too — a slash is still a user step boundary.
       actions.dismissDockTerminals();
 
-      // Escalation interception: when the agent has called ``escalate``,
-      // route the user's next message back as the tool's reply via
-      // client_response (and clear the banner) instead of starting a
-      // new run. Slash commands still pass through to the slash handler
-      // — they're an opt-out for users who want to issue /goal.stop or
-      // /help during an escalation rather than reply to it.
-      if (escalation && !message.startsWith("/")) {
-        const resolved = resolveEscalation(escalation.request_id, message);
-        actions.setEscalation(null);
-        if (resolved) {
-          actions.addMessage({
-            role: "user",
-            content: message,
-            timestamp: new Date(),
-          });
-        }
-        return;
-      }
-
       // Elicitation interception (question kind): the banner told the
-      // user their next message is the answer — send it back as
-      // ``elicitation_response(accept, {text})`` instead of starting a
-      // new run. Slash commands still pass through, mirroring the
-      // escalation opt-out above.
+      // user their next message is the answer. Slash commands still pass
+      // through, as they do for an escalation.
       if (
         elicitation &&
         elicitation.kind === "question" &&
         !message.startsWith("/")
       ) {
-        actions.addMessage({
-          role: "user",
-          content: message,
-          timestamp: new Date(),
-        });
         return await respondElicitation({
           action: "accept",
           value: { text: message },
         });
       }
 
-      // Slash command: handled here or refused here. Never the model's.
+      // This client's own commands run here; the runtime's go to the
+      // conversation session below.
       const typed = parseSlashLine(message);
       if (typed) {
-        const { result, restore } = await handleSlashCommand(message);
-        if (result) {
-          actions.addMessage({
-            role: "command",
-            command: typed.name,
-            content: result,
-            timestamp: new Date(),
-          });
+        const { result, restore, server } = await handleSlashCommand(message);
+        if (!server) {
+          if (result) appendCommandOutput(typed.name, result);
+          // A refused command goes back into the composer, as typed.
+          return restore ? false : undefined;
         }
-        // A refused command goes back into the composer, as typed.
-        return restore ? false : undefined;
       }
 
-      // Always update input-recall history (regardless of which path
-      // the submit takes — queued or direct).
       setMessageHistory((prev) => {
         if (prev.length === 0 || prev[prev.length - 1] !== message) {
           return [...prev, message];
@@ -1132,73 +981,16 @@ export const App: React.FC<AppProps> = ({
         return prev;
       });
 
-      // Queue path: a run is in flight or there's already a queued item
-      // ahead of us. Skip the optimistic addMessage — the user message
-      // will land in the transcript when the drainer fires start_run
-      // and we get run_started with the prompt. Requires a sessionId
-      // (the server needs to know which session to queue against);
-      // sendMessage's mint-on-first-call only works for direct starts.
-      if ((thinking || queuedMessages.length > 0) && sessionId) {
-        try {
-          const queued = await client.enqueueMessage(sessionId, message, {
-            role: "user",
-            source: "ink",
-          });
-          if (!queued.ok)
-            throw new Error(queued.reason || "Message was not queued");
-        } catch (err) {
-          const errorMessage =
-            err instanceof Error ? err.message : "Failed to enqueue message";
-          if (useAppStore.getState().sessionId === sessionId) {
-            actions.setStatus(`Error: ${errorMessage}`, "error", false);
-          }
-          return false;
-        }
-        return;
-      }
-
-      // Direct path: optimistic add, then sendMessage (which calls
-      // start_run server-side).
-      actions.addMessage({
-        role: "user",
-        content: message,
-        timestamp: new Date(),
-      });
-
-      try {
-        // Send to server and get session ID back
-        const response = await sendMessage(message, sessionId);
-        if (!sessionId) {
-          // Tag the freshly-minted id so useMessagesNew skips its
-          // history-load fetch — the server may not have persisted the
-          // user message yet, and an empty fetch would clobber the
-          // optimistic addMessage above.
-          composerDrafts.adoptSession(response.session_id);
-          if (useAppStore.getState().sessionId === sessionId) {
-            actions.markSessionAsMinted(response.session_id);
-            actions.setSessionId(response.session_id);
-          }
-        }
-      } catch (err) {
-        // Show error in status indicator instead of just logging
-        const errorMessage =
-          err instanceof Error ? err.message : "Failed to send message";
-        if (useAppStore.getState().sessionId === sessionId) {
-          actions.setThinking(false, `Error: ${errorMessage}`);
-        }
-        return false;
-      }
+      // The session answers a pending escalation, queues behind a running
+      // response, runs a slash command or starts a run.
+      return (await conversation.send(message)) ? undefined : false;
     },
     [
       client,
       connected,
-      sendMessage,
-      composerDrafts,
-      sessionId,
+      conversation,
       handleSlashCommand,
-      thinking,
-      queuedMessages.length,
-      escalation,
+      appendCommandOutput,
       elicitation,
       respondElicitation,
       actions,
@@ -1229,7 +1021,7 @@ export const App: React.FC<AppProps> = ({
           // First Ctrl+C: cancel the current run / deny a pending
           // approval, then arm the quit window.
           if (thinking && currentRunId) {
-            cancelRun(currentRunId);
+            void cancelRun();
           } else if (approval) {
             handleApproval("no");
           } else if (mcpApproval) {
@@ -1344,7 +1136,7 @@ export const App: React.FC<AppProps> = ({
           } else if (mcpApproval) {
             handleMcpApproval("no");
           } else if (thinking && currentRunId) {
-            cancelRun(currentRunId);
+            void cancelRun();
           }
           return;
         }
@@ -1503,6 +1295,7 @@ export const App: React.FC<AppProps> = ({
             {screen === "agents" ? (
               <AgentsScreen
                 active={screen === "agents"}
+                client={rpcReady ? client : null}
                 height={availableTerminalHeight}
                 onWorkerAction={
                   client && rpcReady && sessionId
@@ -1519,19 +1312,13 @@ export const App: React.FC<AppProps> = ({
                           ok?: boolean;
                           error?: string;
                           message?: string;
-                          snapshot?: import("../store/appStore.js").SubagentSummary[];
+                          snapshot?: unknown[];
                         };
-                        if (useAppStore.getState().sessionId !== sessionId)
-                          return;
                         if (Array.isArray(response.snapshot)) {
-                          actions.setSubagents([
-                            ...useAppStore
-                              .getState()
-                              .subagents.filter(
-                                (entry) => entry.kind !== "worker",
-                              ),
-                            ...response.snapshot,
-                          ]);
+                          mergeWorkersSnapshot(
+                            sessionId,
+                            normalizeSubagentSnapshot(response.snapshot),
+                          );
                         }
                         if (!response.ok)
                           throw new Error(
@@ -1655,6 +1442,7 @@ export const App: React.FC<AppProps> = ({
             <Notifications
               focused={activePanel === "notifications"}
               onUnfocus={() => setActivePanel(null)}
+              onDismiss={conversation.dismissNotification}
             />
             <BashJobs
               focused={activePanel === "jobs"}

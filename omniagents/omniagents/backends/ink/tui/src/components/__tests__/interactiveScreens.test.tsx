@@ -7,8 +7,9 @@ import { AgentsScreen } from "../AgentsScreen.js";
 import { ApprovalDialog } from "../ApprovalDialog.js";
 import { McpApprovalDialog } from "../McpApprovalDialog.js";
 import { ElicitationDialog } from "../ElicitationDialog.js";
-import { useAppStore, type SubagentSummary } from "../../store/appStore.js";
-import type { RPCClient } from "../../rpc/client.js";
+import type { SubagentSummary } from "@omniagents/client/transcript/activity-store";
+import { useAppStore } from "../../store/appStore.js";
+import type { RPCClient } from "@omniagents/client/rpc/client";
 
 const plain = (frame?: string) => stripAnsi(frame ?? "");
 
@@ -224,8 +225,19 @@ it("Agents closes idle workers and offers no actions on closed workers", async (
 it("Ink opens providers from /model, cancels safely, and confirms one workspace change", async () => {
   const { ModelPickerPanel } = await import("../ModelPickerPanel.js");
   const pending = deferred<Record<string, unknown>>();
+  const listModels = vi.fn().mockResolvedValue({
+    models: [],
+    default_model: null,
+    voice_default_model: null,
+    errors: [],
+    reasons: [],
+    session: null,
+  });
   const api = {
-    listModels: vi.fn().mockResolvedValue({ models: [], errors: [] }),
+    request: (method: string) =>
+      method === "list_models"
+        ? listModels()
+        : Promise.reject(new Error(`unexpected ${method}`)),
     serverCall: vi.fn((name: string) =>
       name === "model_providers"
         ? Promise.resolve({
@@ -282,7 +294,7 @@ it("Ink opens providers from /model, cancels safely, and confirms one workspace 
   pending.resolve({ ok: true, provider: "personal", model: "personal/c" });
   await settle();
   expect(plain(ui.lastFrame())).toContain("Models");
-  expect(api.listModels).toHaveBeenCalledTimes(2);
+  expect(listModels).toHaveBeenCalledTimes(2);
 });
 
 it("Ink displays provider switch rejection without treating it as success", async () => {

@@ -368,11 +368,19 @@ def _shared_client_sources() -> list[Path]:
     )
 
 
+def _tui_sources() -> list[Path]:
+    """The TUI's own requests and handlers, beside the shared client's."""
+    return sorted(
+        path
+        for path in (ROOT / "omniagents/backends/ink/tui/src").rglob("*.ts*")
+        if ".test." not in path.name
+        and "__tests__" not in path.parts
+        and "fixtures" not in path.parts
+    )
+
+
 def test_maintained_client_rpc_calls_are_cataloged():
-    paths = [
-        *_shared_client_sources(),
-        ROOT / "omniagents/backends/ink/tui/src/rpc/client.ts",
-    ]
+    paths = [*_shared_client_sources(), *_tui_sources()]
     discovered = discover_client_rpc_calls(paths)
     catalog = {
         operation.name for operation in OPERATIONS if operation.kind == "request"
@@ -392,11 +400,20 @@ def _session_routed_notifications() -> set[str]:
 
 
 def test_maintained_notification_handlers_are_cataloged():
-    paths = [
-        *_shared_client_sources(),
-        ROOT / "omniagents/backends/ink/tui/src/hooks/useMessagesNew.ts",
-    ]
-    discovered = discover_notification_handlers(paths) | _session_routed_notifications()
+    # The TUI's own `.on(` calls are mostly terminal streams (stdin `data`,
+    # stdout `resize`); its protocol subscriptions go through `client.on(`.
+    tui_handlers = {
+        name
+        for path in _tui_sources()
+        for name in re.findall(
+            r"client!?\??\.on\(\s*['\"]([a-z_]+)['\"]", path.read_text()
+        )
+    }
+    discovered = (
+        discover_notification_handlers(_shared_client_sources())
+        | tui_handlers
+        | _session_routed_notifications()
+    )
     catalog = {
         operation.name for operation in OPERATIONS if operation.kind != "request"
     }

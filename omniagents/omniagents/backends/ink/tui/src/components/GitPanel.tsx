@@ -1,7 +1,15 @@
-import { isReplyLost } from "../rpc/lifecycle.js";
+import { isReplyLost } from "@omniagents/client/lifecycle";
+import { GitClient, type GitConfirmation } from "@omniagents/client/rpc/git";
+import { defaultEnvironmentId } from "../rpc/host.js";
 import { useRequestScope } from "../hooks/useRequestScope.js";
 import { WorkspaceView } from "./WorkspaceView.js";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Box, Text } from "ink";
 import Spinner from "ink-spinner";
 import { useKeypress } from "../hooks/useKeypress.js";
@@ -14,12 +22,14 @@ import type {
   GitRepository,
   GitStatusResult,
   GitWorktree,
-  RPCClient,
-} from "../rpc/client.js";
+  WorkspaceRepo,
+} from "@omniagents/client/rpc/git";
+import type { RPCClient } from "@omniagents/client/rpc/client";
 import {
   buildFileRows,
   clampScroll,
   confirmationOf,
+  impactPaths,
   fileCounts,
   flattenConflict,
   flattenDiff,
@@ -47,14 +57,16 @@ type Props = {
   client: RPCClient | null;
 };
 
-/** A pending -32093 confirmation: re-run the operation echoing the token. */
+/** Answers a server confirmation challenge for one guarded operation. */
+type Confirm = (confirmation: GitConfirmation) => Promise<unknown>;
+
+/** A pending confirmation: y resumes the operation with the server's challenge. */
 type PendingConfirmation = {
   label: string;
-  message: string;
-  token: string;
   /** Impact paths from the server — what dies if the user presses y. */
   paths: string[];
-  run: (token: string) => Promise<unknown>;
+  run: () => Promise<unknown>;
+  confirm: Confirm;
 };
 
 const MAX_IMPACT_PATHS = 8;
@@ -64,8 +76,8 @@ const MAX_IMPACT_PATHS = 8;
 // through the AgentHost's default environment. Renders nothing while
 // unfocused: unlike bash jobs there is no ambient signal worth a collapsed
 // row; the chord is the entry point. Guarded operations answer `-32093
-// git_confirmation_required` with a single-use token; the y/n prompt here
-// echoes it back. Discard/reset stay agent-side for now — the panel only
+// git_confirmation_required` with a single-use challenge; the y/n prompt
+// here answers it. Discard/reset stay agent-side for now — the panel only
 // exposes non-destructive writes.
 export const GitPanel = (props: Props) => (
   <WorkspaceView client={props.client} active={props.focused}>
@@ -121,13 +133,18 @@ const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
   const [worktreesLoading, setWorktreesLoading] = useState(false);
   const [worktreesError, setWorktreesError] = useState<string | null>(null);
 
-  const granted = !!client?.isGranted("git_status");
-  const environmentId = client?.defaultEnvironmentId() ?? null;
+  const granted = !!client?.supportsExperimentalOperation("git_status");
+  const environmentId = client ? defaultEnvironmentId(client) : null;
+  const git = useMemo(
+    () =>
+      client && environmentId ? new GitClient(client, environmentId) : null,
+    [client, environmentId],
+  );
   const repo = repos[repoIndex]?.repo ?? null;
 
   const loadStatus = useCallback(
-    async (repoOverride?: string) => {
-      if (!client || !environmentId) return;
+    async (repoOverride?: WorkspaceRepo) => {
+      if (!git) return;
       const current = scope.begin("status");
       const target = repoOverride ?? repo;
       setLoading(true);
@@ -135,7 +152,7 @@ const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
       try {
         let repoList = repos;
         if (repoList.length === 0 || repoOverride === undefined) {
-          const listed = await client.gitListRepositories(environmentId);
+          const listed = await git.listRepositories();
           if (!current()) return;
           repoList = listed.repositories;
           setRepos(repoList);
@@ -146,7 +163,7 @@ const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
           setError("no git repositories in this environment");
           return;
         }
-        const result = await client.gitStatus(environmentId, statusRepo, {
+        const result = await git.status(statusRepo, {
           includeUntracked: true,
         });
         if (!current()) return;
@@ -158,18 +175,15 @@ const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
         if (current()) setLoading(false);
       }
     },
-    [client, environmentId, repo, repos],
+    [git, repo, repos],
   );
 
+  // A reconnect may have missed changes: re-read the status.
   useEffect(() => {
     if (!client) return;
-    const refresh = () => {
-      void loadStatus();
-    };
-    client.on("rpc_ready", refresh);
-    return () => {
-      client.off("rpc_ready", refresh);
-    };
+    return client.onConnectionState((connection) => {
+      if (connection === "connected") void loadStatus();
+    });
   }, [client, loadStatus]);
 
   // Load on focus; drop the stale view on unfocus so reopening refetches.
@@ -207,7 +221,7 @@ const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
 
   const loadDiff = useCallback(
     async (row: GitFileRow) => {
-      if (!client || !environmentId || !repo) return;
+      if (!git || !repo) return;
       const current = scope.begin("diff");
       setDiffForPath(row.path);
       setDiffFile(null);
@@ -223,9 +237,7 @@ const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
       if (row.conflicted) {
         setDiffLoading(true);
         try {
-          const result = await client.gitConflicts(environmentId, repo, [
-            row.path,
-          ]);
+          const result = await git.conflicts(repo, [row.path]);
           if (!current()) return;
           const found =
             result.conflicts.find((c) => c.path === row.path) ??
@@ -250,7 +262,7 @@ const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
         // the worktree. (A file with both kinds of change shows its
         // worktree side — the view of what is not yet staged.)
         const mode = row.staged && !row.unstaged ? "staged" : "worktree";
-        const result = await client.gitDiff(environmentId, repo, {
+        const result = await git.diff(repo, {
           mode,
           paths: [row.renamedFrom ?? row.path, row.path],
         });
@@ -271,7 +283,7 @@ const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
         if (current()) setDiffLoading(false);
       }
     },
-    [client, environmentId, repo],
+    [git, repo],
   );
 
   const diffLines = conflict
@@ -291,20 +303,12 @@ const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
   // Long-running remote operations stream progress; surface the latest
   // phase in the status row while the panel is open.
   useEffect(() => {
-    if (!focused || !client) return;
-    const onProgress = (params: {
-      operation: string;
-      phase: string;
-      repo?: string;
-    }) => {
-      if (!operationPending.current || params.repo !== repo) return;
-      setStatusLine(`${params.operation}: ${params.phase}`);
-    };
-    client.on("git_operation_progress", onProgress);
-    return () => {
-      client.off("git_operation_progress", onProgress);
-    };
-  }, [focused, client, repo]);
+    if (!focused || !git) return;
+    return git.onOperationProgress((progress) => {
+      if (!operationPending.current || progress.repo !== repo) return;
+      setStatusLine(`${progress.operation}: ${progress.phase}`);
+    });
+  }, [focused, git, repo]);
 
   /**
    * Run a write/network operation: report progress, refresh status on
@@ -312,35 +316,34 @@ const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
    * a y/n prompt that re-runs the operation echoing the single-use token.
    */
   const runOp = useCallback(
-    async (label: string, op: (token?: string) => Promise<unknown>) => {
+    async (label: string, op: () => Promise<unknown>, confirm?: Confirm) => {
       if (operationPending.current) return;
       operationPending.current = true;
       const current = scope.begin("operation");
       setBusy(true);
       setStatusLine(`${label}…`);
       try {
-        await op();
+        const outcome = await op();
         if (!current()) return;
+        const challenge = confirmationOf(outcome);
+        if (challenge && confirm) {
+          setConfirm({
+            label,
+            paths: impactPaths(challenge),
+            run: () => confirm(challenge),
+            confirm,
+          });
+          setStatusLine(null);
+          return;
+        }
         setStatusLine(`${label}: done`);
         await loadStatus();
         if (!current()) return;
       } catch (e) {
         if (!current()) return;
-        const confirmation = confirmationOf(e);
-        if (confirmation !== null) {
-          setConfirm({
-            label,
-            message: (e as Error).message,
-            token: confirmation.token,
-            paths: confirmation.paths,
-            run: op,
-          });
-          setStatusLine(null);
-          return;
-        }
         if (isReplyLost(e)) {
           // Lost reply: re-read server truth instead of guessing. Refetch
-          // now if the socket is back; otherwise rpc_ready refetches.
+          // now if the socket is back; otherwise the reconnect refetches.
           setStatusLine(null);
           if (client?.initializeResult) void loadStatus();
           return;
@@ -355,14 +358,14 @@ const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
   );
 
   const openBranches = useCallback(async () => {
-    if (!client || !environmentId || !repo) return;
+    if (!git || !repo) return;
     const current = scope.begin("branches");
     setBranchMode(true);
     setBranchIndex(0);
     setBranchError(null);
     setBranchLoading(true);
     try {
-      const result = await client.gitListBranches(environmentId, repo);
+      const result = await git.branches(repo);
       if (!current()) return;
       setBranches(orderBranches(result.branches));
     } catch (e) {
@@ -371,22 +374,22 @@ const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
     } finally {
       if (current()) setBranchLoading(false);
     }
-  }, [client, environmentId, repo]);
+  }, [git, repo]);
 
   const checkoutBranch = useCallback(
     (name: string, create: boolean) => {
-      if (!client || !environmentId || !repo) return;
+      if (!git || !repo) return;
       setBranchMode(false);
       setNewBranchMode(false);
       setNewBranchName("");
-      void runOp(`checkout ${name}`, (token) =>
-        client.gitCheckout(environmentId, repo, name, {
-          create: create || undefined,
-          confirmationToken: token,
-        }),
+      const opts = { create: create || undefined };
+      void runOp(
+        `checkout ${name}`,
+        () => git.checkout(repo, name, opts),
+        (confirmation) => git.confirmCheckout(repo, name, opts, confirmation),
       );
     },
-    [client, environmentId, repo, runOp],
+    [git, repo, runOp],
   );
 
   // Branch switcher layer.
@@ -477,7 +480,7 @@ const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
   );
 
   const openLog = useCallback(async () => {
-    if (!client || !environmentId || !repo) return;
+    if (!git || !repo) return;
     const current = scope.begin("log");
     setLogMode(true);
     setLogIndex(0);
@@ -485,7 +488,7 @@ const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
     setLogError(null);
     setLogLoading(true);
     try {
-      const result = await client.gitLog(environmentId, repo, {
+      const result = await git.log(repo, {
         maxCount: 30,
       });
       if (!current()) return;
@@ -496,22 +499,21 @@ const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
     } finally {
       if (current()) setLogLoading(false);
     }
-  }, [client, environmentId, repo]);
+  }, [git, repo]);
 
   const resetTo = useCallback(
     (commit: GitCommitSummary, mode: "soft" | "mixed" | "hard") => {
-      if (!client || !environmentId || !repo) return;
+      if (!git || !repo) return;
       setLogMode(false);
       setLogDetail(false);
-      void runOp(`reset --${mode} ${commit.short_oid}`, (token) =>
-        client.gitReset(environmentId, repo, {
-          mode,
-          rev: commit.oid,
-          confirmationToken: token,
-        }),
+      const opts = { mode, rev: commit.oid };
+      void runOp(
+        `reset --${mode} ${commit.short_oid}`,
+        () => git.reset(repo, opts),
+        (confirmation) => git.confirmReset(repo, opts, confirmation),
       );
     },
-    [client, environmentId, repo, runOp],
+    [git, repo, runOp],
   );
 
   // Log view layer — also the rev picker for reset.
@@ -591,13 +593,13 @@ const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
   );
 
   const openWorktrees = useCallback(async () => {
-    if (!client || !environmentId || !repo) return;
+    if (!git || !repo) return;
     const current = scope.begin("worktrees");
     setWorktreesMode(true);
     setWorktreesError(null);
     setWorktreesLoading(true);
     try {
-      const result = await client.gitListWorktrees(environmentId, repo);
+      const result = await git.worktrees(repo);
       if (!current()) return;
       setWorktrees(result.worktrees);
     } catch (e) {
@@ -606,7 +608,7 @@ const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
     } finally {
       if (current()) setWorktreesLoading(false);
     }
-  }, [client, environmentId, repo]);
+  }, [git, repo]);
 
   // Worktrees view layer — informational, no row actions.
   useKeypress(
@@ -632,7 +634,7 @@ const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
     },
   );
 
-  // Confirmation layer: y re-runs with the token, n / esc cancels.
+  // Confirmation layer: y answers the challenge, n / esc cancels.
   useKeypress(
     (input, key) => {
       // Modified keys are chords for the global layer (quit, panel
@@ -643,7 +645,7 @@ const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
       if (input === "y") {
         const pending = confirm;
         setConfirm(null);
-        void runOp(pending.label, () => pending.run(pending.token));
+        void runOp(pending.label, pending.run, pending.confirm);
         return true;
       }
       if (input === "n" || key.escape) {
@@ -681,11 +683,12 @@ const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
         }
         setCommitMode(false);
         setCommitMessage("");
-        if (client && environmentId && repo) {
-          void runOp("commit", (token) =>
-            client.gitCommit(environmentId, repo, message, {
-              confirmationToken: token,
-            }),
+        if (git && repo) {
+          void runOp(
+            "commit",
+            () => git.commit(repo, message),
+            (confirmation) =>
+              git.confirmCommit(repo, message, {}, confirmation),
           );
         }
         return true;
@@ -768,20 +771,20 @@ const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
       // Remote sync works on a clean tree too, so these come before the
       // row guard. Uppercase P is push — matching the drift arrows: pull
       // is the frequent/safe one, push gets the deliberate shift chord.
-      if (client && environmentId && repo && !busy) {
+      if (git && repo && !busy) {
         if (input === "f") {
-          void runOp("fetch", () => client.gitFetch(environmentId, repo));
+          void runOp("fetch", () => git.fetch(repo));
           return true;
         }
         if (input === "p") {
-          void runOp("pull", () => client.gitPull(environmentId, repo));
+          void runOp("pull", () => git.pull(repo));
           return true;
         }
         if (input === "P") {
-          void runOp("push", (token) =>
-            client.gitPush(environmentId, repo, {
-              confirmationToken: token,
-            }),
+          void runOp(
+            "push",
+            () => git.push(repo),
+            (confirmation) => git.confirmPush(repo, {}, confirmation),
           );
           return true;
         }
@@ -820,11 +823,11 @@ const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
         if (row) void loadDiff(row);
         return true;
       }
-      if (client && environmentId && repo && !busy) {
+      if (git && repo && !busy) {
         const row = rows[selectedIndex];
         if (row && input === "s") {
           void runOp(`stage ${row.path}`, () =>
-            client.gitStage(environmentId, repo, { paths: [row.path] }),
+            git.stage(repo, { paths: [row.path] }),
           );
           return true;
         }
@@ -834,7 +837,7 @@ const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
             return true;
           }
           void runOp(`unstage ${row.path}`, () =>
-            client.gitUnstage(environmentId, repo, { paths: [row.path] }),
+            git.unstage(repo, { paths: [row.path] }),
           );
           return true;
         }
@@ -847,11 +850,11 @@ const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
           }
           // Always answers -32093 first: the y/n prompt with the
           // server's impact paths is the real gate.
-          void runOp(`discard ${row.path}`, (token) =>
-            client.gitDiscard(environmentId, repo, {
-              paths: [row.path],
-              confirmationToken: token,
-            }),
+          const selection = { paths: [row.path] };
+          void runOp(
+            `discard ${row.path}`,
+            () => git.discard(repo, selection),
+            (confirmation) => git.confirmDiscard(repo, selection, confirmation),
           );
           return true;
         }
@@ -953,7 +956,9 @@ const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
 
       {confirm && (
         <Box flexDirection="column">
-          <Text color={Theme.stateBlocked}>{confirm.message}</Text>
+          <Text color={Theme.stateBlocked}>
+            {confirm.label} cannot be undone. Continue?
+          </Text>
           {confirm.paths.slice(0, MAX_IMPACT_PATHS).map((path) => (
             <Text key={path} color={Theme.stateFailed}>
               {"  "}✗ {path}

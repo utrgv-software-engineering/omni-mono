@@ -33,13 +33,6 @@ export type SessionRow = {
   pendingAttention: number;
   /** Search-result excerpt around the match; null outside search. */
   preview: string | null;
-  /**
-   * Which operations this row supports. The legacy ``list_sessions``
-   * path has no thread record behind it, so rename/pin/fork have
-   * nothing to address — the component greys those keys out rather
-   * than firing calls that will fail.
-   */
-  organizable: boolean;
 };
 
 function str(value: unknown): string | null {
@@ -52,28 +45,6 @@ function num(value: unknown): number {
 
 function bool(value: unknown): boolean {
   return value === true;
-}
-
-/**
- * Pull display text out of a ``list_sessions`` message field, which is
- * either a plain string or a ``{role, content}`` record whose content is
- * itself a string or a content-part array.
- */
-export function extractMessageContent(msg: unknown): string {
-  if (!msg) return "";
-  if (typeof msg === "string") return msg;
-  if (typeof msg !== "object") return "";
-  const content = (msg as Record<string, unknown>).content;
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    for (const part of content) {
-      if (typeof part === "string") return part;
-      if (part && typeof part === "object" && "text" in part) {
-        return String((part as Record<string, unknown>).text ?? "");
-      }
-    }
-  }
-  return "";
 }
 
 /** First line, collapsed and ellipsized to `max` display columns. */
@@ -96,7 +67,6 @@ export function rowFromThread(thread: Record<string, unknown>): SessionRow {
     active: bool(thread.active),
     pendingAttention: num(thread.pending_attention),
     preview: null,
-    organizable: true,
   };
 }
 
@@ -130,42 +100,6 @@ export function rowsFromSearch(result: unknown): SessionRow[] {
     if (row.id === "") continue;
     row.preview = str(record.preview);
     rows.push(row);
-  }
-  return rows;
-}
-
-/**
- * Rows from the stable ``list_sessions`` surface. Everything the
- * organized surface adds is reported as absent rather than guessed:
- * `organizable: false` is what the component keys its degraded help
- * line off.
- */
-export function rowsFromSessions(sessions: unknown): SessionRow[] {
-  if (!Array.isArray(sessions)) return [];
-  const rows: SessionRow[] = [];
-  for (const entry of sessions) {
-    if (!entry || typeof entry !== "object") continue;
-    const record = entry as Record<string, unknown>;
-    const id = String(record.id ?? "");
-    if (id === "") continue;
-    const preview = truncate(
-      extractMessageContent(record.last_message ?? record.first_message),
-      60,
-    );
-    const created = Date.parse(String(record.created_at ?? ""));
-    rows.push({
-      id,
-      title: preview === "" ? null : preview,
-      updatedAt: Number.isNaN(created) ? 0 : created / 1000,
-      messageCount: num(record.message_count),
-      pinned: false,
-      archived: bool(record.archived),
-      parentThreadId: null,
-      active: false,
-      pendingAttention: 0,
-      preview: null,
-      organizable: false,
-    });
   }
   return rows;
 }

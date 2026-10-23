@@ -1,422 +1,399 @@
-import { createHash } from "node:crypto";
-import { downloadFile, uploadFile } from "../file-transfer.js";
-/** Invoked by tests/integration/test_ink_rpc.py against its real Python server. */
+/**
+ * Invoked by tests/integration/test_ink_rpc.py against its real Python
+ * server: the TUI's connection and conversation layer (@omniagents/client,
+ * shared with the desktop and web UI) across lost replies and reconnects.
+ */
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { RPCClient, type SessionSnapshot } from "../client.js";
-import { DEFAULT_LIFECYCLE_POLICY } from "../lifecycle.js";
+import { respondToApproval } from "@omniagents/client/rpc/approval-response";
+import { RPCClient } from "@omniagents/client/rpc/client";
+import { FsClient } from "@omniagents/client/rpc/fs";
+import { GitClient } from "@omniagents/client/rpc/git";
+import type { ConversationSession } from "@omniagents/client/session/conversation-session";
+import { getSessionRegistry } from "@omniagents/client/session/session-registry";
+import { uuidv4 } from "@omniagents/client/util/uuid";
+import { defaultEnvironmentId } from "../host.js";
 
-const [base, scenario, reconnect] = process.argv.slice(2);
-const client = new RPCClient({
-  url: base.replace("http:", "ws:") + "/ws",
-  policy:
-    scenario === "soak" || scenario === "workspace" || scenario === "screens"
-      ? {
-          ...DEFAULT_LIFECYCLE_POLICY,
-          reconnectInitialDelayMs: 10,
-          reconnectJitter: 0,
-        }
-      : undefined,
+const [base, scenario, reconnect] = process.argv.slice(2) as [
+  string,
+  string,
+  string,
+];
+const url = base.replace("http:", "ws:") + "/ws";
+const client = new RPCClient(url);
+const registry = getSessionRegistry(client);
+const releaseSessions = registry.retain();
+
+/** Completed handshakes, counted so a test can wait for the next one. */
+let connections = 0;
+client.onConnectionState((state) => {
+  if (state === "connected") connections++;
 });
-const errors: unknown[] = [];
-client.on("error", (error) => errors.push(error));
-const approvals: Record<string, unknown>[] = [];
-const method =
-  scenario === "mcp"
-    ? "mcp_approval_requested"
-    : scenario === "elicitation"
-      ? "elicitation_requested"
-      : "tool_approval_requested";
-client.on(method, (params) => approvals.push(params));
 
-async function until(check: () => boolean | Promise<boolean>): Promise<void> {
+async function until(
+  check: () => boolean | Promise<boolean>,
+  describe?: () => string,
+): Promise<void> {
   const deadline = Date.now() + 10_000;
   while (!(await check())) {
     assert.ok(
       Date.now() < deadline,
-      "Timed out waiting for scenario " + scenario,
+      `Timed out waiting for scenario ${scenario}${describe ? `: ${describe()}` : ""}`,
     );
     await delay(10);
   }
 }
+
+type ServerState = {
+  started: boolean;
+  active: boolean;
+  runs: number;
+  requests: Array<{ method: string; params?: Record<string, unknown> }>;
+};
+
+async function state(): Promise<ServerState> {
+  return (await (await fetch(base + "/test/state")).json()) as ServerState;
+}
+
+const requestsOf = async (method: string) =>
+  (await state()).requests.filter((request) => request.method === method);
+
+async function post(path: string) {
+  assert.equal((await fetch(base + path, { method: "POST" })).status, 200);
+}
+
+/** The server answers the next `method` call, then drops the connection
+ * before the reply leaves: the call happened, its reply is lost. */
+const lose = (method: string) => post("/test/lose/" + method);
+
+/** Every live connection drops; resolves once the client is back. */
+async function dropConnection(): Promise<void> {
+  const before = connections;
+  await post("/test/drop");
+  await until(() => connections > before);
+}
+
+/** A conversation the way the TUI holds one, with a count of its loads so a
+ * test can wait for the reload a reconnect triggers. */
+function open(id: string) {
+  const session = registry.get(id);
+  const release = registry.retainSession(id);
+  let loads = 0;
+  let ready = session.actor.getSnapshot().matches("ready");
+  const subscription = session.actor.subscribe((snapshot) => {
+    const next = snapshot.matches("ready");
+    if (next && !ready) loads++;
+    ready = next;
+  });
+  return {
+    session,
+    loads: () => loads,
+    close() {
+      subscription.unsubscribe();
+      release();
+    },
+  };
+}
+
+const pendingApprovals = (session: ConversationSession) => [
+  ...session.actor.getSnapshot().context.pendingApprovals.values(),
+];
+const isIdle = (session: ConversationSession) =>
+  session.actor.getSnapshot().matches({ ready: "idle" });
+const serverIdle = async () => !(await state()).active;
 
 async function main(): Promise<void> {
   try {
     await client.connect();
     if (scenario === "screens") {
       const { runScreenSoak } = await import("./screen-soak.js");
-      await runScreenSoak(client, base);
-      return;
-    }
-    if (scenario === "workspace") {
+      await runScreenSoak(client, base, { until, open, listenerCounts });
+    } else if (scenario === "workspace") {
       await workspace();
-      return;
-    }
-    if (scenario === "soak") {
+    } else if (scenario === "soak") {
       await soak();
-      return;
-    }
-    if (scenario.startsWith("lost_") || scenario === "approval_other") {
+    } else if (scenario.startsWith("lost_") || scenario === "approval_other") {
       await ambiguousOutcome();
-      return;
-    }
-    const { session_id, run_id } = await client.startRun(scenario, {
-      mode: "none",
-    });
-    await until(async () => (await state()).started);
-    if (scenario !== "completed") await until(() => approvals.length === 1);
-    let snapshot: SessionSnapshot | undefined;
-    await client.synchronizeSession(session_id, (value) => {
-      snapshot = value;
-    });
-    assert.equal(snapshot?.run_active, true);
-    assert.equal(snapshot?.active_run_id, run_id);
-    const original = approvals[0];
-    approvals.length = 0;
-    if (reconnect === "automatic") {
-      let restored = false;
-      client.once("rpc_ready", () => {
-        void client
-          .synchronizeSession(session_id, (value) => {
-            snapshot = value;
-          })
-          .then(() => {
-            restored = true;
-          })
-          .catch((error) => errors.push(error));
-      });
-      const response = await fetch(base + "/test/drop", { method: "POST" });
-      assert.equal(response.status, 200);
-      await until(() => restored);
     } else {
-      client.disconnect();
-      if (scenario === "completed") {
-        await fetch(base + "/test/finish", { method: "POST" });
-        await until(async () => !(await state()).active);
-      }
-      await client.connect();
-      await client.synchronizeSession(session_id, (value) => {
-        snapshot = value;
-      });
+      await restoreAcrossReconnect();
     }
-    if (scenario !== "completed") {
-      assert.equal(approvals.length, 1, "Restore exactly one live approval");
-      if (scenario === "approval")
-        assert.ok(
-          original.metadata,
-          "The live prompt must have rich display metadata",
-        );
-      if (scenario === "elicitation") assert.ok(original.expires_at);
-      for (const field of Object.keys(original).filter(
-        (key) => !["seq", "stream_id"].includes(key),
-      )) {
-        assert.deepEqual(approvals[0][field], original[field], field);
-      }
-      if (scenario === "approval") {
-        assert.equal(
-          await client.toolApprovalResponse(
-            String(approvals[0].call_id),
-            "approve",
-          ),
-          true,
-        );
-      } else if (scenario === "mcp") {
-        assert.equal(
-          await client.mcpApprovalResponse(
-            String(approvals[0].request_id),
-            "approve",
-          ),
-          true,
-        );
-      } else {
-        await client.elicitationResponse(
-          String(approvals[0].elicitation_id),
-          "accept",
-          { text: "example.txt" },
-        );
-      }
-      await until(async () => !(await state()).active);
-      approvals.length = 0;
-      await client.synchronizeSession(session_id, (value) => {
-        snapshot = value;
-      });
-      assert.equal(
-        approvals.length,
-        0,
-        "Resolved approvals must stay historical",
-      );
-    }
-    assert.equal(snapshot?.run_active, false);
-    assert.equal(snapshot?.active_run_id, null);
-    assert.deepEqual(errors, []);
   } finally {
-    client.disconnect();
+    releaseSessions();
+    client.dispose();
   }
 }
 
-async function ambiguousOutcome(): Promise<void> {
-  const lose = async (method: string) => {
-    assert.equal(
-      (await fetch(base + "/test/lose/" + method, { method: "POST" })).status,
-      200,
-    );
-  };
-  if (scenario.startsWith("lost_start")) await lose("start_run");
-  if (scenario === "lost_start_switch")
-    client.once("disconnected", () => client.setActiveSession("other-session"));
-  const approvalCase =
-    scenario === "lost_approval" || scenario === "approval_other";
-  const run = await client.startRun(approvalCase ? "approval" : "completed", {
-    mode: "none",
-  });
+/** A live run, and its one pending question, survive a reconnect intact and
+ * are answered once. */
+async function restoreAcrossReconnect(): Promise<void> {
+  const conversation = open(uuidv4());
+  const { session } = conversation;
+  await session.load();
+  await session.send(scenario);
   await until(async () => (await state()).started);
-  if (scenario.startsWith("lost_start")) {
-    assert.equal((await state()).runs, 1);
-    const starts = (await state()).requests.filter(
-      (request) => request.method === "start_run",
-    );
-    assert.equal(
-      starts.length,
-      1,
-      "Recover the accepted result from its receipt without dispatching again",
-    );
-    assert.ok(starts[0].params?.submission_id);
-    if (scenario === "lost_start_switch") {
-      const ended: unknown[] = [];
-      client.on("run_end", (event) => ended.push(event));
-      await fetch(base + "/test/finish", { method: "POST" });
-      await until(async () => !(await state()).active);
-      assert.equal(
-        ended.length,
-        0,
-        "Recovery must not reselect the abandoned session",
+  const live = (): Array<Record<string, unknown>> =>
+    scenario === "elicitation"
+      ? (client.elicitations.list(session.id) as never)
+      : (pendingApprovals(session) as never);
+  if (scenario !== "completed") await until(() => live().length === 1);
+  const original = live()[0];
+  assert.equal(isIdle(session), false);
+
+  const loadsBefore = conversation.loads();
+  if (reconnect === "automatic") {
+    await dropConnection();
+  } else {
+    client.disconnect();
+    if (scenario === "completed") {
+      await post("/test/finish");
+      await until(serverIdle);
+    }
+    await client.connect();
+  }
+  // The reconnect re-reads the conversation from the server.
+  await until(() => conversation.loads() > loadsBefore);
+
+  if (scenario === "completed") {
+    await post("/test/finish");
+  } else {
+    assert.equal(live().length, 1, "Restore exactly one live question");
+    const restored = live()[0]!;
+    if (scenario === "approval") {
+      assert.ok(
+        original?.metadata,
+        "The prompt must carry its display metadata",
       );
     }
-  } else if (scenario === "lost_queue") {
-    await lose("enqueue_message");
-    const queued = await client.enqueueMessage(run.session_id, "next", {});
-    assert.equal(queued.ok, true);
-    const queue = await client.listQueue(run.session_id);
-    assert.equal(queue.items.length, 1);
-    assert.equal(queue.items[0].id, queued.id);
-    assert.equal((await state()).runs, 1);
-    assert.equal(
-      (await state()).requests.filter(
-        (request) => request.method === "enqueue_message",
-      ).length,
-      1,
-    );
-  } else {
-    await until(() => approvals.length === 1);
-    const id = String(approvals[0].call_id);
-    const resolved: string[] = [];
-    client.on("tool_approval_resolved", (params) =>
-      resolved.push(params.call_id),
-    );
-    if (scenario === "lost_approval") {
-      await lose("tool_approval_response");
-      await client.toolApprovalResponse(id, "approve").catch(() => {});
-      await until(() => client.initializeResult !== null);
-    } else {
-      const other = new RPCClient({
-        url: base.replace("http:", "ws:") + "/ws",
+    if (scenario === "elicitation") assert.ok(original?.expiresAt);
+    for (const field of Object.keys(original!)) {
+      assert.deepEqual(restored[field], original![field], field);
+    }
+    if (scenario === "elicitation") {
+      await client.elicitations.respond(String(restored.elicitationId), {
+        action: "accept",
+        value: { text: "example.txt" },
       });
+    } else {
+      const requestId = String(restored.request_id);
+      await respondToApproval(
+        client,
+        requestId,
+        "yes",
+        scenario === "mcp" ? "mcp" : "function",
+      );
+      session.receive({
+        type: "APPROVAL_DECIDED",
+        request_id: requestId,
+        value: "yes",
+      });
+    }
+  }
+  await until(serverIdle);
+  await until(
+    () => isIdle(session),
+    () => JSON.stringify(session.actor.getSnapshot().value),
+  );
+  await session.load({ force: true });
+  assert.equal(live().length, 0, "Answered questions stay answered");
+  assert.equal(isIdle(session), true);
+  conversation.close();
+}
+
+/** A reply lost in transit: the client recovers what the server did, and
+ * never does it twice. */
+async function ambiguousOutcome(): Promise<void> {
+  const conversation = open(uuidv4());
+  const { session } = conversation;
+  await session.load();
+
+  if (scenario === "lost_start") {
+    await lose("start_run");
+    const sent = await session.send("completed");
+    assert.ok(sent?.runId, "The accepted run is recovered from its receipt");
+    const starts = await requestsOf("start_run");
+    assert.equal(starts.length, 1, "The run is never started twice");
+    assert.ok(starts[0]!.params?.submission_id);
+    assert.equal((await state()).runs, 1);
+    await post("/test/finish");
+    await until(() => isIdle(session));
+  } else if (scenario === "lost_queue") {
+    await session.send("completed");
+    await until(async () => (await state()).started);
+    await lose("enqueue_message");
+    assert.deepEqual(await session.send("next"), { runId: "" });
+    const queue = await client.listQueue(session.id);
+    assert.equal(queue.items.length, 1, "The queued message is recovered");
+    assert.equal((await requestsOf("enqueue_message")).length, 1);
+    assert.equal((await state()).runs, 1);
+  } else {
+    await session.send("approval");
+    await until(() => pendingApprovals(session).length === 1);
+    const requestId = pendingApprovals(session)[0]!.request_id;
+    if (scenario === "lost_approval") {
+      const loadsBefore = conversation.loads();
+      await lose("tool_approval_response");
+      await assert.rejects(respondToApproval(client, requestId, "yes"));
+      await until(() => conversation.loads() > loadsBefore);
+      assert.equal((await requestsOf("tool_approval_response")).length, 1);
+    } else {
+      const other = new RPCClient(url);
       try {
         await other.connect();
-        assert.equal(await other.toolApprovalResponse(id, "approve"), true);
-        await until(() => resolved.includes(id));
-        await assert.rejects(client.toolApprovalResponse(id, "reject"));
+        assert.equal(
+          await other.toolApprovalResponse(requestId, "approve"),
+          true,
+        );
+        await until(() => pendingApprovals(session).length === 0);
+        await assert.rejects(respondToApproval(client, requestId, "no"));
       } finally {
-        other.disconnect();
+        other.dispose();
       }
     }
-    approvals.length = 0;
-    await client.synchronizeSession(run.session_id, () => {});
+    await session.load({ force: true });
     assert.equal(
-      approvals.length,
+      pendingApprovals(session).length,
       0,
-      "A resolved approval must not become actionable again",
+      "An answered approval never becomes actionable again",
     );
   }
+  conversation.close();
 }
 
+/** The client's event subscriptions, by event: a reconnect must not grow them. */
+function listenerCounts(): Record<string, number> {
+  const listeners = (
+    client as unknown as { listeners: Map<string, Set<unknown>> }
+  ).listeners;
+  return Object.fromEntries(
+    [...listeners]
+      .filter(([, handlers]) => handlers.size > 0)
+      .map(([event, handlers]) => [event, handlers.size]),
+  );
+}
+
+/** Many reconnects while a run is live and other conversations come and go:
+ * cancelled queue entries never run and nothing accumulates. */
 async function soak(): Promise<void> {
-  const run = await client.startRun("completed", { mode: "none" });
+  const main = open(uuidv4());
+  await main.session.load();
+  await main.session.send("completed");
   await until(async () => (await state()).started);
-  const listenerCounts = () =>
-    Object.fromEntries(
-      client
-        .eventNames()
-        .map((name) => [String(name), client.listenerCount(name)]),
-    );
-  const baseline = listenerCounts();
+  let baseline: Record<string, number> | null = null;
   for (let cycle = 0; cycle < 24; cycle++) {
-    const session = cycle % 3 === 0 ? run.session_id : `soak-${cycle % 3}`;
-    client.setActiveSession(session);
-    const queued = await client.enqueueMessage(
-      run.session_id,
-      `message-${cycle}`,
-      {},
-    );
-    assert.equal(queued.ok, true);
+    const other = cycle % 3 === 0 ? null : open(`soak-${cycle % 3}`);
+    await other?.session.load();
+    await main.session.send(`message-${cycle}`);
+    const queued = () => main.session.panels.state.get().queuedMessages;
+    await until(() => queued().length === 1);
     assert.equal(
-      (await client.cancelQueuedMessage(run.session_id, queued.id!)).ok,
+      (await client.cancelQueuedMessage(main.session.id, queued()[0]!.id)).ok,
       true,
     );
-    let ready = false;
-    client.once("rpc_ready", () => {
-      ready = true;
-    });
-    assert.equal(
-      (await fetch(base + "/test/drop", { method: "POST" })).status,
-      200,
-    );
-    await until(() => ready);
-    let snapshot: SessionSnapshot | undefined;
-    await client.synchronizeSession(session, (value) => {
-      snapshot = value;
-    });
-    assert.equal(snapshot?.run_active, session === run.session_id);
-    assert.equal((await client.listQueue(run.session_id)).items.length, 0);
-    assert.deepEqual(
-      listenerCounts(),
-      baseline,
-      `Listeners grew in cycle ${cycle}`,
-    );
+    const loadsBefore = main.loads();
+    await dropConnection();
+    await until(() => main.loads() > loadsBefore);
+    assert.equal(isIdle(main.session), false, "The run is still live");
+    assert.equal((await client.listQueue(main.session.id)).items.length, 0);
+    other?.close();
+    // Every conversation this soak opens exists after the third cycle.
+    if (cycle === 2) baseline = listenerCounts();
+    if (baseline) {
+      assert.deepEqual(
+        listenerCounts(),
+        baseline,
+        `Listeners grew in cycle ${cycle}`,
+      );
+    }
   }
-  await fetch(base + "/test/finish", { method: "POST" });
-  await until(async () => !(await state()).active);
+  await post("/test/finish");
+  await until(serverIdle);
   assert.equal(
     (await state()).runs,
     1,
-    "Cancelled queue entries must not execute during reconnects",
+    "Cancelled queue entries never run across reconnects",
   );
-  assert.deepEqual(errors, []);
+  main.close();
 }
 
-async function state(): Promise<{
-  started: boolean;
-  active: boolean;
-  runs: number;
-  requests: Array<{ method: string; params?: Record<string, unknown> }>;
-}> {
-  return (await (await fetch(base + "/test/state")).json()) as {
-    started: boolean;
-    active: boolean;
-    runs: number;
-    requests: Array<{ method: string; params?: Record<string, unknown> }>;
-  };
-}
-
-await main();
-
+/** Writes and patches are never replayed: a lost reply is resolved by
+ * reading the workspace back. */
 async function workspace(): Promise<void> {
-  const env = client.defaultEnvironmentId();
+  const env = defaultEnvironmentId(client);
   assert.ok(env);
+  const fs = new FsClient(client);
+  const git = new GitClient(client, env);
   // Hostile but legal: Windows file names cannot contain "*".
   const path =
     process.platform === "win32"
       ? "雪 space '$(touch injected);.txt"
       : "雪 space '$(touch injected);*.txt";
   const sha = (text: string) => createHash("sha256").update(text).digest("hex");
-  async function upload(text: string, expected?: string) {
-    const bytes = Buffer.from(text);
-    const open = await client.fsUploadOpen(env!, path, bytes.length, {
+  const bytes = (text: string) => new TextEncoder().encode(text);
+  const read = async () =>
+    new TextDecoder().decode((await fs.downloadBytes(env, path)).bytes);
+  try {
+    await fs.uploadBytes(env, path, bytes("original"), { overwrite: true });
+    assert.equal(await read(), "original");
+    assert.ok(
+      (await fs.list(env, ".")).entries.some((entry) => entry.path === path),
+    );
+
+    // A chunk's lost reply restarts the uncommitted transfer from scratch.
+    await lose("fs_upload_chunk");
+    await fs.uploadBytes(env, path, bytes("partial"), {
       overwrite: true,
-      sha256: sha(text),
-      expectedSha256: expected,
+      expectedSha256: sha("original"),
     });
-    await client.fsUploadChunk(
-      env!,
-      open.transfer_id,
-      0,
-      bytes.toString("base64"),
+    assert.equal(await read(), "partial");
+
+    // A commit's lost reply is confirmed by its digest, not committed again.
+    await lose("fs_upload_commit");
+    assert.deepEqual(
+      await fs.uploadBytes(env, path, bytes("committed"), {
+        overwrite: true,
+        expectedSha256: sha("partial"),
+      }),
+      { path, size: 9, sha256: sha("committed") },
     );
-    return open;
-  }
-  const initial = await upload("original");
-  await client.fsUploadCommit(env, initial.transfer_id);
-  assert.equal(
-    (await downloadFile(client, env, path, 1024)).bytes.toString(),
-    "original",
-  );
-  assert.ok(
-    (await client.fsList(env, ".")).entries.some(
-      (entry) => entry.path === path,
-    ),
-  );
-  async function lose(method: string, operation: () => Promise<unknown>) {
-    await fetch(base + "/test/lose/" + method, { method: "POST" });
-    const ready = new Promise<void>((resolve) =>
-      client.once("rpc_ready", () => resolve()),
+    assert.equal(await read(), "committed");
+    assert.equal(
+      (await requestsOf("fs_upload_commit")).length,
+      3,
+      "A committed write is never replayed",
     );
-    await assert.rejects(operation);
-    await ready;
+
+    const repo = (await git.listRepositories()).repositories[0]!.repo;
+    const diff = await git.diff(repo, {
+      paths: ["patch.txt"],
+      mode: "worktree",
+    });
+    const hunk = diff.files[0]!.hunks[0]!.hunk_id;
+    const before = connections;
+    await lose("git_stage");
+    await assert.rejects(
+      git.stage(repo, { hunks: [{ path: "patch.txt", hunk_id: hunk }] }),
+    );
+    await until(() => connections > before);
+    const staged = await git.diff(repo, {
+      paths: ["patch.txt"],
+      mode: "staged",
+    });
+    assert.equal(staged.files.length, 1);
+    assert.equal(staged.files[0]!.hunks.length, 1);
+    assert.equal(
+      (await requestsOf("git_stage")).length,
+      1,
+      "A patch is never replayed",
+    );
+    assert.ok(
+      !(await fs.list(env, ".")).entries.some(
+        (entry) => entry.path === "injected",
+      ),
+    );
+  } finally {
+    fs.dispose();
   }
-  const interrupted = await client.fsUploadOpen(env, path, 7, {
-    overwrite: true,
-    sha256: sha("partial"),
-    expectedSha256: sha("original"),
-  });
-  await lose("fs_upload_chunk", () =>
-    client.fsUploadChunk(
-      env,
-      interrupted.transfer_id,
-      0,
-      Buffer.from("partial").toString("base64"),
-    ),
-  );
-  assert.equal(
-    (await downloadFile(client, env, path, 1024)).bytes.toString(),
-    "original",
-  );
-  await client.fsUploadAbort(env, interrupted.transfer_id).catch(() => {});
-  await fetch(base + "/test/lose/fs_upload_commit", { method: "POST" });
-  assert.deepEqual(
-    await uploadFile(
-      client,
-      env,
-      path,
-      Buffer.from("committed"),
-      sha("original"),
-    ),
-    { kind: "saved", sha: sha("committed") },
-  );
-  assert.equal(
-    (await downloadFile(client, env, path, 1024)).bytes.toString(),
-    "committed",
-  );
-  const repo = (await client.gitListRepositories(env)).repositories[0].repo;
-  const diff = await client.gitDiff(env, repo, {
-    paths: ["patch.txt"],
-    mode: "worktree",
-  });
-  const hunk = diff.files[0].hunks[0].hunk_id;
-  await lose("git_stage", () =>
-    client.gitStage(env, repo, {
-      hunks: [{ path: "patch.txt", hunk_id: hunk }],
-    }),
-  );
-  const staged = await client.gitDiff(env, repo, {
-    paths: ["patch.txt"],
-    mode: "staged",
-  });
-  assert.equal(staged.files.length, 1);
-  assert.equal(staged.files[0].hunks.length, 1);
-  const requests = (await state()).requests;
-  assert.equal(
-    requests.filter((r) => r.method === "git_stage").length,
-    1,
-    "Do not replay a patch on reconnect",
-  );
-  assert.equal(
-    requests.filter((r) => r.method === "fs_upload_commit").length,
-    2,
-    "Do not replay a committed write",
-  );
-  assert.ok(
-    !(await client.fsList(env, ".")).entries.some(
-      (entry) => entry.path === "injected",
-    ),
-  );
 }
+
+await main();

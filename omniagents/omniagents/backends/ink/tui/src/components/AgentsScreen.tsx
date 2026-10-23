@@ -1,16 +1,22 @@
 import { useKeyedSelection } from "../hooks/useKeyedSelection.js";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import { $subagentTranscriptsBySession } from "@omniagents/client/transcript/activity-store";
+import type { RPCClient } from "@omniagents/client/rpc/client";
+import type { MessageItem } from "@omniagents/client/transcript/chat-types";
 import { Box, Text } from "ink";
+import { useSessionItems } from "../hooks/useSessionItems.js";
 import { useTerminalSize } from "../hooks/useTerminalSize.js";
 import Spinner from "ink-spinner";
 import { useKeypress } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
-import {
-  useActions,
-  useSubagentEvents,
-  useSubagents,
-} from "../store/appStore.js";
-import type { SubagentSummary } from "../store/appStore.js";
+import { useActions, useSessionId, useSubagents } from "../store/appStore.js";
+import type { SubagentSummary } from "@omniagents/client/transcript/activity-store";
 import { windowStart } from "./model-picker-model.js";
 import { clampScroll } from "./git-model.js";
 import { buildWorkerDetail } from "./agents-model.js";
@@ -25,6 +31,8 @@ const DETAIL_PAGE = 12;
 
 type Props = {
   active: boolean;
+  /** Reads a worker's own session for its live activity. */
+  client?: RPCClient | null;
   height: number;
   onExit: () => void;
   onWorkerAction?: (
@@ -33,7 +41,7 @@ type Props = {
   ) => Promise<void>;
 };
 
-const EMPTY_EVENTS: never[] = [];
+const EMPTY_TRANSCRIPT: readonly MessageItem[] = [];
 
 function statusColor(worker: SubagentSummary): string {
   if (worker.status === "running") return Theme.stateActive;
@@ -69,6 +77,7 @@ function shortTask(task: string, max = 28): string {
 // esc pops. Push-driven from the workers snapshots; no polling.
 export const AgentsScreen = ({
   active,
+  client = null,
   height,
   onExit,
   onWorkerAction,
@@ -76,7 +85,11 @@ export const AgentsScreen = ({
   const { columns: width } = useTerminalSize();
   const wide = width >= WIDE_BREAKPOINT;
   const workers = useSubagents();
-  const subagentEvents = useSubagentEvents();
+  const sessionId = useSessionId();
+  const transcripts = useSyncExternalStore(
+    $subagentTranscriptsBySession.subscribe,
+    $subagentTranscriptsBySession.get,
+  );
   const actions = useActions();
 
   const pendingAction = useRef(false);
@@ -142,13 +155,22 @@ export const AgentsScreen = ({
   const detailWidth = wide
     ? Math.max(20, width - LIST_WIDTH - 2)
     : Math.max(20, width - 1);
-  const selectedEvents = selected
-    ? (subagentEvents[selected.subagent_id] ?? EMPTY_EVENTS)
-    : EMPTY_EVENTS;
+  // A worker owns a session: its activity is that thread. An agent-tool
+  // run's beats are relayed into the parent's activity store.
+  const workerSession =
+    selected?.kind === "worker" ? (selected.session_id ?? null) : null;
+  const workerItems = useSessionItems(client, workerSession);
+  const selectedTranscript = !selected
+    ? EMPTY_TRANSCRIPT
+    : workerSession
+      ? workerItems
+      : (transcripts[sessionId]?.[selected.subagent_id] ?? EMPTY_TRANSCRIPT);
   const detailLines = useMemo(
     () =>
-      selected ? buildWorkerDetail(selected, detailWidth, selectedEvents) : [],
-    [selected, detailWidth, selectedEvents],
+      selected
+        ? buildWorkerDetail(selected, detailWidth, selectedTranscript)
+        : [],
+    [selected, detailWidth, selectedTranscript],
   );
 
   useEffect(() => {

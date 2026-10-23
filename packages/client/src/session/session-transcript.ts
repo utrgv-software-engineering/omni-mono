@@ -111,6 +111,18 @@ export function wireSessionTranscript(session: ConversationSession, client: RPCC
         type: 'TOKEN',
         session_id: typeof p?.session_id === 'string' ? p.session_id : undefined,
       });
+      const totals = p?.totals;
+      const count = (value: unknown) => (typeof value === 'number' ? value : 0);
+      if (totals && typeof totals === 'object') {
+        session.panels.set('usage', {
+          inputTokens: count(totals.input_tokens),
+          outputTokens: count(totals.output_tokens),
+          totalTokens: count(totals.total_tokens),
+          model: typeof p?.model === 'string' ? p.model : undefined,
+          maxInputTokens: typeof p?.max_input_tokens === 'number' ? p.max_input_tokens : undefined,
+          maxOutputTokens: typeof p?.max_output_tokens === 'number' ? p.max_output_tokens : undefined,
+        });
+      }
     }),
 
     session.on('tool_called', (p: any) => {

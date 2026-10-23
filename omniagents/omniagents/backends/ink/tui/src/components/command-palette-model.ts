@@ -12,7 +12,7 @@ import {
   normalizeSlashCommand,
   takesArgs,
   type SlashCommand,
-} from "../rpc/slash.js";
+} from "@omniagents/client/rpc/slash";
 
 export type CommandRow = SlashCommand;
 

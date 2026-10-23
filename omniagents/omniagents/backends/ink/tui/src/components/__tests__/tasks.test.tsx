@@ -9,7 +9,7 @@ import {
   orderTasks,
   taskCounts,
 } from "../task-model.js";
-import type { TaskSummary } from "../../store/appStore.js";
+import type { TaskSummary } from "@omniagents/client/transcript/canonical-plan-tasks";
 import { cleanup, render } from "ink-testing-library";
 
 const plain = (frame?: string) => stripAnsi(frame ?? "");

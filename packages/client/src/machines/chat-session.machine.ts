@@ -176,7 +176,7 @@ export type ChatSessionEvent =
       mcp_ui?: ArtifactItem['mcp_ui'];
     }
   // Direct item manipulation (slash commands, external updates)
-  | { type: 'APPEND_RESPONSE'; content: string }
+  | { type: 'APPEND_RESPONSE'; content: string; command?: string }
   | { type: 'RUN_FAILED'; message: string }
   | { type: 'SET_SESSION_ID'; sessionId: string }
   // MCP-Apps ``ui/update-model-context`` — stage content for the next
@@ -573,7 +573,15 @@ export const chatSessionMachine = setup({
     appendResponse: assign({
       items: ({ context, event }) => {
         const e = event as Extract<ChatSessionEvent, { type: 'APPEND_RESPONSE' }>;
-        return [...context.items, { type: 'chat' as const, role: 'assistant' as const, content: e.content }];
+        return [
+          ...context.items,
+          {
+            type: 'chat' as const,
+            role: 'assistant' as const,
+            content: e.content,
+            ...(e.command ? { command: e.command } : {}),
+          },
+        ];
       },
     }),
 

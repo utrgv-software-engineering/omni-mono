@@ -67,7 +67,7 @@ Terminal UI using React Ink:
 omniagents run -P path/to/project.yml --mode ink
 ```
 
-Official wheels include a prebuilt bundle; from source, the backend can auto-build if Node/npm are available.
+Requires Node.js 22+. Official wheels include the prebuilt bundle; from a source checkout, build it at the monorepo root with `npm ci && npm run build -w omni-ink-tui`.
 
 ### Server mode
 

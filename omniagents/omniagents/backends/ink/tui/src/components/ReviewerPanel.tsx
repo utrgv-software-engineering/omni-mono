@@ -3,7 +3,8 @@ import { Box, Text } from "ink";
 import Spinner from "ink-spinner";
 import { useKeypress } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
-import type { RPCClient } from "../rpc/client.js";
+import type { RPCClient } from "@omniagents/client/rpc/client";
+import { ModelCatalogClient } from "@omniagents/client/rpc/model-catalog";
 import {
   APPROVALS_CONFIG_KEY,
   APPROVALS_OPTIONS,
@@ -86,10 +87,13 @@ export const ReviewerPanel = themedMemo<Props>(
         // reads; the server's own precedence needs both.
         const [catalog, config] = await Promise.all([
           sessionId
-            ? client.listModels({ sessionId, modality: "text" })
+            ? new ModelCatalogClient(client).listModels({
+                sessionId,
+                modality: "text",
+              })
             : Promise.resolve(null),
           client
-            .getConfig()
+            .request("get_config", {})
             .catch(() => null as Record<string, unknown> | null),
         ]);
         const override =

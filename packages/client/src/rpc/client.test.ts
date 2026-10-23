@@ -452,7 +452,8 @@ describe('RPCClient GUI protocol handshake', () => {
       'thread_updated',
     ]);
     expect(EXPERIMENTAL_FEATURE_MANIFESTS.plansAndDiffs).toEqual(['get_plan', 'get_run_diff', 'item_updated']);
-    expect(initialize.params.capabilities.experimental_operations).not.toContain('fork_session');
+    expect(initialize.params.capabilities.experimental_operations).toContain('fork_session');
+    expect(initialize.params.capabilities.experimental_operations).toContain('set_session_hold');
     expect(initialize.params.capabilities.experimental_operations).not.toContain('export_thread');
     expect(initialize.params.capabilities.experimental_operations).not.toContain('purge_threads');
     client.dispose();

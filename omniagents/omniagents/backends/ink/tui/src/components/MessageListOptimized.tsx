@@ -28,7 +28,7 @@ import {
   useTranscriptDetail,
 } from "../store/appStore.js";
 import type { Message, ToolCallInfo } from "../store/appStore.js";
-import type { ConversationRunDiff } from "../types/conversation.js";
+import type { RunDiffItem } from "@omniagents/client/transcript/chat-types";
 import { changeColor, changeGlyph } from "./review-model.js";
 import { Theme } from "../theme.js";
 import { formatToolArgumentsSmart } from "../utils/formatArguments.js";
@@ -476,7 +476,7 @@ function pathTail(path: string, max = DIFF_CARD_PATH_MAX): string {
 // The run's receipt: what this turn changed, as a card instead of a
 // log line. Diffstat headline, the first few files, and the breadcrumb
 // to the Review tab (which opens on exactly this diff).
-const RunDiffCard = themedMemo<{ diff: ConversationRunDiff }>(
+const RunDiffCard = themedMemo<{ diff: RunDiffItem }>(
   ({ diff }) => {
     const shown = diff.files.slice(0, DIFF_CARD_FILES);
     const extra = diff.files.length - shown.length;
@@ -494,8 +494,8 @@ const RunDiffCard = themedMemo<{ diff: ConversationRunDiff }>(
         >
           <Box>
             <Text color={Theme.textPrimary} bold>
-              {diff.stats.files_changed} file
-              {diff.stats.files_changed === 1 ? "" : "s"} edited
+              {diff.stats.filesChanged} file
+              {diff.stats.filesChanged === 1 ? "" : "s"} edited
             </Text>
             <Text color={Theme.stateDone}>
               {"  "}+{diff.stats.additions}
@@ -504,8 +504,8 @@ const RunDiffCard = themedMemo<{ diff: ConversationRunDiff }>(
           </Box>
           {shown.map((file) => (
             <Box key={file.path}>
-              <Text color={changeColor(file.change_type)}>
-                {changeGlyph(file.change_type)}{" "}
+              <Text color={changeColor(file.changeType)}>
+                {changeGlyph(file.changeType)}{" "}
               </Text>
               <Text color={Theme.textSecondary}>{pathTail(file.path)}</Text>
               <Text color={Theme.stateDone}>
@@ -523,8 +523,8 @@ const RunDiffCard = themedMemo<{ diff: ConversationRunDiff }>(
     );
   },
   (prev, next) =>
-    prev.diff.item_id === next.diff.item_id &&
-    prev.diff.revision === next.diff.revision,
+    prev.diff.id === next.diff.id &&
+    prev.diff.canonical.revision === next.diff.canonical.revision,
 );
 
 const ToolCallMessage = themedMemo<{ message: Message }>(

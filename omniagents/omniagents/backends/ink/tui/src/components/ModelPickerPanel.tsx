@@ -4,8 +4,9 @@ import Spinner from "ink-spinner";
 import { ProviderPickerPanel } from "./ProviderPickerPanel.js";
 import { useKeypress } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
-import type { RPCClient } from "../rpc/client.js";
-import { useActions, useAppStore } from "../store/appStore.js";
+import type { RPCClient } from "@omniagents/client/rpc/client";
+import { ModelCatalogClient } from "@omniagents/client/rpc/model-catalog";
+import { useAppStore } from "../store/appStore.js";
 import {
   buildModelRows,
   initialIndex,
@@ -32,7 +33,6 @@ type Props = {
 // message the panel says so instead of failing.
 export const ModelPickerPanel = themedMemo(
   ({ open, onClose, client, sessionId }: Props) => {
-    const actions = useActions();
     const [providersOpen, setProvidersOpen] = useState(false);
     const [rows, setRows] = useState<ModelRow[]>([]);
     const [index, setIndex] = useState(0);
@@ -46,7 +46,7 @@ export const ModelPickerPanel = themedMemo(
       setLoading(true);
       setError(null);
       try {
-        const result = await client.listModels({
+        const result = await new ModelCatalogClient(client).listModels({
           sessionId,
           modality: "text",
         });
@@ -89,14 +89,13 @@ export const ModelPickerPanel = themedMemo(
         setSwitching(true);
         setStatusLine(`switching to ${row.label}…`);
         try {
-          const result = await client.setSessionModel(sessionId, row.id);
+          // The runtime announces the new model to every client
+          // (ui.set_session_state); the conversation session shows it.
+          const result = await new ModelCatalogClient(client).setSessionModel(
+            sessionId,
+            row.id,
+          );
           if (result.ok) {
-            actions.setSessionState({
-              model: result.model ?? row.id,
-              label: result.label ?? row.label,
-              provider: result.provider ?? row.provider,
-              reasoning_effort: result.reasoning_effort ?? null,
-            });
             onClose();
           } else {
             setStatusLine(
@@ -109,7 +108,7 @@ export const ModelPickerPanel = themedMemo(
           setSwitching(false);
         }
       },
-      [client, sessionId, actions, onClose],
+      [client, sessionId, onClose],
     );
 
     useKeypress(

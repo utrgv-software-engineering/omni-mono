@@ -3,7 +3,7 @@ import { Box, Text } from "ink";
 import { useKeypress } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
 import { useLoops } from "../store/appStore.js";
-import type { LoopTaskSnapshot } from "../store/appStore.js";
+import type { LoopTaskSnapshot } from "@omniagents/client/session/panel-types";
 import { RowText, SelectableRow } from "./shared/SelectableRow.js";
 import { Theme, roleMap } from "../theme.js";
 import { themedMemo } from "../theme/themed-memo.js";

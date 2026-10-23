@@ -3,7 +3,8 @@ import stripAnsi from "strip-ansi";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { KeypressProvider } from "../../contexts/KeypressContext.js";
-import { useAppStore, type LoopTaskSnapshot } from "../../store/appStore.js";
+import type { LoopTaskSnapshot } from "@omniagents/client/session/panel-types";
+import { useAppStore } from "../../store/appStore.js";
 import { goalActions } from "../GoalPanel.js";
 import { describeSchedule, orderLoops } from "../LoopPanel.js";
 import { cleanup, render } from "ink-testing-library";

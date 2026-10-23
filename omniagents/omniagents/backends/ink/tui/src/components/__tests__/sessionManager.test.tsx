@@ -1,11 +1,11 @@
-import { ConnectionClosedError } from "../../rpc/lifecycle.js";
+import { ConnectionClosedError } from "@omniagents/client/lifecycle";
 import React from "react";
 import { EventEmitter } from "node:events";
 import stripAnsi from "strip-ansi";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { KeypressProvider } from "../../contexts/KeypressContext.js";
-import type { RPCClient } from "../../rpc/client.js";
+import type { RPCClient } from "@omniagents/client/rpc/client";
 import { cleanup, render } from "ink-testing-library";
 
 const plain = (frame?: string) => stripAnsi(frame ?? "");
@@ -49,41 +49,65 @@ async function waitFor(check: () => void, timeoutMs = 2000): Promise<void> {
 }
 
 const ALL_GRANTS = [
-  "list_threads",
   "search_threads",
   "update_thread",
   "fork_session",
   "set_session_hold",
 ];
 
+/** A canonical thread row as list_threads returns it. */
 function thread(id: string, overrides: Record<string, unknown> = {}) {
   return {
     thread_id: id,
-    title: `Thread ${id}`,
+    user_id: "user-1",
     status: "active",
+    title: `Thread ${id}`,
     created_at: 1_700_000_000,
     updated_at: 1_700_000_000,
+    last_seq: 2,
+    turn_count: 1,
     item_count: 2,
+    parent_thread_id: null,
+    branched_from_item_id: null,
+    usage: {},
+    compaction: {},
     pinned: false,
+    metadata: {},
+    source: "recorded",
+    projected_at: null,
+    schema_version: 1,
     ...overrides,
   };
 }
 
+/**
+ * The operations the screen performs, as mocks with readable signatures;
+ * `asClient` routes the shared client's wire requests to them and wraps
+ * their answers in the wire shapes the organization client validates.
+ */
 function makeClient(grants: string[] = ALL_GRANTS) {
   return {
     events: new EventEmitter(),
     granted: new Set(grants),
-    listThreads: vi.fn(async () => ({ threads: [thread("a"), thread("b")] })),
-    searchThreads: vi.fn(async () => ({
+    initializeResult: undefined as unknown,
+    // Newest first, as list_threads pages them.
+    listThreads: vi.fn(async () => ({
+      threads: [
+        thread("a", { updated_at: 1_700_000_002 }),
+        thread("b", { updated_at: 1_700_000_001 }),
+      ],
+    })),
+    searchThreads: vi.fn(async (_query: string, _options: unknown) => ({
       results: [{ thread_id: "b", preview: "match", thread: thread("b") }],
     })),
-    listSessions: vi.fn(async () => [
-      { id: "legacy-1", created_at: "2026-01-01T00:00:00Z", message_count: 4 },
-    ]),
-    updateThread: vi.fn(async () => ({})),
-    forkSession: vi.fn(async () => ({ new_session_id: "forked-1" })),
-    setSessionHold: vi.fn(async () => ({})),
-    deleteSession: vi.fn(async () => true),
+    updateThread: vi.fn(async (_id: string, _changes: unknown) => ({})),
+    forkSession: vi.fn(
+      async (_id: string): Promise<{ new_session_id: string }> => ({
+        new_session_id: "forked-1",
+      }),
+    ),
+    setSessionHold: vi.fn(async (_id: string, _hold: boolean) => ({})),
+    deleteSession: vi.fn(async (_id: string) => true),
   };
 }
 
@@ -94,14 +118,85 @@ function makeClient(grants: string[] = ALL_GRANTS) {
  */
 type ClientStub = ReturnType<typeof makeClient>;
 
+type Params = Record<string, unknown>;
+
+async function route(stub: ClientStub, method: string, params: Params) {
+  switch (method) {
+    case "list_threads": {
+      const page = await stub.listThreads();
+      return {
+        ...page,
+        next_cursor: null,
+        has_more: false,
+        total: page.threads.length,
+      };
+    }
+    case "search_threads": {
+      const { query, ...options } = params;
+      const page = await stub.searchThreads(query as string, options);
+      return {
+        query,
+        results: page.results.map((hit) => ({
+          match_count: 1,
+          match_kind: "message",
+          item_id: null,
+          turn_id: null,
+          seq: null,
+          rank_detail: 1,
+          ...hit,
+        })),
+        next_cursor: null,
+        has_more: false,
+        total: page.results.length,
+      };
+    }
+    case "update_thread": {
+      const { thread_id, ...changes } = params;
+      await stub.updateThread(thread_id as string, changes);
+      return {
+        thread: thread(thread_id as string, changes),
+        changed: Object.keys(changes),
+        cascaded_thread_ids: [],
+        inaccessible_descendant_count: 0,
+      };
+    }
+    case "fork_session": {
+      const forked = await stub.forkSession(params.session_id as string);
+      return {
+        session_id: params.session_id,
+        branched_from_item_id: null,
+        ...forked,
+      };
+    }
+    case "set_session_hold":
+      return stub.setSessionHold(
+        params.session_id as string,
+        params.hold as boolean,
+      );
+    case "delete_session":
+      return stub.deleteSession(params.session_id as string);
+    default:
+      throw new Error(`unexpected ${method}`);
+  }
+}
+
 /** Adapt the stub to the surface SessionManager actually touches. */
 function asClient(stub: ClientStub): RPCClient {
   return {
-    ...stub,
-    defaultEnvironmentId: () => null,
-    isGranted: (op: string) => stub.granted.has(op),
-    on: stub.events.on.bind(stub.events),
-    off: stub.events.off.bind(stub.events),
+    get initializeResult() {
+      return stub.initializeResult;
+    },
+    supportsExperimentalOperation: (op: string) => stub.granted.has(op),
+    request: (method: string, params: Params) => route(stub, method, params),
+    on: (event: string, handler: (...args: unknown[]) => void) => {
+      stub.events.on(event, handler);
+      return () => stub.events.off(event, handler);
+    },
+    onConnectionState: (handler: (state: string) => void) => {
+      const connected = () => handler("connected");
+      stub.events.on("connected", connected);
+      return () => stub.events.off("connected", connected);
+    },
   } as unknown as RPCClient;
 }
 
@@ -142,22 +237,11 @@ async function mount(
 // ---------------------------------------------------------------------
 
 describe("SessionManager surface selection", () => {
-  it("reads the organized surface when list_threads is granted", async () => {
+  it("reads the organized thread list", async () => {
     const stub = makeClient();
     const { lastFrame } = await mount(stub);
     expect(stub.listThreads).toHaveBeenCalled();
-    expect(stub.listSessions).not.toHaveBeenCalled();
     expect(plain(lastFrame())).toContain("Thread a");
-  });
-
-  it("falls back to list_sessions when the grant is absent", async () => {
-    const stub = makeClient([]);
-    const { lastFrame } = await mount(stub);
-    expect(stub.listSessions).toHaveBeenCalled();
-    expect(stub.listThreads).not.toHaveBeenCalled();
-    // The degraded path must SAY it is degraded rather than silently
-    // offering keys that cannot work.
-    expect(plain(lastFrame())).toContain("predates conversation organizing");
   });
 
   it("reports an empty first load so the caller can skip the screen", async () => {
@@ -320,8 +404,8 @@ describe("SessionManager search", () => {
     stdin.write(KEY.enter);
     await settle();
     expect(stub.searchThreads).not.toHaveBeenCalled();
-    // Re-read the stable surface, then narrow it in memory.
-    expect(stub.listSessions).toHaveBeenCalledTimes(2);
+    // Re-read the list, then narrow it in memory.
+    expect(stub.listThreads).toHaveBeenCalledTimes(2);
   });
 
   it("abandons the query on escape and hands the keyboard back", async () => {
@@ -400,7 +484,12 @@ it("keeps the rename target when a refresh removes it from the list", async () =
   stdin.write("r");
   await settle();
   stub.listThreads.mockResolvedValue({ threads: [thread("b")] });
-  stub.events.emit("thread_updated", {});
+  stub.events.emit("thread_updated", {
+    thread_id: "b",
+    changed: ["title"],
+    thread: thread("b", { updated_at: 1_700_000_009 }),
+    cascaded_thread_ids: [],
+  });
   await settle();
   stdin.write("!" + KEY.enter);
   await waitFor(() =>
@@ -445,7 +534,7 @@ it("re-reads the list after a lost fork reply instead of replaying or warning", 
   stdin.write("f");
   await settle();
   expect(plain(lastFrame())).not.toContain("forking");
-  stub.events.emit("rpc_ready");
+  stub.events.emit("connected");
   await settle();
   expect(stub.forkSession).toHaveBeenCalledTimes(1);
   expect(stub.listThreads.mock.calls.length).toBeGreaterThan(listsBefore);
@@ -455,7 +544,7 @@ it("re-reads the list after a lost fork reply instead of replaying or warning", 
 
 it("refetches immediately after a lost mutation reply when already reconnected", async () => {
   const stub = makeClient();
-  (stub as { initializeResult?: unknown }).initializeResult = {};
+  stub.initializeResult = { agent_host: { default_environment_id: null } };
   stub.updateThread.mockRejectedValueOnce(new ConnectionClosedError("lost"));
   const { stdin, lastFrame } = await mount(stub);
   const listsBefore = stub.listThreads.mock.calls.length;

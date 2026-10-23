@@ -3,7 +3,7 @@ import stripAnsi from "strip-ansi";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { KeypressProvider } from "../../contexts/KeypressContext.js";
-import type { RPCClient } from "../../rpc/client.js";
+import type { RPCClient } from "@omniagents/client/rpc/client";
 import type { ReviewerKind } from "../ReviewerPanel.js";
 import { cleanup, render } from "ink-testing-library";
 
@@ -19,7 +19,7 @@ function makeClient(
     configFields?: Array<Record<string, unknown>>;
   } = {},
 ) {
-  return {
+  const stub = {
     listModels: vi.fn(async () => ({
       models: [],
       default_model: null,
@@ -37,13 +37,21 @@ function makeClient(
     getConfig: vi.fn(async () => ({ fields: opts.configFields ?? [] })),
     // Typed as the wrapper's own return so a test can mock the
     // `{ok: false, reason}` rejection the server really sends.
-    setSessionApprovals: vi.fn(
-      async (): Promise<Record<string, unknown>> => ({ ok: true }),
-    ),
-    setSessionWorkflow: vi.fn(
-      async (): Promise<Record<string, unknown>> => ({ ok: true }),
-    ),
+    setSessionApprovals: vi.fn(async (): Promise<Record<string, unknown>> => ({
+      ok: true,
+    })),
+    setSessionWorkflow: vi.fn(async (): Promise<Record<string, unknown>> => ({
+      ok: true,
+    })),
   };
+  return Object.assign(stub, {
+    request: (method: string) =>
+      method === "list_models"
+        ? stub.listModels()
+        : method === "get_config"
+          ? stub.getConfig()
+          : Promise.reject(new Error(`unexpected ${method}`)),
+  });
 }
 
 type ClientStub = ReturnType<typeof makeClient>;

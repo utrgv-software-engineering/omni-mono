@@ -24,7 +24,7 @@ async function buildTUI() {
       entryPoints: [resolve(__dirname, "index.tsx")],
       bundle: true,
       platform: "node",
-      target: "node18",
+      target: "node22",
       outfile: resolve(distDir, "index.js"),
       format: "esm",
       sourcemap: true,

@@ -88,8 +88,8 @@ export type ThreadSearchPage = Record<string, unknown> & {
 };
 
 export type UpdateThreadOptions = {
-  /** Generated v1 currently cannot express documented `title: null`; see schema limitations below. */
-  title?: string;
+  /** `null` clears the title (the thread then shows by its id). */
+  title?: string | null;
   pinned?: boolean;
   status?: ThreadStatus;
   metadata?: Record<string, unknown>;
@@ -440,7 +440,7 @@ export class ConversationOrganizationClient {
   }
 
   async updateThread(threadId: string, options: UpdateThreadOptions): Promise<UpdateThreadResult> {
-    if (options.title !== undefined) {
+    if (options.title !== undefined && options.title !== null) {
       stringValue(options.title, 'title');
     }
     if (options.pinned !== undefined) {

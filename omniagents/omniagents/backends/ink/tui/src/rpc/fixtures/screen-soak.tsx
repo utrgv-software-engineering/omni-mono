@@ -1,4 +1,5 @@
-/** Real Python RPC + real Ink screens, invoked by test_ink_rpc.py. */
+/** Real Python RPC + real Ink screens, invoked by test_ink_rpc.py through
+ * python-server-client.ts, which hands over its helpers. */
 import React, { useEffect, useState } from "react";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
@@ -17,49 +18,49 @@ import {
 } from "../../components/SessionComposer.js";
 import { MessageListOptimized } from "../../components/MessageListOptimized.js";
 import { Scrollable } from "../../components/Scrollable.js";
-import { useMessagesOptimized } from "../../hooks/useMessagesNew.js";
+import { useConversation } from "../../hooks/useConversation.js";
 import { useAppStore, useApproval, useMessages } from "../../store/appStore.js";
-import type { RPCClient } from "../client.js";
+import type { RPCClient } from "@omniagents/client/rpc/client";
+import { uuidv4 } from "@omniagents/client/util/uuid";
 
-async function until(check: () => boolean, describe?: () => string) {
-  const deadline = Date.now() + 10_000;
-  while (!check()) {
-    if (Date.now() >= deadline)
-      assert.fail(`screen soak timed out${describe ? `: ${describe()}` : ""}`);
-    await delay(10);
-  }
-}
+type Kit = {
+  until(check: () => boolean, describe?: () => string): Promise<void>;
+  open(id: string): {
+    session: { load(): Promise<unknown>; send(text: string): Promise<unknown> };
+    close(): void;
+  };
+  listenerCounts(): Record<string, number>;
+};
 
-export async function runScreenSoak(client: RPCClient, base: string) {
-  const first = await client.startRun("approval", { mode: "none" });
-  const second = await client.startRun("completed", { mode: "none" });
-  const sessions = [first.session_id, second.session_id];
+export async function runScreenSoak(
+  client: RPCClient,
+  base: string,
+  { until, open, listenerCounts: listeners }: Kit,
+) {
+  const sessions = [uuidv4(), uuidv4()];
+  const [first, second] = sessions.map(open) as [
+    ReturnType<Kit["open"]>,
+    ReturnType<Kit["open"]>,
+  ];
+  await first.session.load();
+  await first.session.send("approval");
+  await second.session.load();
+  await second.session.send("completed");
   const drafts = new ComposerDrafts();
   const typed = ["", ""];
-  const listeners = () =>
-    Object.fromEntries(
-      client
-        .eventNames()
-        .map((name) => [String(name), client.listenerCount(name)]),
-    );
   const originalListeners = listeners();
   let recovered = 0;
   function Root({ tab, session }: { tab: string; session: string }) {
     const [ready, setReady] = useState(true);
-    useEffect(() => {
-      const online = () => {
-        recovered++;
-        setReady(true);
-      };
-      const offline = () => setReady(false);
-      client.on("rpc_ready", online);
-      client.on("disconnected", offline);
-      return () => {
-        client.off("rpc_ready", online);
-        client.off("disconnected", offline);
-      };
-    }, []);
-    const api = useMessagesOptimized({
+    useEffect(
+      () =>
+        client.onConnectionState((state) => {
+          if (state === "connected") recovered++;
+          setReady(state === "connected");
+        }),
+      [],
+    );
+    const api = useConversation({
       client,
       sessionId: session,
       rpcReady: ready,
@@ -121,8 +122,8 @@ export async function runScreenSoak(client: RPCClient, base: string) {
       </MouseProvider>
     </KeypressProvider>
   );
-  useAppStore.getState().actions.setSessionId(first.session_id);
-  const instance = render(view("approval", first.session_id));
+  useAppStore.getState().actions.setSessionId(sessions[0]!);
+  const instance = render(view("approval", sessions[0]!));
   const { stdin, stdout } = instance;
   const screen = () => stripAnsi(instance.lastFrame() ?? "");
   try {
@@ -132,7 +133,7 @@ export async function runScreenSoak(client: RPCClient, base: string) {
     for (let i = 0; i < 25; i++) {
       const tab = tabs[i % tabs.length];
       const selected = Math.floor(i / tabs.length) % 2;
-      const session = sessions[selected];
+      const session = sessions[selected]!;
       useAppStore.getState().actions.setSessionId(session);
       // ink-testing-library's stdout is fixed at 100 columns; resize it as a
       // terminal does: new width, then a "resize" event.
@@ -182,8 +183,8 @@ export async function runScreenSoak(client: RPCClient, base: string) {
           "draft survived output and session switches",
         );
     }
-    instance.rerender(view("approval", first.session_id));
-    useAppStore.getState().actions.setSessionId(first.session_id);
+    instance.rerender(view("approval", sessions[0]!));
+    useAppStore.getState().actions.setSessionId(sessions[0]!);
     await until(
       () =>
         !!useAppStore.getState().approval && screen().includes("Approve Once"),
@@ -218,6 +219,8 @@ export async function runScreenSoak(client: RPCClient, base: string) {
     );
     await fetch(base + "/test/finish", { method: "POST" });
   } finally {
+    first.close();
+    second.close();
     instance.unmount();
     instance.cleanup();
     await delay(30);

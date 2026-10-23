@@ -2,11 +2,9 @@
 // (same split as ./review-model / ./strip-model).
 
 import wrapAnsi from "wrap-ansi";
-import type {
-  ToolCallInfo,
-  SubagentEvent,
-  SubagentSummary,
-} from "../store/appStore.js";
+import type { SubagentSummary } from "@omniagents/client/transcript/activity-store";
+import type { MessageItem } from "@omniagents/client/transcript/chat-types";
+import type { ToolCallInfo } from "../store/appStore.js";
 import { renderMarkdownCached } from "../utils/markdownCache.js";
 import { runningLabel } from "./transcript-model.js";
 import { Theme } from "../theme.js";
@@ -48,25 +46,23 @@ export function wrapStyled(text: string, width: number): string[] {
 }
 
 /**
- * A running worker's live activity feed, built from the relayed
- * ui.subagent.event buffer. Tool calls render in the transcript's beat
- * language (present-tense verb + salient argument); assistant prose
- * renders wrapped; failed tool results surface in red. One entry per
- * event — the buffer is already ring-capped by the store.
+ * A worker's activity feed, from its relayed transcript (the shared
+ * per-subagent transcript the desktop renders too). Tool calls render in
+ * the transcript's beat language (present-tense verb + salient argument);
+ * assistant prose renders wrapped; failed tool results surface in red.
  */
 export function buildLiveActivity(
-  events: SubagentEvent[],
+  items: readonly MessageItem[],
   width: number,
   includeProse = true,
 ): DetailLine[] {
   const lines: DetailLine[] = [];
-  for (const event of events) {
-    const params = event.params ?? {};
-    if (event.method === "tool_called") {
+  for (const item of items) {
+    if (item.type === "tool") {
       const call: ToolCallInfo = {
-        tool: String(params.tool ?? ""),
-        input: String(params.input ?? ""),
-        call_id: String(params.call_id ?? ""),
+        tool: item.tool,
+        input: item.input ?? "",
+        call_id: item.call_id ?? "",
         running: true,
       };
       const label = runningLabel(call);
@@ -74,16 +70,19 @@ export function buildLiveActivity(
         ? `${label.action} ${label.detail}`
         : label.action;
       lines.push({ text: `· ${text}`, color: Theme.textChrome });
-    } else if (event.method === "tool_result") {
-      const metadata = params.metadata as Record<string, unknown> | undefined;
-      if (metadata && metadata.success === false) {
+      const metadata = item.metadata as Record<string, unknown> | undefined;
+      if (item.status === "result" && metadata?.success === false) {
         lines.push({
-          text: `✗ ${String(params.tool ?? "tool")} failed`,
+          text: `✗ ${item.tool || "tool"} failed`,
           color: Theme.stateFailed,
         });
       }
-    } else if (event.method === "message_output" && includeProse) {
-      const content = String(params.content ?? "").trim();
+    } else if (
+      item.type === "chat" &&
+      item.role === "assistant" &&
+      includeProse
+    ) {
+      const content = item.content.trim();
       if (content) {
         for (const row of wrapPlain(content, width)) {
           lines.push({ text: row, color: Theme.textSecondary });
@@ -105,7 +104,7 @@ export function buildLiveActivity(
 export function buildWorkerDetail(
   worker: SubagentSummary,
   width: number,
-  events: SubagentEvent[] = [],
+  transcript: readonly MessageItem[] = [],
 ): DetailLine[] {
   const lines: DetailLine[] = [];
   for (const row of wrapPlain(worker.task.trim(), width)) {
@@ -133,7 +132,7 @@ export function buildWorkerDetail(
   // Once a result/error exists, the sub-agent's prose lives there — the
   // feed keeps only the actions, so nothing reads twice.
   const activity = buildLiveActivity(
-    events,
+    transcript,
     width,
     !(worker.error || worker.result),
   );

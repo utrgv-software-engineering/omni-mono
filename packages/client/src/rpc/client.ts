@@ -139,9 +139,13 @@ export const EXPERIMENTAL_FEATURE_MANIFESTS = {
   // The sidebar and conversation actions use canonical thread reads and
   // mutations. ``thread_updated`` is part of the feature, not an optional
   // enhancement: it keeps every open column converged after metadata changes.
-  // Descendant/fork/export/purge operations stay unrequested until their UI
-  // consumers and reconnect recovery are shipped.
+  // Descendant/export/purge operations stay unrequested until a UI consumes
+  // them.
   conversationOrganization: ['list_threads', 'search_threads', 'update_thread', 'thread_updated'],
+  // The TUI's session manager forks a conversation and places retention
+  // holds on one.
+  conversationForking: ['fork_session'],
+  retentionHolds: ['set_session_hold'],
   // Plans and run diffs are authoritative, revisioned conversation items.
   // Requesting the reads without ``item_updated`` would leave an active run's
   // projection stale, so negotiate the notification atomically with both
@@ -173,6 +177,8 @@ export const WORKSPACE_EXPERIMENTAL_OPERATIONS = [
   ...EXPERIMENTAL_FEATURE_MANIFESTS.mcpOperations,
   ...EXPERIMENTAL_FEATURE_MANIFESTS.layeredConfig,
   ...EXPERIMENTAL_FEATURE_MANIFESTS.conversationOrganization,
+  ...EXPERIMENTAL_FEATURE_MANIFESTS.conversationForking,
+  ...EXPERIMENTAL_FEATURE_MANIFESTS.retentionHolds,
   ...EXPERIMENTAL_FEATURE_MANIFESTS.plansAndDiffs,
   ...EXPERIMENTAL_FEATURE_MANIFESTS.approvalReviewer,
   ...EXPERIMENTAL_FEATURE_MANIFESTS.workflowReviewer,

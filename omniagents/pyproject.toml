@@ -288,12 +288,8 @@ include-package-data = true
     "guardian_policy.md",
     "plan_review_policy.md",
 ]
-# Ensure the Ink TUI TypeScript sources are included in wheels/sdists
+# The built Ink TUI bundle; its sources build in the monorepo workspace.
 "omniagents.backends.ink" = [
-    "tui/package.json",
-    "tui/tsconfig.json",
-    "tui/src/**/*.ts",
-    "tui/src/**/*.tsx",
     "tui/dist/*",
     "tui/dist/**/*",
 ]

@@ -170,6 +170,15 @@ export class RpcTimeoutError extends Error {
 }
 
 /** A JSON-RPC call was aborted by its AbortSignal before completing. */
+/**
+ * True when a call's reply was lost in transit (the socket dropped, or the
+ * deadline passed): the server may or may not have applied it. The only
+ * honest next step is to re-read server state, never to guess.
+ */
+export function isReplyLost(error: unknown): boolean {
+  return error instanceof ConnectionClosedError || error instanceof RpcTimeoutError;
+}
+
 export class RpcAbortError extends Error {
   readonly method: string;
 

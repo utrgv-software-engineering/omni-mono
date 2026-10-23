@@ -3,7 +3,7 @@ import { Box, Text } from "ink";
 import { useImmediateState } from "../hooks/useImmediateState.js";
 import { useKeypress } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
-import type { RPCClient } from "../rpc/client.js";
+import type { RPCClient } from "@omniagents/client/rpc/client";
 import { SelectableRow, RowText } from "./shared/SelectableRow.js";
 import { windowStart } from "./model-picker-model.js";
 import { Theme } from "../theme.js";

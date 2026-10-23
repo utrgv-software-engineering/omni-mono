@@ -10,14 +10,16 @@ clean:
 build:
 	python -m build
 
-ink-assets:
-	cd $(INK_TUI_DIR) && npm ci
-	cd $(INK_TUI_DIR) && npm run build
+# The UIs are npm workspaces of the monorepo: one install at its root.
+js-deps:
+	cd .. && npm ci
+
+ink-assets: js-deps
+	cd .. && npm run build -w omni-ink-tui
 	@test -f $(INK_TUI_DIR)/dist/index.js || (echo "Ink TUI build failed: dist/index.js not found" && exit 1)
 
-web-assets:
-	cd $(WEB_UI_DIR) && npm ci
-	cd $(WEB_UI_DIR) && npm run build
+web-assets: js-deps
+	cd .. && npm run build -w omniagents-web-ui
 	@test -f $(WEB_UI_DIR)/dist/index.html || (echo "Web UI build failed: dist/index.html not found" && exit 1)
 
 # Build everything needed for packaging (Ink TUI dist + Web UI dist)
@@ -62,4 +64,4 @@ bump-minor:
 bump-major:
 	bump2version major
 
-.PHONY: clean ink-assets web-assets build publish install dev format coverage-python bump-patch bump-minor bump-major release-guard
+.PHONY: clean js-deps ink-assets web-assets build publish install dev format coverage-python bump-patch bump-minor bump-major release-guard

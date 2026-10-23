@@ -89,6 +89,30 @@ export function parseSlashArgs(rule: SlashArgsRule, rest: string): SlashArgsResu
   }
 }
 
+export const takesArgs = (command: SlashCommand): boolean => command.args.kind !== 'none';
+
+/** The composer text for a chosen command: a trailing space when it
+ * expects arguments, so the cursor lands where they go. */
+export function completionFor(command: SlashCommand): string {
+  return takesArgs(command) ? `/${command.name} ` : `/${command.name}`;
+}
+
+/**
+ * What Enter does on a highlighted command row. If the user has already
+ * typed the whole name (or an alias), Enter runs it as typed: a verb with
+ * no text after it opens its panel or reports status. Otherwise Enter
+ * completes the name and, for a command that takes no arguments, sends
+ * it; a command expecting arguments waits for them.
+ */
+export function enterCompletion(command: SlashCommand, typed: string): { text: string; submit: boolean } {
+  const name = typed.trim().toLowerCase();
+  const exact = name === command.name || command.aliases.includes(name);
+  if (exact) {
+    return { text: `/${name}`, submit: true };
+  }
+  return { text: completionFor(command), submit: !takesArgs(command) };
+}
+
 export function unknownCommandMessage(name: string): string {
   return `Unrecognized command '/${name}'. Type / for a list of commands.`;
 }

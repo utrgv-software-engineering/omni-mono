@@ -3,19 +3,22 @@ import {
   buildFileRows,
   clampScroll,
   confirmationOf,
+  impactPaths,
   fileCounts,
   flattenConflict,
   flattenDiff,
   headline,
   orderBranches,
 } from "../git-model.js";
-import type { GitBranch } from "../../rpc/client.js";
-import { JSONRPCError } from "../../rpc/client.js";
-import type {
-  GitDiffFile,
-  GitStatusEntry,
-  GitStatusResult,
-} from "../../rpc/client.js";
+import { OmniagentsRpcError } from "@omniagents/client/protocol/errors";
+import {
+  GitConfirmation,
+  workspaceRepo,
+  type GitBranch,
+  type GitDiffFile,
+  type GitStatusEntry,
+  type GitStatusResult,
+} from "@omniagents/client/rpc/git";
 
 function entry(overrides: Partial<GitStatusEntry>): GitStatusEntry {
   return {
@@ -36,7 +39,7 @@ function entry(overrides: Partial<GitStatusEntry>): GitStatusEntry {
 function statusResult(overrides: Partial<GitStatusResult>): GitStatusResult {
   return {
     environment_id: "env",
-    repo: ".",
+    repo: workspaceRepo("."),
     head: { detached: false, unborn: false, branch: "main", oid: "abc123" },
     upstream: null,
     entries: [],
@@ -238,50 +241,40 @@ describe("flattenDiff", () => {
   });
 });
 
-describe("confirmationOf", () => {
-  it("extracts the token and impact paths from a typed -32093 rejection", () => {
-    const error = new JSONRPCError({
-      code: -32093,
-      message: "discard_changes discards work and must be confirmed",
-      data: {
-        kind: "git_confirmation_required",
-        operation: "discard_changes",
-        confirmation_token: "tok-1",
-        impact: { paths: ["a.txt", "b.txt"] },
-      },
-    });
-    expect(confirmationOf(error)).toEqual({
-      token: "tok-1",
-      paths: ["a.txt", "b.txt"],
-    });
+describe("confirmationOf / impactPaths", () => {
+  const repo = workspaceRepo(".");
+  const challenge = (impact: Record<string, unknown>) =>
+    GitConfirmation.fromError(
+      new OmniagentsRpcError({
+        code: -32093,
+        message: "discard_changes discards work and must be confirmed",
+        data: {
+          kind: "git_confirmation_required",
+          reason: "confirmation_required",
+          operation: "discard_changes",
+          confirmation_token: "tok-1",
+          repo: ".",
+          impact,
+        },
+      }),
+      { method: "git.discard", repo, paramsKey: "k" } as never,
+    )!;
+
+  it("takes the challenge out of a confirmation-required outcome", () => {
+    const confirmation = challenge({ paths: ["a.txt", "b.txt"] });
+    expect(
+      confirmationOf({ kind: "confirmation_required", confirmation }),
+    ).toBe(confirmation);
+    expect(impactPaths(confirmation)).toEqual(["a.txt", "b.txt"]);
   });
 
   it("tolerates a missing or non-path impact", () => {
-    expect(
-      confirmationOf(
-        new JSONRPCError({
-          code: -32093,
-          message: "push rewrites remote history",
-          data: {
-            kind: "git_confirmation_required",
-            confirmation_token: "tok-2",
-            impact: { refs: ["refs/heads/main"] },
-          },
-        }),
-      ),
-    ).toEqual({ token: "tok-2", paths: [] });
+    expect(impactPaths(challenge({ refs: ["refs/heads/main"] }))).toEqual([]);
   });
 
-  it("returns null for every other error shape", () => {
-    expect(confirmationOf(new Error("nope"))).toBeNull();
-    expect(
-      confirmationOf(new JSONRPCError({ code: -32000, message: "other" })),
-    ).toBeNull();
-    expect(
-      confirmationOf(
-        new JSONRPCError({ code: -32093, message: "no token", data: {} }),
-      ),
-    ).toBeNull();
+  it("returns null for a completed operation", () => {
+    expect(confirmationOf({ kind: "completed", result: {} })).toBeNull();
+    expect(confirmationOf(null)).toBeNull();
   });
 });
 

@@ -7,17 +7,48 @@ import {
 } from "../mention-model.js";
 
 const entries = [
-  { path: "./src/app.ts", type: "file" as const, size: 1, mtime: null },
-  { path: "src/app/", type: "directory" as const, size: null, mtime: null },
-  { path: "src/app/app.test.ts", type: "file" as const, size: 1, mtime: null },
+  {
+    path: "./src/app.ts",
+    type: "file" as const,
+    size: 1,
+    mtime: null,
+    writable: true,
+  },
+  {
+    path: "src/app/",
+    type: "directory" as const,
+    size: null,
+    mtime: null,
+    writable: true,
+  },
+  {
+    path: "src/app/app.test.ts",
+    type: "file" as const,
+    size: 1,
+    mtime: null,
+    writable: true,
+  },
   {
     path: "node_modules/x/index.js",
     type: "file" as const,
     size: 1,
     mtime: null,
+    writable: true,
   },
-  { path: ".git/HEAD", type: "file" as const, size: 1, mtime: null },
-  { path: "README.md", type: "file" as const, size: 1, mtime: null },
+  {
+    path: ".git/HEAD",
+    type: "file" as const,
+    size: 1,
+    mtime: null,
+    writable: true,
+  },
+  {
+    path: "README.md",
+    type: "file" as const,
+    size: 1,
+    mtime: null,
+    writable: true,
+  },
 ];
 
 describe("buildMentionRows", () => {

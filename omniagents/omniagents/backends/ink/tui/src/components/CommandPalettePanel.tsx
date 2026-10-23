@@ -3,7 +3,7 @@ import { Box, Text } from "ink";
 import Spinner from "ink-spinner";
 import { useKeypress } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
-import type { RPCClient } from "../rpc/client.js";
+import type { RPCClient } from "@omniagents/client/rpc/client";
 import {
   buildCommandRows,
   completionFor,

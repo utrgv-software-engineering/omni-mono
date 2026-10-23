@@ -443,6 +443,54 @@ describe('FsClient', () => {
     client.dispose();
   });
 
+  it('never replays a commit whose reply was lost: reads the digest back instead', async () => {
+    for (const [onDisk, outcome] of [
+      [sha256Hello, 'saved'],
+      ['b'.repeat(64), 'unconfirmed'],
+    ] as const) {
+      const rpc = new FakeRpc();
+      rpc.responder = (method, params) => {
+        if (method === 'fs_upload_open') {
+          return { transfer_id: 'upload-1', environment_id: environmentId, path: 'file.txt', chunk_size: 256 * 1024 };
+        }
+        if (method === 'fs_upload_chunk') {
+          return { transfer_id: 'upload-1', received: atob(params.data).length, size: 5 };
+        }
+        if (method === 'fs_upload_commit') {
+          // The write lands; the reply is lost with the connection.
+          rpc.setState('reconnecting');
+          queueMicrotask(() => rpc.setState('connected'));
+          throw new Error('socket closed');
+        }
+        if (method === 'fs_download_open') {
+          return {
+            transfer_id: 'read-1',
+            environment_id: environmentId,
+            path: 'file.txt',
+            size: 5,
+            sha256: onDisk,
+            mime: null,
+            mtime: null,
+            chunk_size: 256 * 1024,
+          };
+        }
+        return true;
+      };
+      const client = new FsClient(rpc as FileSystemRpcTransport);
+      const write = client.writeTextFile(environmentId, 'file.txt', 'hello', { expectedSha256: 'a'.repeat(64) });
+
+      if (outcome === 'saved') {
+        await expect(write).resolves.toEqual({ path: 'file.txt', size: 5, sha256: sha256Hello });
+      } else {
+        await expect(write).rejects.toThrow('socket closed');
+      }
+      expect(rpc.calls.filter((call) => call.method === 'fs_upload_open')).toHaveLength(1);
+      expect(rpc.calls.filter((call) => call.method === 'fs_upload_commit')).toHaveLength(1);
+      expect(rpc.calls.some((call) => call.method === 'fs_download_read')).toBe(false);
+      client.dispose();
+    }
+  });
+
   it('aborts a failed upload and rejects malformed server boundaries', async () => {
     const rpc = new FakeRpc();
     rpc.responder = (method) => {

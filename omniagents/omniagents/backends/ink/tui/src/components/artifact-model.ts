@@ -73,39 +73,29 @@ export function formatBytes(bytes: number): string {
 }
 
 /**
- * Upsert on `(artifactId, sessionId)`: re-emitting the same id means
- * "here is the new version of that artifact"
- * (omniagents/core/conversation/recorder.py), so it REPLACES rather than
- * appends, and the revision counter is what lets the drawer show that it
- * changed. An artifact with no id can never be addressed again, so it
- * always appends.
- *
- * Returns the same array reference when nothing changed, so a store
- * update can be skipped.
+ * The drawer's entries from the conversation's artifacts, which the shared
+ * session already keeps one per id: re-emitting an id is "here is the new
+ * version" (omniagents/core/conversation/recorder.py). Each entry keeps the
+ * revision it had and bumps it when its content or title changed, which is
+ * what lets the drawer show that it changed.
  */
-export function upsertArtifact(
-  list: readonly ArtifactEntry[],
-  entry: ArtifactEntry,
+export function reviseArtifacts(
+  previous: readonly ArtifactEntry[],
+  current: readonly Omit<ArtifactEntry, "revision">[],
 ): ArtifactEntry[] {
-  if (!entry.artifactId) return [...list, entry];
-  const index = list.findIndex(
-    (existing) =>
-      existing.artifactId === entry.artifactId &&
-      // A session filter only applies when BOTH sides name a session:
-      // matching on undefined would collapse artifacts from different
-      // sessions that happen to share an id.
-      (!entry.sessionId ||
-        !existing.sessionId ||
-        existing.sessionId === entry.sessionId),
-  );
-  if (index < 0) return [...list, entry];
-  const previous = list[index]!;
-  if (previous.content === entry.content && previous.title === entry.title) {
-    return list as ArtifactEntry[];
-  }
-  const next = [...list];
-  next[index] = { ...entry, revision: previous.revision + 1 };
-  return next;
+  return current.map((entry) => {
+    const before = entry.artifactId
+      ? previous.find(
+          (existing) =>
+            existing.artifactId === entry.artifactId &&
+            existing.sessionId === entry.sessionId,
+        )
+      : undefined;
+    if (!before) return { ...entry, revision: 0 };
+    const changed =
+      before.content !== entry.content || before.title !== entry.title;
+    return { ...entry, revision: before.revision + (changed ? 1 : 0) };
+  });
 }
 
 const MIME_EXTENSIONS: Record<string, string> = {

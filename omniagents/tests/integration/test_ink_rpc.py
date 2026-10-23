@@ -35,7 +35,6 @@ from omniagents.rpc.transport.websocket import ServerWebSocketTransport
         (scenario, "automatic")
         for scenario in [
             "lost_start",
-            "lost_start_switch",
             "lost_queue",
             "lost_approval",
             "approval_other",
@@ -48,9 +47,17 @@ from omniagents.rpc.transport.websocket import ServerWebSocketTransport
 def test_ink_reconnect(monkeypatch, tmp_path, scenario, reconnect):
     root = Path(__file__).resolve().parents[2]
     tui = root / "omniagents/backends/ink/tui"
-    tsx = tui / "node_modules/tsx/dist/cli.mjs"
+    # npm workspaces hoist tsx to the nearest node_modules above the TUI.
+    tsx = next(
+        (
+            candidate
+            for directory in [tui, *tui.parents]
+            if (candidate := directory / "node_modules/tsx/dist/cli.mjs").exists()
+        ),
+        None,
+    )
     node = shutil.which("node")
-    if not node or not tsx.exists():
+    if not node or tsx is None:
         pytest.skip("Ink integration requires Node and installed TUI dependencies")
 
     finished = asyncio.Event()

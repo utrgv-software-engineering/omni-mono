@@ -11,7 +11,7 @@ import {
   previewLines,
   saveBuffer,
   slugify,
-  upsertArtifact,
+  reviseArtifacts,
   type ArtifactEntry,
 } from "../artifact-model.js";
 
@@ -84,43 +84,37 @@ describe("sizes", () => {
   });
 });
 
-describe("upsertArtifact", () => {
-  it("appends a new id", () => {
-    const list = upsertArtifact([], entry());
-    expect(list).toHaveLength(1);
+describe("reviseArtifacts", () => {
+  const { revision: _revision, ...bare } = entry();
+
+  it("starts a new artifact at revision zero", () => {
+    expect(reviseArtifacts([], [bare])[0]!.revision).toBe(0);
   });
 
-  it("replaces the same id and bumps the revision", () => {
-    const first = upsertArtifact([], entry());
-    const second = upsertArtifact(first, entry({ content: "changed" }));
-    expect(second).toHaveLength(1);
-    expect(second[0]!.content).toBe("changed");
+  it("bumps the revision when the same id's content changed", () => {
+    const first = reviseArtifacts([], [bare]);
+    const second = reviseArtifacts(first, [{ ...bare, content: "changed" }]);
     expect(second[0]!.revision).toBe(1);
+    expect(
+      reviseArtifacts(second, [{ ...bare, content: "changed" }])[0]!.revision,
+    ).toBe(1);
   });
 
-  it("always appends when there is no id to address", () => {
-    const list = upsertArtifact(
-      upsertArtifact([], entry({ artifactId: undefined })),
-      entry({ artifactId: undefined }),
-    );
-    expect(list).toHaveLength(2);
+  it("never matches an artifact with no id", () => {
+    const first = reviseArtifacts([], [{ ...bare, artifactId: undefined }]);
+    expect(
+      reviseArtifacts(first, [
+        { ...bare, artifactId: undefined, content: "x" },
+      ])[0]!.revision,
+    ).toBe(0);
   });
 
   it("keeps artifacts from different sessions apart", () => {
-    const first = upsertArtifact([], entry({ sessionId: "s-1" }));
-    const second = upsertArtifact(first, entry({ sessionId: "s-2" }));
-    expect(second).toHaveLength(2);
-  });
-
-  it("returns the same reference when nothing changed", () => {
-    const first = upsertArtifact([], entry());
-    expect(upsertArtifact(first, entry())).toBe(first);
-  });
-
-  it("does not mutate the input list", () => {
-    const first = upsertArtifact([], entry());
-    upsertArtifact(first, entry({ content: "changed" }));
-    expect(first[0]!.content).toBe("# Heading\n\nbody");
+    const first = reviseArtifacts([], [{ ...bare, sessionId: "s-1" }]);
+    const second = reviseArtifacts(first, [
+      { ...bare, sessionId: "s-2", content: "x" },
+    ]);
+    expect(second[0]!.revision).toBe(0);
   });
 });
 

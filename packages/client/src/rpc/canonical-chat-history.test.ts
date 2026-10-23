@@ -179,10 +179,22 @@ describe('canonical conversation item adapters', () => {
         item({
           kind: 'approval',
           status: 'started',
-          content: { approval_kind: 'mcp', request_id: 'req-1', tool: 'publish', server_label: 'github' },
+          content: {
+            approval_kind: 'mcp',
+            request_id: 'req-1',
+            tool: 'publish',
+            server_label: 'github',
+            metadata: { display_type: 'diff', path: 'a.txt', diff: '+new' },
+          },
         })
       )
-    ).toMatchObject({ type: 'approval', request_id: 'req-1', kind: 'mcp', server_label: 'github' });
+    ).toMatchObject({
+      type: 'approval',
+      request_id: 'req-1',
+      kind: 'mcp',
+      server_label: 'github',
+      metadata: { display_type: 'diff', path: 'a.txt', diff: '+new' },
+    });
   });
 
   it('maps reviewer-resolved approvals to guardian review steps', () => {
