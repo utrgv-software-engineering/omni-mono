@@ -83,7 +83,7 @@ export function ScenariosTab({ agent }: { agent: string | null }) {
     <div className="grid h-full grid-cols-[16rem_1fr]">
       <nav className="space-y-4 overflow-y-auto border-r border-border p-3 text-sm">
         <SetList title="Project scenarios" hint="What the suite runs" sets={project} current={current} root={root} onSelect={setSelected} />
-        <SetList title="Generated sets" hint="artifacts/eval/" sets={generated} current={current} root={root} onSelect={setSelected} />
+        <SetList title="Generated sets" hint="generated/" sets={generated} current={current} root={root} onSelect={setSelected} />
         <button
           type="button"
           onClick={() => setSelected(DIMENSIONS)}
@@ -100,7 +100,7 @@ export function ScenariosTab({ agent }: { agent: string | null }) {
           <DimensionsPanel />
         ) : !current ? (
           <p className="text-sm text-muted-foreground">
-            No scenarios yet. Add a scenarios.yml under the evaluations directory, or generate a set from dimensions.
+            No scenarios yet. Add a file to scenarios/ in the evaluations directory, or generate a set from dimensions.
           </p>
         ) : (
           <div className="space-y-4">

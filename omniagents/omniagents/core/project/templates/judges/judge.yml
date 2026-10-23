@@ -1,26 +1,24 @@
-judges:
-  {sanitized}:
-    agent:
-      name: {agent_name}
-      label: {agent_label}
-      model: {model}
-      output_type: dict
-      output_type_strict: false
-      output_schema:
-        type: object
-        properties:
-          reasoning:
-            type: string
-          answer:
-            type: string
-            enum:
-              - Pass
-              - Fail
-        required:
-          - reasoning
-          - answer
-        additionalProperties: false
-      instructions_file: instructions.md
-    input:
-      source: {source}
-      template_file: template.md
+agent:
+  name: {agent_name}
+  label: {agent_label}
+  model: {model}
+  output_type: dict
+  output_type_strict: false
+  output_schema:
+    type: object
+    properties:
+      reasoning:
+        type: string
+      answer:
+        type: string
+        enum:
+          - Pass
+          - Fail
+    required:
+      - reasoning
+      - answer
+    additionalProperties: false
+  instructions_file: instructions.md
+input:
+  source: {source}
+  template_file: template.md

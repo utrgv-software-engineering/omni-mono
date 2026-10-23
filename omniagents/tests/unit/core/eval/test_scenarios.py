@@ -89,6 +89,7 @@ def test_generate_scenarios_filters_dimensions_and_emits_manifest(
     scenario_list, output_path, ts = asyncio.run(
         scenarios.generate_scenarios(
             compiled_yaml=compiled_path,
+            output=tmp_path / "generated" / "demo-set" / "scenarios.yml",
             count=2,
             seed=7,
             set_name="demo-set",
@@ -122,6 +123,8 @@ def test_generate_scenarios_filters_dimensions_and_emits_manifest(
     )
     assert manifest["counts"]["total"] == 2
     assert manifest["workflow_generate"] == "wf"
+    assert manifest["name"] == "demo-set"
+    assert output_path == tmp_path / "generated" / "demo-set" / "scenarios.yml"
 
 
 def test_run_generation_parses_outputs_correctly(monkeypatch):
@@ -208,6 +211,7 @@ def test_generate_scenarios_skips_outputs_without_prompt(tmp_path, monkeypatch):
     result, output_path, ts = asyncio.run(
         scenarios.generate_scenarios(
             compiled_yaml=compiled_path,
+            output=tmp_path / "generated" / "no-prompts" / "scenarios.yml",
             count=1,
             seed=3,
             set_name="no-prompts",

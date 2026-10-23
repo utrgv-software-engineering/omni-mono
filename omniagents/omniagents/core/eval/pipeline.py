@@ -56,8 +56,10 @@ def load_project_measures(
 ) -> List[str]:
     """Import the project's ``measures.py`` files; returns the measures they define.
 
-    They are looked for beside the agent file (and in its ``evaluation/`` and
-    ``eval/`` folders) and in the evaluations directory. Loading replaces
+    A project's is ``measures.py`` in its evaluations directory
+    (``eval_dir``). Without one (an agent file carrying its own
+    ``evaluation`` block), it is looked for beside the agent file and in the
+    evaluations directory of the project around it. Loading replaces
     the project measures any earlier load registered, so an edited file
     takes effect in a long-running process and two projects never share a
     measure by name. A file that fails to import raises: a run without the
@@ -69,14 +71,10 @@ def load_project_measures(
     from omniagents.core.evaluation.registry import _MEASURES
 
     base_dir = Path(cfg_path).parent
-    candidates = [
-        base_dir / "measures.py",
-        base_dir / "evaluation" / "measures.py",
-        base_dir / "eval" / "measures.py",
-    ]
     if eval_dir is not None:
-        candidates.append(Path(eval_dir) / "measures.py")
+        candidates = [Path(eval_dir) / "measures.py"]
     else:
+        candidates = [base_dir / "measures.py"]
         root = project_root
         if root is None:
             for folder in [base_dir.resolve(), *base_dir.resolve().parents]:
@@ -84,7 +82,7 @@ def load_project_measures(
                     root = folder
                     break
         if root is not None:
-            from omniagents.core.eval.loader import evaluations_dir
+            from omniagents.core.eval.layout import evaluations_dir
 
             project = yaml.safe_load(
                 (Path(root) / "project.yml").read_text(encoding="utf-8")

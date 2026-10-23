@@ -63,19 +63,26 @@ async def evaluate_split(
         except Exception:
             category_hint = None
 
+    from omniagents.core.eval.layout import EvalLayout
     from omniagents.core.eval.results import conversations_for
+    from omniagents.core.eval.split import dataset_set
 
-    # The conversations being judged: the set's saved runs (the dataset is
-    # artifacts/eval/<set>/splits/<category>/<split>.yml).
+    # The conversations being judged: the saved runs of the set the dataset
+    # was drawn from, or the runs file given.
+    if eval_config is None:
+        raise SystemExit("Judging a split needs the project's evaluation")
+    layout = EvalLayout(eval_config.eval_dir, eval_config.project_root)
     explicit_runs = Path(runs_file).resolve() if runs_file else None
-    conversations = conversations_for(Path(split_path).parents[2], explicit_runs)
+    conversations = conversations_for(
+        layout, dataset_set(layout, Path(split_path)), explicit_runs
+    )
     expected_ids = [str(sc.get("id") or sc.get("name")) for sc in scenarios]
     missing = [sid for sid in expected_ids if sid not in conversations]
     if missing:
         raise SystemExit(
             f"{len(missing)} scenario(s) in the split have no saved run with its "
             f"conversation (e.g. {missing[0]}). Run the scenario set first: "
-            "omniagents eval scenarios run --set <its generated_scenarios.yml>"
+            "omniagents eval scenarios run --set <the set's name>"
         )
     by_id = {sid: conversations[sid] for sid in expected_ids}
 

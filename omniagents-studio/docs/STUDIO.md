@@ -64,10 +64,10 @@ datasets are built from. **Timing** shows the run's traces when tracing was on.
 
 The agent picker in the header chooses what runs are made against.
 
-- **Scenarios**: the project's scenario files (what the suite runs) and the
-  generated sets under `artifacts/eval/`, edited in place. Run a set; promote a
-  generated scenario into the project; label a generated set from reviews; build
-  a judge dataset from it. **Dimensions and generation** edits the dimensions
+- **Scenarios**: the project's scenario files in `scenarios/` (what the suite
+  runs) and the generated sets in `generated/`, edited in place. Run a set;
+  promote a generated scenario into `scenarios/promoted.yml`; label a set from
+  the reviews of its newest run; build a category's judge dataset from it. **Dimensions and generation** edits the dimensions
   synthetic scenarios are drawn from and generates a set from them.
 - **Runs**: run the suite (a selection, a holdout split, unmeasured scenarios,
   a turn limit), make the train/dev/test holdout, and read saved runs: each with
@@ -84,3 +84,10 @@ The agent picker in the header chooses what runs are made against.
   reply the judge reads; optimizing a judge on a dataset.
 - **Optimize**: improving an agent's instructions against a judge dataset; the
   best instructions are saved into the agent's files.
+
+All of it lives in the project's evaluations directory, laid out as
+`omniagents/core/eval/layout.py` describes: what people write
+(`evaluation.yml`, `measures.py`, `judges/<key>/`, `scenarios/`) apart from
+what the tools produce (`generated/`, `holdout/`, `judge-datasets/<category>/`,
+`runs/`, `optimizations/`). Each saved run keeps a copy of the agent it tested.
+A project laid out the old way is refused with what to move where.

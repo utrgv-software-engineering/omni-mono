@@ -2,13 +2,47 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import re
 import threading
 import time
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 import yaml
 from omniagents.core.eval.stratified_sampler import StratifiedBatchSampler
+
+
+def _optimization_dir(
+    eval_config: Any, kind: str, subject: str, output_dir: str | None, resume: bool
+) -> Path:
+    """Where an optimization writes: a new ``optimizations/<id>_<kind>_<subject>/``,
+    or ``output_dir``. ``resume`` continues the optimization in
+    ``output_dir``, which must exist."""
+    from omniagents.core.eval.layout import EvalLayout
+    from omniagents.core.eval.results import generate_run_id
+
+    if output_dir:
+        run_dir = Path(output_dir)
+        if not run_dir.is_absolute():
+            run_dir = (eval_config.project_root / run_dir).resolve()
+    elif resume:
+        raise SystemExit("Name the optimization to resume with --output <its folder>")
+    else:
+        layout = EvalLayout(eval_config.eval_dir, eval_config.project_root)
+        run_dir = layout.optimizations_dir / f"{generate_run_id()}_{kind}_{subject}"
+    if resume and not run_dir.is_dir():
+        raise SystemExit(f"No optimization to resume at {run_dir}")
+    if not resume and run_dir.is_dir() and any(run_dir.iterdir()):
+        raise SystemExit(
+            f"{run_dir} holds an optimization; resume it with --resume or name another"
+        )
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir
+
+
+def _dataset_split(eval_config: Any, category: str, which: str) -> Path:
+    from omniagents.core.eval.layout import EvalLayout
+
+    layout = EvalLayout(eval_config.eval_dir, eval_config.project_root)
+    return layout.judge_dataset_dir(category) / f"{which}.yml"
 
 
 def optimize_agent_from_project(
@@ -18,7 +52,6 @@ def optimize_agent_from_project(
     train_file: str | None,
     dev_file: str | None,
     test_file: str | None,
-    name: str | None,
     positives_only: bool,
     max_turns: int | None,
     max_metric_calls: int,
@@ -85,12 +118,7 @@ def optimize_agent_from_project(
             return p if p.is_absolute() else (base / p).resolve()
         if not cat:
             return None
-        name_arg = (name or "").strip()
-        if not name_arg:
-            return None
-        candidate = (
-            base / "artifacts" / "eval" / name_arg / "splits" / cat / f"{which}.yml"
-        ).resolve()
+        candidate = _dataset_split(_eval_config, cat, which)
         return candidate if candidate.exists() else None
 
     # Resolve file paths only for roles not covered by a selector.
@@ -137,33 +165,15 @@ def optimize_agent_from_project(
     # Only raise the "missing splits" error when NO selector was used at all
     # AND no file path resolved successfully.
     if not using_any_selector and not any([tr_path, dv_path, ts_path]):
-        if not any([train_file, dev_file, test_file]) and not ((name or "").strip()):
+        if cat:
             raise SystemExit(
-                "Could not locate scenario splits for category '{cat}'. Provide --name <scenario_set>, explicit split files, or --train-select/--dev-select/--test-select.".format(
-                    cat=cat or "<unknown>"
-                )
-            )
-        expected_dir = None
-        if (name or "").strip() and (cat or "").strip():
-            expected_dir = (
-                base
-                / "artifacts"
-                / "eval"
-                / (name or "").strip()
-                / "splits"
-                / (cat or "").strip()
-            ).resolve()
-        if expected_dir is not None:
-            raise SystemExit(
-                "Could not locate scenario splits for category '{cat}' under {path}. Verify --name or provide explicit split files.".format(
-                    cat=cat or "<unknown>", path=expected_dir
-                )
+                f"No judge dataset for category '{cat}' at "
+                f"{_dataset_split(_eval_config, cat, 'dev').parent}. Build one with "
+                "`omniagents judge dataset`, or pass split files or selectors."
             )
         raise SystemExit(
-            "Could not locate scenario splits. Provide --name <scenario_set>, explicit split files, or --train-select/--dev-select/--test-select."
+            "Could not locate scenario splits. Provide --category, explicit split files, or --train-select/--dev-select/--test-select."
         )
-
-    reference_split_path = dv_path or tr_path or ts_path
 
     def _read_scenarios(p: _P) -> List[Dict[str, Any]]:
         y = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
@@ -265,12 +275,7 @@ def optimize_agent_from_project(
         tracing = _eval_config.tracing_config or {}
         if str(tracing.get("provider", "")).lower() == "studio":
             base_name = tracing.get("name") or _P(compiled_cfg_path).stem
-            if reference_split_path is not None:
-                ts = reference_split_path.parents[2].name
-            else:
-                ts = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-            if not re.fullmatch(r"\d{4}_\d{2}_\d{2}_\d{2}_\d{2}_\d{2}", ts):
-                ts = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+            ts = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
             workflow_name = f"{base_name}_studio_optimize_{cat}_{ts}"
     except Exception:
         workflow_name = None
@@ -283,27 +288,7 @@ def optimize_agent_from_project(
         workflow_name=workflow_name,
         eval_config=_eval_config,
     )
-    out_dir = output_dir or ""
-    if out_dir:
-        outp = _P(out_dir)
-        base_run = outp if outp.is_absolute() else (base / outp).resolve()
-    elif reference_split_path is not None:
-        base_run = (
-            reference_split_path.parents[2] / "agent_optimize" / (cat or "category")
-        )
-    else:
-        # Selector-based flow: no split files exist on disk. Land artifacts
-        # under the project's evaluations dir by default.
-        base_run = (
-            _eval_config.eval_dir / "agent_optimize" / (cat or "category")
-        ).resolve()
-    if resume:
-        run_dir = base_run
-    else:
-        from datetime import datetime as _dt
-
-        run_dir = base_run / _dt.now().strftime("%Y%m%d%H%M%S")
-    run_dir.mkdir(parents=True, exist_ok=True)
+    run_dir = _optimization_dir(_eval_config, "agent", cat, output_dir, resume)
     try:
         cfg_tr = yaml.safe_load(_P(compiled_cfg_path).read_text(encoding="utf-8")) or {}
         tracing = cfg_tr.get("tracing") or {}
@@ -326,9 +311,13 @@ def optimize_agent_from_project(
         from gepa.core.data_loader import ensure_loader  # type: ignore
         from gepa.logging.experiment_tracker import create_experiment_tracker  # type: ignore
         from gepa.strategies.candidate_selector import ParetoCandidateSelector  # type: ignore
-        from gepa.strategies.component_selector import RoundRobinReflectionComponentSelector  # type: ignore
+        from gepa.strategies.component_selector import (
+            RoundRobinReflectionComponentSelector,
+        )  # type: ignore
         from gepa.utils import FileStopper, CompositeStopper, MaxMetricCallsStopper  # type: ignore
-        from gepa.proposer.reflective_mutation.reflective_mutation import ReflectiveMutationProposer  # type: ignore
+        from gepa.proposer.reflective_mutation.reflective_mutation import (
+            ReflectiveMutationProposer,
+        )  # type: ignore
     except Exception as e:
         raise SystemExit(f"Could not import GEPA components: {e}")
 
@@ -556,7 +545,6 @@ def optimize_judge_from_project(
     train_file: str | None,
     dev_file: str | None,
     test_file: str | None,
-    name: str | None,
     judge_key: str | None,
     runs_file: str | None,
     source: str,
@@ -598,18 +586,14 @@ def optimize_judge_from_project(
         if explicit:
             p = _P(explicit)
             return p if p.is_absolute() else (base / p).resolve()
-        name_arg = (name or "").strip()
-        if not name_arg:
-            raise SystemExit(
-                "Provide --name <scenario_set> to locate splits or pass explicit split files."
-            )
-        candidate = (
-            base / "artifacts" / "eval" / name_arg / "splits" / cat / f"{which}.yml"
-        ).resolve()
+        if not cat:
+            raise SystemExit("Provide --category or explicit split files.")
+        candidate = _dataset_split(_eval_config, cat, which)
         if candidate.exists():
             return candidate
         raise SystemExit(
-            f"Could not find split for category '{cat}' ({which}) at {candidate}."
+            f"No judge dataset split for category '{cat}' ({which}) at {candidate}. "
+            "Build one with `omniagents judge dataset`."
         )
 
     tr_path = (
@@ -676,16 +660,20 @@ def optimize_judge_from_project(
     except Exception:
         pass
 
+    from omniagents.core.eval.layout import EvalLayout
     from omniagents.core.eval.results import conversations_for
+    from omniagents.core.eval.split import dataset_set
 
-    # The conversations the judge reads: the set's saved runs (the set is
-    # artifacts/eval/<set>/, its datasets splits/<category>/<split>.yml).
+    # The conversations the judge reads: the saved runs of the set the
+    # dataset was drawn from, or the runs file given.
     explicit_runs = None
     if runs_file:
         explicit_runs = _P(runs_file)
         if not explicit_runs.is_absolute():
             explicit_runs = (base / explicit_runs).resolve()
-    conversations = conversations_for(dv_path.parents[2], explicit_runs)
+    layout = EvalLayout(_eval_config.eval_dir, _eval_config.project_root)
+    source_set = dataset_set(layout, dv_path)
+    conversations = conversations_for(layout, source_set, explicit_runs)
     wanted = {
         item["id"] if item.get("id") not in (None, "None") else str(item.get("name"))
         for item in trainset + devset + testset
@@ -695,7 +683,7 @@ def optimize_judge_from_project(
         raise SystemExit(
             f"{len(missing)} scenario(s) in the judge dataset have no saved run "
             f"with its conversation (e.g. {missing[0]}). Run the scenario set "
-            "first: omniagents eval scenarios run --set <its generated_scenarios.yml>"
+            "first: omniagents eval scenarios run --set <the set's name>"
         )
 
     jkey = judge_key
@@ -757,7 +745,7 @@ def optimize_judge_from_project(
             import json as _json
 
             base_name = tracing.get("name") or _P(compiled_cfg_path).stem
-            set_dir = dv_path.parents[2] if dv_path is not None else None
+            set_dir = source_set.parent if source_set is not None else None
             ts = None
             sc_name = None
             try:
@@ -791,19 +779,7 @@ def optimize_judge_from_project(
         workflow_name=workflow_name,
         eval_config=_eval_config,
     )
-    out_dir = output_dir or ""
-    if out_dir:
-        outp = _P(out_dir)
-        base_run = outp if outp.is_absolute() else (base / outp).resolve()
-    else:
-        base_run = dv_path.parents[2] / "judge_optimize" / jkey
-    if resume:
-        run_dir = base_run
-    else:
-        from datetime import datetime as _dt
-
-        run_dir = base_run / _dt.now().strftime("%Y%m%d%H%M%S")
-    run_dir.mkdir(parents=True, exist_ok=True)
+    run_dir = _optimization_dir(_eval_config, "judge", str(jkey), output_dir, resume)
     try:
         adapter.debug_dir = run_dir / "debug"
     except Exception:

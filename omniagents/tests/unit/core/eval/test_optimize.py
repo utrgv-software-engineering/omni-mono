@@ -574,7 +574,6 @@ def test_optimize_agent_requires_gepa(monkeypatch, tmp_path):
             None,
             None,
             None,
-            None,
             False,
             None,
             10,
@@ -652,7 +651,6 @@ evaluation:
             None,
             None,
             None,
-            None,
             False,
             None,
             10,
@@ -665,7 +663,7 @@ evaluation:
             False,
         )
 
-    assert "Could not locate scenario splits for category 'safety'" in str(exc.value)
+    assert "No judge dataset for category 'safety'" in str(exc.value)
 
 
 def test_optimize_judge_requires_gepa(monkeypatch, tmp_path):
@@ -681,7 +679,6 @@ def test_optimize_judge_requires_gepa(monkeypatch, tmp_path):
     with pytest.raises(SystemExit) as exc:
         optimize.optimize_judge_from_project(
             str(tmp_path),
-            None,
             None,
             None,
             None,
@@ -761,7 +758,6 @@ def test_optimize_agent_happy_path(monkeypatch, tmp_path, configure_optimize_env
         str(train_path),
         str(dev_path),
         str(test_path),
-        None,
         False,
         5,
         3,
@@ -811,7 +807,6 @@ def test_optimize_agent_missing_named_split_path(
             None,
             None,
             None,
-            "scenario",
             False,
             1,
             1,
@@ -824,7 +819,7 @@ def test_optimize_agent_missing_named_split_path(
             False,
         )
 
-    assert "under" in str(exc.value)
+    assert "judge-datasets/safety" in str(exc.value)
 
 
 def test_optimize_agent_missing_category_from_splits(
@@ -882,7 +877,6 @@ def test_optimize_agent_missing_category_from_splits(
             str(train_path),
             str(dev_path),
             str(test_path),
-            None,
             False,
             1,
             1,
@@ -926,7 +920,7 @@ def test_optimize_agent_auto_resolution_resume_apply(
         progress_state=types.SimpleNamespace(total_num_evals=1),
     )
 
-    scenario_dir = project_dir / "artifacts" / "eval" / "scenario" / "splits" / "safety"
+    scenario_dir = project_dir / "judge-datasets" / "safety"
     scenario_dir.mkdir(parents=True)
 
     def write_split(path, labels):
@@ -962,7 +956,6 @@ def test_optimize_agent_auto_resolution_resume_apply(
         None,
         None,
         None,
-        "scenario",
         True,
         5,
         4,
@@ -971,13 +964,14 @@ def test_optimize_agent_auto_resolution_resume_apply(
         None,
         7,
         None,
-        True,
+        False,
         True,
         log_hook=logs.append,
     )
 
-    expected_run_dir = scenario_dir.parent.parent / "agent_optimize" / "safety"
-    assert result["run_dir"] == str(expected_run_dir)
+    run_dir = Path(result["run_dir"])
+    assert run_dir.parent == project_dir / "optimizations"
+    assert run_dir.name.endswith("_agent_safety")
     assert env.apply_calls
     apply_args, apply_kwargs = env.apply_calls[0]
     assert apply_args[0] == str(project_dir)
@@ -1007,10 +1001,9 @@ def test_optimize_agent_auto_resolution_resume_apply(
 def test_optimize_agent_auto_resolve_resume_and_progress_logging(monkeypatch, tmp_path):
     project_dir = tmp_path / "proj"
     project_dir.mkdir()
-    scenario_dir = (
-        project_dir / "artifacts" / "eval" / "scenario-set" / "splits" / "safety"
-    )
+    scenario_dir = project_dir / "judge-datasets" / "safety"
     scenario_dir.mkdir(parents=True)
+    (project_dir / "optimizations" / "earlier").mkdir(parents=True)
     compiled_path = project_dir / "compiled.yaml"
     compiled_path.write_text(
         yaml.dump(
@@ -1045,7 +1038,6 @@ def test_optimize_agent_auto_resolve_resume_and_progress_logging(monkeypatch, tm
         None,
         None,
         None,
-        "scenario-set",
         True,
         5,
         3,
@@ -1053,13 +1045,13 @@ def test_optimize_agent_auto_resolve_resume_and_progress_logging(monkeypatch, tm
         "fraction",
         None,
         0,
-        None,
+        str(project_dir / "optimizations" / "earlier"),
         True,
         False,
         log_hook=logs.append,
     )
-    expected_run_dir = dev_path.parents[2] / "agent_optimize" / "safety"
-    assert Path(result["run_dir"]) == expected_run_dir
+    # Resuming continues in the optimization named.
+    assert Path(result["run_dir"]) == project_dir / "optimizations" / "earlier"
     assert any(msg.startswith("LOG_PATH:") for msg in logs)
     assert any(msg.startswith("PROGRESS:2:") for msg in logs)
     assert logs[-1] == "PROGRESS:4:0"
@@ -1130,7 +1122,6 @@ def test_optimize_agent_positives_only_filters_all_splits(
         str(train_path),
         str(dev_path),
         str(test_path),
-        None,
         True,
         4,
         3,
@@ -1215,7 +1206,6 @@ def test_optimize_agent_stop_callback_respects_max_stopper(
         str(train_path),
         str(dev_path),
         str(test_path),
-        None,
         False,
         4,
         2,
@@ -1271,7 +1261,7 @@ def test_optimize_agent_tracing_studio_init(
         lambda **kwargs: tracing_calls.append(kwargs),
     )
 
-    scenario_dir = project_dir / "artifacts" / "eval" / "scenario" / "splits" / "safety"
+    scenario_dir = project_dir / "judge-datasets" / "safety"
     scenario_dir.mkdir(parents=True)
 
     def write_split(path, labels):
@@ -1305,7 +1295,6 @@ def test_optimize_agent_tracing_studio_init(
         None,
         None,
         None,
-        "scenario",
         False,
         4,
         2,
@@ -1364,7 +1353,7 @@ def test_optimize_agent_tracing_failure_continues(
 
     monkeypatch.setattr("omniagents.core.tracing.local.init", failing_init)
 
-    scenario_dir = project_dir / "artifacts" / "eval" / "scenario" / "splits" / "safety"
+    scenario_dir = project_dir / "judge-datasets" / "safety"
     scenario_dir.mkdir(parents=True)
 
     def write_split(path, labels):
@@ -1399,7 +1388,6 @@ def test_optimize_agent_tracing_failure_continues(
         None,
         None,
         None,
-        "scenario",
         False,
         4,
         2,
@@ -1471,7 +1459,6 @@ def test_optimize_agent_apply_failure(monkeypatch, tmp_path, configure_optimize_
         str(train_path),
         str(dev_path),
         str(test_path),
-        None,
         False,
         3,
         2,
@@ -1526,7 +1513,6 @@ def test_optimize_agent_apply_true(monkeypatch, tmp_path):
         str(train_path),
         str(dev_path),
         str(test_path),
-        None,
         False,
         5,
         3,
@@ -1615,7 +1601,7 @@ def test_optimize_judge_happy_path(monkeypatch, tmp_path, configure_optimize_env
 
     monkeypatch.setattr("omniagents.core.eval.workspace.EvalWorkspace", FakeWorkspace)
 
-    scenario_dir = project_dir / "artifacts" / "eval" / "scenario" / "splits" / "safety"
+    scenario_dir = project_dir / "judge-datasets" / "safety"
     scenario_dir.mkdir(parents=True)
 
     def write_split(path, labels):
@@ -1642,13 +1628,22 @@ def test_optimize_judge_happy_path(monkeypatch, tmp_path, configure_optimize_env
     write_split(scenario_dir / "dev.yml", [True, False])
     write_split(scenario_dir / "test.yml", [False, True])
 
-    manifest_dir = scenario_dir.parent.parent
-    (manifest_dir / "manifest.json").write_text(
+    set_dir = project_dir / "generated" / "scenario"
+    set_dir.mkdir(parents=True)
+    (set_dir / "scenarios.yml").write_text("scenarios: []\n", encoding="utf-8")
+    (set_dir / "manifest.json").write_text(
         json.dumps({"timestamp": "2024_01_01_00_00_00", "name": "scenario"}),
         encoding="utf-8",
     )
-    # The judge reads the conversations of the set's saved run.
+    (scenario_dir / "manifest.yml").write_text(
+        "set: generated/scenario/scenarios.yml\n", encoding="utf-8"
+    )
+    # The judge reads the conversations of the dataset's set's saved run, not
+    # the suite's.
+    from omniagents.core.eval.layout import EvalLayout
     from omniagents.core.eval.results import save_evaluation_run
+
+    layout = EvalLayout(project_dir, project_dir)
 
     ids = [
         f"{split}-{i}"
@@ -1656,7 +1651,7 @@ def test_optimize_judge_happy_path(monkeypatch, tmp_path, configure_optimize_env
         for i in range(n)
     ]
     save_evaluation_run(
-        manifest_dir / "generated_scenarios.yml",
+        layout,
         {
             "runs": [
                 {
@@ -1668,6 +1663,14 @@ def test_optimize_judge_happy_path(monkeypatch, tmp_path, configure_optimize_env
             ]
         },
         source="test",
+        label="scenario",
+        scenario_set=set_dir / "scenarios.yml",
+    )
+    save_evaluation_run(
+        layout,
+        {"runs": [{"scenario_config": {"id": ids[0]}, "history": []}]},
+        source="test",
+        label="suite",
     )
 
     result = optimize.optimize_judge_from_project(
@@ -1677,7 +1680,6 @@ def test_optimize_judge_happy_path(monkeypatch, tmp_path, configure_optimize_env
         None,
         None,
         None,
-        "scenario",
         "safety_judge",
         None,
         "final_assistant_text",
@@ -1706,6 +1708,10 @@ def test_optimize_judge_happy_path(monkeypatch, tmp_path, configure_optimize_env
     # Note: tracing initialization is tested separately in test_optimize_judge_tracing
     assert judge_adapter_instances[0].evaluate_calls
     assert set(judge_adapter_instances[0].conversations) == set(ids)
+    assert judge_adapter_instances[0].conversations[ids[0]]["history"]
+    run_dir = Path(result["run_dir"])
+    assert run_dir.parent == project_dir / "optimizations"
+    assert run_dir.name.endswith("_judge_safety_judge")
     env.engine_kwargs["evaluator"](
         [{"label": True}],
         {"instructions": "judge", "template": "tmpl"},
@@ -1774,7 +1780,6 @@ def test_optimize_agent_missing_measures(monkeypatch, tmp_path, configure_optimi
             str(train_path),
             str(dev_path),
             str(test_path),
-            None,
             False,
             5,
             3,
@@ -1788,3 +1793,23 @@ def test_optimize_agent_missing_measures(monkeypatch, tmp_path, configure_optimi
         )
 
     assert "Failure category 'safety' has no measures configured" in str(exc.value)
+
+
+def test_an_optimization_gets_a_new_folder_or_resumes_a_named_one(tmp_path):
+    config = types.SimpleNamespace(eval_dir=tmp_path / "evaluations", project_root=tmp_path)
+
+    fresh = optimize._optimization_dir(config, "agent", "safety", None, False)
+    assert fresh.parent == tmp_path / "evaluations" / "optimizations"
+    assert fresh.name.endswith("_agent_safety") and fresh.is_dir()
+
+    with pytest.raises(SystemExit, match="Name the optimization to resume"):
+        optimize._optimization_dir(config, "agent", "safety", None, True)
+    with pytest.raises(SystemExit, match="No optimization to resume"):
+        optimize._optimization_dir(config, "agent", "safety", "elsewhere", True)
+
+    (fresh / "gepa.log").write_text("started")
+    assert optimize._optimization_dir(config, "agent", "safety", str(fresh), True) == fresh
+    with pytest.raises(SystemExit, match="resume it with --resume"):
+        optimize._optimization_dir(config, "agent", "safety", str(fresh), False)
+    named = optimize._optimization_dir(config, "judge", "j", "mine", False)
+    assert named == tmp_path / "mine"

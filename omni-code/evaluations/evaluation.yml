@@ -34,52 +34,6 @@ evaluation:
       profile_resolver: product
       default_profile: profiles/devbox.yml
 
-  judges:
-    adherence:
-      agent:
-        model: gpt-4.1
-        output_type: dict
-        output_type_strict: true
-        output_schema:
-          properties:
-            reasoning: { type: string }
-            answer: { type: string, enum: [Pass, Fail] }
-          required: [reasoning, answer]
-        instructions_file: judges/adherence_judge_instructions.md
-      input:
-        source: history
-        template_file: templates/adherence_judge.md
-
-    compaction_fidelity:
-      agent:
-        model: gpt-4.1
-        output_type: dict
-        output_type_strict: true
-        output_schema:
-          properties:
-            reasoning: { type: string }
-            answer: { type: string, enum: [Pass, Fail] }
-          required: [reasoning, answer]
-        instructions_file: judges/compaction_judge_instructions.md
-      input:
-        source: history
-        template_file: templates/compaction_judge.md
-
-    phi_leakage:
-      agent:
-        model: gpt-4.1
-        output_type: dict
-        output_type_strict: true
-        output_schema:
-          properties:
-            reasoning: { type: string }
-            answer: { type: string, enum: [Pass, Fail] }
-          required: [reasoning, answer]
-        instructions_file: judges/phi_leakage_judge_instructions.md
-      input:
-        source: history
-        template_file: templates/phi_leakage_judge.md
-
   metrics:
     # Skill activation
     - name: skill_activation_rate

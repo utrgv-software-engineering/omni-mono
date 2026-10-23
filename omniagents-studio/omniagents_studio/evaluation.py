@@ -356,10 +356,10 @@ def get_judge_dataset_split(request: Request, path: str = Query(...)) -> dict[st
 
 @router.delete("/judge-datasets")
 def delete_judge_dataset(
-    request: Request, set: str = Query(...), category: str = Query(...)
+    request: Request, category: str = Query(...)
 ) -> dict[str, Any]:
-    _call(lambda: _workspace(request).remove_judge_dataset(set, category))
-    return {"removed": f"{set}/{category}"}
+    _call(lambda: _workspace(request).remove_judge_dataset(category))
+    return {"removed": category}
 
 
 # -- holdout --------------------------------------------------------------------
@@ -445,7 +445,6 @@ class AnnotateJob(BaseModel):
 class OptimizeJudgeJob(BaseModel):
     kind: Literal["optimize_judge"]
     judge: str
-    set_path: str
     category: str
     max_metric_calls: int = Field(default=60, ge=6)
     seed: int = 0
@@ -454,7 +453,6 @@ class OptimizeJudgeJob(BaseModel):
 class OptimizeAgentJob(BaseModel):
     kind: Literal["optimize_agent"]
     agent: str
-    set_path: str
     category: str
     positives_only: bool = False
     max_metric_calls: int = Field(default=100, ge=6)
@@ -520,44 +518,33 @@ def _generate_work(workspace: EvalWorkspace, body: GenerateJob):
 
 def _annotate_work(workspace: EvalWorkspace, body: AnnotateJob, project: str | None):
     async def work(report: JobReporter) -> dict[str, Any]:
-        from omniagents.core.eval.annotate import (
-            annotate_scenarios,
-            write_annotation_output,
-        )
-        from omniagents.core.project.runtime import load_project, resolve_agent
-
         if not project:
             raise EvalWorkspaceError("Studio has no trace project to read reviews from")
-        set_path = Path(workspace.scenario_set(body.set_path)["path"])
-        _, agent_yaml = resolve_agent(load_project(str(workspace.manifest)), body.agent)
-        annotated, _original, source = await asyncio.to_thread(
-            annotate_scenarios, Path(agent_yaml), set_path, project, None
+        result = await asyncio.to_thread(
+            workspace.annotate_from_reviews, body.set_path, project
         )
-        output = write_annotation_output(workspace.root, source, annotated)
-        report.log(f"Annotated {len(annotated)} scenarios")
-        return {"set_path": str(output)}
+        labelled = sum(
+            1 for s in result["set"]["scenarios"] if s.get("failure_categories")
+        )
+        report.log(f"Labelled {labelled} scenarios from the run {result['run']}")
+        return {"set_path": result["set"]["path"], "run": result["run"]}
 
     return work
 
 
-def _dataset_files(
-    workspace: EvalWorkspace, set_path: str, category: str
-) -> dict[str, str]:
-    for dataset in workspace.judge_datasets():
-        if Path(dataset["set_path"]) == Path(
-            workspace.scenario_set(set_path)["path"]
-        ) and (dataset["category"] == category):
-            files = {split["split"]: split["path"] for split in dataset["splits"]}
-            if set(files) == {"train", "dev", "test"}:
-                return files
-    raise EvalWorkspaceError(f"No complete judge dataset for {category!r} in that set")
+def _dataset_files(workspace: EvalWorkspace, category: str) -> dict[str, str]:
+    dataset = workspace.judge_dataset(category)
+    files = {split["split"]: split["path"] for split in dataset["splits"]}
+    if set(files) != {"train", "dev", "test"}:
+        raise EvalWorkspaceError(f"The judge dataset for {category!r} is incomplete")
+    return files
 
 
 def _optimize_judge_work(workspace: EvalWorkspace, body: OptimizeJudgeJob):
     async def work(report: JobReporter) -> dict[str, Any]:
         from omniagents.core.eval.optimize import optimize_judge_from_project
 
-        files = _dataset_files(workspace, body.set_path, body.category)
+        files = _dataset_files(workspace, body.category)
         judge = workspace.judge(body.judge)
         report.progress(0, body.max_metric_calls)
         result = await asyncio.to_thread(
@@ -568,7 +555,6 @@ def _optimize_judge_work(workspace: EvalWorkspace, body: OptimizeJudgeJob):
             train_file=files["train"],
             dev_file=files["dev"],
             test_file=files["test"],
-            name=Path(body.set_path).parent.name,
             judge_key=body.judge,
             runs_file=None,
             source=judge["source"],
@@ -592,7 +578,7 @@ def _optimize_agent_work(workspace: EvalWorkspace, body: OptimizeAgentJob):
     async def work(report: JobReporter) -> dict[str, Any]:
         from omniagents.core.eval.optimize import optimize_agent_from_project
 
-        files = _dataset_files(workspace, body.set_path, body.category)
+        files = _dataset_files(workspace, body.category)
         report.progress(0, body.max_metric_calls)
 
         def log(line: str) -> None:
@@ -611,7 +597,6 @@ def _optimize_agent_work(workspace: EvalWorkspace, body: OptimizeAgentJob):
             train_file=files["train"],
             dev_file=files["dev"],
             test_file=files["test"],
-            name=Path(body.set_path).parent.name,
             positives_only=body.positives_only,
             max_turns=None,
             max_metric_calls=body.max_metric_calls,

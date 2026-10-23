@@ -25,9 +25,11 @@ node_modules/
 .ruff_cache/
 sessions.db
 
-# Eval run outputs (regenerated each run)
+# Eval run outputs: saved runs and optimizations are local
 artifacts/
 evaluations/__pycache__/
+evaluations/runs/
+evaluations/optimizations/
 
 # playwright-cli / playwright-mcp working dirs (transient)
 .playwright-cli/

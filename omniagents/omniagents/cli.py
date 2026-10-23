@@ -22,7 +22,6 @@ from omniagents.core.eval.optimize import (
     optimize_agent_from_project,
     optimize_judge_from_project,
 )
-from omniagents.core.eval.annotate import annotate_scenarios, write_annotation_output
 from omniagents.core.runtime.runner import Runner
 from omniagents.core.debug import Debug
 from omniagents.core.session.cli import add_sessions_subparser, handle_sessions_command
@@ -417,18 +416,10 @@ def main():
     scen_gen.add_argument(
         "--agent", "-a", default="", help="Agent key (defaults to entrypoint)"
     )
-    scen_gen.add_argument("--select", default="")
-    scen_gen.add_argument("--exclude", default="")
     scen_gen.add_argument(
         "--name",
-        default=None,
-        help="Scenario set name written under artifacts/eval/<name>/ (required unless --output is provided)",
-    )
-    scen_gen.add_argument(
-        "--output",
-        "-o",
-        default="",
-        help="Explicit output path for generated_scenarios.yml (overrides --name)",
+        required=True,
+        help="The set's name: it is written to evaluations/generated/<name>/",
     )
     scen_gen.add_argument("--count", type=int, default=None)
     scen_gen.add_argument("--seed", type=int, default=None)
@@ -479,11 +470,13 @@ def main():
         "--set",
         dest="scenario_set",
         default="",
-        help="Run every scenario in this scenario set file (a generated set's "
-        "generated_scenarios.yml) instead of the project's scenarios",
+        help="Run every scenario in this set (a generated set's name, or a "
+        "scenario file's path) instead of the project's suite",
     )
     scen_ann = scen_sub.add_parser(
-        "annotate", help="Annotate scenarios with Studio categories"
+        "annotate",
+        help="Label a set's scenarios with the failure categories their "
+        "conversations were given in review, in the set's newest saved run",
     )
     scen_ann.add_argument(
         "--project",
@@ -495,15 +488,12 @@ def main():
         "--agent", "-a", default="", help="Agent key (defaults to entrypoint)"
     )
     scen_ann.add_argument(
-        "--name",
-        default=None,
-        help="Scenario set name under artifacts/eval/<name>/ (alternative to --input)",
+        "--set",
+        dest="scenario_set",
+        required=True,
+        help="The set: a generated set's name, or a scenario file's path",
     )
-    scen_ann.add_argument("--input", "-i", default="")
-    scen_ann.add_argument("--output", "-o", default=None)
     scen_ann.add_argument("--studio-project", dest="studio_project", default=None)
-    scen_ann.add_argument("--select", default="")
-    scen_ann.add_argument("--exclude", default="")
     scen_ann.add_argument("-q", "--quiet", action="count", default=0)
     scen_ann.add_argument("-v", "--verbose", action="count", default=0)
 
@@ -829,7 +819,7 @@ def main():
         "--category",
         "-c",
         required=False,
-        help="Failure category to optimize (required unless --train-file/--dev-file/--test-file provided)",
+        help="Failure category to optimize; its judge dataset (evaluations/judge-datasets/<category>/) is the splits unless files or selectors are given",
     )
     agent_opt.add_argument(
         "--train-file",
@@ -906,18 +896,16 @@ def main():
     )
     agent_opt.add_argument("--seed", type=int, default=0)
     agent_opt.add_argument(
-        "--output", "-o", default="", help="Directory to write optimization artifacts"
+        "--output",
+        "-o",
+        default="",
+        help="The optimization's folder (default: a new one in evaluations/optimizations/)",
     )
     agent_opt.add_argument(
         "--resume",
         dest="resume",
         action="store_true",
-        help="Resume from existing output directory (default: use a fresh subdirectory)",
-    )
-    agent_opt.add_argument(
-        "--name",
-        default=None,
-        help="Scenario set name under artifacts/eval/<name>/ for split lookup when files are not provided",
+        help="Continue the optimization in --output",
     )
     _agent_apply_group = agent_opt.add_mutually_exclusive_group()
     _agent_apply_group.add_argument(
@@ -952,8 +940,7 @@ def main():
         "--set",
         dest="scenario_set",
         required=True,
-        help="The generated set: its name under artifacts/eval/ or its "
-        "generated_scenarios.yml",
+        help="The reviewed generated set: its name, or its scenarios.yml",
     )
     judge_dataset.add_argument("--category", "-c", required=True)
     judge_dataset.add_argument("--train", type=float, default=0.15)
@@ -977,7 +964,7 @@ def main():
         "--category",
         "-c",
         required=False,
-        help="Category name for locating splits (required unless --split-file provided)",
+        help="The failure category whose judge dataset to judge (required unless --split-file provided)",
     )
     judge_run.add_argument(
         "--split",
@@ -992,11 +979,6 @@ def main():
         required=False,
         default=None,
         help="Explicit path to a split YAML; overrides --category/--split lookup",
-    )
-    judge_run.add_argument(
-        "--name",
-        default=None,
-        help="Scenario set name under artifacts/eval/<name>/ for split lookup (used with --category)",
     )
     judge_run.add_argument(
         "--judge",
@@ -1014,7 +996,7 @@ def main():
         dest="runs_file",
         default=None,
         help="A saved run's results.json to read the conversations from "
-        "(default: the scenario set's newest saved runs)",
+        "(default: the newest saved runs of the set the dataset was drawn from)",
     )
     judge_run.add_argument("--output", "-o", default="")
     judge_run.add_argument(
@@ -1063,7 +1045,7 @@ def main():
         "--category",
         "-c",
         required=False,
-        help="Failure category name to locate splits under artifacts/eval/*/splits/<category>/ (optional if --train-file/--dev-file/--test-file provided)",
+        help="Failure category whose judge dataset (evaluations/judge-datasets/<category>/) is the splits (optional if --train-file/--dev-file/--test-file provided)",
     )
     judge_opt.add_argument(
         "--train-file",
@@ -1084,11 +1066,6 @@ def main():
         help="Explicit path to a test split YAML",
     )
     judge_opt.add_argument(
-        "--name",
-        default=None,
-        help="Scenario set name under artifacts/eval/<name>/ for split lookup when files are not provided",
-    )
-    judge_opt.add_argument(
         "--judge",
         "-j",
         default=None,
@@ -1099,7 +1076,7 @@ def main():
         dest="runs_file",
         default=None,
         help="A saved run's results.json to read the conversations from "
-        "(default: the scenario set's newest saved runs)",
+        "(default: the newest saved runs of the set the dataset was drawn from)",
     )
     judge_opt.add_argument(
         "--source",
@@ -1134,13 +1111,16 @@ def main():
     )
     judge_opt.add_argument("--seed", type=int, default=0)
     judge_opt.add_argument(
-        "--output", "-o", default="", help="Directory to write optimization artifacts"
+        "--output",
+        "-o",
+        default="",
+        help="The optimization's folder (default: a new one in evaluations/optimizations/)",
     )
     judge_opt.add_argument(
         "--resume",
         dest="resume",
         action="store_true",
-        help="Resume from existing output directory (default: use a fresh subdirectory)",
+        help="Continue the optimization in --output",
     )
     _judge_apply_group2 = judge_opt.add_mutually_exclusive_group()
     _judge_apply_group2.add_argument(
@@ -1492,7 +1472,6 @@ def main():
                     train_file=getattr(args, "train_file", None),
                     dev_file=getattr(args, "dev_file", None),
                     test_file=getattr(args, "test_file", None),
-                    name=(str(getattr(args, "name", "") or "") or None),
                     positives_only=bool(getattr(args, "positives_only", False)),
                     max_turns=(
                         int(getattr(args, "max_turns"))
@@ -1659,7 +1638,9 @@ def main():
                 )
                 scenario_set = str(getattr(args, "scenario_set", "") or "").strip()
                 data = workspace.run(
-                    scenario_set=scenario_set or None,
+                    scenario_set=(
+                        workspace.resolve_set(scenario_set) if scenario_set else None
+                    ),
                     select=str(args.select or "") or None,
                     exclude=str(args.exclude or "") or None,
                     split=(str(getattr(args, "split", "") or "") or None),
@@ -1867,7 +1848,7 @@ def main():
                                 "#          `eval suite run` only includes scenarios with measures attached."
                             )
                             print(
-                                "#          Add `measures: [<measure_name>]` to each scenario in scenarios.yml,"
+                                "#          Add `measures: [<measure_name>]` to each scenario in evaluations/scenarios/,"
                             )
                             print(
                                 "#          or pass `--include-unmeasured` to run them anyway (no scoring)."
@@ -2000,64 +1981,12 @@ def main():
                             "Error: Provide --project <project.yml> (or run from a directory containing a project.yml)."
                         )
                         sys.exit(2)
-                eval_cfg = load_eval_config(
-                    str(proj_path),
-                    select=str(args.select or ""),
-                    exclude=str(args.exclude or ""),
-                    agent_key=(str(getattr(args, "agent", "") or "") or None),
-                )
-                from omniagents.core.eval.scenarios import generate_scenarios
-                from pathlib import Path as _P
+                from omniagents.core.eval.workspace import EvalWorkspace
                 import asyncio as _asyncio
 
-                compiled_cfg_path = eval_cfg.agent_path
-                tracing = eval_cfg.tracing_config
-                name_arg = str(getattr(args, "name", "") or "").strip()
-                out_arg = str(getattr(args, "output", "") or "").strip()
-                if not name_arg and not out_arg:
-                    print(
-                        "Error: Provide --name <scenario_set> or --output <path> for generated scenarios."
-                    )
-                    sys.exit(2)
-                output_path = None
-                if out_arg:
-                    outp = _P(out_arg)
-                    if not outp.is_absolute():
-                        base_proj = _P(proj_path).resolve()
-                        if base_proj.is_file():
-                            base_proj = base_proj.parent
-                        outp = (base_proj / outp).resolve()
-                    output_path = outp
-                wf_name = None
-                try:
-                    provider = str(tracing.get("provider", "")).lower()
-                    if provider == "studio":
-                        from datetime import datetime
-                        from omniagents.core.tracing import local as tracing_module
-
-                        base_name = tracing.get("name") or _P(compiled_cfg_path).stem
-                        if name_arg:
-                            sc_name = name_arg
-                        elif output_path is not None:
-                            try:
-                                sc_name = output_path.parent.name
-                            except Exception:
-                                sc_name = "scenarios"
-                        else:
-                            sc_name = "scenarios"
-                        ts = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-                        wf_name = f"{base_name}_scenarios_{sc_name}_{ts}_generate"
-                        resume = (tracing.get("settings") or {}).get("resume", "never")
-                        tracing_module.init(
-                            project=str(
-                                tracing.get("project") or "scenario_generation"
-                            ),
-                            name=wf_name,
-                            resume=str(resume),
-                            replace_default=True,
-                        )
-                except Exception:
-                    wf_name = None
+                workspace = EvalWorkspace(
+                    proj_path, agent=(str(getattr(args, "agent", "") or "") or None)
+                )
                 qlvl_pre = int(getattr(args, "quiet", 0) or 0)
                 vlvl_pre = int(getattr(args, "verbose", 0) or 0)
                 vlevel_pre = vlvl_pre - qlvl_pre
@@ -2128,19 +2057,17 @@ def main():
                         except Exception:
                             pass
 
-                scenarios, out_path, gen_ts = _asyncio.run(
-                    generate_scenarios(
-                        _P(compiled_cfg_path),
+                generated = _asyncio.run(
+                    workspace.generate_scenarios(
+                        str(args.name),
                         count=args.count,
                         seed=args.seed,
-                        set_name=(name_arg or None),
-                        output=output_path,
-                        workflow_name=wf_name,
                         progress_cb=_progress_cb,
-                        eval_config=eval_cfg,
                     )
                 )
-                print(f"Wrote {len(scenarios)} scenarios to {out_path}")
+                print(
+                    f"Wrote {len(generated['scenarios'])} scenarios to {generated['path']}"
+                )
             except Exception as e:
                 print(f"Error generating scenarios: {e}")
                 import traceback
@@ -2152,8 +2079,10 @@ def main():
             and getattr(args, "scen_cmd", None) == "annotate"
         ):
             try:
-                from omniagents.core.eval.loader import load_eval_config
-                from omniagents.core.project.runtime import load_project, resolve_agent
+                from omniagents.core.eval.workspace import (
+                    EvalWorkspace,
+                    EvalWorkspaceError,
+                )
 
                 proj_path = getattr(args, "project", None)
                 if not proj_path:
@@ -2165,92 +2094,32 @@ def main():
                             "Error: Provide --project <project.yml> (or run from a directory containing a project.yml)."
                         )
                         sys.exit(2)
-                ctx = load_project(str(proj_path))
-                agent_key_arg = str(getattr(args, "agent", "") or "").strip() or None
-                _, agent_yaml_path = resolve_agent(ctx, agent_key_arg)
-                base = Path(proj_path).resolve()
-                if base.is_file():
-                    base = base.parent
-                name_arg = str(getattr(args, "name", "") or "").strip()
-                input_arg = str(getattr(args, "input", "") or "").strip()
-                scenario_path: Optional[Path] = None
-                if input_arg:
-                    candidate = Path(input_arg)
-                    scenario_path = (
-                        candidate
-                        if candidate.is_absolute()
-                        else (base / candidate).resolve()
-                    )
-                elif name_arg:
-                    candidate_dir = (base / "artifacts" / "eval" / name_arg).resolve()
-                    for option in [
-                        candidate_dir / "generated_scenarios.yml",
-                        candidate_dir / "annotated_scenarios.yml",
-                        candidate_dir / "scenarios.yml",
-                    ]:
-                        if option.is_file():
-                            scenario_path = option
-                            break
-                    if scenario_path is None:
-                        scenario_path = candidate_dir / "generated_scenarios.yml"
-                else:
-                    print(
-                        "Error: Provide --name <scenario_set> or --input <path> for scenarios."
-                    )
-                    sys.exit(2)
-                if not scenario_path.exists():
-                    print(f"Error: Scenarios file not found: {scenario_path}")
-                    sys.exit(2)
-                eval_cfg = load_eval_config(
-                    str(proj_path),
-                    select=str(getattr(args, "select", "") or ""),
-                    exclude=str(getattr(args, "exclude", "") or ""),
-                    agent_key=agent_key_arg,
-                )
-                tracing_cfg = eval_cfg.tracing_config
+                workspace = EvalWorkspace(proj_path)
                 studio_project = str(getattr(args, "studio_project") or "").strip()
                 if not studio_project:
-                    candidate = tracing_cfg.get("project")
+                    candidate = workspace.config().tracing_config.get("project")
                     if isinstance(candidate, str) and candidate.strip():
                         studio_project = candidate.strip()
-                if not studio_project:
-                    defaults = ctx.tracing_defaults or {}
-                    if isinstance(defaults, dict):
-                        candidate = defaults.get("project")
-                        if isinstance(candidate, str) and candidate.strip():
-                            studio_project = candidate.strip()
                 if not studio_project:
                     print(
                         "Error: Unable to determine Studio project; set tracing.project in project.yml or provide --studio-project."
                     )
                     sys.exit(2)
-                annotated, _original, source_path = annotate_scenarios(
-                    Path(agent_yaml_path), scenario_path, studio_project, None
-                )
-                output_arg = str(getattr(args, "output", "") or "").strip()
-                if output_arg:
-                    out_path = Path(output_arg)
-                    if not out_path.is_absolute():
-                        out_path = (base / out_path).resolve()
-                    out_path.parent.mkdir(parents=True, exist_ok=True)
-
-                    class NoAliasDumper(yaml.SafeDumper):
-                        def ignore_aliases(self, data):
-                            return True
-
-                    out_path.write_text(
-                        yaml.dump(
-                            {"scenarios": annotated},
-                            sort_keys=False,
-                            Dumper=NoAliasDumper,
-                            allow_unicode=True,
-                        ),
-                        encoding="utf-8",
+                try:
+                    result = workspace.annotate_from_reviews(
+                        workspace.resolve_set(str(args.scenario_set)), studio_project
                     )
-                else:
-                    out_path = write_annotation_output(ctx.root, source_path, annotated)
+                except EvalWorkspaceError as exc:
+                    print(f"Error: {exc}")
+                    sys.exit(2)
+                labelled = sum(
+                    1
+                    for scenario in result["set"]["scenarios"]
+                    if scenario.get("failure_categories")
+                )
                 print(
-                    f"Updated annotations for {len(annotated)} scenarios in {out_path}"
+                    f"Labelled {labelled} of {len(result['set']['scenarios'])} "
+                    f"scenarios in {result['set']['path']} from {result['run']}"
                 )
                 sys.exit(0)
             except SystemExit:
@@ -2266,11 +2135,9 @@ def main():
             and getattr(args, "scen_cmd", None) == "holdout"
         ):
             try:
-                from omniagents.core.eval.loader import load_eval_config
-                from omniagents.core.eval.holdout import (
-                    create_holdout,
-                    holdout_manifest,
-                    write_holdout,
+                from omniagents.core.eval.workspace import (
+                    EvalWorkspace,
+                    EvalWorkspaceError,
                 )
 
                 proj_path = getattr(args, "project", None)
@@ -2283,37 +2150,36 @@ def main():
                             "Error: Provide --project <project.yml> (or run from a directory containing a project.yml)."
                         )
                         sys.exit(2)
-                eval_cfg = load_eval_config(
-                    str(proj_path),
-                    select=str(args.select or ""),
-                    exclude=str(args.exclude or ""),
-                    agent_key=(str(getattr(args, "agent", "") or "") or None),
-                )
-                scenarios = list((eval_cfg.config or {}).get("scenarios") or [])
-                if not scenarios:
-                    print("Error: no scenarios to hold out (check --select/--exclude).")
-                    sys.exit(2)
                 strata = [
                     x.strip() for x in str(args.strata or "").split(",") if x.strip()
                 ]
                 try:
-                    fractions = [float(x) for x in str(args.fractions).split(",")]
+                    fractions = tuple(float(x) for x in str(args.fractions).split(","))
                 except ValueError:
+                    fractions = ()
+                if len(fractions) != 3:
                     print(
                         f"Error: --fractions must be three numbers, got {args.fractions!r}"
                     )
                     sys.exit(2)
-                assignment = create_holdout(
-                    scenarios, strata=strata, fractions=fractions, seed=int(args.seed)
+                workspace = EvalWorkspace(
+                    proj_path, agent=(str(getattr(args, "agent", "") or "") or None)
                 )
-                manifest = holdout_manifest(
-                    assignment, scenarios, strata, fractions, int(args.seed)
-                )
-                paths = write_holdout(eval_cfg.eval_dir, assignment, manifest)
+                try:
+                    manifest = workspace.create_holdout(
+                        strata=strata,
+                        fractions=fractions,
+                        seed=int(args.seed),
+                        select=str(args.select or "") or None,
+                        exclude=str(args.exclude or "") or None,
+                    )
+                except EvalWorkspaceError as exc:
+                    print(f"Error: {exc}")
+                    sys.exit(2)
                 counts = manifest["counts"]
                 print(
                     f"Holdout: train={counts['train']} dev={counts['dev']} test={counts['test']} "
-                    f"(seed {args.seed}, strata {strata or 'none'}) -> {paths['manifest'].parent}"
+                    f"(seed {args.seed}, strata {strata or 'none'}) -> {workspace.layout.holdout_dir}"
                 )
                 for stratum, c in manifest["counts_by_stratum"].items():
                     print(
@@ -2337,13 +2203,9 @@ def main():
             from omniagents.core.eval.workspace import EvalWorkspace, EvalWorkspaceError
 
             workspace = EvalWorkspace(getattr(args, "project", None) or Path.cwd())
-            set_arg = str(args.scenario_set)
-            set_path = Path(set_arg)
-            if not set_path.suffix:
-                set_path = workspace.artifacts_dir / set_arg / "generated_scenarios.yml"
             try:
                 dataset = workspace.create_judge_dataset(
-                    set_path,
+                    workspace.resolve_set(str(args.scenario_set)),
                     args.category,
                     fractions=(args.train, args.dev, args.test),
                     seed=args.seed,
@@ -2457,22 +2319,15 @@ def main():
                             "Error: Provide either --split-file <path> or --category <name> with --split <dev|test|train>."
                         )
                         sys.exit(2)
-                    name_arg = str(getattr(args, "name", "") or "").strip()
-                    if not name_arg:
-                        print(
-                            "Error: Provide --name <scenario_set> to locate splits (or use --split-file)."
-                        )
-                        sys.exit(2)
+                    from omniagents.core.eval.layout import EvalLayout
+
                     which = str(getattr(args, "split", "dev") or "dev")
                     split_path = (
-                        base
-                        / "artifacts"
-                        / "eval"
-                        / name_arg
-                        / "splits"
-                        / category
+                        EvalLayout(
+                            eval_cfg.eval_dir, eval_cfg.project_root
+                        ).judge_dataset_dir(category)
                         / f"{which}.yml"
-                    ).resolve()
+                    )
                     split_name = which
                     if not split_path.exists():
                         print(f"Error: Split file not found: {split_path}")
@@ -2784,7 +2639,6 @@ def main():
                     train_file=getattr(args, "train_file", None),
                     dev_file=getattr(args, "dev_file", None),
                     test_file=getattr(args, "test_file", None),
-                    name=(str(getattr(args, "name", "") or "") or None),
                     judge_key=(str(getattr(args, "judge", "") or "") or None),
                     runs_file=getattr(args, "runs_file", None),
                     source=str(

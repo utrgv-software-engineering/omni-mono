@@ -303,14 +303,8 @@ def scaffold_project(
         created,
     )
     _write_template(
-        eval_dir / "metrics.yml",
-        "project/evaluations/metrics.yml",
-        force,
-        created,
-    )
-    _write_template(
-        eval_dir / "scenarios.yml",
-        "project/evaluations/scenarios.yml",
+        eval_dir / "scenarios" / "basics.yml",
+        "project/evaluations/scenarios/basics.yml",
         force,
         created,
     )
@@ -441,7 +435,7 @@ def scaffold_judge(
     failure_category: Optional[str] = None,
     force: bool = False,
 ) -> Tuple[List[str], str]:
-    from omniagents.core.eval.loader import evaluations_dir
+    from omniagents.core.eval.layout import evaluations_dir
 
     root = _resolve_project_root(project_ref)
     sanitized = _sanitize_name(key)
@@ -614,10 +608,14 @@ def scaffold_optimizer(
     kind: str = "agent",
     force: bool = False,
 ) -> Tuple[List[str], str]:
+    from omniagents.core.eval.layout import evaluations_dir
+
     root = _resolve_project_root(project_ref)
     sanitized = _sanitize_name(key)
-    eval_dir = root / "evaluations"
-    eval_dir.mkdir(exist_ok=True)
+    eval_dir = evaluations_dir(
+        root, yaml.safe_load((root / "project.yml").read_text(encoding="utf-8")) or {}
+    )
+    eval_dir.mkdir(parents=True, exist_ok=True)
     opt_root = eval_dir / "optimizers" / sanitized
     opt_root.mkdir(parents=True, exist_ok=True)
     created: List[str] = []

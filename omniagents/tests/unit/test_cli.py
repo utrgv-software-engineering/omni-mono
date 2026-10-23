@@ -597,6 +597,9 @@ def _fake_workspace(monkeypatch, tmp_path, data, *, output=None, progress=()):
         def config(self):
             return types.SimpleNamespace(config={"output": output} if output else {})
 
+        def resolve_set(self, value):
+            return f"resolved:{value}"
+
     monkeypatch.setattr("omniagents.core.eval.workspace.EvalWorkspace", FakeWorkspace)
     return seen
 
@@ -771,132 +774,102 @@ def test_eval_suite_run_pretty_verbose(monkeypatch, tmp_path, capsys):
 
 
 def test_eval_scenarios_generate(monkeypatch, tmp_path, capsys):
-    project_dir = tmp_path / "proj"
-    project_dir.mkdir()
-    project_file = project_dir / "project.yml"
-    project_file.write_text("name: demo\n", encoding="utf-8")
-    compiled_path = tmp_path / "compiled.yml"
-    compiled_path.write_text("tracing:\n  provider: other\n", encoding="utf-8")
+    calls = {}
 
-    loader_module = _make_fake_loader_module(compiled_path)
-    monkeypatch.setitem(sys.modules, "omniagents.core.eval.loader", loader_module)
+    class FakeWorkspace:
+        def __init__(self, project, agent=None):
+            calls["project"] = project
 
-    async def fake_generate(
-        compiled,
-        count=None,
-        seed=None,
-        set_name=None,
-        output=None,
-        workflow_name=None,
-        progress_cb=None,
-        **kw,
-    ):
-        if progress_cb:
-            progress_cb({"event": "start", "target": count or 1})
+        async def generate_scenarios(self, name, *, count, seed, progress_cb):
+            calls.update(name=name, count=count, seed=seed)
+            progress_cb({"event": "start", "target": count})
             progress_cb({"event": "progress"})
-            progress_cb({"event": "done", "count": count or 1})
-        out_path = output or compiled.parent / "generated.yml"
-        return ([{"id": "case1"}], out_path, "ts")
+            progress_cb({"event": "done", "count": count})
+            return {
+                "scenarios": [{"id": "case1"}],
+                "path": f"evaluations/generated/{name}/scenarios.yml",
+            }
 
-    scenarios_module = types.ModuleType("omniagents.core.eval.scenarios")
-    scenarios_module.generate_scenarios = fake_generate
-    monkeypatch.setitem(sys.modules, "omniagents.core.eval.scenarios", scenarios_module)
-
-    argv = [
-        "omniagents",
-        "eval",
-        "scenarios",
-        "generate",
-        "--project",
-        str(project_file),
-        "--name",
-        "demo-set",
-        "--count",
-        "1",
-        "--color",
-        "never",
-    ]
-    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setattr("omniagents.core.eval.workspace.EvalWorkspace", FakeWorkspace)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "omniagents",
+            "eval",
+            "scenarios",
+            "generate",
+            "--project",
+            str(tmp_path / "project.yml"),
+            "--name",
+            "demo-set",
+            "--count",
+            "1",
+            "--color",
+            "never",
+        ],
+    )
 
     cli_main()
 
+    assert calls == {
+        "project": str(tmp_path / "project.yml"),
+        "name": "demo-set",
+        "count": 1,
+        "seed": None,
+    }
     captured = capsys.readouterr().out
-    assert "Wrote 1 scenarios" in captured
+    assert "Wrote 1 scenarios to evaluations/generated/demo-set/scenarios.yml" in captured
 
 
 def test_eval_scenarios_annotate(monkeypatch, tmp_path, capsys):
-    project_dir = tmp_path / "proj"
-    project_dir.mkdir()
-    project_file = project_dir / "project.yml"
-    project_file.write_text("name: demo\n", encoding="utf-8")
-    compiled_path = tmp_path / "compiled.yml"
-    compiled_path.write_text("tracing:\n  project: trace-demo\n", encoding="utf-8")
+    calls = {}
 
-    scenario_dir = project_dir / "artifacts" / "eval" / "demo-set"
-    scenario_dir.mkdir(parents=True)
-    scenario_file = scenario_dir / "generated_scenarios.yml"
-    scenario_file.write_text(
-        "scenarios:\n  - id: case1\n    prompt: hi\n", encoding="utf-8"
+    class FakeWorkspace:
+        def __init__(self, project, agent=None):
+            pass
+
+        def config(self):
+            return types.SimpleNamespace(tracing_config={"project": "trace-demo"})
+
+        def resolve_set(self, value):
+            return tmp_path / "evaluations/generated" / value / "scenarios.yml"
+
+        def annotate_from_reviews(self, set_path, project):
+            calls.update(set=set_path, project=project)
+            return {
+                "set": {
+                    "path": str(set_path),
+                    "scenarios": [{"id": "a", "failure_categories": ["x"]}, {"id": "b"}],
+                },
+                "run": "runs/r1/results.json",
+            }
+
+    monkeypatch.setattr("omniagents.core.eval.workspace.EvalWorkspace", FakeWorkspace)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "omniagents",
+            "eval",
+            "scenarios",
+            "annotate",
+            "--project",
+            str(tmp_path / "project.yml"),
+            "--set",
+            "demo-set",
+        ],
     )
-
-    loader_module = _make_fake_loader_module(compiled_path)
-    monkeypatch.setitem(sys.modules, "omniagents.core.eval.loader", loader_module)
-
-    runtime_module = types.ModuleType("omniagents.core.project.runtime")
-
-    def fake_load_project(path):
-        return types.SimpleNamespace(
-            tracing_defaults={"project": "trace-demo"}, root=project_dir
-        )
-
-    def fake_resolve_agent(ctx_obj, agent_key=None):
-        agent_path = project_dir / "agents" / "demo" / "agent.yml"
-        agent_path.parent.mkdir(parents=True, exist_ok=True)
-        agent_path.write_text("name: demo\n", encoding="utf-8")
-        return (agent_key or "demo", agent_path)
-
-    runtime_module.load_project = fake_load_project
-    runtime_module.resolve_agent = fake_resolve_agent
-    monkeypatch.setitem(sys.modules, "omniagents.core.project.runtime", runtime_module)
-
-    annotations = [{"id": "case1", "label": "ok"}]
-    annotate_calls = {}
-
-    def fake_annotate(agent_path, scen_path, studio_project, _extra):
-        annotate_calls["agent"] = agent_path
-        annotate_calls["scenario"] = scen_path
-        annotate_calls["project"] = studio_project
-        return annotations, [], scen_path
-
-    def fake_write_output(root, source, annotated):
-        annotate_calls["root"] = root
-        annotate_calls["source"] = source
-        annotate_calls["annotated"] = annotated
-        out_path = project_dir / "annotated.yml"
-        out_path.write_text("done", encoding="utf-8")
-        return out_path
-
-    monkeypatch.setattr("omniagents.cli.annotate_scenarios", fake_annotate)
-    monkeypatch.setattr("omniagents.cli.write_annotation_output", fake_write_output)
-
-    argv = [
-        "omniagents",
-        "eval",
-        "scenarios",
-        "annotate",
-        "--project",
-        str(project_file),
-        "--name",
-        "demo-set",
-    ]
-    monkeypatch.setattr(sys, "argv", argv)
 
     with pytest.raises(SystemExit) as exc:
         cli_main()
 
     assert exc.value.code == 0
-    assert annotate_calls["project"] == "trace-demo"
-    assert annotate_calls["annotated"] == annotations
+    assert calls == {
+        "set": tmp_path / "evaluations/generated/demo-set/scenarios.yml",
+        "project": "trace-demo",
+    }
+    assert "Labelled 1 of 2 scenarios" in capsys.readouterr().out
 
 
 def test_generate_tool(monkeypatch, tmp_path, capsys):
@@ -1113,30 +1086,25 @@ def test_run_codex_auth_unknown_command_returns_1(capsys):
     assert "Unknown codex command" in capsys.readouterr().err
 
 
+def _project_with_scenarios(root, scenarios):
+    (root / "project.yml").write_text("name: demo\nagents:\n  entrypoint: main\n")
+    agent = root / "agents" / "main"
+    agent.mkdir(parents=True)
+    (agent / "agent.yml").write_text("name: main\ninstructions: Help.\n")
+    suite = root / "evaluations" / "scenarios" / "main.yml"
+    suite.parent.mkdir(parents=True)
+    suite.write_text(json.dumps({"scenarios": scenarios}))
+
+
 def test_eval_scenarios_holdout_writes_split_files(monkeypatch, tmp_path, capsys):
     import yaml as _yaml
 
-    compiled = tmp_path / "agent.yml"
-    compiled.write_text(
-        _yaml.safe_dump(
-            {
-                "name": "alpha",
-                "evaluation": {
-                    "scenarios": [
-                        {
-                            "name": f"case-{i}",
-                            "prompt": "hi",
-                            "expect": {"tone": str(i % 2)},
-                        }
-                        for i in range(8)
-                    ]
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setitem(
-        sys.modules, "omniagents.core.eval.loader", _make_fake_loader_module(compiled)
+    _project_with_scenarios(
+        tmp_path,
+        [
+            {"name": f"case-{i}", "prompt": "hi", "expect": {"tone": str(i % 2)}}
+            for i in range(8)
+        ],
     )
     monkeypatch.setattr(
         sys,
@@ -1159,7 +1127,7 @@ def test_eval_scenarios_holdout_writes_split_files(monkeypatch, tmp_path, capsys
     assert exc.value.code == 0
     out = capsys.readouterr().out
     assert "Holdout: train=4 dev=2 test=2" in out
-    split_dir = tmp_path / "splits" / "eval"
+    split_dir = tmp_path / "evaluations" / "holdout"
     assert (split_dir / "test.yml").is_file() and (split_dir / "manifest.yml").is_file()
     manifest = _yaml.safe_load((split_dir / "manifest.yml").read_text())
     assert manifest["strata"] == ["expect.tone"] and manifest["seed"] == 3
@@ -1186,7 +1154,7 @@ def test_eval_runs_pass_their_selection_to_the_workspace(monkeypatch, tmp_path):
             "--select",
             "tag:smoke",
             "--set",
-            "artifacts/eval/b/generated_scenarios.yml",
+            "b",
             "--reporter",
             "tap",
             "--color",
@@ -1202,17 +1170,14 @@ def test_eval_runs_pass_their_selection_to_the_workspace(monkeypatch, tmp_path):
     assert seen["agent"] == "alpha"
     assert seen["split"] == "test"
     assert seen["select"] == "tag:smoke"
-    assert seen["scenario_set"] == "artifacts/eval/b/generated_scenarios.yml"
+    assert seen["scenario_set"] == "resolved:b"
     # `eval scenarios run` includes unmeasured scenarios by default.
     assert seen["include_unmeasured"] is True
 
 
 def test_judge_dataset_splits_a_reviewed_set(monkeypatch, tmp_path, capsys):
-    (tmp_path / "project.yml").write_text("name: demo\nagents:\n  entrypoint: main\n")
-    agent = tmp_path / "agents" / "main"
-    agent.mkdir(parents=True)
-    (agent / "agent.yml").write_text("name: main\ninstructions: Help.\n")
-    generated = tmp_path / "artifacts" / "eval" / "batch" / "generated_scenarios.yml"
+    _project_with_scenarios(tmp_path, [{"name": "suite", "prompt": "p"}])
+    generated = tmp_path / "evaluations" / "generated" / "batch" / "scenarios.yml"
     generated.parent.mkdir(parents=True)
     scenarios = [
         {
@@ -1250,7 +1215,7 @@ def test_judge_dataset_splits_a_reviewed_set(monkeypatch, tmp_path, capsys):
 
     out = capsys.readouterr().out
     assert "train: 4 scenarios" in out
-    split_dir = generated.parent / "splits" / "tone"
+    split_dir = tmp_path / "evaluations" / "judge-datasets" / "tone"
     labels = [
         item["label"]
         for split in ("train", "dev", "test")

@@ -4,3 +4,7 @@ __pycache__/
 target/
 .pytest_cache/
 artifacts/
+# Saved evaluation runs and optimizations are local results; generated
+# scenario sets, the holdout and judge datasets are committed.
+evaluations/runs/
+evaluations/optimizations/

@@ -132,7 +132,7 @@ function RunRow({
       </TableCell>
       <TableCell className="text-xs">{when(entry.timestamp)}</TableCell>
       <TableCell className="text-xs">
-        {entry.scenario_name ?? '—'}
+        {entry.label}
         <span className="ml-1 text-muted-foreground">({total})</span>
         {entry.manifest?.split ? <span className="ml-1 text-muted-foreground">· {entry.manifest.split}</span> : null}
       </TableCell>

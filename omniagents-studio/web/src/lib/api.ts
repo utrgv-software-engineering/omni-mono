@@ -400,8 +400,8 @@ export class ApiClient {
     return this.fetch(`/evaluation/judge-datasets/split?${new URLSearchParams({ path })}`)
   }
 
-  async removeJudgeDataset(set: string, category: string): Promise<{ removed: string }> {
-    return this.send(`/evaluation/judge-datasets?${new URLSearchParams({ set, category })}`, 'DELETE')
+  async removeJudgeDataset(category: string): Promise<{ removed: string }> {
+    return this.send(`/evaluation/judge-datasets?${new URLSearchParams({ category })}`, 'DELETE')
   }
 
   // -- evaluation: holdout and saved runs ------------------------------------

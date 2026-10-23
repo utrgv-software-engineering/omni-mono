@@ -47,7 +47,7 @@ After:
 
 ### ✅ 5. CI & Deployment Checklist
 - [ ] Evaluation Checks Passed Locally
-- [ ] Golden Dataset Updated (scenarios.yml)
+- [ ] Golden Dataset Updated (evaluations/scenarios/)
   - [ ] Yes — added examples of this failure mode to prevent regressions
   - [ ] No — covered by existing cases
 - [ ] Evaluator Alignment Checked

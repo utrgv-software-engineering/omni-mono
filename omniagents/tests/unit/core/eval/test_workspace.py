@@ -49,10 +49,10 @@ def project(tmp_path: Path) -> Path:
         "name: main\nmodel: gpt-5.5\ninstructions: Help.\n",
     )
     _write(tmp_path / "evaluations/evaluation.yml", EVALUATION_YML)
-    _write(tmp_path / "evaluations/scenarios.yml", SCENARIOS_YML)
-    generated = tmp_path / "artifacts/eval/batch1"
+    _write(tmp_path / "evaluations/scenarios/main.yml", SCENARIOS_YML)
+    generated = tmp_path / "evaluations/generated/batch1"
     _write(
-        generated / "generated_scenarios.yml",
+        generated / "scenarios.yml",
         """\
         scenarios:
           - id: g1
@@ -71,7 +71,7 @@ def project(tmp_path: Path) -> Path:
             prompt: Paris weather
         """,
     )
-    (generated / "manifest.json").write_text(json.dumps({"name": "Batch one"}))
+    (generated / "manifest.json").write_text(json.dumps({"name": "batch1"}))
     return tmp_path
 
 
@@ -127,7 +127,7 @@ def test_failure_categories_and_their_scenarios(project):
 
     assert workspace.remove_failure_category("wrong_units") == 3
     assert [c["id"] for c in workspace.failure_categories()] == ["ignores_location"]
-    scenarios = (project / "evaluations/scenarios.yml").read_text()
+    scenarios = (project / "evaluations/scenarios/main.yml").read_text()
     assert "failure_categories" not in scenarios
     assert "# Regression from the March outage." in scenarios
 
@@ -159,10 +159,13 @@ def test_measures_list_builtin_and_project_functions(project):
 
 def test_scenarios_are_edited_in_place_and_stale_edits_refused(project):
     workspace = EvalWorkspace(project)
-    project_set = str(project / "evaluations/scenarios.yml")
+    project_set = str(project / "evaluations/scenarios/main.yml")
 
     kinds = [(s["kind"], s["label"]) for s in workspace.scenario_sets()]
-    assert kinds == [("project", "scenarios.yml"), ("generated", "Batch one")]
+    assert kinds == [("project", "main.yml"), ("generated", "batch1")]
+    assert workspace.resolve_set("batch1") == (
+        project / "evaluations/generated/batch1/scenarios.yml"
+    )
 
     workspace.add_scenario(project_set, {"name": "storm", "prompt": "Any storms?"})
     with pytest.raises(EvalWorkspaceError, match="in this set"):
@@ -176,7 +179,7 @@ def test_scenarios_are_edited_in_place_and_stale_edits_refused(project):
         workspace.remove_scenario(project_set, scenario_id="gone")
     workspace.remove_scenario(project_set, name="hello")
 
-    text = (project / "evaluations/scenarios.yml").read_text()
+    text = (project / "evaluations/scenarios/main.yml").read_text()
     assert "# Regression from the March outage." in text
     names = [s["name"] for s in workspace.scenario_set(project_set)["scenarios"]]
     assert names == ["celsius", "storm"]
@@ -186,7 +189,7 @@ def test_scenarios_are_edited_in_place_and_stale_edits_refused(project):
 
 def test_generated_scenarios_are_promoted_labelled_and_removed(project):
     workspace = EvalWorkspace(project)
-    generated = str(project / "artifacts/eval/batch1/generated_scenarios.yml")
+    generated = str(project / "evaluations/generated/batch1/scenarios.yml")
 
     workspace.promote_scenario(generated, scenario_id="g2")
     workspace.label_scenario(
@@ -196,14 +199,14 @@ def test_generated_scenarios_are_promoted_labelled_and_removed(project):
         review={"judgment": "fail", "notes": "kelvin again"},
     )
 
-    promoted = workspace.scenario_set(project / "evaluations/scenarios.yml")
-    assert promoted["scenarios"][-1]["id"] == "g2"
+    promoted = workspace.scenario_set(project / "evaluations/scenarios/promoted.yml")
+    assert [s["id"] for s in promoted["scenarios"]] == ["g2"]
     labelled = workspace.scenario_set(generated)["scenarios"][3]
     assert labelled["failure_categories"] == ["wrong_units"]
     assert labelled["analysis"] == {"judgment": "fail", "notes": "kelvin again"}
 
     workspace.remove_scenario_set(generated)
-    assert not (project / "artifacts/eval/batch1").exists()
+    assert not (project / "evaluations/generated/batch1").exists()
 
 
 def test_judges_are_created_edited_and_removed(project):
@@ -218,6 +221,7 @@ def test_judges_are_created_edited_and_removed(project):
     assert judge["failure_category"] == "Wrong Units"
     assert judge["instructions"] == "Fail answers in the wrong units."
     assert judge["instructions_path"].endswith("judges/units_judge/instructions.md")
+    assert judge["defined_in"].endswith("judges/units_judge/judge.yml")
     units = workspace._category("wrong_units")
     assert units["measures"] == ["expectations", "units_judge_agent"]
 
@@ -277,7 +281,13 @@ def test_runs_are_saved_whole_listed_and_compared(project, monkeypatch):
     assert first["overview"]["interval"][0] < 0.5 < first["overview"]["interval"][1]
     assert first["manifest"]["model"] == "gpt-5.5"
     assert first["metadata"]["agent"] == "main"
-    assert Path(first["path"]).parent.parent == project / "evaluations/results"
+    assert first["metadata"]["set"] is None and first["metadata"]["label"] == "baseline"
+    run_dir = Path(first["path"]).parent
+    assert run_dir.parent == project / "evaluations/runs"
+    # The run keeps the agent it tested.
+    assert (run_dir / "agent/agent.yml").read_text() == (
+        project / "agents/main/agent.yml"
+    ).read_text()
     assert [r["path"] for r in workspace.runs()] == [
         third["path"],
         second["path"],
@@ -297,11 +307,11 @@ def test_runs_are_saved_whole_listed_and_compared(project, monkeypatch):
     assert refused["pass_rate"]["change"] is None
 
 
-def test_a_set_run_is_saved_beside_the_set_and_feeds_its_judge_datasets(
+def test_a_set_run_is_saved_in_runs_and_feeds_its_judge_dataset(
     project, monkeypatch
 ):
     workspace = EvalWorkspace(project)
-    generated = project / "artifacts/eval/batch1/generated_scenarios.yml"
+    generated = project / "evaluations/generated/batch1/scenarios.yml"
     seen = {}
 
     def fake_run(agent_path, **kwargs):
@@ -316,17 +326,30 @@ def test_a_set_run_is_saved_beside_the_set_and_feeds_its_judge_datasets(
     saved = workspace.run(scenario_set=generated)
     assert [s["id"] for s in seen["eval_cfg"]["scenarios"]] == ["g1", "g2", "g3", "g4"]
     assert seen["include_unmeasured"] is True
-    assert Path(saved["path"]).parent.parent == generated.parent / "results"
+    assert Path(saved["path"]).parent.parent == project / "evaluations/runs"
+    assert saved["metadata"]["set"] == "generated/batch1/scenarios.yml"
+    # A suite run does not stand in for the set's conversations.
+    workspace.run(name="suite")
 
     dataset = workspace.create_judge_dataset(
-        generated, "wrong_units", fractions=(0.5, 0.25, 0.25), seed=1
+        "evaluations/generated/batch1/scenarios.yml",
+        "wrong_units",
+        fractions=(0.5, 0.25, 0.25),
+        seed=1,
+    )
+    folder = project / "evaluations/judge-datasets/wrong_units"
+    assert dataset["category"] == "wrong_units" and dataset["set"] == "batch1"
+    assert yaml.safe_load((folder / "manifest.yml").read_text())["set"] == (
+        "generated/batch1/scenarios.yml"
     )
     assert sum(s["positives"] for s in dataset["splits"]) == 2
     split = workspace.judge_dataset_split(dataset["splits"][0]["path"])
-    assert all(s["reply"].startswith("reply") for s in split["scenarios"])
+    assert split["scenarios"] and all(
+        s["reply"].startswith("reply") for s in split["scenarios"]
+    )
 
-    workspace.remove_judge_dataset("batch1", "wrong_units")
-    assert workspace.judge_datasets() == []
+    workspace.remove_judge_dataset("wrong_units")
+    assert workspace.judge_datasets() == [] and not folder.exists()
 
 
 def test_holdout_is_created_and_selects_the_suite(project, monkeypatch):
@@ -345,7 +368,7 @@ def test_holdout_is_created_and_selects_the_suite(project, monkeypatch):
 
     monkeypatch.setattr(pipeline, "run_evaluation", fake_run)
     train = yaml.safe_load(
-        (project / "evaluations/splits/eval/train.yml").read_text()
+        (project / "evaluations/holdout/train.yml").read_text()
     )["scenarios"]
     workspace.run(split="train", include_unmeasured=True)
     assert split_used["split"] == "train"
@@ -357,8 +380,8 @@ def test_a_judge_defined_by_reference_edits_the_referenced_files(project):
     _write(shared / "tone_agent.yml", "agent:\n  model: gpt-5.5\n  instructions_file: tone.md\n")
     _write(shared / "tone.md", "Judge the tone.")
     _write(
-        project / "evaluations/evaluation.yml",
-        EVALUATION_YML + "  judges:\n    tone:\n      agent_ref: shared/tone_agent.yml\n",
+        project / "evaluations/judges/tone/judge.yml",
+        "agent_ref: ../../shared/tone_agent.yml\n",
     )
     workspace = EvalWorkspace(project)
 
@@ -366,3 +389,45 @@ def test_a_judge_defined_by_reference_edits_the_referenced_files(project):
     workspace.update_judge("tone", instructions="Judge the tone strictly.")
 
     assert (shared / "tone.md").read_text() == "Judge the tone strictly."
+
+
+def test_an_old_layout_is_refused_as_a_workspace_error(project):
+    (project / "artifacts/eval/old").mkdir(parents=True)
+    workspace = EvalWorkspace(project)
+    with pytest.raises(EvalWorkspaceError, match="artifacts/eval"):
+        workspace.scenario_sets()
+    with pytest.raises(EvalWorkspaceError, match="laid out the old way"):
+        workspace.config()
+
+
+def test_labels_come_from_the_reviews_of_the_sets_newest_run(project, monkeypatch):
+    from omniagents.core.eval import annotate
+
+    workspace = EvalWorkspace(project)
+    generated = project / "evaluations/generated/batch1/scenarios.yml"
+    with pytest.raises(EvalWorkspaceError, match="no saved run"):
+        workspace.annotate_from_reviews(generated, "traces")
+
+    def fake_run(agent_path, **kwargs):
+        return {**_engine_result([True]), "workflow_name": f"wf{len(read)}"}
+
+    monkeypatch.setattr(pipeline, "run_evaluation", fake_run)
+    read = []
+    workspace.run(scenario_set=generated)
+    read.append("older")
+    workspace.run(scenario_set=generated)
+    read.append("newest")
+    workspace.run()  # wf2: newer, but the suite's run is not the set's
+
+    def labels(project_name, workflow_name):
+        read.append((project_name, workflow_name))
+        return {"g2": ["wrong_units"]}
+
+    monkeypatch.setattr(annotate, "review_labels", labels)
+    result = workspace.annotate_from_reviews(generated, "traces")
+
+    assert read[-1] == ("traces", "wf1")
+    by_id = {s["id"]: s for s in result["set"]["scenarios"]}
+    assert by_id["g2"]["failure_categories"] == ["wrong_units"]
+    assert "failure_categories" not in by_id["g1"]  # no review, no label
+    assert not list(generated.parent.glob("*.bak*"))

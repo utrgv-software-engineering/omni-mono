@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Tuple
 
 import yaml
 
+from omniagents.core.eval.layout import DATASET_MANIFEST, EvalLayout
+
 
 def _read_yaml(path: Path) -> Any:
     try:
@@ -81,7 +83,7 @@ def _write_yaml(path: Path, scenarios: List[Dict[str, Any]]) -> None:
 def create_splits(
     input_path: Path,
     category: str,
-    output_dir: Path | None = None,
+    output_dir: Path,
     f_train: float = 0.15,
     f_dev: float = 0.425,
     f_test: float = 0.425,
@@ -120,11 +122,7 @@ def create_splits(
     rng.shuffle(dev)
     rng.shuffle(test)
 
-    if output_dir:
-        out_dir = Path(output_dir).resolve()
-    else:
-        parent = in_path.parent
-        out_dir = (parent / "splits" / category).resolve()
+    out_dir = Path(output_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     out_train = out_dir / "train.yml"
     out_dev = out_dir / "dev.yml"
@@ -133,3 +131,14 @@ def create_splits(
     _write_yaml(out_dev, dev)
     _write_yaml(out_test, test)
     return {"train": out_train, "dev": out_dev, "test": out_test}
+
+
+def dataset_set(layout: EvalLayout, split_path: Path) -> Path | None:
+    """The generated set a judge dataset split was drawn from, as its
+    ``manifest.yml`` records it."""
+    manifest = Path(split_path).parent / DATASET_MANIFEST
+    if not manifest.is_file():
+        return None
+    data = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
+    recorded = data.get("set") if isinstance(data, dict) else None
+    return layout.resolve(str(recorded)) if recorded else None

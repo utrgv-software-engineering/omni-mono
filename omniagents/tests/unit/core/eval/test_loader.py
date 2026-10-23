@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 import yaml
 
+from omniagents.core.eval.layout import EvalLayout
 from omniagents.core.eval.loader import (
     EvalConfig,
     load_eval_config,
@@ -67,54 +69,38 @@ def _create_project(
     (tools_dir / "echo.py").write_text(
         "def echo(value):\n    return value\n", encoding="utf-8"
     )
-    _write_yaml(eval_dir / "evaluation.yml", {"evaluation": {"title": "suite"}})
     _write_yaml(
-        eval_dir / "scenarios.yml",
+        eval_dir / "evaluation.yml",
+        {
+            "evaluation": {
+                "title": "suite",
+                "metrics": metrics or [{"name": "score", "type": "number"}],
+            }
+        },
+    )
+    _write_yaml(
+        eval_dir / "scenarios" / "main.yml",
         {
             "scenarios": scenarios
             or [{"name": "scenario-alpha", "description": "hello"}]
         },
     )
-    _write_yaml(
-        eval_dir / "metrics.yml",
-        {"metrics": metrics or [{"name": "score", "type": "number"}]},
-    )
     if scenario_directory:
-        scenario_dir = eval_dir / "scenarios"
-        scenario_dir.mkdir(parents=True, exist_ok=True)
         _write_yaml(
-            scenario_dir / "extra.yml",
+            eval_dir / "scenarios" / "more" / "extra.yml",
             {"scenarios": [{"name": "scenario-gamma", "description": "extra"}]},
         )
     if include_judge:
-        judge_dir = eval_dir / "judges"
-        judge_dir.mkdir(parents=True, exist_ok=True)
         _write_yaml(
-            judge_dir / "primary.yml",
-            {
-                "judges": {
-                    "primary": {
-                        "agent": {
-                            "name": "arbiter",
-                        }
-                    }
-                }
-            },
+            eval_dir / "judges" / "primary" / "judge.yml",
+            {"agent": {"name": "arbiter"}},
         )
     if include_measures:
         (eval_dir / "measures.py").write_text("VALUE = 1\n", encoding="utf-8")
     if include_optimizers:
-        opt_dir = eval_dir / "optimizers"
-        opt_dir.mkdir(parents=True, exist_ok=True)
         _write_yaml(
-            opt_dir / "grid.yml",
-            {
-                "optimizers": {
-                    "grid": {
-                        "strategy": "grid",
-                    }
-                }
-            },
+            eval_dir / "optimizers" / "grid" / "optimizer.yml",
+            {"strategy": "grid"},
         )
     return root
 
@@ -240,22 +226,34 @@ class TestLoadEvalConfig:
         with pytest.raises(ValueError, match="Duplicate metric identifier 'score'"):
             load_eval_config(str(project_dir))
 
-    def test_rejects_invalid_judge_key(self, tmp_path: Path):
-        project_dir = _create_project(tmp_path)
-        judge_path = project_dir / "evaluations" / "judges" / "primary.yml"
+    def test_judge_and_optimizer_files_resolve_beside_them(self, tmp_path: Path):
+        project_dir = _create_project(tmp_path, include_optimizers=True)
+        eval_dir = project_dir / "evaluations"
         _write_yaml(
-            judge_path,
-            {
-                "judges": {
-                    "": {
-                        "agent": {
-                            "name": "arbiter",
-                        }
-                    }
-                }
-            },
+            eval_dir / "judges" / "primary" / "judge.yml",
+            {"agent": {"instructions_file": "instructions.md"}},
         )
-        with pytest.raises(ValueError, match="Judge keys must be non-empty strings"):
+        (eval_dir / "judges" / "primary" / "instructions.md").write_text("Judge.")
+        _write_yaml(
+            eval_dir / "optimizers" / "grid" / "optimizer.yml",
+            {"proposals": {"instructions_template_file": "rewrite.md"}},
+        )
+        (eval_dir / "optimizers" / "grid" / "rewrite.md").write_text("Rewrite.")
+        cfg = load_eval_config(str(project_dir))
+        assert cfg.config["judges"]["primary"]["agent"]["instructions_file"] == str(
+            (eval_dir / "judges" / "primary" / "instructions.md").resolve()
+        )
+        assert cfg.judge_sources["primary"] == eval_dir / "judges" / "primary" / "judge.yml"
+        proposals = cfg.config["optimizers"]["grid"]["proposals"]
+        assert proposals["instructions_template_file"] == str(
+            (eval_dir / "optimizers" / "grid" / "rewrite.md").resolve()
+        )
+
+        _write_yaml(
+            eval_dir / "optimizers" / "grid" / "optimizer.yml",
+            {"agent": {"instructions_file": "missing.md"}},
+        )
+        with pytest.raises(FileNotFoundError, match="Optimizer 'grid'.*missing.md"):
             load_eval_config(str(project_dir))
 
     def test_rejects_metrics_missing_identifier(self, tmp_path: Path):
@@ -489,7 +487,9 @@ def test_load_eval_config_restricts_scenarios_to_a_holdout_split(tmp_path):
     manifest = holdout_manifest(
         assignment, scenarios, ["expect.tone"], (0.5, 0.25, 0.25), 5
     )
-    write_holdout(root / "evaluations", assignment, manifest)
+    write_holdout(
+        EvalLayout((root / "evaluations").resolve(), root), assignment, manifest
+    )
 
     cfg = load_eval_config(str(root / "project.yml"), split="test")
     names = [sc["name"] for sc in cfg.config["scenarios"]]
@@ -514,25 +514,45 @@ def test_load_eval_config_without_split_is_unchanged(tmp_path):
     assert [sc["name"] for sc in cfg.config["scenarios"]] == ["only"]
 
 
-def test_inline_scenarios_are_selected_like_scenario_files(tmp_path):
-    """Scenarios written in evaluation.yml used to bypass --select/--exclude."""
+@pytest.mark.parametrize(
+    ("place", "mentions"),
+    [
+        (lambda e: _write_yaml(e / "scenarios.yml", {"scenarios": []}), "scenarios.yml"),
+        (lambda e: _write_yaml(e / "metrics.yml", {"metrics": []}), "metrics.yml"),
+        (lambda e: _write_yaml(e / "splits" / "eval" / "test.yml", {}), "holdout/"),
+        (lambda e: (e / "results").mkdir(), "runs/"),
+        (lambda e: (e.parent / "artifacts" / "eval").mkdir(parents=True), "generated/"),
+        (
+            lambda e: _write_yaml(
+                e / "evaluation.yml",
+                {"evaluation": {"scenarios": [{"name": "inline", "prompt": "p"}]}},
+            ),
+            "lists scenarios",
+        ),
+        (
+            lambda e: _write_yaml(
+                e / "evaluation.yml", {"evaluation": {"judges": {"j": {"agent": {}}}}}
+            ),
+            "judges/<key>/judge.yml",
+        ),
+        (
+            lambda e: _write_yaml(
+                e / "judges" / "primary" / "judge.yml", {"judges": {"primary": {}}}
+            ),
+            "wraps the judge",
+        ),
+        (lambda e: _write_yaml(e / "judges" / "loose.yml", {}), "loose.yml"),
+    ],
+)
+def test_an_evaluations_directory_laid_out_the_old_way_is_refused(
+    tmp_path, place, mentions
+):
+    from omniagents.core.eval.layout import EvalLayoutError
+
     root = _create_project(tmp_path)
-    eval_dir = root / "evaluations"
-    (eval_dir / "scenarios.yml").unlink()
-    _write_yaml(
-        eval_dir / "evaluation.yml",
-        {
-            "evaluation": {
-                "scenarios": [
-                    {"name": "keep", "tags": ["smoke"]},
-                    {"name": "drop", "tags": ["slow"]},
-                ]
-            }
-        },
-    )
-    cfg = load_eval_config(str(root / "project.yml"), select="tag:smoke")
-    assert [sc["name"] for sc in cfg.config["scenarios"]] == ["keep"]
-    assert cfg.select == "tag:smoke" and cfg.exclude is None
+    place(root / "evaluations")
+    with pytest.raises(EvalLayoutError, match=re.escape(mentions)):
+        load_eval_config(str(root))
 
 
 def test_evaluations_record_traces_unless_the_manifest_names_a_provider(tmp_path):

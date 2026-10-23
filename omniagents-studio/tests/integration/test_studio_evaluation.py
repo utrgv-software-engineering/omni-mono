@@ -98,7 +98,7 @@ def test_scenarios_and_judges_are_written_where_omniagents_reads_them(studio_api
 
     assert added.status_code == 200 and judge.status_code == 200
     scenarios = yaml.safe_load(
-        (env.project_dir / "evaluations/scenarios.yml").read_text()
+        (env.project_dir / "evaluations/scenarios/main.yml").read_text()
     )
     assert [s["name"] for s in scenarios["scenarios"]] == ["initial", "rude_user"]
     assert (env.project_dir / "evaluations/judges/politeness/judge.yml").is_file()
@@ -223,6 +223,6 @@ def test_a_review_labels_the_scenario_its_conversation_ran(studio_api_env):
     assert labelled.json() == {"categoryIds": ["quality_issues"]}
     assert unknown.status_code == 400
     [scenario] = yaml.safe_load(
-        (env.project_dir / "evaluations/scenarios.yml").read_text()
+        (env.project_dir / "evaluations/scenarios/main.yml").read_text()
     )["scenarios"]
     assert scenario["failure_categories"] == ["quality_issues"]

@@ -156,7 +156,7 @@ function GenerateScenarios({ dimensions }: { dimensions: Dimension[] }) {
       <div>
         <h4 className="text-sm font-semibold">Generate a scenario set</h4>
         <p className="text-xs text-muted-foreground">
-          Writes artifacts/eval/&lt;name&gt;/. Run it, review the conversations in Logs, then promote the good scenarios or
+          Writes generated/&lt;name&gt;/ in the evaluations directory. Run it, review the conversations in Logs, then promote the good scenarios or
           build a judge dataset from the reviews.
         </p>
       </div>

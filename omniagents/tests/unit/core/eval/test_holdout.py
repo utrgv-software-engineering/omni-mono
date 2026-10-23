@@ -10,6 +10,7 @@ from omniagents.core.eval.holdout import (
     load_holdout,
     write_holdout,
 )
+from omniagents.core.eval.layout import EvalLayout
 
 
 def _scenarios(n=40):
@@ -86,15 +87,16 @@ def test_write_and_load_holdout_roundtrip(tmp_path: Path):
     manifest = holdout_manifest(
         assignment, scenarios, ["expect.skin_tone"], (0.5, 0.25, 0.25), 3
     )
-    paths = write_holdout(tmp_path / "evaluations", assignment, manifest)
-    assert paths["test"] == tmp_path / "evaluations" / "splits" / "eval" / "test.yml"
-    names, loaded_manifest = load_holdout(tmp_path / "evaluations", "test")
+    layout = EvalLayout(tmp_path / "evaluations", tmp_path)
+    paths = write_holdout(layout, assignment, manifest)
+    assert paths["test"] == tmp_path / "evaluations" / "holdout" / "test.yml"
+    names, loaded_manifest = load_holdout(layout, "test")
     assert names == sorted(k for k, s in assignment.items() if s == "test")
     assert loaded_manifest["seed"] == 3
     # the files hold names only, never scenario bodies
     data = yaml.safe_load(paths["train"].read_text())
     assert set(data) == {"split", "scenarios"}
     with pytest.raises(FileNotFoundError):
-        load_holdout(tmp_path / "nowhere", "test")
+        load_holdout(EvalLayout(tmp_path / "nowhere", tmp_path), "test")
     with pytest.raises(ValueError):
-        load_holdout(tmp_path / "evaluations", "validation")
+        load_holdout(layout, "validation")

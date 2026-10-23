@@ -210,7 +210,7 @@ function JudgeDatasets({ judges }: { judges: Judge[] }) {
   const datasets = useQuery({ queryKey: ['evaluation', 'judge-datasets'], queryFn: () => api.getJudgeDatasets() })
   const [browsing, setBrowsing] = useState<string | null>(null)
   const remove = useMutation({
-    mutationFn: (dataset: JudgeDataset) => api.removeJudgeDataset(dataset.set, dataset.category),
+    mutationFn: (dataset: JudgeDataset) => api.removeJudgeDataset(dataset.category),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['evaluation', 'judge-datasets'] }),
   })
   const list = datasets.data?.datasets ?? []
@@ -219,17 +219,16 @@ function JudgeDatasets({ judges }: { judges: Judge[] }) {
       <div>
         <h3 className="text-base font-semibold">Judge datasets</h3>
         <p className="text-xs text-muted-foreground">
-          Reviewed generated scenarios split into train, dev and test for one category: positives are scenarios reviewers
-          labelled with it. Build one from a generated set on the Scenarios tab.
+          One per category: reviewed generated scenarios split into train, dev and test, positives being the scenarios
+          reviewers labelled with it. Build one from a generated set on the Scenarios tab; building again replaces it.
         </p>
       </div>
       {list.length === 0 ? <p className="text-sm text-muted-foreground">No judge datasets yet.</p> : null}
       {list.map((dataset) => (
-        <div key={`${dataset.set}/${dataset.category}`} className="space-y-2 rounded-md border border-border p-3">
+        <div key={dataset.category} className="space-y-2 rounded-md border border-border p-3">
           <div className="flex flex-wrap items-center gap-2 text-sm">
-            <span className="font-medium">
-              {dataset.set} · {dataset.category}
-            </span>
+            <span className="font-medium">{dataset.category}</span>
+            <span className="text-xs text-muted-foreground">from {dataset.set ?? 'a set that no longer exists'}</span>
             {dataset.splits.map((split) => (
               <button key={split.split} type="button" onClick={() => setBrowsing(browsing === split.path ? null : split.path)}>
                 <Badge variant={browsing === split.path ? 'default' : 'outline'}>
@@ -291,10 +290,10 @@ function OptimizeJudge({ dataset, judges }: { dataset: JudgeDataset; judges: Jud
     <div className="space-y-2">
       <div className="flex items-end gap-2">
         <div className="grid gap-1">
-          <Label htmlFor={`optimize-${dataset.set}-${dataset.category}`} className="text-xs">
+          <Label htmlFor={`optimize-${dataset.category}`} className="text-xs">
             Optimize judge
           </Label>
-          <NativeSelect id={`optimize-${dataset.set}-${dataset.category}`} size="sm" value={judge} onChange={(e) => setJudge(e.target.value)}>
+          <NativeSelect id={`optimize-${dataset.category}`} size="sm" value={judge} onChange={(e) => setJudge(e.target.value)}>
             {judges.map((j) => (
               <NativeSelectOption key={j.key} value={j.key}>
                 {j.label}
@@ -303,11 +302,11 @@ function OptimizeJudge({ dataset, judges }: { dataset: JudgeDataset; judges: Jud
           </NativeSelect>
         </div>
         <div className="grid w-24 gap-1">
-          <Label htmlFor={`budget-${dataset.set}-${dataset.category}`} className="text-xs">
+          <Label htmlFor={`budget-${dataset.category}`} className="text-xs">
             Budget
           </Label>
           <Input
-            id={`budget-${dataset.set}-${dataset.category}`}
+            id={`budget-${dataset.category}`}
             className="h-8"
             type="number"
             min={6}
@@ -323,7 +322,6 @@ function OptimizeJudge({ dataset, judges }: { dataset: JudgeDataset; judges: Jud
             void job.start({
               kind: 'optimize_judge',
               judge,
-              set_path: dataset.set_path,
               category: dataset.category,
               max_metric_calls: Math.max(6, Number(budget) || 60),
             })

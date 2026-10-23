@@ -17,20 +17,9 @@ by any of them is complete in the others.
 Files are edited in place (:mod:`omniagents.core.utils.yaml_edit`), so
 comments and layout people wrote by hand survive an edit made here.
 
-Where things live, relative to the evaluations directory (``evaluations/``
-unless ``project.yml`` says otherwise):
-
-- ``evaluation.yml``: dimensions (``synthetic_data_generation.dimensions``),
-  failure categories, measure descriptions, defaults, inline judges;
-- ``scenarios.yml`` and ``scenarios/**.yml``: the project's scenarios;
-- ``judges/<key>/judge.yml``: judges, beside their instructions and template;
-- ``measures.py``: the project's measure functions;
-- ``splits/eval/``: the holdout;
-- ``results/``: runs of the project's scenarios.
-
-Generated scenario sets live under ``artifacts/eval/<set>/`` in the project:
-``generated_scenarios.yml``, a ``manifest.json``, their runs in ``results/``
-and judge datasets in ``splits/<category>/{train,dev,test}.yml``.
+Where each thing lives in the evaluations directory is
+:mod:`omniagents.core.eval.layout`; a directory laid out the old way is
+refused when the evaluation loads.
 """
 
 from __future__ import annotations
@@ -46,7 +35,17 @@ from typing import Any
 
 import yaml
 
-from omniagents.core.eval.loader import EvalConfig, evaluations_dir, load_eval_config
+from omniagents.core.eval.layout import (
+    DATASET_MANIFEST,
+    GENERATED_MANIFEST,
+    GENERATED_SCENARIOS,
+    SPLIT_NAMES,
+    EvalLayout,
+    EvalLayoutError,
+    check_layout,
+    evaluations_dir,
+)
+from omniagents.core.eval.loader import EvalConfig, load_eval_config
 from omniagents.core.eval.results import (
     compare_runs,
     latest_conversations,
@@ -125,12 +124,19 @@ class EvalWorkspace:
         return evaluations_dir(self.root, project)
 
     @property
-    def evaluation_file(self) -> Path:
-        return self.eval_dir / "evaluation.yml"
+    def layout(self) -> EvalLayout:
+        """The evaluations directory's paths; one laid out the old way is
+        refused, saying what to move where."""
+        layout = EvalLayout(self.eval_dir, self.root)
+        try:
+            check_layout(layout)
+        except EvalLayoutError as exc:
+            raise EvalWorkspaceError(str(exc)) from exc
+        return layout
 
     @property
-    def artifacts_dir(self) -> Path:
-        return self.root / "artifacts" / "eval"
+    def evaluation_file(self) -> Path:
+        return self.layout.evaluation_file
 
     def config(
         self,
@@ -140,6 +146,7 @@ class EvalWorkspace:
         split: str | None = None,
     ) -> EvalConfig:
         """The evaluation as a run loads it."""
+        _ = self.layout  # refuses an old layout as a workspace error
         return load_eval_config(
             str(self.manifest),
             select=select or None,
@@ -434,7 +441,7 @@ class EvalWorkspace:
 
         project = set(
             load_project_measures(
-                self.eval_dir / "evaluation.yml",
+                self.evaluation_file,
                 project_root=self.root,
                 eval_dir=self.eval_dir,
             )
@@ -547,7 +554,7 @@ class EvalWorkspace:
         raise NotFound(f"No measure {name!r}")
 
     def _add_measure_stub(self, name: str) -> None:
-        path = self.eval_dir / "measures.py"
+        path = self.layout.measures_file
         existing = path.read_text(encoding="utf-8") if path.is_file() else ""
         if re.search(rf"^(async\s+)?def {re.escape(name)}\(", existing, re.MULTILINE):
             return
@@ -621,29 +628,6 @@ class EvalWorkspace:
 
     # -- scenario sets -----------------------------------------------------
 
-    def _project_scenario_files(self) -> list[Path]:
-        """The files whose scenarios a suite runs, as the loader finds them."""
-        files: list[Path] = []
-        for candidate in (
-            self.root / "evaluations" / "scenarios.yml",
-            self.eval_dir / "scenarios.yml",
-        ):
-            if candidate.is_file() and candidate.resolve() not in files:
-                files.append(candidate.resolve())
-        folder = self.eval_dir / "scenarios"
-        if folder.is_dir():
-            files += [p.resolve() for p in sorted(folder.rglob("*.yml"))]
-        return files
-
-    def _generated_dirs(self) -> list[Path]:
-        if not self.artifacts_dir.is_dir():
-            return []
-        return [
-            entry
-            for entry in sorted(self.artifacts_dir.iterdir())
-            if (entry / "generated_scenarios.yml").is_file()
-        ]
-
     @staticmethod
     def _read_scenarios(path: Path) -> list[dict[str, Any]]:
         try:
@@ -651,41 +635,28 @@ class EvalWorkspace:
         except (OSError, yaml.YAMLError):
             return []
         if isinstance(data, dict):
-            if isinstance(data.get("evaluation"), dict):
-                data = data["evaluation"]
             data = data.get("scenarios")
         return [item for item in data or [] if isinstance(item, dict)]
 
     def scenario_sets(self) -> list[dict[str, Any]]:
-        """The project's scenario files (what a suite runs; scenarios written
-        inline in ``evaluation.yml`` when there are none) and each generated
-        scenario set."""
+        """The project's scenario files (what a suite runs) and each
+        generated scenario set."""
+        layout = self.layout
         sets: list[dict[str, Any]] = []
-        files = self._project_scenario_files()
-        if (
-            not files
-            and self.evaluation_file.is_file()
-            and self._read_scenarios(self.evaluation_file)
-        ):
-            files = [self.evaluation_file]
-        for path in files:
+        for path in layout.scenario_files():
             sets.append(
                 {
                     "kind": PROJECT,
                     "path": str(path),
-                    "label": (
-                        str(path.relative_to(self.eval_dir))
-                        if self.eval_dir in path.parents
-                        else path.name
-                    ),
+                    "label": str(path.relative_to(layout.scenarios_dir.resolve())),
                     "scenarios": self._read_scenarios(path),
                     "updated_at": _iso(path),
                     "manifest": None,
                 }
             )
-        for folder in self._generated_dirs():
-            path = folder / "generated_scenarios.yml"
-            manifest_path = folder / "manifest.json"
+        for folder in layout.generated_sets():
+            path = folder / GENERATED_SCENARIOS
+            manifest_path = folder / GENERATED_MANIFEST
             try:
                 manifest = (
                     json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -698,13 +669,21 @@ class EvalWorkspace:
                 {
                     "kind": GENERATED,
                     "path": str(path.resolve()),
-                    "label": (manifest or {}).get("name") or folder.name,
+                    "label": folder.name,
                     "scenarios": self._read_scenarios(path),
                     "updated_at": _iso(path),
                     "manifest": manifest,
                 }
             )
         return sets
+
+    def resolve_set(self, value: str | Path) -> Path:
+        """A scenario set named the way a person would: a generated set's
+        name, or a set file's path."""
+        candidate = Path(value)
+        if not candidate.suffix and len(candidate.parts) == 1:
+            candidate = self.layout.generated_set_dir(str(value)) / GENERATED_SCENARIOS
+        return Path(self.scenario_set(candidate)["path"])
 
     def scenario_set(self, path: str | Path) -> dict[str, Any]:
         resolved = self._inside(path)
@@ -721,12 +700,9 @@ class EvalWorkspace:
         if isinstance(doc, list):
             entries = doc
         else:
-            holder = doc
-            if isinstance(doc.get("evaluation"), dict) and "scenarios" not in doc:
-                holder = doc["evaluation"]
-            if not isinstance(holder.get("scenarios"), list):
-                holder["scenarios"] = []
-            entries = holder["scenarios"]
+            if not isinstance(doc.get("scenarios"), list):
+                doc["scenarios"] = []
+            entries = doc["scenarios"]
         result = update(entries)
         if result is not False:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -882,8 +858,8 @@ class EvalWorkspace:
         name: str | None = None,
         index: int | None = None,
     ) -> dict:
-        """Copy a generated scenario into the project's ``scenarios.yml``,
-        so the suite runs it."""
+        """Copy a generated scenario into ``scenarios/promoted.yml``, so the
+        suite runs it."""
         source = self.scenario_set(set_path)
         if source["kind"] != GENERATED:
             raise EvalWorkspaceError("Only generated scenarios are promoted")
@@ -894,7 +870,7 @@ class EvalWorkspace:
             ]
         )
         scenario.pop("analysis", None)
-        target = self.eval_dir / "scenarios.yml"
+        target = self.layout.scenarios_dir / "promoted.yml"
         cleaned = self._clean_scenario(scenario)
 
         def update(target_entries: Any) -> None:
@@ -905,16 +881,12 @@ class EvalWorkspace:
         return self.scenario_set(target)
 
     def remove_scenario_set(self, set_path: str | Path) -> None:
-        """Delete a generated set (its whole folder: runs and judge datasets
-        too) or a project scenario file."""
+        """Delete a generated set (its folder) or a project scenario file.
+        Its saved runs and the judge datasets built from it stay."""
         scenario_set = self.scenario_set(set_path)
         path = Path(scenario_set["path"])
         if scenario_set["kind"] == GENERATED:
             shutil.rmtree(path.parent)
-        elif path == self.evaluation_file:
-            raise EvalWorkspaceError(
-                "Scenarios inside evaluation.yml are removed one by one"
-            )
         else:
             path.unlink()
 
@@ -928,8 +900,8 @@ class EvalWorkspace:
         progress_cb: ProgressCallback | None = None,
     ) -> dict[str, Any]:
         """Generate a set of synthetic scenarios from the dimensions, as
-        ``artifacts/eval/<name>/``. ``dimension_values`` limits which values
-        of each dimension are drawn."""
+        ``generated/<name>/``. ``dimension_values`` limits which values of
+        each dimension are drawn."""
         from omniagents.core.eval.scenarios import generate_scenarios
 
         name = (name or "").strip()
@@ -949,7 +921,7 @@ class EvalWorkspace:
             count=count,
             seed=seed,
             set_name=name,
-            output=self.artifacts_dir / name / "generated_scenarios.yml",
+            output=self.layout.generated_set_dir(name) / GENERATED_SCENARIOS,
             workflow_name=workflow_name,
             progress_cb=progress_cb,
             dimension_filters=filters or None,
@@ -1040,30 +1012,9 @@ class EvalWorkspace:
             template=template,
         )
 
-    def _judge_location(self, key: str) -> tuple[Path, Callable[[Any], Any]]:
-        """The file defining judge ``key`` and how to find its entry in it."""
-        source = Path(self.judge(key)["defined_in"])
-
-        def entry(doc: Any) -> Any:
-            for holder in (
-                doc,
-                doc.get("evaluation") if isinstance(doc, dict) else None,
-            ):
-                if not isinstance(holder, dict):
-                    continue
-                judges = holder.get("judges")
-                if isinstance(judges, dict) and key in judges:
-                    return judges[key]
-                if isinstance(judges, list):
-                    for item in judges:
-                        if (
-                            isinstance(item, dict)
-                            and (item.get("name") or item.get("key")) == key
-                        ):
-                            return item
-            raise NotFound(f"Judge {key!r} is not in {source}")
-
-        return source, entry
+    def _judge_file(self, key: str) -> Path:
+        """``judges/<key>/judge.yml``."""
+        return Path(self.judge(key)["defined_in"])
 
     def update_judge(
         self,
@@ -1080,9 +1031,8 @@ class EvalWorkspace:
         ``failure_category`` clears it). Instructions and template are saved
         in the judge's files, or inline when it has none."""
         current = self.judge(key)
-        path, entry_of = self._judge_location(key)
-        doc_yaml, doc = load_document(path.read_text(encoding="utf-8"))
-        entry = entry_of(doc)
+        path = self._judge_file(key)
+        doc_yaml, entry = load_document(path.read_text(encoding="utf-8"))
         agent = entry.get("agent")
         if not isinstance(agent, dict):
             entry["agent"] = {}
@@ -1106,7 +1056,7 @@ class EvalWorkspace:
             agent["instructions"] = instructions
         if template is not None and not current["template_path"]:
             reads["template"] = template
-        replace_file(path, dump_document(doc_yaml, doc))
+        replace_file(path, dump_document(doc_yaml, entry))
         if instructions is not None and current["instructions_path"]:
             replace_file(Path(current["instructions_path"]), instructions)
         if template is not None and current["template_path"]:
@@ -1120,68 +1070,67 @@ class EvalWorkspace:
         return self.judge(key)
 
     def remove_judge(self, key: str) -> None:
-        """Delete a judge: its folder when it has one to itself, else its
-        entry where it is defined. Its measure function stays in
+        """Delete a judge's folder. Its measure function stays in
         ``measures.py``."""
-        path, entry_of = self._judge_location(key)
-        doc_yaml, doc = load_document(path.read_text(encoding="utf-8"))
-        holder = doc if "judges" in doc else doc.get("evaluation")
-        judges = holder["judges"]
-        if (
-            path.name == "judge.yml"
-            and isinstance(judges, dict)
-            and list(judges) == [key]
-        ):
-            shutil.rmtree(path.parent)
-            return
-        if isinstance(judges, dict):
-            del judges[key]
-        else:
-            judges.remove(entry_of(doc))
-        replace_file(path, dump_document(doc_yaml, doc))
+        shutil.rmtree(self._judge_file(key).parent)
 
     # -- judge datasets ----------------------------------------------------
 
     def judge_datasets(self) -> list[dict[str, Any]]:
-        """For each generated set and failure category, the train/dev/test
-        scenarios (labelled positive or negative for the category) a judge
-        of that category is optimized and checked on."""
+        """For each failure category with one, the train/dev/test scenarios
+        (labelled positive or negative for the category) a judge of that
+        category is optimized and checked on, and the generated set they
+        were drawn from."""
+        root = self.layout.judge_datasets_dir
+        if not root.is_dir():
+            return []
         datasets = []
-        for folder in self._generated_dirs():
-            splits_root = folder / "splits"
-            if not splits_root.is_dir():
+        for folder in sorted(p for p in root.iterdir() if p.is_dir()):
+            manifest_path = folder / DATASET_MANIFEST
+            manifest = (
+                yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+                if manifest_path.is_file()
+                else {}
+            )
+            splits = []
+            for split in SPLIT_NAMES:
+                path = folder / f"{split}.yml"
+                if not path.is_file():
+                    continue
+                entries = self._read_scenarios(path)
+                splits.append(
+                    {
+                        "split": split,
+                        "path": str(path),
+                        "scenario_count": len(entries),
+                        "positives": sum(1 for e in entries if e.get("label") is True),
+                        "negatives": sum(1 for e in entries if e.get("label") is False),
+                        "updated_at": _iso(path),
+                    }
+                )
+            if not splits:
                 continue
-            for category_dir in sorted(p for p in splits_root.iterdir() if p.is_dir()):
-                splits = []
-                for split in ("train", "dev", "test"):
-                    path = category_dir / f"{split}.yml"
-                    if not path.is_file():
-                        continue
-                    entries = self._read_scenarios(path)
-                    splits.append(
-                        {
-                            "split": split,
-                            "path": str(path),
-                            "scenario_count": len(entries),
-                            "positives": sum(
-                                1 for e in entries if e.get("label") is True
-                            ),
-                            "negatives": sum(
-                                1 for e in entries if e.get("label") is False
-                            ),
-                            "updated_at": _iso(path),
-                        }
-                    )
-                if splits:
-                    datasets.append(
-                        {
-                            "set": folder.name,
-                            "set_path": str(folder / "generated_scenarios.yml"),
-                            "category": category_dir.name,
-                            "splits": splits,
-                        }
-                    )
+            set_path = (
+                self.layout.resolve(str(manifest["set"]))
+                if manifest.get("set")
+                else None
+            )
+            datasets.append(
+                {
+                    "category": folder.name,
+                    "set": set_path.parent.name if set_path else None,
+                    "set_path": str(set_path) if set_path else None,
+                    "manifest": manifest,
+                    "splits": splits,
+                }
+            )
         return datasets
+
+    def judge_dataset(self, category: str) -> dict[str, Any]:
+        for dataset in self.judge_datasets():
+            if dataset["category"] == category:
+                return dataset
+        raise NotFound(f"No judge dataset for {category!r}")
 
     def create_judge_dataset(
         self,
@@ -1192,9 +1141,9 @@ class EvalWorkspace:
         seed: int = 42,
         negatives_ratio: float | None = None,
     ) -> dict[str, Any]:
-        """Split a reviewed generated set into a judge dataset for
-        ``category``: scenarios labelled with it are positives, the rest
-        negatives."""
+        """Split a reviewed generated set into the judge dataset for
+        ``category`` (replacing the one it had): scenarios labelled with it
+        are positives, the rest negatives."""
         from omniagents.core.eval.split import create_splits
 
         scenario_set = self.scenario_set(set_path)
@@ -1204,62 +1153,75 @@ class EvalWorkspace:
             )
         if sum(fractions) <= 0 or any(f < 0 for f in fractions):
             raise EvalWorkspaceError("Train, dev and test fractions must be positive")
+        if slugify(category) != category:
+            raise EvalWorkspaceError(f"{category!r} is not a failure category id")
         path = Path(scenario_set["path"])
+        folder = self.layout.judge_dataset_dir(category)
+        if folder.is_dir():
+            shutil.rmtree(folder)
         create_splits(
             path,
             category,
-            output_dir=None,
+            output_dir=folder,
             f_train=fractions[0],
             f_dev=fractions[1],
             f_test=fractions[2],
             seed=seed,
             negatives_ratio=negatives_ratio,
         )
-        for dataset in self.judge_datasets():
-            if dataset["set"] == path.parent.name and dataset["category"] == category:
-                return dataset
-        raise EvalWorkspaceError("The judge dataset was not written")
+        (folder / DATASET_MANIFEST).write_text(
+            yaml.safe_dump(
+                {
+                    "set": self.layout.relative(path),
+                    "category": category,
+                    "seed": int(seed),
+                    "fractions": [float(f) for f in fractions],
+                    "negatives_ratio": negatives_ratio,
+                    "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        return self.judge_dataset(category)
 
     def judge_dataset_split(self, split_path: str | Path) -> dict[str, Any]:
-        """One split's scenarios with the reply each got in the set's newest
-        run that included it (what the judge reads)."""
+        """One split's scenarios with the reply each got in the newest run
+        of the set the dataset was drawn from (what the judge reads)."""
         path = self._inside(split_path)
         for dataset in self.judge_datasets():
             for split in dataset["splits"]:
-                if Path(split["path"]) == path:
-                    conversations = latest_conversations(
-                        Path(dataset["set_path"]).parent
+                if Path(split["path"]) != path:
+                    continue
+                conversations = (
+                    latest_conversations(self.layout, Path(dataset["set_path"]))
+                    if dataset["set_path"]
+                    else {}
+                )
+                scenarios = []
+                for scenario in self._read_scenarios(path):
+                    key = str(scenario.get("id") or scenario.get("name") or "")
+                    run = conversations.get(key)
+                    scenarios.append(
+                        {
+                            **scenario,
+                            "reply": (
+                                None if run is None else run.get("final_assistant_text")
+                            ),
+                        }
                     )
-                    scenarios = []
-                    for scenario in self._read_scenarios(path):
-                        key = str(scenario.get("id") or scenario.get("name") or "")
-                        run = conversations.get(key)
-                        scenarios.append(
-                            {
-                                **scenario,
-                                "reply": (
-                                    None
-                                    if run is None
-                                    else run.get("final_assistant_text")
-                                ),
-                            }
-                        )
-                    return {**dataset, "split": split, "scenarios": scenarios}
+                return {**dataset, "split": split, "scenarios": scenarios}
         raise NotFound(f"No judge dataset split at {split_path}")
 
-    def remove_judge_dataset(self, set_name: str, category: str) -> None:
-        folder = (self.artifacts_dir / set_name / "splits" / category).resolve()
-        if self.artifacts_dir.resolve() not in folder.parents or not folder.is_dir():
-            raise NotFound(f"No judge dataset {set_name}/{category}")
-        shutil.rmtree(folder)
+    def remove_judge_dataset(self, category: str) -> None:
+        self.judge_dataset(category)
+        shutil.rmtree(self.layout.judge_dataset_dir(category))
 
     # -- holdout -----------------------------------------------------------
 
     def holdout(self) -> dict[str, Any] | None:
         """The project's train/dev/test holdout of its scenarios, if made."""
-        from omniagents.core.eval.holdout import HOLDOUT_SUBDIR
-
-        manifest = self.eval_dir / HOLDOUT_SUBDIR / "manifest.yml"
+        manifest = self.layout.holdout_dir / "manifest.yml"
         if not manifest.is_file():
             return None
         data = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
@@ -1297,7 +1259,7 @@ class EvalWorkspace:
         manifest = holdout_manifest(
             assignment, scenarios, list(strata), fractions, seed
         )
-        write_holdout(self.eval_dir, assignment, manifest)
+        write_holdout(self.layout, assignment, manifest)
         holdout = self.holdout()
         assert holdout is not None
         return holdout
@@ -1339,10 +1301,10 @@ class EvalWorkspace:
 
         Without ``scenario_set`` this is the project's suite (its scenarios,
         optionally one holdout ``split``; unmeasured ones are skipped unless
-        ``include_unmeasured``), saved in the evaluations directory's
-        ``results/``. With one, every scenario in that set runs, saved beside
-        it. Either way each run keeps its conversation, which judges and
-        reviews read. Returns the saved run (:func:`results.read_run`).
+        ``include_unmeasured``). With one, every scenario in that set runs.
+        Either way it is saved in ``runs/`` with a copy of the agent, and
+        keeps each conversation, which judges and reviews read. Returns the
+        saved run (:func:`results.read_run`).
         """
         from omniagents.core.eval.pipeline import run_evaluation
 
@@ -1366,14 +1328,13 @@ class EvalWorkspace:
             for scenario in scenarios:
                 scenario["_source_path"] = str(set_path)
             eval_cfg["scenarios"] = scenarios
-            results_for = set_path
             measured_only = (
                 False if include_unmeasured is None else not include_unmeasured
             )
         else:
             if not eval_cfg.get("scenarios"):
                 raise EvalWorkspaceError("The project has no scenarios to run")
-            results_for = self.eval_dir / "scenarios.yml"
+            set_path = None
             label = name or "suite"
             measured_only = not include_unmeasured
         if max_turns is not None:
@@ -1392,18 +1353,20 @@ class EvalWorkspace:
             include_history=True,
         )
         saved = save_evaluation_run(
-            results_for,
+            self.layout,
             data,
             source=source,
-            scenario_name=label,
+            label=label,
+            scenario_set=set_path,
             agent=self.agent_key(),
+            agent_path=config.agent_path,
             workflow_name=data.get("workflow_name"),
         )
         return read_run(saved)
 
     def runs(self) -> list[dict[str, Any]]:
         """Every saved run of the project's and generated scenarios, newest first."""
-        return list_runs([self.eval_dir, self.artifacts_dir])
+        return list_runs(self.layout)
 
     def _run_path(self, path: str | Path) -> Path:
         resolved = self._inside(path)
@@ -1417,3 +1380,43 @@ class EvalWorkspace:
     def compare_runs(self, a: str | Path, b: str | Path) -> dict[str, Any]:
         """How saved run ``b`` differs from ``a`` (:func:`results.compare_runs`)."""
         return compare_runs(self.read_run(a), self.read_run(b))
+
+    # -- labels from reviews ----------------------------------------------
+
+    def annotate_from_reviews(
+        self, set_path: str | Path, trace_project: str
+    ) -> dict[str, Any]:
+        """Label each scenario in a set with the failure categories its
+        conversation was given in review, in the newest saved run of the set
+        (a scenario its reviewers gave none loses its labels). Returns the
+        set and the run the labels came from."""
+        from omniagents.core.eval.annotate import review_labels
+
+        path = Path(self.scenario_set(set_path)["path"])
+        recorded = self.layout.relative(path)
+        run = next(
+            (
+                entry
+                for entry in self.runs()
+                if entry.get("set") == recorded and entry.get("workflow_name")
+            ),
+            None,
+        )
+        if run is None:
+            raise EvalWorkspaceError(
+                "That set has no saved run with traces to read reviews from; run it"
+            )
+        labels = review_labels(trace_project, str(run["workflow_name"]))
+
+        def update(entries: Any) -> None:
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                found = labels.get(str(entry.get("id") or ""))
+                if found:
+                    entry["failure_categories"] = found
+                else:
+                    entry.pop("failure_categories", None)
+
+        self._edit_scenarios(path, update)
+        return {"set": self.scenario_set(path), "run": run["path"]}

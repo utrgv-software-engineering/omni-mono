@@ -284,12 +284,58 @@ def _persona_from_mapping(
     return out
 
 
+def _write_set(
+    output: Path,
+    scenarios: List[Dict[str, Any]],
+    set_name: str | None,
+    ts: str,
+    cfg_path: Path,
+    project_root: Path | None,
+    workflow_name: str | None,
+) -> Path:
+    """Write a generated set's ``scenarios.yml`` and, beside it,
+    ``manifest.json`` (paths in it relative to the project, since the set
+    is committed)."""
+    out_path = output.resolve()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    class NoAliasDumper(yaml.SafeDumper):
+        def ignore_aliases(self, data):
+            return True
+
+    out_path.write_text(
+        yaml.dump(
+            {"scenarios": scenarios},
+            sort_keys=False,
+            Dumper=NoAliasDumper,
+            allow_unicode=True,
+        ),
+        encoding="utf-8",
+    )
+    source = Path(cfg_path).resolve()
+    if project_root is not None and Path(project_root).resolve() in source.parents:
+        source = source.relative_to(Path(project_root).resolve())
+    manifest = {
+        "timestamp": ts,
+        "name": str(set_name) if set_name else out_path.parent.name,
+        "counts": {"total": len(scenarios)},
+        "source": str(source),
+    }
+    if workflow_name:
+        manifest["workflow_generate"] = str(workflow_name)
+    (out_path.parent / "manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
+    return out_path
+
+
 async def generate_scenarios(
     compiled_yaml: Path,
+    *,
+    output: Path,
     count: int | None = None,
     seed: int | None = None,
     set_name: str | None = None,
-    output: Path | None = None,
     workflow_name: str | None = None,
     progress_cb: Any | None = None,
     dimension_filters: Dict[str, List[str]] | None = None,
@@ -356,48 +402,9 @@ async def generate_scenarios(
         except Exception:
             pass
     if target_count <= 0:
-        base = _project_root or cfg_path.parent
-        if output is not None:
-            out_dir = Path(output).resolve().parent
-            out_path = Path(output).resolve()
-        else:
-            if not set_name:
-                raise SystemExit(
-                    "Provide a scenario set name or output path for generation"
-                )
-            out_dir = (base / "artifacts" / "eval" / str(set_name)).resolve()
-            out_path = out_dir / "generated_scenarios.yml"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        data = {"scenarios": []}
-
-        class NoAliasDumper(yaml.SafeDumper):
-            def ignore_aliases(self, data):
-                return True
-
-        out_path.write_text(
-            yaml.dump(data, sort_keys=False, Dumper=NoAliasDumper, allow_unicode=True),
-            encoding="utf-8",
+        out_path = _write_set(
+            Path(output), [], set_name, ts, cfg_path, _project_root, workflow_name
         )
-        try:
-            (out_dir / "manifest.json").write_text(
-                json.dumps(
-                    {
-                        "timestamp": ts,
-                        "name": (str(set_name) if set_name else out_dir.name),
-                        "counts": {"total": 0},
-                        "source": str(cfg_path),
-                        **(
-                            {"workflow_generate": str(workflow_name)}
-                            if workflow_name
-                            else {}
-                        ),
-                    },
-                    indent=2,
-                ),
-                encoding="utf-8",
-            )
-        except Exception:
-            pass
         if progress_cb:
             try:
                 progress_cb({"event": "done", "count": 0})
@@ -505,48 +512,9 @@ async def generate_scenarios(
         if len(scenarios) >= target_count:
             break
 
-    base = _project_root or cfg_path.parent
-    if output is not None:
-        out_dir = Path(output).resolve().parent
-        out_path = Path(output).resolve()
-    else:
-        if not set_name:
-            raise SystemExit(
-                "Provide a scenario set name or output path for generation"
-            )
-        out_dir = (base / "artifacts" / "eval" / str(set_name)).resolve()
-        out_path = out_dir / "generated_scenarios.yml"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    data = {"scenarios": scenarios}
-
-    class NoAliasDumper(yaml.SafeDumper):
-        def ignore_aliases(self, data):
-            return True
-
-    out_path.write_text(
-        yaml.dump(data, sort_keys=False, Dumper=NoAliasDumper, allow_unicode=True),
-        encoding="utf-8",
+    out_path = _write_set(
+        Path(output), scenarios, set_name, ts, cfg_path, _project_root, workflow_name
     )
-    try:
-        (out_dir / "manifest.json").write_text(
-            json.dumps(
-                {
-                    "timestamp": ts,
-                    "name": (str(set_name) if set_name else out_dir.name),
-                    "counts": {"total": len(scenarios)},
-                    "source": str(cfg_path),
-                    **(
-                        {"workflow_generate": str(workflow_name)}
-                        if workflow_name
-                        else {}
-                    ),
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-    except Exception:
-        pass
     if progress_cb:
         try:
             progress_cb({"event": "done", "count": len(scenarios)})

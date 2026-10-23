@@ -187,3 +187,10 @@ evaluation:
     measures:
     # - ambiguous_location_assumption_judge_agent
     - ambiguous_location_requires_clarification
+  metrics:
+    - name: unknown_tool_call_rate
+      label: Unknown Tool Call Rate
+      type: rate
+      from_measure: tool_hallucination
+      numerator: counts.unknown_tool_calls
+      denominator: counts.total_tool_calls

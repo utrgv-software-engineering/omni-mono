@@ -14,13 +14,19 @@ python -m omniagents.cli eval suite run -P omni_code/project.yml \
   --select 'name:<scenario_name>' --reporter pretty
 ```
 
-**Do not pass `-o`.** It writes raw JSON wherever you point and bypasses
-the structured results storage. Without `-o`, results land at:
+Every run is saved in this directory's `runs/` (`-o` only copies the
+`results.json` somewhere else as well):
 
 ```
-artifacts/eval/results/<timestamp>/{results.json,metadata.json}
-artifacts/eval/results/runs.json    # index of all runs
+evaluations/runs/<run id>/results.json    # every run record, summary, metrics, manifest
+evaluations/runs/<run id>/metadata.json   # which scenarios, agent, source
+evaluations/runs/<run id>/agent/          # agent.yml and instructions as they were
+evaluations/runs/index.json               # every run, newest first
 ```
+
+`runs/` is local (gitignored). Where everything else in this directory
+goes (scenarios, judges, generated sets, the holdout, judge datasets,
+optimizations) is `omniagents/core/eval/layout.py`.
 
 For multi-run scenarios (see "Multiple runs" below), all N runs land in
 the same `results.json` under `runs[]`.
@@ -46,7 +52,7 @@ message in order.
 ls -t target/eval_transcripts/*<scenario_name>*.json | head -1
 
 # Or look up directly from the run JSON:
-jq -r '.runs[0].transcript_path' artifacts/eval/results/<timestamp>/results.json
+jq -r '.runs[0].transcript_path' evaluations/runs/<run id>/results.json
 ```
 
 For deeper inspection (full session export with stable schema):
@@ -118,7 +124,7 @@ The framework records a lot more than its CLI surfaces:
 - Session history (full message log including tool calls + outputs):
   `~/.omniagents/sessions/<project>/<agent>/sessions.db`
 - Traces / spans: `~/.omniagents/traces/`
-- Structured run results: `<project>/artifacts/eval/results/<ts>/`
+- Structured run results: `evaluations/runs/<run id>/`
 
 There's already a `omniagents sessions {db-path,list,search,export}`
 CLI. Before adding new recording or inspection plumbing,

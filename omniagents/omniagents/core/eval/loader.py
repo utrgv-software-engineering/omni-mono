@@ -15,6 +15,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
+from omniagents.core.eval.layout import (
+    JUDGE_FILE,
+    OPTIMIZER_FILE,
+    EvalLayout,
+    check_layout,
+    evaluations_dir,
+)
+
 # ---------------------------------------------------------------------------
 # Data class returned to callers
 # ---------------------------------------------------------------------------
@@ -77,16 +85,6 @@ def _read_yaml(path: Path) -> Any:
         return None
 
 
-def _merge_dict(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
-    out = dict(a or {})
-    for k, v in (b or {}).items():
-        if k in out and isinstance(out[k], dict) and isinstance(v, dict):
-            out[k] = _merge_dict(out[k], v)
-        else:
-            out[k] = v
-    return out
-
-
 def _ensure_list(x: Any) -> List[Any]:
     if x is None:
         return []
@@ -139,13 +137,7 @@ def _expand_scenarios(source: Path, scenarios: List[Any]) -> List[Dict[str, Any]
     return out
 
 
-def _collect_scenarios(paths: List[Path]) -> List[Dict[str, Any]]:
-    files: List[Path] = []
-    for p in paths:
-        if p.is_file():
-            files.append(p)
-        elif p.is_dir():
-            files.extend(sorted(p.rglob("*.yml")))
+def _collect_scenarios(files: List[Path]) -> List[Dict[str, Any]]:
     scenarios: List[Dict[str, Any]] = []
     for path in files:
         scenarios.extend(load_scenarios_file(path.parent, str(path)))
@@ -153,7 +145,7 @@ def _collect_scenarios(paths: List[Path]) -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# Judge / optimizer / metric collection
+# Judges and optimizers: one folder each, named by its key
 # ---------------------------------------------------------------------------
 
 
@@ -188,202 +180,86 @@ def _resolve_judge_agent_ref(base: Path, jcfg: Dict[str, Any]) -> Dict[str, Any]
     return jc
 
 
-def _collect_judges(
-    paths: List[Path], sources: Optional[Dict[str, Path]] = None
-) -> Dict[str, Any]:
-    """Collect judge configs from per-folder yml files.
-
-    If ``sources`` is provided, each judge's source path is recorded into it
-    (last-write-wins, mirroring the merge order). Inline judges defined under
-    ``evaluation.judges`` in ``evaluation.yml`` are picked up by
-    :func:`_collect_base_eval`, not here.
-    """
-    out: Dict[str, Any] = {}
-    for p in paths:
-        if p.is_file():
-            data = _read_yaml(p)
-            if isinstance(data, dict):
-                js = data.get("judges")
-                if isinstance(js, dict):
-                    for k, v in js.items():
-                        out[k] = _resolve_judge_agent_ref(p.parent, v)
-                        if sources is not None:
-                            sources[str(k)] = p
-                if isinstance(js, list):
-                    for j in js:
-                        key = (j or {}).get("name") or (j or {}).get("key")
-                        if key:
-                            out[key] = _resolve_judge_agent_ref(p.parent, j)
-                            if sources is not None:
-                                sources[str(key)] = p
-            continue
-        if not p.is_dir():
-            continue
-        for y in sorted(list(p.rglob("*.yml"))):
-            data = _read_yaml(y)
-            if not isinstance(data, dict):
-                continue
-            js = data.get("judges")
-            if isinstance(js, dict):
-                for k, v in js.items():
-                    out[k] = _resolve_judge_agent_ref(y.parent, v)
-                    if sources is not None:
-                        sources[str(k)] = y
-            if isinstance(js, list):
-                for j in js:
-                    key = (j or {}).get("name") or (j or {}).get("key")
-                    if key:
-                        out[key] = _resolve_judge_agent_ref(y.parent, j)
-                        if sources is not None:
-                            sources[str(key)] = y
+def _collect_folders(
+    root: Path, filename: str
+) -> Dict[str, Tuple[Dict[str, Any], Path]]:
+    """``<root>/<key>/<filename>`` for each key: the file's settings and path.
+    A file that does not parse raises, naming it."""
+    out: Dict[str, Tuple[Dict[str, Any], Path]] = {}
+    if not root.is_dir():
+        return out
+    for path in sorted(root.glob(f"*/{filename}")):
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            raise ValueError(f"{path} does not parse: {exc}") from exc
+        if not isinstance(data, dict):
+            raise ValueError(f"{path} is not a mapping of settings")
+        out[path.parent.name] = (data, path)
     return out
 
 
-def _collect_optimizers(paths: List[Path]) -> Dict[str, Any]:
-    out: Dict[str, Any] = {}
-    for p in paths:
-        if p.is_file():
-            data = _read_yaml(p)
-            if isinstance(data, dict):
-                os_ = data.get("optimizers")
-                if isinstance(os_, dict):
-                    for k, v in os_.items():
-                        out[k] = v
-                if isinstance(os_, list):
-                    for o in os_:
-                        key = (o or {}).get("name") or (o or {}).get("key")
-                        if key:
-                            out[key] = o
-            continue
-        if not p.is_dir():
-            continue
-        for y in sorted(list(p.rglob("*.yml"))):
-            data = _read_yaml(y)
-            if not isinstance(data, dict):
-                continue
-            os_ = data.get("optimizers")
-            if isinstance(os_, dict):
-                for k, v in os_.items():
-                    out[k] = v
-            if isinstance(os_, list):
-                for o in os_:
-                    key = (o or {}).get("name") or (o or {}).get("key")
-                    if key:
-                        out[key] = o
-    return out
-
-
-def _collect_metrics(paths: List[Path]) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
-    for p in paths:
-        if p.is_file():
-            data = _read_yaml(p)
-            if isinstance(data, dict):
-                ms = data.get("metrics")
-                if isinstance(ms, list):
-                    out.extend(ms)
-            continue
-        if not p.is_dir():
-            continue
-        for y in sorted(list(p.rglob("*.yml"))):
-            data = _read_yaml(y)
-            if not isinstance(data, dict):
-                continue
-            ms = data.get("metrics")
-            if isinstance(ms, list):
-                out.extend(ms)
-    return out
-
-
-def _collect_base_eval(
-    paths: List[Path], judge_sources: Optional[Dict[str, Path]] = None
-) -> Dict[str, Any]:
-    """Collect the merged ``evaluation.*`` dict from base eval YAML files.
-
-    If ``judge_sources`` is provided, each judge defined inline under
-    ``evaluation.judges`` is recorded (last-write-wins). This lets callers
-    locate the YAML file an inline judge came from for path resolution.
-    """
-
-    def _record_judges(eval_block: Dict[str, Any], src: Path) -> None:
-        if judge_sources is None:
-            return
-        js = eval_block.get("judges")
-        if isinstance(js, dict):
-            for k in js.keys():
-                judge_sources[str(k)] = src
-        elif isinstance(js, list):
-            for j in js:
-                if isinstance(j, dict):
-                    key = j.get("name") or j.get("key")
-                    if key:
-                        judge_sources[str(key)] = src
-
-    result: Dict[str, Any] = {}
-    for p in paths:
-        if not p.exists():
-            continue
-        if p.is_file():
-            data = _read_yaml(p)
-            if isinstance(data, dict):
-                if isinstance(data.get("evaluation"), dict):
-                    result = _merge_dict(result, data["evaluation"])
-                    _record_judges(data["evaluation"], p)
-                else:
-                    result = _merge_dict(result, data)
-            continue
-        for y in sorted(list(p.rglob("*.yml"))):
-            data = _read_yaml(y)
-            if isinstance(data, dict) and isinstance(data.get("evaluation"), dict):
-                result = _merge_dict(result, data["evaluation"])
-                _record_judges(data["evaluation"], y)
-    return result
-
-
-def _inline_judges(inline: Any) -> Dict[str, Any]:
-    """``evaluation.judges`` as a mapping (it may be written as a list)."""
-    if isinstance(inline, dict):
-        return {str(k): v for k, v in inline.items()}
-    if isinstance(inline, list):
-        return {
-            str(j.get("name") or j.get("key")): j
-            for j in inline
-            if isinstance(j, dict) and (j.get("name") or j.get("key"))
-        }
-    return {}
-
-
-def _resolve_judge_files(
-    judges: Dict[str, Any], inline: Any, sources: Dict[str, Path]
+def _resolve_files(
+    what: str, cfg: Dict[str, Any], source: Path, fields: Tuple[Tuple[str, str], ...]
 ) -> None:
-    """Make each judge's ``instructions_file`` and ``template_file`` absolute,
-    resolved against the YAML that declares the judge, in place.
-
-    A judge whose file is missing would otherwise run with generic
-    instructions and quietly score nothing in particular, so a missing file
-    is an error here, naming the path that was looked for.
-    """
-    declared = list(judges.items()) + list(_inline_judges(inline).items())
-    for key, cfg in declared:
-        if not isinstance(cfg, dict) or key not in sources:
+    """Make the files ``cfg`` names absolute, resolved against ``source``,
+    in place. A named file that is missing raises: a judge or optimizer
+    without its instructions would run generic ones and quietly measure
+    something else."""
+    for block, key_name in fields:
+        section = cfg.get(block)
+        value = section.get(key_name) if isinstance(section, dict) else None
+        if not isinstance(value, str) or not value.strip():
             continue
-        base = sources[key].parent
-        for block, key_name in (
-            ("agent", "instructions_file"),
-            ("input", "template_file"),
-        ):
-            section = cfg.get(block)
-            value = section.get(key_name) if isinstance(section, dict) else None
-            if not isinstance(value, str) or not value.strip():
-                continue
-            path = Path(value)
-            path = path if path.is_absolute() else (base / path).resolve()
-            if not path.is_file():
-                raise FileNotFoundError(
-                    f"Judge {key!r}: {key_name} not found: {path} "
-                    f"(relative paths are resolved from {sources[key]})"
-                )
-            section[key_name] = str(path)
+        path = Path(value)
+        path = path if path.is_absolute() else (source.parent / path).resolve()
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"{what}: {key_name} not found: {path} "
+                f"(relative paths are resolved from {source})"
+            )
+        section[key_name] = str(path)
+
+
+_JUDGE_FILES = (("agent", "instructions_file"), ("input", "template_file"))
+_OPTIMIZER_FILES = (
+    ("agent", "instructions_file"),
+    ("proposals", "instructions_template_file"),
+    ("proposals", "template_template_file"),
+)
+
+
+def _collect_judges(root: Path) -> Tuple[Dict[str, Any], Dict[str, Path]]:
+    judges: Dict[str, Any] = {}
+    sources: Dict[str, Path] = {}
+    for key, (cfg, path) in _collect_folders(root, JUDGE_FILE).items():
+        cfg = _resolve_judge_agent_ref(path.parent, cfg)
+        _resolve_files(f"Judge {key!r}", cfg, path, _JUDGE_FILES)
+        judges[key] = cfg
+        sources[key] = path
+    return judges, sources
+
+
+def _collect_optimizers(root: Path) -> Dict[str, Any]:
+    optimizers: Dict[str, Any] = {}
+    for key, (cfg, path) in _collect_folders(root, OPTIMIZER_FILE).items():
+        _resolve_files(f"Optimizer {key!r}", cfg, path, _OPTIMIZER_FILES)
+        optimizers[key] = cfg
+    return optimizers
+
+
+def _evaluation_settings(path: Path) -> Dict[str, Any]:
+    """``evaluation.yml``'s settings (under ``evaluation:`` or bare)."""
+    if not path.is_file():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        raise ValueError(f"{path} does not parse: {exc}") from exc
+    if not isinstance(data, dict):
+        return {}
+    block = data.get("evaluation")
+    return dict(block) if isinstance(block, dict) else dict(data)
 
 
 # ---------------------------------------------------------------------------
@@ -498,36 +374,6 @@ def filter_scenarios(
 
 
 # ---------------------------------------------------------------------------
-# De-duplication helper for source paths
-# ---------------------------------------------------------------------------
-
-
-def _uniq(ps: List[Path]) -> List[Path]:
-    seen: set[str] = set()
-    out: List[Path] = []
-    for x in ps:
-        try:
-            key = str(x.resolve())
-        except Exception:
-            key = str(x)
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(x)
-    return out
-
-
-def evaluations_dir(project_root: Path, project_config: Dict[str, Any]) -> Path:
-    """The project's evaluations directory: ``paths.evaluations`` in
-    ``project.yml`` (the first, when it lists several), else
-    ``evaluations/``."""
-    configured = (project_config.get("paths") or {}).get("evaluations")
-    if isinstance(configured, list):
-        configured = configured[0] if configured else None
-    return (Path(project_root) / str(configured or "evaluations")).resolve()
-
-
-# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -577,6 +423,8 @@ def load_eval_config(
 
     proj = _read_yaml(p if p.is_file() else (base_dir / "project.yml")) or {}
     eval_dir = evaluations_dir(base_dir, proj)
+    layout = EvalLayout(eval_dir, base_dir.resolve())
+    check_layout(layout)
 
     # Resolve agent via the project runtime
     prj = load_project(str(p))
@@ -584,61 +432,11 @@ def load_eval_config(
         prj, agent_key=(str(agent_key) if agent_key else None)
     )
 
-    # Source paths for each resource type
-    scenarios_sources = _uniq(
-        [
-            base_dir / "evaluations" / "scenarios.yml",
-            eval_dir / "scenarios.yml",
-            eval_dir / "scenarios",
-        ]
-    )
-    judges_sources = _uniq([eval_dir / "judges"])
-    optimizers_sources = _uniq([eval_dir / "optimizers"])
-    metrics_sources = _uniq(
-        [
-            base_dir / "evaluations" / "metrics.yml",
-            eval_dir / "metrics.yml",
-            eval_dir / "metrics",
-        ]
-    )
-    base_eval_sources = _uniq(
-        [
-            base_dir / "evaluations" / "evaluation.yml",
-            eval_dir / "evaluation.yml",
-            eval_dir,
-        ]
-    )
-
-    # Collect everything. Judge source paths are tracked across both base
-    # eval (inline `evaluation.judges`) and per-folder judges/, mirroring
-    # the merge order so per-folder definitions win when both exist.
-    judge_sources: Dict[str, Path] = {}
-    base_eval = _collect_base_eval(
-        [s for s in base_eval_sources if s.exists()], judge_sources
-    )
-    scenarios = _collect_scenarios([s for s in scenarios_sources if s.exists()])
-    judges = _collect_judges([s for s in judges_sources if s.exists()], judge_sources)
-    optimizers = _collect_optimizers([s for s in optimizers_sources if s.exists()])
-    metrics = _collect_metrics([s for s in metrics_sources if s.exists()])
-
-    # Inline judges follow their agent_ref like judges/ ones do.
-    inline_judges = {
-        key: (
-            _resolve_judge_agent_ref(judge_sources[key].parent, cfg)
-            if key in judge_sources and isinstance(cfg, dict)
-            else cfg
-        )
-        for key, cfg in _inline_judges(base_eval.get("judges")).items()
-    }
-    if inline_judges:
-        base_eval["judges"] = inline_judges
-    _resolve_judge_files(judges, inline_judges, judge_sources)
-
-    # Scenarios written inline in evaluation.yml are used when there are no
-    # scenario files, and are selected and split like any others.
-    inline_scenarios = base_eval.pop("scenarios", None)
-    if not scenarios and isinstance(inline_scenarios, list):
-        scenarios = [sc for sc in inline_scenarios if isinstance(sc, dict)]
+    settings = _evaluation_settings(layout.evaluation_file)
+    scenarios = _collect_scenarios(layout.scenario_files())
+    judges, judge_sources = _collect_judges(layout.judges_dir)
+    optimizers = _collect_optimizers(layout.optimizers_dir)
+    metrics = [m for m in settings.get("metrics") or [] if m is not None]
 
     # Filter
     if select or exclude:
@@ -647,27 +445,24 @@ def load_eval_config(
     if split:
         from omniagents.core.eval.holdout import load_holdout, scenario_key
 
-        names, holdout_manifest = load_holdout(eval_dir, str(split))
+        names, holdout_manifest = load_holdout(layout, str(split))
         wanted = set(names)
         scenarios = [sc for sc in scenarios if scenario_key(sc) in wanted]
 
     # Validate
     _validate_graph_resources(scenarios, metrics, judges)
 
-    # Merge into single eval config dict
-    compiled_eval: Dict[str, Any] = {}
-    compiled_eval = _merge_dict(compiled_eval, base_eval)
-    # Judges declared inline in evaluation.yml and in judges/ are one set;
-    # a judges/ definition wins for the same key.
-    all_judges = {**_inline_judges(compiled_eval.get("judges")), **judges}
-    if all_judges:
-        compiled_eval["judges"] = all_judges
-    if optimizers:
-        compiled_eval["optimizers"] = optimizers
-    if metrics:
-        compiled_eval["metrics"] = metrics
-    if scenarios:
-        compiled_eval["scenarios"] = scenarios
+    compiled_eval: Dict[str, Any] = dict(settings)
+    for key, value in (
+        ("judges", judges),
+        ("optimizers", optimizers),
+        ("metrics", metrics),
+        ("scenarios", scenarios),
+    ):
+        if value:
+            compiled_eval[key] = value
+        else:
+            compiled_eval.pop(key, None)
 
     # Read agent config
     agent_cfg = _read_yaml(agent_path) or {}

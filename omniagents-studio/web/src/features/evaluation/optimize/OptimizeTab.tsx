@@ -21,11 +21,11 @@ export function OptimizeTab({ agent }: { agent: string | null }) {
   const job = useJob([['agents'], ['evaluation', 'runs']])
   const complete = (datasets.data?.datasets ?? []).filter((dataset) => dataset.splits.length === 3)
   const [target, setTarget] = useState(agent ?? '')
-  const [datasetKey, setDatasetKey] = useState('')
+  const [category, setCategory] = useState('')
   const [budget, setBudget] = useState('100')
   const [seed, setSeed] = useState('0')
   const [positivesOnly, setPositivesOnly] = useState(false)
-  const chosen = complete.find((dataset) => `${dataset.set}/${dataset.category}` === datasetKey) ?? complete[0]
+  const chosen = complete.find((dataset) => dataset.category === category) ?? complete[0]
   const agentKey = target || agents.data?.agents.find((a) => a.is_entry)?.key || ''
 
   return (
@@ -58,12 +58,12 @@ export function OptimizeTab({ agent }: { agent: string | null }) {
             <Label htmlFor="optimize-dataset">Judge dataset</Label>
             <NativeSelect
               id="optimize-dataset"
-              value={chosen ? `${chosen.set}/${chosen.category}` : ''}
-              onChange={(e) => setDatasetKey(e.target.value)}
+              value={chosen?.category ?? ''}
+              onChange={(e) => setCategory(e.target.value)}
             >
               {complete.map((dataset) => (
-                <NativeSelectOption key={`${dataset.set}/${dataset.category}`} value={`${dataset.set}/${dataset.category}`}>
-                  {dataset.set} · {dataset.category}
+                <NativeSelectOption key={dataset.category} value={dataset.category}>
+                  {dataset.category}
                 </NativeSelectOption>
               ))}
             </NativeSelect>
@@ -88,7 +88,6 @@ export function OptimizeTab({ agent }: { agent: string | null }) {
                 void job.start({
                   kind: 'optimize_agent',
                   agent: agentKey,
-                  set_path: chosen.set_path,
                   category: chosen.category,
                   positives_only: positivesOnly,
                   max_metric_calls: Math.max(6, Number(budget) || 100),

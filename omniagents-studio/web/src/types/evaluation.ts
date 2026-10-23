@@ -37,7 +37,7 @@ export interface Scenario {
 }
 
 export interface ScenarioSet {
-  /** `project`: what the suite runs. `generated`: a set under artifacts/eval/. */
+  /** `project`: a file in scenarios/, which the suite runs. `generated`: a set in generated/. */
   kind: 'project' | 'generated'
   path: string
   label: string
@@ -76,10 +76,13 @@ export interface JudgeDatasetSplit {
   updated_at: string | null
 }
 
+/** The judge dataset of a failure category, drawn from one generated set. */
 export interface JudgeDataset {
-  set: string
-  set_path: string
   category: string
+  /** The generated set it was drawn from; null when that set is gone. */
+  set: string | null
+  set_path: string | null
+  manifest: Record<string, JsonValue>
   splits: JudgeDatasetSplit[]
 }
 
@@ -144,7 +147,9 @@ export interface SavedRunEntry {
   timestamp: string
   path: string
   source?: string
-  scenario_name?: string
+  /** The set file it ran, relative to the evaluations directory; null for the suite. */
+  set: string | null
+  label: string
   workflow_name?: string | null
   agent: string | null
   /** Older runs carry only the counts. */
@@ -251,11 +256,10 @@ export type JobRequest =
     }
   | { kind: 'generate'; name: string; count?: number | null; seed?: number | null; dimension_values?: Record<string, string[]> | null }
   | { kind: 'annotate'; set_path: string; agent?: string | null }
-  | { kind: 'optimize_judge'; judge: string; set_path: string; category: string; max_metric_calls?: number; seed?: number }
+  | { kind: 'optimize_judge'; judge: string; category: string; max_metric_calls?: number; seed?: number }
   | {
       kind: 'optimize_agent'
       agent: string
-      set_path: string
       category: string
       positives_only?: boolean
       max_metric_calls?: number

@@ -138,8 +138,19 @@ def _write_project(root: Path, evaluation: Dict[str, Any]) -> Path:
         encoding="utf-8",
     )
     (root / "tools/weather.py").write_text(TOOL_SOURCE, encoding="utf-8")
+    settings = dict(evaluation)
+    (root / "evaluations/scenarios").mkdir()
+    (root / "evaluations/scenarios/main.yml").write_text(
+        yaml.safe_dump({"scenarios": settings.pop("scenarios", [])}, sort_keys=False),
+        encoding="utf-8",
+    )
+    for key, judge in (settings.pop("judges", None) or {}).items():
+        (root / "evaluations/judges" / key).mkdir(parents=True)
+        (root / "evaluations/judges" / key / "judge.yml").write_text(
+            yaml.safe_dump(judge, sort_keys=False), encoding="utf-8"
+        )
     (root / "evaluations/evaluation.yml").write_text(
-        yaml.safe_dump({"evaluation": evaluation}, sort_keys=False), encoding="utf-8"
+        yaml.safe_dump({"evaluation": settings}, sort_keys=False), encoding="utf-8"
     )
     return root / "project.yml"
 
@@ -206,6 +217,13 @@ def _run_view(run: Dict[str, Any], *, same_runtime: bool) -> Dict[str, Any]:
         # session store vs the SDK's input list); everything scored from it
         # must still agree.
         view.pop("history_len")
+        # A project's scenario carries the file it is written in; a
+        # hand-built one has none.
+        view["scenario_config"] = {
+            k: v
+            for k, v in (run.get("scenario_config") or {}).items()
+            if k != "_source_path"
+        }
     return view
 
 

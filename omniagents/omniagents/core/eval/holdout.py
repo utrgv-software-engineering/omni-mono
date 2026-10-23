@@ -4,7 +4,7 @@ Distinct from :mod:`omniagents.core.eval.split`, which partitions scenarios by
 a failure-category *label* to train and test a judge. This partitions a
 scenario set for evaluating an *agent*: a seeded, stratified train/dev/test
 assignment by scenario name, written as an assignment (names only, never a
-copy of the scenarios) under ``evaluations/splits/eval/``, and selected at
+copy of the scenarios) in the evaluations directory's ``holdout/``, and selected at
 run time with ``--split test``. The manifest records the seed, the strata and
 the counts, so "the test split was touched once" is checkable.
 """
@@ -18,8 +18,7 @@ from typing import Any, Dict, List, Sequence, Tuple
 
 import yaml
 
-HOLDOUT_SUBDIR = Path("splits") / "eval"
-SPLIT_NAMES: Tuple[str, str, str] = ("train", "dev", "test")
+from omniagents.core.eval.layout import SPLIT_NAMES, EvalLayout
 
 
 def scenario_key(scenario: Dict[str, Any]) -> str:
@@ -142,10 +141,10 @@ def holdout_manifest(
 
 
 def write_holdout(
-    eval_dir: Path, assignment: Dict[str, str], manifest: Dict[str, Any]
+    layout: EvalLayout, assignment: Dict[str, str], manifest: Dict[str, Any]
 ) -> Dict[str, Path]:
-    """Write ``<eval_dir>/splits/eval/{train,dev,test}.yml`` and ``manifest.yml``."""
-    out_dir = Path(eval_dir) / HOLDOUT_SUBDIR
+    """Write ``holdout/{train,dev,test}.yml`` and ``manifest.yml``."""
+    out_dir = layout.holdout_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     paths: Dict[str, Path] = {}
     for split in SPLIT_NAMES:
@@ -163,9 +162,9 @@ def write_holdout(
     return paths
 
 
-def load_holdout(eval_dir: Path, split: str) -> Tuple[List[str], Dict[str, Any]]:
+def load_holdout(layout: EvalLayout, split: str) -> Tuple[List[str], Dict[str, Any]]:
     """Scenario names in ``split`` and the holdout manifest."""
-    out_dir = Path(eval_dir) / HOLDOUT_SUBDIR
+    out_dir = layout.holdout_dir
     path = out_dir / f"{split}.yml"
     if split not in SPLIT_NAMES:
         raise ValueError(f"split must be one of {SPLIT_NAMES}, got {split!r}")

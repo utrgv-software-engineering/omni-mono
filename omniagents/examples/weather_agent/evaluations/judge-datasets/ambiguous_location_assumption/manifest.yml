@@ -1,0 +1,2 @@
+set: generated/in_class_error_analysis/scenarios.yml
+category: ambiguous_location_assumption
