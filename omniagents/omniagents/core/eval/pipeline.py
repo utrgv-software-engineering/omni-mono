@@ -273,9 +273,10 @@ async def run_judge(
     """Run one judge config over a conversation and return its parsed output.
 
     The judge's ``input.template`` (Jinja) sees ``text`` (per
-    ``input.source``), ``history``, ``history_json``, ``scenario``,
-    ``user_input`` (the first user message) and ``tools_used`` (names of the
-    tools called, in order). Returns ``{"error": "judge_failed"}`` when the
+    ``input.source``), ``history``, ``history_json``, ``scenario``, ``event``
+    (what started the run, for automation scenarios), ``user_input`` (the
+    first user message) and ``tools_used`` (names of the tools called, in
+    order). Returns ``{"error": "judge_failed"}`` when the
     judge cannot run.
     """
     agent_cfg = (jcfg or {}).get("agent") or {}
@@ -301,12 +302,13 @@ async def run_judge(
         history=history,
         history_json=json.dumps(history),
         scenario=scenario,
+        # What started the run: the event an automation fired on.
+        event=scenario.get("event"),
         user_input=_first_user_text(history),
         tools_used=[c.get("name") for c in parse_tool_calls(history) if c.get("name")],
     )
 
     try:
-        from agents import Runner as AgentsRunner
         from omniagents.core.agents.specs import AgentSpec
         from omniagents.core.agents.builder import _default_build_agent
     except Exception:
@@ -378,6 +380,13 @@ async def run_judge(
             pass
 
     try:
+        from omniagents.core.eval.models import (
+            merged_model_settings,
+            resolve_eval_model,
+            run_to_final_output,
+        )
+
+        resolved = resolve_eval_model(model)
         get_instr = lambda: instructions
         spec = AgentSpec(
             name=agent_cfg.get("name") or f"Judge:{key}",
@@ -385,7 +394,8 @@ async def run_judge(
             get_agent_instructions=get_instr,
             build_agent=None,
             available_tools=[],
-            model_name=model,
+            model_name=resolved.name if resolved else model,
+            model_settings=merged_model_settings(None, resolved),
             output_type=base_out_type,
             output_type_strict=output_type_strict,
             project_slug=None,
@@ -396,13 +406,13 @@ async def run_judge(
         # available_tools); pass workspace_root so any builtin tool
         # they gain works under strict mode. Anchored to cwd because
         # this judge runs post-scenario without a live workspace.
-        judge_res = await AgentsRunner.run(
+        val = await run_to_final_output(
             cast(Any, judge_agent),
             judge_prompt,
+            provider=resolved.provider if resolved else None,
             context={"workspace_root": os.getcwd()},
             max_turns=int(agent_cfg.get("max_turns", 1)),
         )
-        val = getattr(judge_res, "final_output", None)
         if expect_dict and not isinstance(val, dict):
             s = str(val)
             try:
@@ -420,9 +430,38 @@ async def run_judge(
                 val = json.loads(t)
             except Exception:
                 val = {"raw": s}
-        return val
+        return normalize_fail_reason(val, jcfg)
     except Exception:
         return {"error": "judge_failed"}
+
+
+def normalize_fail_reason(output: Any, jcfg: Optional[Dict[str, Any]]) -> Any:
+    """Hold a judge's ``reason`` to the ``fail_reasons`` its config declares.
+
+    A judge that declares ``fail_reasons`` names one of them when it answers
+    Fail, the way a code check returns ``fail_reason("...")``. A Fail with a
+    missing or unlisted reason is recorded as ``unspecified``, keeping what
+    the judge said under ``reason_given``; a Pass carries no reason. Judges
+    without ``fail_reasons`` are returned unchanged.
+    """
+    allowed = [
+        str(r) for r in ((jcfg or {}).get("fail_reasons") or []) if str(r) != "none"
+    ]
+    if not allowed or not isinstance(output, dict):
+        return output
+    answer = str(output.get("answer") or "").strip().lower()
+    given = output.get("reason")
+    out = dict(output)
+    if answer == "pass":
+        out.pop("reason", None)
+    elif answer == "fail":
+        if not (isinstance(given, str) and given.strip() in allowed):
+            out["reason"] = "unspecified"
+            if given is not None:
+                out["reason_given"] = given
+        else:
+            out["reason"] = given.strip()
+    return out
 
 
 async def run_evaluation_async(

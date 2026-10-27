@@ -22,7 +22,7 @@ from .history_db import (
     append_message as db_append_message,
     get_user_messages,
     get_session_metadata,
-    get_session_user_id,
+    get_session_owner,
     session_exists,
     update_session_metadata,
 )
@@ -736,7 +736,7 @@ class Session:  # noqa: D101
         self.owner_lookup_failed: bool = False
         if session_id:
             try:
-                self.user_id = get_session_user_id(
+                self.user_id = get_session_owner(
                     session_id, project_slug=project_slug, agent_slug=agent_slug
                 )
             except Exception:

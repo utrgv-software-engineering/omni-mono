@@ -158,8 +158,21 @@ async def run_agent_once(
             "The workspace provider is unavailable; no other provider will be used."
         )
 
+    # Outside a run's trace (the guardian reviews an approval from another task),
+    # the run's trace is its session's: the same group, so it is found with it.
+    session_id = getattr(session, "id", None)
+    trace_options: Dict[str, Any] = (
+        {
+            "group_id": f"session_{session_id}",
+            "workflow_name": getattr(spec, "name", None) or "omniagents",
+        }
+        if session_id
+        else {}
+    )
     run_config = (
-        RunConfig(model_provider=model_provider) if model_provider is not None else None
+        RunConfig(model_provider=model_provider, **trace_options)
+        if model_provider is not None or trace_options
+        else None
     )
 
     if not workspace_root:

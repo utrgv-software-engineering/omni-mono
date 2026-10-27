@@ -4,6 +4,7 @@ import asyncio
 import json
 import inspect
 import os
+import secrets
 from dataclasses import dataclass
 from pathlib import Path
 import sys
@@ -13,6 +14,7 @@ import yaml
 
 from omniagents.core.config.loader import load_agent_spec_from_yaml
 from omniagents.core.agents.factory import create_unified_agent
+from omniagents.execution import AgentHostResources, register_host_environment
 from omniagents.core.session.history_db import load_history
 from omniagents.core.evaluation import (
     build_eval_context,
@@ -212,15 +214,13 @@ class OmniAgentsAgentAdapter:
 
         spec.get_agent_instructions = _get_instr
 
-        # Anchor builtin filesystem tools to the eval invocation's cwd.
-        # Without this, start_run raises WorkspaceRootRequiredError under
-        # strict mode (no default_host_workspace_root is set on the eval-side
-        # AgentService). Mirrors the judges path in _run_judges.
-        if not isinstance(spec.context, dict):
-            spec.context = {} if spec.context is None else {"_original": spec.context}
-        spec.context.setdefault("workspace_root", os.getcwd())
-
-        agent = await create_unified_agent(spec)
+        # The agent's tools work in the invocation's cwd: its host is composed
+        # with a host environment there as the default, as `omni serve` is.
+        resources = AgentHostResources.create(f"gepa-{secrets.token_hex(8)}")
+        resources.thread_bindings.set_initial_default(
+            register_host_environment(resources, os.getcwd(), owner_user_id=None)
+        )
+        agent = await create_unified_agent(spec, host_resources=resources)
         msgs = [{"role": "user", "content": prompt}]
 
         try:

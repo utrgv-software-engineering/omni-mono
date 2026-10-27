@@ -65,6 +65,7 @@ ProgressCallback = Callable[[dict[str, Any]], None]
 
 PROJECT = "project"
 GENERATED = "generated"
+BENCHMARK = "benchmark"
 
 
 class EvalWorkspaceError(ValueError):
@@ -644,6 +645,17 @@ class EvalWorkspace:
                     "kind": PROJECT,
                     "path": str(path),
                     "label": str(path.relative_to(layout.scenarios_dir.resolve())),
+                    "scenarios": self._read_scenarios(path),
+                    "updated_at": _iso(path),
+                    "manifest": None,
+                }
+            )
+        for path in layout.benchmark_files():
+            sets.append(
+                {
+                    "kind": BENCHMARK,
+                    "path": str(path),
+                    "label": f"benchmarks/{path.name}",
                     "scenarios": self._read_scenarios(path),
                     "updated_at": _iso(path),
                     "manifest": None,
@@ -1346,9 +1358,9 @@ class EvalWorkspace:
             )
             category = existing or self.add_failure_category(
                 chosen,
-                description=description
-                if description is not None
-                else proposal["description"],
+                description=(
+                    description if description is not None else proposal["description"]
+                ),
             )
         unapplied = []
         for group_id in proposal["review_ids"]:

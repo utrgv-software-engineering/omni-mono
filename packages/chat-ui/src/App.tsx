@@ -1,3 +1,6 @@
+import { useVoiceCaptions } from './hooks/use-voice-captions';
+import { isVoiceCaption, visibleVoiceTranscript } from '@omniagents/client/transcript/voice-captions';
+import { OmniAvatar } from './components/omni-avatar/OmniAvatar';
 import { useStore } from '@nanostores/react';
 import type { PendingMessage } from '@omniagents/chat-ui/ChatShell';
 import { type ArtifactItem, ArtifactsPanel } from '@omniagents/chat-ui/components/ArtifactsPanel';
@@ -15,7 +18,6 @@ import { QueuedMessages } from '@omniagents/chat-ui/components/QueuedMessages';
 import { RecapPanel } from '@omniagents/chat-ui/components/RecapPanel';
 import { SessionList } from '@omniagents/chat-ui/components/SessionList';
 import { Sidebar } from '@omniagents/chat-ui/components/Sidebar';
-import { VoiceDock } from '@omniagents/chat-ui/components/VoiceDock';
 import { WakeupPanel } from '@omniagents/chat-ui/components/WakeupPanel';
 import { OmniAgentsHeaderActionsPortal, OmniAgentsHeaderActionsProvider } from '@omniagents/chat-ui/header-actions';
 import { useAutoRetry } from '@omniagents/chat-ui/hooks/use-auto-retry';
@@ -79,6 +81,9 @@ export type ClientToolCallHandler = (
 ) => Promise<{ ok: boolean; result?: Record<string, unknown>; error?: Record<string, unknown> }>;
 
 export type AppProps = {
+  /** Optional animated Omni identity, driven by this conversation. */
+  omniAvatar?: boolean;
+  defaultVoiceCaptions?: boolean;
   sessionId?: string;
   /** Explicit execution identity. Never inferred from the conversation id. */
   executionTarget?: ExecutionTarget;
@@ -114,6 +119,8 @@ export type AppProps = {
   readOnly?: boolean;
   /** Refetch a read-only transcript when its external worker advances. */
   transcriptRevision?: string;
+  /** Whether a retained conversation is currently visible in its host. */
+  active?: boolean;
 };
 
 export function App(props: AppProps) {
@@ -152,6 +159,9 @@ export function App(props: AppProps) {
 /** This view has immutable session identity. UI layout may unmount; its
  * connection-owned controller and in-flight operations do not. */
 function SessionView({
+  omniAvatar = false,
+  defaultVoiceCaptions = true,
+  active = true,
   sessionId: sessionIdProp,
   executionTarget,
   onSessionChange,
@@ -297,9 +307,12 @@ function SessionView({
     }
   }, [readOnly, connected, ui, transcriptRevision, loadSession, sessionIdProp]);
 
-  // Hosted realtime voice — one session per chat surface. The dock renders
-  // above the composer; live transcript items merge into MessageList below.
+  // Hosted realtime voice — one session per chat surface. Controls live in
+  // the composer; voice transcripts merge into the same MessageList.
   const voice = useRealtimeVoice();
+  // Retaining hidden chat views must preserve the existing end-call-on-switch behavior.
+  useEffect(() => { if (!active) voice.close(); }, [active, voice.close]);
+  const [voiceCaptions, setVoiceCaptions] = useVoiceCaptions(defaultVoiceCaptions);
   const voiceItems = useSelector(voice.actor, (s) => s.context.items);
   const voiceIsActive = useSelector(voice.actor, voiceActive);
   const voiceSessionId = useSelector(voice.actor, (s) => s.context.sessionId);
@@ -329,8 +342,8 @@ function SessionView({
   // in a ref rather than in either machine.
   const mergeLedgerRef = useRef(createVoiceMergeLedger());
   const mergedItems = useMemo(
-    () => mergeVoiceTranscript(items, voiceItems, mergeLedgerRef.current, voiceIsActive),
-    [items, voiceItems, voiceIsActive]
+    () => visibleVoiceTranscript(mergeVoiceTranscript(items, voiceItems.map(item => item.type === 'chat' ? {...item, voice_caption: true} : item), mergeLedgerRef.current, voiceIsActive), voiceCaptions),
+    [items, voiceItems, voiceIsActive, voiceCaptions]
   );
 
   // Unified subagent list (workers + agent-tool runs). The session-keyed
@@ -1302,7 +1315,8 @@ function SessionView({
           <ResizablePanelGroup orientation="horizontal" className="min-h-0 min-w-0 flex-1">
             <ResizablePanel minSize="50%">
               <div className="flex h-full min-h-0 min-w-0 flex-col">
-                <div ref={setChatColumnEl} className="flex-1 min-h-0 min-w-0 overflow-x-hidden relative flex flex-col">
+                <div ref={setChatColumnEl} data-omni-avatar={omniAvatar || undefined} className="flex-1 min-h-0 min-w-0 overflow-x-hidden relative flex flex-col data-[omni-avatar=true]:[&_[data-testid=chat-transcript]]:pt-[120px]">
+                  {omniAvatar && <OmniAvatar online={connected} waiting={pendingApproval || Boolean(pendingPlan)} working={runActive} voice={voice} />}
                   <ArtifactPortalProvider target={chatColumnEl}>
                     <MessageList
                       items={mergedItems}
@@ -1412,9 +1426,6 @@ function SessionView({
                 )}
                 {!readOnly && (
                   <>
-                    {/* Above the pills: the dock is the session's headline
-                        while a call is live, not another composer row. */}
-                    <VoiceDock voice={voice} />
                     <PillStrip
                       sessionId={sessionId}
                       subagents={visibleSubagents}
@@ -1484,6 +1495,9 @@ function SessionView({
                       onVoiceToggleMute={voice.toggleMute}
                       voiceMuted={voiceMuted}
                       voiceLive={voiceIsActive}
+                      voiceCaptions={voiceCaptions}
+                      onVoiceCaptionsChange={setVoiceCaptions}
+                      voiceCaptionsAvailable={items.some(isVoiceCaption)}
                     />
                   </>
                 )}

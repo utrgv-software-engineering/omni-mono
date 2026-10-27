@@ -417,22 +417,23 @@ async def test_attach_predicates_gates_unsafe_and_exempts_safe_and_bridged():
     unsafe = make_function_tool("bash")
     bridged = make_function_tool("client_tool")
 
-    attach_tool_approval_predicates(
+    own_safe, own_unsafe, own_bridged = attach_tool_approval_predicates(
         [safe, unsafe, bridged],
         session=session,
         safe_tool_names=["read_file"],
         exempt=[bridged],
     )
 
-    assert callable(safe.needs_approval)
-    assert callable(unsafe.needs_approval)
-    assert bridged.needs_approval is False
+    assert callable(own_safe.needs_approval)
+    assert callable(own_unsafe.needs_approval)
+    assert own_bridged is bridged and bridged.needs_approval is False
+    assert unsafe.needs_approval is False  # the shared tool is not changed
 
-    assert await safe.needs_approval(None, {}, "c1") is False
-    assert await unsafe.needs_approval(None, {}, "c2") is True
+    assert await own_safe.needs_approval(None, {}, "c1") is False
+    assert await own_unsafe.needs_approval(None, {}, "c2") is True
 
     session.always_allow_tools.add("bash")
-    assert await unsafe.needs_approval(None, {}, "c3") is False
+    assert await own_unsafe.needs_approval(None, {}, "c3") is False
 
 
 @pytest.mark.asyncio
@@ -449,7 +450,7 @@ async def test_start_attaches_predicates_when_approvals_configured(
     paired = make_paired_session()
 
     with (
-        patch("agents.realtime.RealtimeAgent", create=True),
+        patch("agents.realtime.RealtimeAgent", create=True) as realtime_agent,
         patch("agents.realtime.RealtimeRunner", create=True),
         patch("omniagents.rpc.realtime_session.history_db.register_session"),
     ):
@@ -462,8 +463,9 @@ async def test_start_attaches_predicates_when_approvals_configured(
         )
         await session.start()
 
-    assert callable(tool.needs_approval)
-    assert bridged.needs_approval is False
+    given = {t.name: t for t in realtime_agent.call_args.kwargs["tools"]}
+    assert callable(given["bash"].needs_approval)
+    assert given["client_tool"] is bridged and bridged.needs_approval is False
 
 
 @pytest.mark.asyncio
@@ -604,12 +606,14 @@ async def test_lazy_mcp_tools_are_gated():
     # Untouched until the SDK actually resolves tools for a run.
     assert mcp_tool.needs_approval is False
 
-    resolved = await agent.get_all_tools(None)
-    assert {t.name for t in resolved} == {"read_file", "mcp_databricks__run_sql"}
+    resolved = {t.name: t for t in await agent.get_all_tools(None)}
+    assert set(resolved) == {"read_file", "mcp_databricks__run_sql"}
 
-    assert await mcp_tool.needs_approval(None, {}, "c1") is True
+    assert (
+        await resolved["mcp_databricks__run_sql"].needs_approval(None, {}, "c1") is True
+    )
     # The safe list still applies to whatever comes back through this path.
-    assert await static.needs_approval(None, {}, "c2") is False
+    assert await resolved["read_file"].needs_approval(None, {}, "c2") is False
 
 
 @pytest.mark.asyncio
@@ -625,5 +629,5 @@ async def test_lazy_gating_reaches_handoff_targets():
 
     attach_lazy_tool_approval(root, session=session)
 
-    await target.get_all_tools(None)
-    assert await nested_tool.needs_approval(None, {}, "c1") is True
+    [resolved] = await target.get_all_tools(None)
+    assert await resolved.needs_approval(None, {}, "c1") is True

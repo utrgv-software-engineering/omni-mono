@@ -197,3 +197,20 @@ on key conflicts:
 
 The same resolver is used for AgentHost environment provisioning, so product
 layers apply consistently to replacement environments.
+
+A docker profile's `build:` list (shell commands, like `init:`) is built
+into an image once: each command is a `RUN` step on `options.image`, the
+result is tagged `omniagents-profile:<digest>` of the image and the steps,
+and every environment the profile starts uses that image
+(`omniagents.core.sandbox.images.prepare_profile_image`). Toolchains,
+browsers and CLIs belong there; `init:` runs in every container at start
+and keeps work that needs the running container, the workspace or
+credentials. Changing a step builds a new image.
+
+Skill folders that are not in a container environment's workspace (an
+agent's `skills/`, the project's, the product's global root) are copied
+into the container read-only under `/opt/omniagents/skills/` when the
+agent's instructions render or a skill loads, and again when they change on
+the host. The agent is shown those copies, so the files a skill points to
+resolve inside the container. File tools read paths under `/opt/omniagents`
+and refuse to write them.

@@ -93,6 +93,9 @@ def _load_sdk_builtins_once() -> None:
     if _SDK_BUILTINS_LOADED:
         return
     _SDK_BUILTINS_LOADED = True
+    from omniagents.core.memory.capability import WorkplaceMemory
+
+    register_capability("workplace_memory", WorkplaceMemory)
     try:
         from agents.sandbox.capabilities import (
             Compaction,

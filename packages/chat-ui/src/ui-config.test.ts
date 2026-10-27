@@ -28,3 +28,10 @@ describe('resolveUiConfig', () => {
     );
   });
 });
+
+it('can disable an unavailable realtime endpoint without disabling chat', () => {
+  const config = resolveUiConfig({ baseUrl: 'https://example.test/personal/?minimal=true', realtime: false });
+  expect(config.wsRealtimeUrl).toBe('');
+  expect(config.wsBaseUrl).toBe('wss://example.test/personal/ws');
+  expect(config.minimal).toBe(true);
+});

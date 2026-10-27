@@ -1,0 +1,80 @@
+# omniagents-workplace's releases: the package (PyPI) and its images (GHCR),
+# on a release tagged omniagents-workplace-v<version> (make bump-patch in
+# omniagents-workplace, from main). workflow_dispatch publishes the package to
+# Test PyPI and builds the images without pushing them.
+name: Publish omniagents-workplace
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  package:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'omniagents-workplace-v')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: omniagents-workplace
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install -g npm@11.6.2
+      - run: python -m pip install --upgrade pip build twine
+      - name: Build package (with its web UI)
+        run: make build
+      - run: twine check dist/*
+      - name: The wheel installs and runs, with its UI
+        run: |
+          python -m venv /tmp/check
+          /tmp/check/bin/pip install dist/*.whl
+          /tmp/check/bin/omniagents-workplace --help
+          /tmp/check/bin/python -c "import omniagents_workplace, pathlib; assert (pathlib.Path(omniagents_workplace.__file__).parent / 'static' / 'index.html').is_file()"
+      - name: Publish to Test PyPI
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}
+        run: twine upload --repository testpypi dist/*
+      - name: Publish to PyPI
+        if: github.event_name == 'release'
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: twine upload dist/*
+
+  images:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'omniagents-workplace-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - {image: omniagents-workplace, dockerfile: omniagents-workplace/Dockerfile}
+          - {image: omniagents-workflow-runner, dockerfile: omniagents-workplace/runner.Dockerfile}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        run: echo "version=$(sed -n 's/^version = "\(.*\)"/\1/p' omniagents-workplace/pyproject.toml)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: github.event_name == 'release'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: ${{ github.event_name == 'release' }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ steps.version.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:latest

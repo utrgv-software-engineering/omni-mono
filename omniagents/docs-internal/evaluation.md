@@ -101,15 +101,21 @@ evaluation:
       MY_WORKSPACE_ROOT: "${workspace}"
       MISE_TRUSTED_CONFIG_PATHS: "${workspace_root}"
 
-    # Optional: compose ContainerRoutingMixin. `profile_resolver:
+    # Optional: run scenarios in a container. `profile_resolver:
     # product` is the installed product's layered resolver
     # (resolve_product_profile); a dotted path imports a custom one.
+    # `profile` puts every scenario in that sandbox profile's container;
     # `default_profile` backs the bare `environment.image` shorthand;
-    # `profile`/`image` are class-level fallbacks (per-scenario
-    # `environment:` blocks win).
+    # per-scenario `environment: {profile|image}` blocks win. Relative
+    # paths resolve against the evaluation directory. The container is
+    # registered as the run's execution environment, as `omni serve`
+    # registers a profile's sandbox: the agent's file and shell tools
+    # (and its workers) work in it, at /workspace, while the model loop
+    # and the checks stay on the host. Checks reach it through
+    # `ctx.environment.run_command(ctx.environment_context, cmd)`.
     container_routing:
       profile_resolver: product
-      default_profile: profiles/devbox.yml
+      profile: ../sandbox_profile_default.yml
 
     # Optional: per-scenario user-MCP fixture staging. When a scenario
     # sets `<scenario_key>: <name>`, an isolated XDG_CONFIG_HOME is
@@ -237,3 +243,84 @@ evaluation:
       type: answered_rate
       target: { op: ">=", value: 0.95 }
 ```
+
+## Scenarios that start the way production does
+
+A scenario normally gives the suite's agent a `prompt`. Two keys start it
+another way:
+
+```yaml
+scenarios:
+  # Run one project agent directly, with this prompt.
+  - name: duplicate_is_caught
+    agent: triage
+    prompt: "Triage issue #15 on acme/api-service."
+    measures: [triage_classification]
+
+  # Replay an event through an automation: the agent it starts gets the
+  # automation's instruction and the event, exactly as a real run does
+  # (`omniagents.core.automations.Automation.run_input`). No `prompt`.
+  - name: finds_last_page_off_by_one
+    automation: pr-opened              # automations/pr-opened/automation.md
+    event: {action: opened, pull_request: {number: 33}}
+    github: pr_pagination.yml          # the scenario's GitHub: its issues and pull requests
+    fixture: api_service_pr_pagination
+    measures: [review_posted_once, review_finds_defects]
+```
+
+Judge templates get the event as `event`. Project agents are built exactly
+as the project runtime builds them (agents called by name, `extends:`
+bases, instruction fragments, context factories, skill folders).
+
+## Slack and GitHub: the workplace
+
+Agents that work in Slack and on GitHub are evaluated in the workplace
+simulator (`omniagents-workplace`), the way they run in production:
+
+```yaml
+environment:
+  type: workplace                    # provided by omniagents-workplace
+  fixtures_dir: fixtures/workspaces  # repositories' content
+  github_dir: fixtures/github        # issues and pull requests
+```
+
+Every scenario gets a workplace of its own (people, Slack, and its
+repository on GitHub, seeded from its `fixture` and its `github:` file) and
+a fresh sandbox from the project's sandbox profile with the repository
+cloned at `/workspace/<name>` from the workplace's git, as an automation run
+gets (`omniagents.integrations.environment`). The agents' MCP servers point
+at the scenario's workplace (`SLACK_MCP_URL`, `GITHUB_MCP_URL` and their
+tokens, resolved for that scenario only), so they push branches, open pull
+requests, review and reply as they would against GitHub and Slack. A
+`github:` file names the `repository`, its `default_branch` and `ci: {name,
+conclusion}`, and lists `issues` and `pull_requests` (a pull request's head
+is the scenario's fixture when it names a `base_fixture` for its base, or a
+`diff` applied to the fixture). After the run, `ctx.get_env_data("github")`
+holds every repository's branches and its issues and pull requests (comments,
+reviews, review comments, files), and `ctx.get_env_data("slack")` every
+message. Environments record what a run changed by overriding
+`EvalEnvironment.collect(context)`, which runs after the agent's last turn
+and before judges and measures.
+
+## Failure reasons on judges
+
+A code check fails with a reason (`fail_reason("wrong_agent")`). A judge can
+too: list the reasons in `judge.yml` and put a `reason` in its output.
+
+```yaml
+# evaluations/judges/task_compliance/judge.yml
+agent:
+  output_schema:
+    properties:
+      reasoning: {type: string}
+      answer: {type: string, enum: [Pass, Fail]}
+      reason: {type: string, enum: [none, missing_request, unrequested_scope]}
+    required: [reasoning, answer, reason]
+fail_reasons: [none, missing_request, unrequested_scope]
+```
+
+A Fail whose `reason` is not one of `fail_reasons` (or is missing) is
+recorded as `unspecified`, keeping what the judge said as `reason_given`; a
+Pass carries no reason. `ctx.judge_result(key).to_result()` then fails with
+that reason and keeps the judge's `reasoning`. Judges without
+`fail_reasons` are unchanged.

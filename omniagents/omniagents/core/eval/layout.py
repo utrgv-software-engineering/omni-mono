@@ -122,6 +122,17 @@ class EvalLayout:
     def scenarios_dir(self) -> Path:
         return self.eval_dir / SCENARIOS
 
+    @property
+    def benchmarks_dir(self) -> Path:
+        """Benchmark suites: tasks taken from real runs, run across configurations
+        (``eval scenarios run --set <suite> --matrix``), never as the suite."""
+        return self.eval_dir / "benchmarks"
+
+    def benchmark_files(self) -> List[Path]:
+        if not self.benchmarks_dir.is_dir():
+            return []
+        return [p.resolve() for p in sorted(self.benchmarks_dir.glob("*.yml"))]
+
     def scenario_files(self) -> List[Path]:
         """The files whose scenarios a suite runs."""
         if not self.scenarios_dir.is_dir():

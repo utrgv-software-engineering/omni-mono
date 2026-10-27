@@ -419,3 +419,37 @@ def test_loader_routes_reasoning_replay_to_provider_config(tmp_path):
     # And folded into model_provider_config.
     assert spec.model_provider_config is not None
     assert spec.model_provider_config["reasoning_content_replay"] == {"enabled": True}
+
+
+def test_an_agent_keeps_its_own_name_beside_the_agents_it_calls(tmp_path):
+    """The agents it names (as tools, or to hand off to) are not its name: a
+    foreman that called mobile_build last was named mobile_build in its traces."""
+    for name in ("triage", "mobile_build"):
+        _write(
+            tmp_path / f"{name}.yaml",
+            f"""
+        name: {name}
+        instructions: x
+        """,
+        )
+    main_path = tmp_path / "foreman.yaml"
+    _write(
+        main_path,
+        """
+        name: foreman
+        instructions: Orchestrate
+        agent_tools:
+          - agent: triage
+          - agent: mobile_build
+        handoffs:
+          - agent: triage
+        """,
+    )
+    spec = load_agent_spec_from_yaml(
+        str(main_path),
+        agents_map={
+            n: (tmp_path / f"{n}.yaml").resolve() for n in ("triage", "mobile_build")
+        },
+    )
+    assert spec.name == "foreman"
+    assert len(spec.agent_tool_configs) == 2

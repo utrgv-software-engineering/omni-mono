@@ -8,17 +8,14 @@
  * half-duplex hold, and the audio-level meter. UI intents come in as
  * method calls; everything that happened goes to the machine as events.
  *
- * The level meter writes to a mutable holder (`realtimeVoiceLevel`) read
- * by the orb's RAF loop — 60fps updates never touch React state (same
- * pattern as `voice-recording.ts`'s `voiceLevel`).
+ * Per-controller audio levels drive the Omni avatar without React updates
+ * on every animation frame.
  */
+import { CodexLiveTransport } from './codex-live';
 import type { AudioSettings } from '@omniagents/chat-ui/host';
 import { voiceSessionMachine } from '@omniagents/client/machines/voice-session.machine';
 import { RealtimeRPCClient } from '@omniagents/client/rpc/realtime';
 import { type Actor, createActor } from 'xstate';
-
-/** Live mic/output level (0..1) for the orb; a plain holder, not a store. */
-export const realtimeVoiceLevel = { current: 0 };
 
 const CAPTURE_SAMPLE_RATE = 24000;
 const CAPTURE_CHUNK_SAMPLES = 2400;
@@ -213,9 +210,11 @@ registerProcessor('omni-voice-capture', OmniVoiceCapture);
 // ---------------------------------------------------------------------------
 
 export class RealtimeVoiceController {
+  readonly levels = { input: 0, output: 0 };
   readonly actor: Actor<typeof voiceSessionMachine>;
 
   private client: RealtimeRPCClient | null = null;
+  private live: CodexLiveTransport | null = null;
   private offEvent: (() => void) | null = null;
   private generation = 0;
 
@@ -279,6 +278,35 @@ export class RealtimeVoiceController {
           return;
         }
         this.actor.send({ type: 'CONNECTED' });
+        const capabilities = await client.capabilities();
+        if (generation !== this.generation) return;
+        if (capabilities.transport === 'webrtc') {
+          if (!sessionId) throw new Error('Open a conversation before starting voice');
+          const live = (this.live = new CodexLiveTransport(
+            client,
+            sessionId,
+            (event) => this.onServerEvent(event),
+            () => this.close(),
+            (message) => {
+              if (generation !== this.generation) return;
+              this.actor.send({ type: 'DISCONNECTED', message });
+              this.teardownTransport();
+            },
+            (input, output, speaking) => {
+              this.levels.input = input;
+              this.levels.output = output;
+              if (speaking !== this.playbackActive) {
+                this.playbackActive = speaking;
+                this.actor.send({ type: speaking ? 'PLAYBACK_ACTIVE' : 'PLAYBACK_IDLE' });
+              }
+            }
+          ));
+          await live.open(config.audioSettings);
+          if (generation === this.generation)
+            this.actor.send({ type: 'SESSION_STARTED', sessionId, runId: '', at: Date.now() });
+          return;
+        }
+
         let res: Awaited<ReturnType<typeof client.startSession>>;
         try {
           res = await client.startSession(sessionId);
@@ -334,7 +362,13 @@ export class RealtimeVoiceController {
       // Let the stop RPC reach the server before dropping the socket — a
       // fire-and-forget stop that races disconnect leaves the session
       // registered server-side ("Session ... already exists" on reopen).
-      const stop = sid ? client.stopSession(sid).catch(() => {}) : Promise.resolve();
+      const live = this.live;
+      this.live = null;
+      const stop = live
+        ? live.close().catch(() => {})
+        : sid
+          ? client.stopSession(sid).catch(() => {})
+          : Promise.resolve();
       void stop.finally(() => {
         client.disconnect();
         if (generation === this.generation) {
@@ -349,6 +383,7 @@ export class RealtimeVoiceController {
   toggleMute(): void {
     this.actor.send({ type: 'TOGGLE_MUTE' });
     this.applyTrackState();
+    this.live?.mute(this.snapshot.context.muted);
     if (!this.snapshot.context.muted) {
       void this.audioCtx?.resume().catch(() => {});
     }
@@ -356,6 +391,10 @@ export class RealtimeVoiceController {
 
   /** Barge-in: kill playback locally and tell the server to interrupt. */
   interrupt(): void {
+    if (this.live) {
+      this.close();
+      return;
+    }
     const sid = this.sessionId;
     this.stopPlayback();
     this.releaseDuplexHold(0);
@@ -367,6 +406,7 @@ export class RealtimeVoiceController {
 
   /** Send a typed message into the live voice session. */
   sendText(text: string): boolean {
+    if (this.live) return false; // Typed requests use the ordinary shared conversation.
     const sid = this.sessionId;
     const trimmed = text.trim();
     if (!this.client || !sid || !trimmed) {
@@ -633,7 +673,7 @@ export class RealtimeVoiceController {
   }
 
   /**
-   * One level for the orb, read from whichever side is actually talking:
+   * Audio levels for the avatar, read from whichever side is actually talking:
    * the playback bus while the agent speaks (the mic is gated off then, so
    * metering it would report silence for the whole turn), the mic otherwise.
    */
@@ -657,7 +697,8 @@ export class RealtimeVoiceController {
       const level = source ? shapeAudioLevel(weightedAudioLevel(data)) : 0;
       const rate = level > this.smoothedLevel ? LEVEL_ATTACK : LEVEL_RELEASE;
       this.smoothedLevel += (level - this.smoothedLevel) * (1 - Math.pow(1 - rate, dt * 60));
-      realtimeVoiceLevel.current = this.smoothedLevel;
+      this.levels.input = this.playbackActive ? 0 : this.smoothedLevel;
+      this.levels.output = this.playbackActive ? this.smoothedLevel : 0;
       this.meterRaf = requestAnimationFrame(tick);
     };
     this.meterRaf = requestAnimationFrame(tick);
@@ -704,7 +745,8 @@ export class RealtimeVoiceController {
       cancelAnimationFrame(this.meterRaf);
       this.meterRaf = null;
     }
-    realtimeVoiceLevel.current = 0;
+    this.levels.input = 0;
+    this.levels.output = 0;
     this.smoothedLevel = 0;
     this.analyser = null;
     if (this.captureNode) {
@@ -810,6 +852,8 @@ export class RealtimeVoiceController {
   }
 
   private teardownTransport(): void {
+    void this.live?.close().catch(() => {});
+    this.live = null;
     this.offEvent?.();
     this.offEvent = null;
     this.client?.disconnect();

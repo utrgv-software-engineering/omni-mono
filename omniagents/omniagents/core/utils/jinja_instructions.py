@@ -9,7 +9,7 @@ environment has no loader and rendering behaves exactly as before (includes
 are unsupported and raise a clear error).
 """
 
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Union
 from dataclasses import is_dataclass, asdict
 from pathlib import Path
 import json
@@ -188,8 +188,11 @@ def create_jinja2_instructions(
     template_string: str,
     *,
     search_paths: Optional[Sequence[PathLike]] = None,
+    globals: Optional[Mapping[str, Any]] = None,
 ):
     env = _create_env(silent_undefined=True, search_paths=search_paths)
+    # Under the run's context: a context value of the same name wins.
+    env.globals.update(globals or {})
     template = env.from_string(template_string)
 
     async def render_instructions(
@@ -220,6 +223,7 @@ def process_instructions(
     instructions: Any,
     *,
     search_paths: Optional[Sequence[PathLike]] = None,
+    globals: Optional[Mapping[str, Any]] = None,
 ) -> Any:
     """Process instructions, treating strings as Jinja2 and wrapping callables to process their output.
 
@@ -227,6 +231,8 @@ def process_instructions(
         instructions: String (treated as Jinja2), callable (output treated as Jinja2), or None
         search_paths: Optional directories searched, in order, for
             ``{% include %}`` fragments (see :func:`instruction_search_paths`).
+        globals: Names in scope for every render (``project``), under the
+            run's context.
 
     Returns:
         Wrapped function that processes Jinja2, or None if instructions is None
@@ -236,7 +242,9 @@ def process_instructions(
 
     if isinstance(instructions, str):
         # Treat strings as Jinja2 templates
-        return create_jinja2_instructions(instructions, search_paths=search_paths)
+        return create_jinja2_instructions(
+            instructions, search_paths=search_paths, globals=globals
+        )
 
     if callable(instructions):
         # Wrap the callable to process its output as Jinja2
@@ -255,7 +263,9 @@ def process_instructions(
             # If the result is a string, process it as Jinja2
             if isinstance(result, str):
                 # Create a Jinja2 renderer for the result
-                renderer = create_jinja2_instructions(result, search_paths=search_paths)
+                renderer = create_jinja2_instructions(
+                    result, search_paths=search_paths, globals=globals
+                )
                 # Render the template with the context
                 return await renderer(context_wrapper, agent)
 

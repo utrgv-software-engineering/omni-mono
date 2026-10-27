@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Runs</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap">
+<style>
+body{margin:0;background:#F6F6F7}
+a{color:#1D4ED8;text-decoration:none}a:hover{color:#1E3A8A}
+.mono{font-family:'JetBrains Mono',monospace;font-size:12px}
+.file{font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#52525B;background:#F4F4F5;border-radius:4px;padding:2px 6px}
+.code{margin:0;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.65;background:#FAFAFA;border:1px solid #F0F0F1;border-radius:8px;padding:10px 12px;overflow-x:auto;white-space:pre}
+.cli{font-family:'JetBrains Mono',monospace;font-size:12px;background:#18181B;color:#E4E4E7;border-radius:8px;padding:9px 12px;overflow-x:auto;white-space:nowrap}
+.card{background:#FFFFFF;border:1px solid #E4E4E7;border-radius:12px;padding:18px 20px}
+.detail{background:#FAFAFA;border:1px dashed #D4D4D8;border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.dlabel{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#71717A}
+.h2{margin:0;font-size:15px;font-weight:600}
+.muted{font-size:13px;color:#52525B;line-height:1.55}
+.photo{background:repeating-linear-gradient(135deg,#E4E4E7 0 10px,#EDEDEF 10px 20px);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#71717A;font-size:12px}
+.user{align-self:flex-end;max-width:85%;background:#F4F4F5;padding:10px 14px;border-radius:14px 14px 4px 14px}
+.turn{border:1px solid #FDBA74;background:#FFF7ED;border-radius:12px;padding:12px 14px}
+.turn b{display:block;font-size:12px;font-weight:600;color:#9A3412;letter-spacing:.02em;margin-bottom:4px}
+.noticed{border:1px solid #FDBA74;background:#FFF7ED;border-radius:10px;padding:12px 14px;font-size:14px;line-height:1.55;color:#431407}
+.noticed b{display:block;font-size:12px;font-weight:600;color:#9A3412;letter-spacing:.02em;margin-bottom:2px}
+.ok{color:#1D4ED8}.warn{color:#C2410C}
+.btn{font:inherit;font-size:13px;padding:7px 12px;border-radius:8px;border:1px solid #D4D4D8;background:#FFFFFF;color:#18181B;cursor:pointer}
+.btn.primary{border-color:#18181B;background:#18181B;color:#FFFFFF;font-weight:500}
+.pill{font:inherit;font-size:13px;padding:6px 12px;border-radius:999px;border:1px solid #D4D4D8;background:#FFFFFF;color:#18181B;cursor:pointer}
+.row{display:flex;gap:12px;align-items:center;padding:10px 0;border-top:1px solid #F0F0F1}
+.prov{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;padding:2px 8px;border-radius:999px;white-space:nowrap;vertical-align:middle}
+.prov::before{content:"";width:6px;height:6px;border-radius:3px;display:inline-block}
+.prov.you{background:#F4F4F5;color:#3F3F46}.prov.you::before{background:#18181B}
+.prov.sug{background:#FEF3C7;color:#78350F}.prov.sug::before{background:#D97706}
+.prov.calc{background:#EFF6FF;color:#1E3A8A}.prov.calc::before{background:#2563EB}
+.legend{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12px;color:#71717A}
+
+.qcard{border:1px solid #D4D4D8;border-radius:12px;background:#FFFFFF;padding:14px 16px;display:flex;flex-direction:column;gap:10px;box-shadow:0 1px 2px rgba(24,24,27,.05)}
+.qcard .q{font-size:15px;font-weight:600;line-height:1.4}
+.qopts{display:flex;flex-wrap:wrap;gap:6px}
+.did{border:1px solid #E4E4E7;border-radius:10px;overflow:hidden;font-size:13px}
+.did div{padding:8px 12px;border-bottom:1px solid #F0F0F1;display:flex;gap:8px}
+.did div:last-child{border-bottom:0}
+.node{border:1px solid #D4D4D8;background:#FFFFFF;border-radius:10px;padding:10px 12px;min-width:150px;max-width:200px}
+.node .t{font-size:14px;font-weight:600}
+.node .r{font-size:12px;color:#52525B;margin-top:2px;line-height:1.4}
+.arrow{color:#A1A1AA;font-size:18px;align-self:center}
+.bubble{font-size:14px;line-height:1.6}
+.when{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#A1A1AA;text-align:center}
+
+.nav a{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-radius:8px;color:#3F3F46;font-size:14px}
+.nav a.on{background:#E4E4E7;color:#18181B;font-weight:600}
+.nav .badge{font-size:11px;font-weight:600;color:#52525B}
+.nav .badge.warn{color:#C2410C}
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{text-align:left;font-weight:500;color:#52525B;font-size:12px;padding:8px 10px;border-bottom:1px solid #E4E4E7;white-space:nowrap}
+.tbl td{padding:10px;border-bottom:1px solid #F0F0F1;vertical-align:middle}
+.tbl tr.sel td{background:#EFF6FF}
+.status{font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;white-space:nowrap}
+.status.ok{background:#DBEAFE;color:#1E3A8A}.status.warn{background:#FFEDD5;color:#9A3412}.status.none{background:#F4F4F5;color:#52525B}.status.crit{background:#FEE2E2;color:#991B1B}
+.pagehead{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
+.pagehead h1{margin:0;font-size:22px;font-weight:600}
+.sug{border:1px solid #E4E4E7;border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.5;background:#FFFFFF;display:flex;flex-direction:column;gap:8px}
+</style>
+</helmet>
+<div style="font-family: Inter, system-ui, sans-serif; color: #18181B; background: #F6F6F7; height: 100vh; display: flex; flex-direction: column">
+  <header style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 20px; background: #FFFFFF; border-bottom: 1px solid #E4E4E7">
+    <div style="display: flex; align-items: center; gap: 10px">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#18181B" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="5"></circle><ellipse cx="12" cy="12" rx="10" ry="3.5" transform="rotate(-20 12 12)"></ellipse></svg>
+      <span style="font-weight: 600; font-size: 15px">Studio</span>
+      <span style="color: #A1A1AA">/</span>
+      <button type="button" style="font: inherit; font-size: 14px; font-weight: 500; background: none; border: 0; padding: 4px 6px; border-radius: 6px; cursor: pointer; color: #18181B">patient-messages ▾</button>
+    </div>
+    <div style="display: flex; align-items: center; gap: 14px">
+      <button type="button" onClick="{{toggleDetails}}" aria-pressed="{{detailsPressed}}" style="font: inherit; font-size: 13px; display: flex; align-items: center; gap: 8px; background: none; border: 0; cursor: pointer; color: #18181B; padding: 4px">Details <span style="{{detTrack}}"><span style="width: 18px; height: 18px; border-radius: 9px; background: #FFFFFF; display: block"></span></span></button>
+      <button type="button" onClick="{{toggleCopilot}}" aria-pressed="{{copilotPressed}}" style="{{copilotBtn}}">✦ Builder</button>
+    </div>
+  </header>
+  <div style="flex: 1; min-height: 0; display: flex">
+    <nav class="nav" aria-label="Project" style="flex: 0 0 200px; padding: 14px 10px; display: flex; flex-direction: column; gap: 2px; border-right: 1px solid #E4E4E7; background: #FAFAFA">
+      <a href="FHome.dc.html" class=""><span>Home</span><span class="badge"></span></a>
+      <a href="FAgents.dc.html" class=""><span>Agents</span><span class="badge">5</span></a>
+      <a href="FAutomations.dc.html" class=""><span>Automations</span><span class="badge">3</span></a>
+      <a href="FRuns.dc.html" class="on"><span>Runs</span><span class="badge">1,204 this week</span></a>
+      <a href="FChecks.dc.html" class=""><span>Checks</span><span class="badge">6</span></a>
+      <a href="FTests.dc.html" class=""><span>Tests</span><span class="badge">1 running</span></a>
+      <a href="FReviews.dc.html" class=""><span>Reviews</span><span class="badge warn">6</span></a>
+      <a href="#skills" class=""><span>Skills</span><span class="badge">2</span></a>
+    </nav>
+    <main style="flex: 1; min-width: 0; min-height: 0; overflow-y: auto; padding: 24px 28px 48px; display: flex; flex-direction: column; gap: 18px">
+
+<div class="pagehead"><div><h1>Runs</h1><div class="muted">Everything your agents did, started by your automations. Checks grade a sample.</div></div>
+<span class="muted">1,204 this week · 3 errors, all retried</span></div>
+<div style="display: flex; gap: 6px; flex-wrap: wrap"><sc-for list="{{filters}}" as="f" hint-placeholder-count="4"><button type="button" onClick="{{f.pick}}" style="{{f.style}}">{{f.label}}</button></sc-for></div>
+<section class="card" style="padding: 8px 12px">
+  <div style="display: grid; grid-template-columns: 52px minmax(150px, 1.2fr) minmax(150px, 1.3fr) minmax(200px, 2fr) 60px; gap: 10px; font-size: 12px; color: #52525B; padding: 8px 6px; border-bottom: 1px solid #E4E4E7"><span>Time</span><span>Automation</span><span>Agents</span><span>Checks</span><span>Took</span></div>
+  <sc-for list="{{runs}}" as="r" hint-placeholder-count="5">
+    <button type="button" onClick="{{r.pick}}" style="{{r.style}}">
+      <span class="mono" style="text-align: left">{{r.time}}</span><span style="text-align: left">{{r.auto}}</span><span style="text-align: left">{{r.pathText}}</span>
+      <span style="text-align: left; display: flex; gap: 4px; flex-wrap: wrap"><sc-for list="{{r.chips}}" as="g" hint-placeholder-count="1"><span class="{{g.cls}}">{{g.text}}</span></sc-for></span>
+      <span class="mono" style="text-align: left">{{r.dur}}</span>
+    </button>
+  </sc-for>
+</section>
+<section class="card">
+  <div style="display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: baseline"><h2 class="h2" style="font-size: 17px">Run at {{selTime}} · {{selAuto}}</h2><span style="display: flex; gap: 8px"><a href="FReviews.dc.html" class="btn">Send to review</a><button type="button" onClick="{{addToTests}}" class="btn">{{addLabel}}</button></span></div>
+  <div style="margin-top: 12px"><div class="dlabel" style="margin-bottom: 4px">Input</div><div style="font-size: 15px">{{selInput}}</div></div>
+  <div style="margin-top: 12px; display: flex; flex-direction: column; gap: 8px">
+    <sc-for list="{{steps}}" as="st" hint-placeholder-count="2"><div style="border: 1px solid #F0F0F1; border-radius: 10px; padding: 10px 12px"><span style="font-size: 14px; font-weight: 600">{{st.agent}}</span><span style="display: block; font-size: 14px; margin-top: 2px">{{st.did}}</span></div></sc-for>
+  </div>
+  <sc-if value="{{hasOutput}}" hint-placeholder-val="{{ true }}"><div style="margin-top: 12px"><div class="dlabel" style="margin-bottom: 4px">Output</div><div style="font-size: 14px; line-height: 1.55; background: #FAFAFA; border-radius: 8px; padding: 10px 12px">{{selOutput}}</div></div></sc-if>
+</section>
+<sc-if value="{{detailsOn}}" hint-placeholder-val="{{ false }}"><div class="detail"><div class="dlabel">Trace</div><pre class="code">{{trace}}</pre></div></sc-if>
+    </main>
+    <sc-if value="{{copilotOpen}}" hint-placeholder-val="{{ true }}">
+    <aside aria-label="Builder" style="flex: 0 0 360px; min-height: 0; background: #FFFFFF; border-left: 1px solid #E4E4E7; display: flex; flex-direction: column">
+      <div style="padding: 12px 16px; border-bottom: 1px solid #F0F0F1; display: flex; justify-content: space-between; align-items: center"><span style="font-size: 14px; font-weight: 600">✦ Builder</span><span style="font-size: 12px; color: #52525B">sees: Runs › {{selTime}}</span></div>
+      <div style="flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px">
+<sc-if value="{{isWrong}}" hint-placeholder-val="{{ true }}"><div class="bubble">This run failed <strong style="font-weight: 600">Routed correctly</strong> (<span class="mono">wrong_agent</span>): a refill request that Triage sent to Clinic info. 11 runs like it this week, all Spanish inputs that name a clinic.</div><div class="sug"><strong style="font-weight: 600">Turn them into test cases?</strong>Real runs make better tests than drafted ones. I’ll add these 11 with the route they should have taken, which you’ll confirm.<div class="qopts"><sc-for list="{{addOpts}}" as="o" hint-placeholder-count="2"><button type="button" onClick="{{o.pick}}" style="{{o.style}}">{{o.label}}</button></sc-for></div></div><sc-if value="{{added}}" hint-placeholder-val="{{ false }}"><div class="bubble">Added 11 cases to a new test set, “From real runs”. I’ll ask you to confirm each expected route in Reviews.</div></sc-if></sc-if>
+<sc-if value="{{isError}}" hint-placeholder-val="{{ false }}"><div class="bubble">This run hit a rate limit. It was retried a minute later and finished; the retry is the run at 10:21. Errors aren’t graded, so they don’t lower any check.</div></sc-if>
+<sc-if value="{{isHidden}}" hint-placeholder-val="{{ false }}"><div class="bubble">“Red flags first” graded this run, but its results stay hidden until an expert has checked it.</div></sc-if>
+<sc-if value="{{isPlain}}" hint-placeholder-val="{{ false }}"><div class="bubble">You’re looking at the run at <strong style="font-weight: 600">{{selTime}}</strong>. Ask me anything about it.</div></sc-if>
+      </div>
+      <div style="padding: 12px 14px; border-top: 1px solid #E4E4E7">
+        <div style="display: flex; gap: 8px; align-items: flex-end; border: 1px solid #D4D4D8; border-radius: 12px; padding: 8px 8px 8px 12px">
+          <span style="flex: 1; font-size: 14px; color: #A1A1AA; padding: 6px 0">Ask the builder…</span>
+          <button type="button" aria-label="Send" style="width: 30px; height: 30px; border-radius: 8px; border: 0; background: #18181B; color: #FFFFFF; cursor: pointer">↑</button>
+        </div>
+      </div>
+    </aside>
+    </sc-if>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1040}}'>
+
+const chipStyle = (on) => 'font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 999px; cursor: pointer; ' + (on ? 'border: 1px solid #18181B; background: #18181B; color: #FFFFFF' : 'border: 1px solid #E4E4E7; background: #FFFFFF; color: #3F3F46');
+const toneChip = (on) => 'font: inherit; font-size: 13px; padding: 5px 10px; border-radius: 999px; cursor: pointer; ' + (on ? 'border: 1px solid #C2410C; background: #FFEDD5; color: #7C2D12; font-weight: 500' : 'border: 1px solid #E4E4E7; background: #FFFFFF; color: #3F3F46');
+const verdictBtn = (on, tone) => 'font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 8px; cursor: pointer; ' + (on ? (tone === 'yes' ? 'border: 1px solid #1D4ED8; background: #DBEAFE; color: #1E3A8A; font-weight: 600' : 'border: 1px solid #C2410C; background: #FFEDD5; color: #7C2D12; font-weight: 600') : 'border: 1px solid #E4E4E7; background: #FFFFFF; color: #18181B');
+const icon = (ok) => 'flex: none; width: 22px; height: 22px; border-radius: 11px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; ' + (ok ? 'background: #DBEAFE; color: #1E3A8A' : 'background: #FFEDD5; color: #9A3412');
+
+const optStyle = (on, primary) => 'font: inherit; font-size: 13px; padding: 7px 12px; border-radius: 999px; cursor: pointer; ' + (on ? 'border: 1px solid #1D4ED8; background: #DBEAFE; color: #1E3A8A; font-weight: 600' : primary ? 'border: 1px solid #18181B; background: #18181B; color: #FFFFFF' : 'border: 1px solid #D4D4D8; background: #FFFFFF; color: #18181B');
+
+const wilson = (k, n) => { if (!n) return [0, 0]; const z = 1.96, p = k / n, d = 1 + z * z / n, c = (p + z * z / (2 * n)) / d, h = z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d; return [Math.max(0, c - h), Math.min(1, c + h)]; };
+const choose = (n, k) => { let r = 1; for (let i = 1; i <= k; i++) r = r * (n - k + i) / i; return r; };
+const signP = (b, w) => { const n = b + w; if (!n) return 1; const k = Math.min(b, w); let t = 0; for (let i = 0; i <= k; i++) t += choose(n, i); return Math.min(1, 2 * t / Math.pow(2, n)); };
+const pick = (self, key, defs, cur) => defs.map(([k, label, primary]) => ({ label, pick: () => self.setState({ [key]: k }), style: optStyle(cur === k, primary && !cur) }));
+const RUNS = [{"id": "r1", "time": "10:42", "auto": "New portal message", "path": ["Triage", "Clinic info"], "ok": true, "grades": [["Routed correctly", "fail · wrong_agent", false]], "dur": "2.1 s", "input": "Quiero resurtir mi lisinopril, ¿lo pueden mandar a Weslaco?", "output": "La clínica de Weslaco está abierta de lunes a viernes, de 8 a 5.", "steps": [["Triage", "Sent it to Clinic info: “asks about the Weslaco location”."], ["Clinic info", "Replied with the Weslaco clinic’s hours."]]}, {"id": "r2", "time": "10:39", "auto": "New portal message", "path": ["Triage", "Refills"], "ok": true, "grades": [["Routed correctly", "pass", true], ["Refill handled", "pass", true], ["Warm tone", "pass", true]], "dur": "3.4 s", "input": "Can you send my metformin refill to the Harlingen pharmacy?", "output": "Thanks for letting us know. I’ve sent your metformin refill to the Harlingen pharmacy; it should be ready in about 2 business days.", "steps": [["Triage", "Sent it to Refills."], ["Refills", "Sent the refill request; replied with timing."]]}, {"id": "r3", "time": "10:31", "auto": "Summary on request", "path": ["Nurse handoff"], "ok": true, "grades": [["Red flags first", "hidden until trusted", null]], "dur": "1.8 s", "input": "Thread #48213 (6 messages)", "output": "Adult, 3 days of worsening cough, now short of breath on stairs. Asking for an appointment this week. Taking an inhaler twice daily.", "steps": [["Nurse handoff", "Summarized the thread for the requester; no reply sent."]]}, {"id": "r4", "time": "10:27", "auto": "New portal message", "path": ["Triage", "Nurse handoff"], "ok": true, "grades": [["Routed correctly", "pass", true]], "dur": "2.6 s", "input": "my mom fell yesterday and her hip still hurts a lot", "output": "Thanks for telling us. A nurse will reply today. If she can’t stand or the pain is severe, call 911.", "steps": [["Triage", "Sent it to Nurse handoff, marked urgent."], ["Nurse handoff", "Summarized for the queue; replied with next steps."]]}, {"id": "r5", "time": "10:20", "auto": "New portal message", "path": ["Triage"], "ok": false, "grades": [], "dur": "—", "input": "is parking free at the brownsville clinic", "output": "", "steps": [["Triage", "Error: RateLimitError 429. Retried at 10:21 and finished as run 10:21."]]}];
+const INIT = {"sel": "r1", "f": "all", "add": null, "addedOne": {}};
+function VALS(s) {
+
+  const flt = { all: () => true, failed: (r) => r.grades.some((g) => g[2] === false), errors: (r) => !r.ok, summary: (r) => r.auto === 'Summary on request' };
+  const shown = RUNS.filter(flt[s.f]);
+  const r = RUNS.find((x) => x.id === s.sel) || RUNS[0];
+  return {
+    filters: [['all', 'All runs'], ['failed', 'Failed a check'], ['errors', 'Errors'], ['summary', 'Summary on request']].map(([k, label]) => ({ label, pick: () => this.setState({ f: k }), style: chipStyle(s.f === k) })),
+    runs: shown.map((x) => ({ ...x, pathText: x.path.join(' → '), pick: () => this.setState({ sel: x.id }),
+      chips: x.ok ? (x.grades.length ? x.grades.map(([sc, label, pass]) => ({ text: sc + ': ' + label, cls: 'status ' + (pass === null ? 'none' : pass ? 'ok' : 'warn') })) : [{ text: 'not sampled', cls: 'status none' }]) : [{ text: 'error, retried', cls: 'status warn' }],
+      style: 'font: inherit; font-size: 13px; width: 100%; display: grid; grid-template-columns: 52px minmax(150px, 1.2fr) minmax(150px, 1.3fr) minmax(200px, 2fr) 60px; gap: 10px; align-items: center; padding: 10px 6px; border: 0; border-bottom: 1px solid #F0F0F1; cursor: pointer; color: #18181B; ' + (x.id === r.id ? 'background: #EFF6FF' : 'background: #FFFFFF') })),
+    selTime: r.time, selAuto: r.auto, selInput: r.input, selOutput: r.output, hasOutput: !!r.output,
+    steps: r.steps.map(([agent, did]) => ({ agent, did })),
+    trace: r.path.map((a, i) => a.toLowerCase().replace(/ /g, '_').padEnd(14) + (i < r.path.length - 1 ? 'handoff → ' + r.path[i + 1].toLowerCase().replace(/ /g, '_') : 'final output')).join('\n'),
+    isWrong: r.id === 'r1', isError: r.id === 'r5', isHidden: r.id === 'r3', isPlain: ['r2', 'r4'].includes(r.id),
+    addOpts: pick(this, 'add', [['yes', 'Add all 11', true], ['no', 'Not now', false]], s.add), added: s.add === 'yes',
+    addToTests: () => this.setState({ addedOne: { ...s.addedOne, [r.id]: true } }), addLabel: s.addedOne[r.id] ? '✓ Added to tests' : 'Add to tests'
+  };
+
+}
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = Object.assign({ details: false, copilot: true }, INIT); }
+  renderVals() {
+    const s = this.state;
+    const v = VALS.call(this, s) || {};
+    v.detailsOn = s.details;
+    v.detailsPressed = s.details ? 'true' : 'false';
+    v.toggleDetails = () => this.setState({ details: !s.details });
+    v.detTrack = 'width: 38px; height: 22px; border-radius: 11px; padding: 2px; box-sizing: border-box; display: flex; ' + (s.details ? 'background: #1D4ED8; justify-content: flex-end' : 'background: #D4D4D8; justify-content: flex-start');
+    v.copilotOpen = s.copilot;
+    v.copilotPressed = s.copilot ? 'true' : 'false';
+    v.toggleCopilot = () => this.setState({ copilot: !s.copilot });
+    v.copilotBtn = 'font: inherit; font-size: 13px; font-weight: 500; padding: 6px 12px; border-radius: 8px; cursor: pointer; ' + (s.copilot ? 'border: 1px solid #18181B; background: #18181B; color: #FFFFFF' : 'border: 1px solid #D4D4D8; background: #FFFFFF; color: #18181B');
+    return v;
+  }
+}
+</script>
+</body>
+</html>

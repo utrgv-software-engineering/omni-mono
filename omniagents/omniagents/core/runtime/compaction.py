@@ -548,6 +548,18 @@ async def run_checkpoint_compaction(
     recorder = _conversation_recorder(session)
     session.append_message(summary_item)
     _record_checkpoint_item(session, recorder, summary_item)
+    memory_config = getattr(session, "_memory_config", None)
+    if memory_config and "compaction" in (memory_config.get("extraction") or {}).get(
+        "triggers", []
+    ):
+        from omniagents.core.memory.extract import schedule
+
+        schedule(
+            memory_config,
+            window,
+            {"session_id": getattr(session, "id", None)},
+            "compaction",
+        )
     return summary_item
 
 

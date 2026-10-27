@@ -19,11 +19,16 @@ Partial loads defeat the discipline.
 from __future__ import annotations
 
 import asyncio
+import posixpath
 from pathlib import Path
 from typing import Any
 
 from agents.run_context import RunContextWrapper
-from omniagents.core.skills import skill_roots
+from omniagents.core.skills import (
+    provide_skill_dirs,
+    skill_dir_location,
+    skill_roots,
+)
 from omniagents.core.tools import RichToolOutput, rich_function_tool
 from omniagents.execution import current_request_context
 from omniagents.workspace.types import WorkspaceError
@@ -53,8 +58,8 @@ async def _read_candidate(path: Path) -> tuple[str, str] | None:
     Paths inside the routed environment root must go through its Workspace
     adapter. This is what makes ``/workspace`` mean a container path for a
     devbox Run instead of accidentally probing the AgentHost filesystem.
-    Product-global/configured roots outside that root intentionally remain
-    control-plane files.
+    Product-global/configured roots outside that root are read on the
+    AgentHost; a sandbox Run gets a read-only copy of the skill's folder.
     """
     context = current_request_context()
     lease = context.environment_lease if context is not None else None
@@ -76,7 +81,11 @@ async def _read_candidate(path: Path) -> tuple[str, str] | None:
         )
     except (OSError, ValueError):
         return None
-    return text, str(path)
+    # A sandbox Run works on a read-only copy of the folder in its
+    # container; the agent is pointed there, so the files the skill names
+    # resolve where its tools work.
+    await provide_skill_dirs([path.parent])
+    return text, posixpath.join(skill_dir_location(path.parent), path.name)
 
 
 @rich_function_tool(running_summary="Loading skill...")

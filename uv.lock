@@ -21,6 +21,7 @@ members = [
     "omni-code",
     "omniagents",
     "omniagents-studio",
+    "omniagents-workplace",
 ]
 
 [[package]]
@@ -4328,6 +4329,7 @@ dependencies = [
 all = [
     { name = "bashkit" },
     { name = "fastapi", extra = ["all"] },
+    { name = "httpx" },
     { name = "markitdown", extra = ["all", "docx", "pdf"] },
     { name = "openai-agents", extra = ["blaxel", "cloudflare", "daytona", "docker", "e2b", "encrypt", "litellm", "modal", "mongodb", "redis", "runloop", "sqlalchemy", "vercel", "voice"] },
     { name = "presidio-analyzer" },
@@ -4337,6 +4339,7 @@ all = [
     { name = "pyjwt", extra = ["crypto"] },
     { name = "pywinpty", marker = "sys_platform == 'win32'" },
     { name = "uvicorn" },
+    { name = "websockets" },
 ]
 dev = [
     { name = "black" },
@@ -4401,8 +4404,10 @@ sandbox-vercel = [
 ]
 server = [
     { name = "fastapi", extra = ["all"] },
+    { name = "httpx" },
     { name = "pywinpty", marker = "sys_platform == 'win32'" },
     { name = "uvicorn" },
+    { name = "websockets" },
 ]
 session-encrypted = [
     { name = "openai-agents", extra = ["encrypt"] },
@@ -4476,6 +4481,7 @@ requires-dist = [
     { name = "fastapi", extras = ["all"], marker = "extra == 'server'", specifier = ">=0.115.12" },
     { name = "fastapi", extras = ["all"], marker = "extra == 'web'", specifier = ">=0.115.12" },
     { name = "filelock", specifier = ">=3.12" },
+    { name = "httpx", marker = "extra == 'server'", specifier = ">=0.27" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.142.4" },
     { name = "jinja2" },
     { name = "jmespath", marker = "extra == 'training'", specifier = ">=1.0" },
@@ -4531,6 +4537,7 @@ requires-dist = [
     { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.34.1" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.34.1" },
     { name = "vcrpy", marker = "extra == 'dev'", specifier = ">=5.1.0" },
+    { name = "websockets", marker = "extra == 'server'", specifier = ">=13" },
 ]
 provides-extras = ["voice", "litellm", "server", "web", "docs", "markdown", "oidc", "sqlcipher", "session-sqlalchemy", "session-redis", "session-mongodb", "session-encrypted", "session-postgres", "sandbox-docker", "sandbox-e2b", "sandbox-modal", "sandbox-runloop", "sandbox-daytona", "sandbox-blaxel", "sandbox-vercel", "sandbox-cloudflare", "sandbox-bashkit", "presidio", "all", "training", "dev"]
 
@@ -4587,6 +4594,49 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "pytest-timeout" },
     { name = "pytest-xdist" },
+]
+
+[[package]]
+name = "omniagents-workplace"
+version = "0.1.0"
+source = { editable = "omniagents-workplace" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "fastapi", extra = ["all"] },
+    { name = "httpx" },
+    { name = "mcp" },
+    { name = "pyyaml" },
+    { name = "uvicorn" },
+    { name = "websockets" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "black" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-timeout" },
+    { name = "websockets" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cryptography", specifier = ">=42" },
+    { name = "fastapi", extras = ["all"], specifier = ">=0.115.12" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "mcp", specifier = ">=1.30,<2" },
+    { name = "pyyaml" },
+    { name = "uvicorn", specifier = ">=0.34.1" },
+    { name = "websockets", specifier = ">=13" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "black", specifier = "==26.5.1" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-timeout" },
+    { name = "websockets", specifier = ">=13" },
 ]
 
 [[package]]

@@ -190,6 +190,16 @@ def _parse_mcp_servers_config(
             )
             options = None
 
+        # ${VAR} / ${VAR:-default} in params and options, so one definition
+        # points at different endpoints and credentials per deployment.
+        try:
+            params = _substitute_env_vars(params)
+            if options is not None:
+                options = _substitute_env_vars(options)
+        except ValueError as exc:
+            _report(f"MCP server '{name}' in {config_path}: {exc}. Skipping.")
+            continue
+
         servers.append(
             MCPServerConfig(
                 name=name,
@@ -201,6 +211,28 @@ def _parse_mcp_servers_config(
         seen_names.add(name)
 
     return servers
+
+
+_SUBSTITUTIONS: "ContextVar[Dict[str, str]]" = ContextVar(
+    "omniagents_substitutions", default={}
+)
+
+
+@contextmanager
+def substitution_environment(values: Dict[str, str]):
+    """Variables ``${VAR}`` resolves to, ahead of the process environment,
+    for what is loaded in this context (this task and the ones it starts).
+
+    An evaluation scenario points its agents at its own services this way,
+    beside scenarios running at the same time.
+    """
+    token = _SUBSTITUTIONS.set(
+        {**_SUBSTITUTIONS.get(), **{k: str(v) for k, v in values.items()}}
+    )
+    try:
+        yield
+    finally:
+        _SUBSTITUTIONS.reset(token)
 
 
 def _substitute_env_vars(value: Any) -> Any:
@@ -222,7 +254,10 @@ def _substitute_env_vars(value: Any) -> Any:
             operator = match.group(2)
             default_or_error = match.group(3) or ""
 
-            env_value = os.getenv(var_name)
+            overlay = _SUBSTITUTIONS.get()
+            env_value = (
+                overlay[var_name] if var_name in overlay else os.getenv(var_name)
+            )
 
             if env_value is not None:
                 return env_value
@@ -316,11 +351,203 @@ def _instruction_search_paths(
         anchor_dir = (base_dir / str(instructions_file_relative)).resolve().parent
 
     extra_dirs: List[Path] = []
+    # An agent that extends a base renders the base's instructions with its
+    # own role in them: includes resolve from both agents' folders (and their
+    # `_shared/` conventions), role first.
+    for d in config.get("_extends_dirs") or []:
+        extra_dirs.extend([Path(d), Path(d) / "_shared", Path(d).parent / "_shared"])
     if project_defaults:
         for d in project_defaults.get("instruction_fragments") or []:
             extra_dirs.append(Path(d))
 
     return instruction_search_paths(anchor_dir, extra_dirs)
+
+
+_ROLE_SLOT = re.compile(r"\{\{\s*role\s*\}\}")
+
+
+def _find_project_file(start: Path) -> Optional[Path]:
+    """The nearest ``project.yml`` at or above ``start``, or ``None``."""
+    current = start
+    while True:
+        candidate = current / "project.yml"
+        if candidate.is_file():
+            return candidate
+        if current == current.parent:
+            return None
+        current = current.parent
+
+
+def _project_root(
+    config_file: Path, project_defaults: Optional[Dict[str, Any]]
+) -> Optional[Path]:
+    root = (project_defaults or {}).get("project_root")
+    if root:
+        return Path(root)
+    found = _find_project_file(config_file.parent)
+    return found.parent if found else None
+
+
+def _project_context_dirs(
+    config_file: Path, project_defaults: Optional[Dict[str, Any]]
+) -> List[Path]:
+    """``paths.context`` folders, from the project loader or the nearest project.yml."""
+    if project_defaults and "context_dirs" in project_defaults:
+        return [Path(d) for d in project_defaults.get("context_dirs") or []]
+    found = _find_project_file(config_file.parent)
+    if found is None:
+        return []
+    try:
+        data = yaml.safe_load(found.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return []
+    paths_cfg = data.get("paths") if isinstance(data, dict) else None
+    raw = paths_cfg.get("context") if isinstance(paths_cfg, dict) else None
+    entries = raw if isinstance(raw, list) else ([raw] if raw else [])
+    return [(found.parent / str(e)).resolve() for e in entries]
+
+
+def _project_skill_dirs(
+    config_file: Path, project_defaults: Optional[Dict[str, Any]]
+) -> List[Path]:
+    """``paths.skills`` folders (default ``skills/``), from the project loader or project.yml."""
+    if project_defaults and "skills_dirs" in project_defaults:
+        return [Path(d) for d in project_defaults.get("skills_dirs") or []]
+    found = _find_project_file(config_file.parent)
+    if found is None:
+        return []
+    try:
+        data = yaml.safe_load(found.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return []
+    paths_cfg = data.get("paths") if isinstance(data, dict) else None
+    raw = paths_cfg.get("skills", "skills") if isinstance(paths_cfg, dict) else "skills"
+    entries = raw if isinstance(raw, list) else ([raw] if raw else [])
+    return [(found.parent / str(e)).resolve() for e in entries]
+
+
+def _agent_skill_roots(
+    config: Dict[str, Any],
+    config_file: Path,
+    project_defaults: Optional[Dict[str, Any]],
+) -> List[str]:
+    """The skill folders an agent definition brings: its own, its bases', the project's."""
+    candidates: List[Path] = [config_file.parent / "skills"]
+    candidates.extend(Path(d) / "skills" for d in config.get("_extends_dirs") or [])
+    candidates.extend(_project_skill_dirs(config_file, project_defaults))
+    out: List[str] = []
+    for c in candidates:
+        resolved = str(c.resolve())
+        if c.is_dir() and resolved not in out:
+            out.append(resolved)
+    return out
+
+
+def _instructions_text(config: Dict[str, Any], base_dir: Path, source: Path) -> str:
+    """An agent definition's own instructions, read now (for ``extends:`` merging)."""
+    if config.get("instructions"):
+        return str(config["instructions"])
+    rel = config.get("instructions_file")
+    if not rel:
+        return ""
+    path = (base_dir / str(rel)).resolve()
+    if not path.is_file():
+        raise ValueError(f"{source}: instructions file not found: {path}")
+    return path.read_text(encoding="utf-8")
+
+
+def _apply_extends(
+    config: Dict[str, Any],
+    config_file: Path,
+    project_defaults: Optional[Dict[str, Any]],
+    loading_stack: Set[Path],
+) -> Dict[str, Any]:
+    """Merge the agent definition ``config`` names with ``extends:`` into it.
+
+    ``extends: <folder>`` names a folder, relative to the project root,
+    holding an ``agent.yml``. The extending agent's own keys override the
+    base's; its ``capabilities`` add to the base's list; and its
+    instructions are rendered into the base instructions' ``{{ role }}``
+    slot (appended when the base has no slot). The base may extend another
+    definition in turn. The folders whose instructions were combined are
+    recorded under ``_extends_dirs`` so includes and context factories
+    resolve from them too.
+    """
+    target = config.get("extends")
+    if not target:
+        return config
+    if not isinstance(target, str) or not target.strip():
+        raise ValueError(
+            f"{config_file}: 'extends' must name a folder holding an agent.yml"
+        )
+    root = _project_root(config_file, project_defaults) or config_file.parent
+    base_file = (root / target.strip() / "agent.yml").resolve()
+    if not base_file.is_file():
+        raise ValueError(
+            f"{config_file}: 'extends: {target}' has no agent.yml at {base_file} "
+            "(the folder is relative to the project root)"
+        )
+    if base_file in loading_stack:
+        raise ValueError(
+            f"Circular 'extends' detected: {base_file} is already being loaded"
+        )
+    try:
+        base = yaml.safe_load(base_file.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as e:
+        raise ValueError(f"Error parsing YAML file {base_file}: {e}")
+    if not isinstance(base, dict):
+        raise ValueError(f"Invalid YAML format in {base_file}. Expected a dictionary.")
+    base = _apply_extends(
+        base, base_file, project_defaults, loading_stack | {base_file}
+    )
+
+    base_dir = base_file.parent
+    base_instructions = _instructions_text(base, base_dir, base_file)
+    role_instructions = _instructions_text(config, config_file.parent, config_file)
+
+    merged: Dict[str, Any] = {
+        k: v for k, v in base.items() if k not in ("instructions", "instructions_file")
+    }
+    for key, value in config.items():
+        if key in ("extends", "instructions", "instructions_file"):
+            continue
+        if key == "capabilities":
+
+            def _cap_name(entry: Any) -> Any:
+                return entry.get("name") if isinstance(entry, dict) else entry
+
+            combined = list(base.get("capabilities") or [])
+            names = {_cap_name(c) for c in combined}
+            combined.extend(c for c in (value or []) if _cap_name(c) not in names)
+            merged["capabilities"] = combined
+        else:
+            merged[key] = value
+
+    if _ROLE_SLOT.search(base_instructions):
+        merged["instructions"] = _ROLE_SLOT.sub(
+            lambda _m: role_instructions, base_instructions
+        )
+    elif role_instructions:
+        merged["instructions"] = base_instructions.rstrip() + "\n\n" + role_instructions
+    elif base_instructions:
+        merged["instructions"] = base_instructions
+
+    dirs: List[str] = []
+    if config.get("instructions_file"):
+        dirs.append(
+            str(
+                (config_file.parent / str(config["instructions_file"])).resolve().parent
+            )
+        )
+    dirs.append(str(config_file.parent))
+    base_rel = base.get("instructions_file")
+    dirs.append(
+        str((base_dir / str(base_rel)).resolve().parent) if base_rel else str(base_dir)
+    )
+    dirs.append(str(base_dir))
+    dirs.extend(base.get("_extends_dirs") or [])
+    merged["_extends_dirs"] = list(dict.fromkeys(dirs))
+    return merged
 
 
 def _parse_inline_agent_spec(
@@ -589,6 +816,9 @@ def load_agent_spec_from_yaml(
         raise ValueError(
             f"Invalid YAML format in {config_file.resolve()}. Expected a dictionary (key-value pairs)."
         )
+
+    # --- extends: build on another agent definition ---
+    config = _apply_extends(config, config_file, project_defaults, _loading_stack)
 
     # --- Remote Agent preliminary ---
     remote_ws_url: str | None = None
@@ -884,7 +1114,7 @@ def load_agent_spec_from_yaml(
         )
         voice_backend = "realtime"
     voice_backend = voice_backend.strip().lower() or "realtime"
-    if voice_backend not in {"realtime", "pipeline"}:
+    if voice_backend not in {"realtime", "pipeline", "codex-live"}:
         _report(f"Invalid voice_backend '{voice_backend}'. Using 'realtime'.")
         voice_backend = "realtime"
 
@@ -1428,22 +1658,22 @@ def load_agent_spec_from_yaml(
                 # to the same yaml_path the `yaml:` branch produces, so downstream
                 # HandoffConfig handling is unchanged.
                 if "agent" in handoff_item:
-                    agent_name = handoff_item.get("agent")
-                    if not isinstance(agent_name, str) or not agent_name.strip():
+                    handoff_agent = handoff_item.get("agent")
+                    if not isinstance(handoff_agent, str) or not handoff_agent.strip():
                         _report(
                             f"handoff 'agent' value must be a non-empty string in {config_path}. Skipping."
                         )
                         continue
                     if agents_map is None:
                         _report(
-                            f"handoff entry uses 'agent: {agent_name}' but no project agent registry is available "
+                            f"handoff entry uses 'agent: {handoff_agent}' but no project agent registry is available "
                             f"(loader was called without agents_map). Skipping. Use 'yaml:' or load via project."
                         )
                         continue
-                    handoff_yaml_path = agents_map.get(agent_name)
+                    handoff_yaml_path = agents_map.get(handoff_agent)
                     if handoff_yaml_path is None:
                         _report(
-                            f"handoff 'agent: {agent_name}' not found in project. "
+                            f"handoff 'agent: {handoff_agent}' not found in project. "
                             f"Available: {sorted(agents_map.keys())}. Skipping."
                         )
                         continue
@@ -1569,22 +1799,22 @@ def load_agent_spec_from_yaml(
             # to the same yaml_path the `yaml:` branch produces, so downstream
             # AgentToolConfig handling is unchanged.
             if "agent" in at_item:
-                agent_name = at_item.get("agent")
-                if not isinstance(agent_name, str) or not agent_name.strip():
+                tool_agent = at_item.get("agent")
+                if not isinstance(tool_agent, str) or not tool_agent.strip():
                     _report(
                         f"agent_tool 'agent' value must be a non-empty string in {config_path}. Skipping."
                     )
                     continue
                 if agents_map is None:
                     _report(
-                        f"agent_tool entry uses 'agent: {agent_name}' but no project agent registry is available "
+                        f"agent_tool entry uses 'agent: {tool_agent}' but no project agent registry is available "
                         f"(loader was called without agents_map). Skipping. Use 'yaml:' or load via project."
                     )
                     continue
-                resolved_yp = agents_map.get(agent_name)
+                resolved_yp = agents_map.get(tool_agent)
                 if resolved_yp is None:
                     _report(
-                        f"agent_tool 'agent: {agent_name}' not found in project. "
+                        f"agent_tool 'agent: {tool_agent}' not found in project. "
                         f"Available: {sorted(agents_map.keys())}. Skipping."
                     )
                     continue
@@ -1919,18 +2149,30 @@ def load_agent_spec_from_yaml(
     variables_config = config.get("variables")
     context_factory_name = config.get("context")
 
-    # Discover context factories from agent directory (decorated with @context_factory)
+    # Context factories (decorated with @context_factory) are discovered in
+    # the agent's own folder, then the folders of any definition it extends,
+    # then the project's `paths.context` folders. First match wins.
     build_context_func: Optional[Callable] = None
     if context_factory_name:
-        context_factories = discover_context_factories(base_dir)
-        if context_factory_name in context_factories:
-            build_context_func = context_factories[context_factory_name]
-            Debug.log(f"Using context factory: {context_factory_name}")
-        else:
-            available = list(context_factories.keys()) if context_factories else []
+        searched: List[Path] = [base_dir]
+        for d in config.get("_extends_dirs") or []:
+            searched.append(Path(d))
+        searched.extend(_project_context_dirs(config_file, project_defaults))
+        searched = list(dict.fromkeys(searched))
+        available: List[str] = []
+        for search_dir in searched:
+            context_factories = discover_context_factories(search_dir)
+            if context_factory_name in context_factories:
+                build_context_func = context_factories[context_factory_name]
+                Debug.log(
+                    f"Using context factory: {context_factory_name} from {search_dir}"
+                )
+                break
+            available.extend(context_factories.keys())
+        if build_context_func is None:
             _report(
-                f"Context factory '{context_factory_name}' not found in {base_dir}. "
-                f"Available: {available}"
+                f"Context factory '{context_factory_name}' not found in "
+                f"{', '.join(str(d) for d in searched)}. Available: {sorted(set(available))}"
             )
 
     # --- Model Config Resolver Discovery ---
@@ -2186,6 +2428,15 @@ def load_agent_spec_from_yaml(
             sandbox_run_config_obj = None
             sandbox_capabilities_list = None
 
+    from omniagents.core.memory.client import configuration as memory_configuration
+
+    memory_config = memory_configuration(
+        config.get("memory", (project_defaults or {}).get("memory"))
+    )
+
+    if memory_config is not None:
+        memory_config["agent"] = agent_name
+
     # --- Construct AgentSpec ---
     spec = AgentSpec(
         # Basic Info
@@ -2193,6 +2444,7 @@ def load_agent_spec_from_yaml(
         welcome_text=welcome_text,
         # Agent Config
         get_agent_instructions=get_instructions_func,
+        memory_config=memory_config,
         build_agent=build_agent_func,  # Defer to internal builder
         available_tools=selected_tool_functions if not remote_ws_url else [],
         model_name=model_name_from_config if not remote_ws_url else None,
@@ -2205,6 +2457,7 @@ def load_agent_spec_from_yaml(
         realtime_mode=realtime_mode,
         realtime_settings=realtime_settings,
         voice_backend=voice_backend,
+        voice_instructions=config.get("voice_instructions"),
         mcp_config=mcp_config_from_yaml if mcp_config_from_yaml else None,
         mcp_servers=mcp_servers,
         output_type=output_type,
@@ -2263,6 +2516,8 @@ def load_agent_spec_from_yaml(
         # Storage Metadata
         project_slug=None,
         agent_slug=agent_slug,
+        # Skill folders the agent definition brings (own, bases', project's)
+        skill_roots=_agent_skill_roots(config, config_file, project_defaults),
         # Include search paths for {% include %} fragments in instructions
         instructions_search_paths=_instruction_search_paths(
             config, base_dir, project_defaults
@@ -2297,7 +2552,10 @@ def load_agent_spec_from_yaml(
     if project_defaults and isinstance(project_defaults.get("security"), dict):
         spec.security_config = project_defaults["security"]
 
-    # Store registries in spec for passing to handoff agents
+    # Store registries in spec for passing to handoff agents, and the
+    # project's defaults (fragment and context directories, the root that
+    # `extends:` resolves against), so they load as project agents too.
+    spec._project_defaults = project_defaults
     spec._tool_registry = tool_registry
     spec._guardrails_registry = guardrails_registry
     spec._server_functions_registry = server_functions_registry

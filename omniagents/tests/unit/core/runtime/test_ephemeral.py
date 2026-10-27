@@ -160,3 +160,31 @@ async def test_run_agent_once_explicit_workspace_root_wins(monkeypatch):
         workspace_root="/explicit",
     )
     assert captured["context"]["workspace_root"] == "/explicit"
+
+
+@pytest.mark.asyncio
+async def test_a_run_for_a_session_is_traced_in_its_group(monkeypatch):
+    """The guardian reviews an approval outside its run's trace: its own trace joins
+    the session's group, so it is found with the run."""
+    captured = {}
+
+    async def fake_build(*, settings, mcp_servers, spec, session):
+        return "A"
+
+    def fake_run_streamed(agent, prompt, *, context, max_turns, run_config):
+        captured["run_config"] = run_config
+        return _FakeStream("ok")
+
+    import omniagents.core.agents.builder as builder_mod
+    import agents as agents_mod
+
+    monkeypatch.setattr(builder_mod, "_default_build_agent", fake_build)
+    monkeypatch.setattr(
+        agents_mod.Runner, "run_streamed", staticmethod(fake_run_streamed)
+    )
+    session = SimpleNamespace(id="S1", context={"workspace_root": "/w"})
+    await run_agent_once(
+        SimpleNamespace(model_name="m", name="guardian"), "p", session=session
+    )
+    assert captured["run_config"].group_id == "session_S1"
+    assert captured["run_config"].workflow_name == "guardian"

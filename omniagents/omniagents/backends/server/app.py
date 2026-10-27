@@ -415,6 +415,7 @@ def build_app(
     agent_host_control_token: str | None = None,
     default_host_workspace_root: str | None = None,
     default_environment: "ExecutionEnvironmentDescriptor | None" = None,
+    integrations: bool = True,
 ) -> FastAPI:  # noqa: D401
     """Return a fully configured FastAPI app exposing the agent via RPC.
 
@@ -438,6 +439,9 @@ def build_app(
             ``agent_host_resources`` (``register_initial``), installed as the
             default Thread binding in place of a host one — e.g. a sandbox
             session opened before the server starts.
+        integrations: Mount the project's integrations (its event sources
+            and automations). Off for a runtime another server mounts to
+            read its agents' sessions: one server receives the events.
 
     A default environment is data, not a code path: every Thread first seen
     by this AgentHost is bound to it — the same binding a targetless host's
@@ -600,7 +604,7 @@ def build_app(
     realtime_spec = getattr(spec, "voice_spec", None)
     spec_voice_backend = getattr(spec, "voice_backend", "realtime")
     if realtime_spec is None and (
-        spec.realtime_mode or spec_voice_backend == "pipeline"
+        spec.realtime_mode or spec_voice_backend in {"pipeline", "codex-live"}
     ):
         realtime_spec = spec
 
@@ -648,7 +652,13 @@ def build_app(
         settings_resolver = getattr(realtime_spec, "resolve_realtime_settings", None)
         voice_backend = getattr(realtime_spec, "voice_backend", "realtime")
         realtime_service: Any
-        if voice_backend == "pipeline":
+        if voice_backend == "codex-live":
+            from omniagents.rpc.codex_live_service import CodexLiveService
+
+            realtime_service = CodexLiveService(
+                realtime_spec, realtime_settings, agent_service=service
+            )
+        elif voice_backend == "pipeline":
             from omniagents.rpc.voice_pipeline_service import VoicePipelineService
 
             realtime_service = VoicePipelineService(
@@ -675,7 +685,20 @@ def build_app(
             service.realtime_service = realtime_service  # type: ignore[attr-defined]
         except Exception:
             pass
-        realtime_endpoint = JsonRpcEndpoint(realtime_service)
+        realtime_endpoint = JsonRpcEndpoint(
+            realtime_service,
+            allowed_methods=(
+                {
+                    "capabilities",
+                    "start_session",
+                    "stop_session",
+                    "delegate",
+                    "sync_context",
+                }
+                if voice_backend == "codex-live"
+                else None
+            ),
+        )
         realtime_endpoint.register_route(app, "/ws/realtime", dependencies=[auth_dep])
     else:
         # Realtime is off: say so with a close code. Closing before accepting
@@ -814,4 +837,11 @@ def build_app(
     app.add_api_websocket_route(
         "/ws/terminal", _terminal_route, dependencies=[auth_dep]
     )
+
+    # Events from the project's integrations (Slack...) start its automations
+    # (not in a runtime another server mounts to read its agents' sessions).
+    if integrations:
+        from omniagents.integrations.server import mount_integrations
+
+        mount_integrations(app, spec, agent_host_resources, auth_token=auth_token)
     return app

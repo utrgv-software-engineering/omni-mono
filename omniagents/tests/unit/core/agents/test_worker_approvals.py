@@ -1,6 +1,5 @@
-"""Worker review and escalation use real service approval/ownership paths."""
+"""Worker review uses real service approval/ownership paths."""
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -64,8 +63,10 @@ async def test_worker_guardian_even_with_manual_parent_or_offline_container(cont
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["tool", "mcp"])
-@pytest.mark.parametrize("decision", ["allow", "deny", "unsure", "auto", "cancel"])
-async def test_worker_decisions_and_human_fallback(monkeypatch, kind, decision):
+@pytest.mark.parametrize("decision", ["allow", "deny", "failed", "auto"])
+async def test_worker_decisions_never_reach_a_person(monkeypatch, kind, decision):
+    """A worker's approvals are decided by its policy or the guardian, which
+    fails closed: nothing is passed up to the parent's person."""
     parent, worker = make_service(), make_service()
     parent_session = session_for(parent, "parent")
     session = session_for(worker, "worker")
@@ -74,17 +75,21 @@ async def test_worker_decisions_and_human_fallback(monkeypatch, kind, decision):
     worker._worker_approval_context = WorkerApprovalContext(
         parent, parent_session.id, "reviewer", decision == "auto"
     )
-    assessment = (
-        None
-        if decision in {"unsure", "cancel"}
-        else guardian.GuardianAssessment(
-            outcome=decision if decision != "auto" else "allow",
+    if decision == "failed":
+        result_decision = guardian.GuardianDecision(status="failed", message="failed")
+    else:
+        assessment = guardian.GuardianAssessment(
+            outcome="allow" if decision in {"allow", "auto"} else "deny",
             risk_level="low",
-            user_authorization="explicit",
+            user_authorization="high",
             rationale="test decision",
         )
-    )
-    review = AsyncMock(return_value=assessment)
+        result_decision = guardian.GuardianDecision(
+            status="approved" if assessment.allowed else "denied",
+            message=None if assessment.allowed else "denied",
+            assessment=assessment,
+        )
+    review = AsyncMock(return_value=result_decision)
     monkeypatch.setattr(guardian, "review_approval", review)
     kwargs = dict(
         session=session,
@@ -93,62 +98,16 @@ async def test_worker_decisions_and_human_fallback(monkeypatch, kind, decision):
         run_id="worker-run",
     )
     if kind == "tool":
-        request = worker.request_tool_approval(call_id="provider-id", **kwargs)
+        result = await worker.request_tool_approval(call_id="provider-id", **kwargs)
     else:
-        request = worker.request_mcp_approval(
+        result = await worker.request_mcp_approval(
             request_id="provider-id", server_label="projects", **kwargs
         )
-    task = asyncio.create_task(request)
-    try:
-        async with asyncio.timeout(3):
-            if decision in {"unsure", "cancel"}:
-                while not parent_events:
-                    await asyncio.sleep(0)
-                method, payload = parent_events[0]
-                assert method == f"{kind}_approval_requested"
-                assert payload["session_id"] == "parent"
-                assert payload["worker_session_id"] == "worker"
-                assert payload["worker_id"] == "reviewer"
-                assert not task.done()
-                parent._clear_live_state(parent_session)
-                replay = getattr(parent_session, f"pending_{kind}_approvals")
-                assert replay  # parent's run ending must not erase worker prompts
-                if decision == "cancel":
-                    task.cancel()
-                    with pytest.raises(asyncio.CancelledError):
-                        await task
-                    assert not replay
-                    assert not getattr(parent, f"_pending_{kind}_approvals")
-                    return
-                token = payload["call_id" if kind == "tool" else "request_id"]
-                owner, _, _ = parent._resolve_rpc_resource_owner(
-                    (
-                        "tool_approval_response"
-                        if kind == "tool"
-                        else "mcp_approval_response"
-                    ),
-                    {"call_id" if kind == "tool" else "request_id": token},
-                )
-                assert owner == parent_session.user_id
-                if kind == "tool":
-                    assert await parent.tool_approval_response(
-                        token, "reject", rejection_message="No"
-                    )
-                else:
-                    assert await parent.mcp_approval_response(
-                        token, "reject", rejection_message="No"
-                    )
-            result = await task
-        assert result["decision"] == (
-            "approve" if decision in {"allow", "auto"} else "reject"
-        )
-        assert review.await_count == (0 if decision == "auto" else 1)
-        if decision in {"allow", "deny", "auto"}:
-            assert not parent_events
-    finally:
-        if not task.done():
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+    assert result["decision"] == (
+        "approve" if decision in {"allow", "auto"} else "reject"
+    )
+    assert review.await_count == (0 if decision == "auto" else 1)
+    assert not parent_events
 
 
 def test_worker_uses_parent_guardian_model_configuration():

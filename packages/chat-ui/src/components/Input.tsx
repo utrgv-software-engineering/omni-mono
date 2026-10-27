@@ -65,6 +65,9 @@ export function Input({
   onVoiceToggleMute,
   voiceMuted,
   voiceLive,
+  voiceCaptions,
+  onVoiceCaptionsChange,
+  voiceCaptionsAvailable,
 }: {
   conversationId?: string;
   disabled?: boolean;
@@ -80,7 +83,7 @@ export function Input({
    *  chip row is the one home for column-context controls, pre- and
    *  post-launch, so callers pass the same node to ChatShell and the app. */
   composerExtras?: React.ReactNode;
-  /** Start a hosted realtime voice session (the host renders the VoiceDock). */
+  /** Start a hosted realtime voice session. */
   onVoiceStart?: () => void;
   /** Ends the live hosted-voice session (the primary button while it runs). */
   onVoiceEnd?: () => void;
@@ -88,8 +91,11 @@ export function Input({
   onVoiceToggleMute?: () => void;
   /** Live session's mic state, for the mute button's icon. */
   voiceMuted?: boolean;
-  /** True while a voice session is active — the dock owns the controls, so the mic button hides. */
+  /** True while a voice session is active; the composer shows mute and end-call controls. */
   voiceLive?: boolean;
+  voiceCaptions?: boolean;
+  onVoiceCaptionsChange?: (enabled: boolean) => void;
+  voiceCaptionsAvailable?: boolean;
 }) {
   const localId = useId();
   const draftId = conversationId ?? localId;
@@ -377,6 +383,11 @@ export function Input({
             </div>
 
             <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+              {(voiceEnabled || voiceLive || voiceCaptionsAvailable) && onVoiceCaptionsChange && (
+                <Toggle size="sm" pressed={!!voiceCaptions} onPressedChange={onVoiceCaptionsChange}
+                  aria-label="Voice captions" title={voiceCaptions ? 'Hide voice captions' : 'Show voice captions'}
+                  className="rounded-2xl text-xs font-medium">CC</Toggle>
+              )}
               {localVoiceSupported && LocalVoiceButton ? (
                 <>
                   <Toggle

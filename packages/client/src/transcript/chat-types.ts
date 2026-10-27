@@ -42,6 +42,8 @@ export type CanonicalItemEnvelope = {
 };
 
 export type ChatMessage = {
+  /** Spoken transcript for the captions display preference, not task output. */
+  voice_caption?: boolean;
   type: 'chat';
   role: 'user' | 'assistant' | 'system';
   content: string;

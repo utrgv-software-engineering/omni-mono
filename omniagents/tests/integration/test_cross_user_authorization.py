@@ -560,9 +560,9 @@ def test_owner_lookup_failure_denies_instead_of_failing_open(
     import omniagents.core.session.manager as mgr_mod
 
     original_hdb = hdb.get_session_user_id
-    original_mgr = mgr_mod.get_session_user_id
+    original_mgr = mgr_mod.get_session_owner
     hdb.get_session_user_id = boom
-    mgr_mod.get_session_user_id = boom
+    mgr_mod.get_session_owner = boom
 
     bob_cm, bob = _connect(authz_context, BOB)
     try:
@@ -580,7 +580,7 @@ def test_owner_lookup_failure_denies_instead_of_failing_open(
         alice2_cm.__exit__(None, None, None)
 
     hdb.get_session_user_id = original_hdb
-    mgr_mod.get_session_user_id = original_mgr
+    mgr_mod.get_session_owner = original_mgr
 
     # Ownership was never transferred by the denied reads.
     assert hdb.get_session_user_id(session_id) == "alice"
@@ -742,9 +742,22 @@ def test_documented_backfill_assigns_legacy_sessions(authz_context):
     )
     from omniagents.core.session.history_db import get_session_user_id, register_session
 
+    from omniagents.core.conversation.recorder import ConversationRecorder
+    from omniagents.core.conversation.store import get_conversation_store
+
     register_session("legacy-a")
     register_session("legacy-b")
     assert set(find_unowned_sessions()) >= {"legacy-a", "legacy-b"}
+    # An agent tool's child thread under legacy-a: no session row, no owner.
+    convo = get_conversation_store()
+    recorder = ConversationRecorder(convo)
+    recorder.ensure_thread("legacy-a", project_legacy_history=False)
+    recorder.ensure_thread(
+        "sub_legacy", source="agent_tool", project_legacy_history=False
+    )
+    convo.mutate_thread(
+        "sub_legacy", lambda t: setattr(t, "parent_thread_id", "legacy-a")
+    )
 
     planned = backfill_session_owners("alice", dry_run=True)
     assert set(planned) >= {"legacy-a", "legacy-b"}
@@ -753,6 +766,8 @@ def test_documented_backfill_assigns_legacy_sessions(authz_context):
     backfill_session_owners("alice")
     assert get_session_user_id("legacy-a") == "alice"
     assert get_session_user_id("legacy-b") == "alice"
+    assert convo.get_thread("sub_legacy").user_id == "alice"  # with its session
+    assert convo.get_thread("legacy-a").user_id == "alice"  # and its own thread
 
     alice_cm, alice = _connect(authz_context, ALICE)
     try:
@@ -878,3 +893,87 @@ def test_existing_unowned_session_stays_denied(authz_context):
     finally:
         alice_cm.__exit__(None, None, None)
     assert get_session_user_id("legacy-ensure") is None
+
+
+def test_an_agent_tools_child_thread_is_owned_as_its_thread_row_says(authz_context):
+    """A child thread an agent tool runs in (``sub_<hash>``) has no session
+    row; the recorder stamps its thread with the parent's owner, and that is
+    whose it is: its owner reads it, nobody else does."""
+    from omniagents.core.conversation.recorder import ConversationRecorder
+
+    service = authz_context.service
+    manager = service._session_manager
+    ConversationRecorder(
+        service._conversation_service().store,
+        project_slug=manager._project_slug,
+        agent_slug=manager._agent_slug,
+    ).ensure_thread(
+        "sub_child", user_id="alice", source="agent_tool", project_legacy_history=False
+    )
+
+    alice_cm, alice = _connect(authz_context, ALICE, experimental=("queue_status",))
+    bob_cm, bob = _connect(authz_context, BOB, experimental=("queue_status",))
+    try:
+        assert service._session_owner("sub_child") == "alice"
+        # Loaded as a session (to read it, or its workers), it is alice's too.
+        from omniagents.core.session.manager import Session
+
+        assert (
+            Session(manager._project_slug, manager._agent_slug, "sub_child").user_id
+            == "alice"
+        )
+        alice.result("queue_status", session_id="sub_child", include_snapshot=True)
+        bob.expect_denied("queue_status", session_id="sub_child", include_snapshot=True)
+    finally:
+        bob_cm.__exit__(None, None, None)
+        alice_cm.__exit__(None, None, None)
+
+
+@pytest.mark.parametrize("session_id", ["factory-personal", "personal-side-chat"])
+def test_personal_sandbox_inherit_is_owned_by_factory_principal(
+    authz_context, session_id
+):
+    from omniagents.integrations.environment import RunSandbox
+    from omniagents.execution import EnvironmentCapability
+
+    resources = authz_context.service.agent_host_resources
+    sandbox = RunSandbox(
+        SimpleNamespace(),
+        "/workspace",
+        frozenset({EnvironmentCapability.PROCESS}),
+        None,
+        "test-container",
+    )
+    descriptor = sandbox.register(resources, owner_user_id="alice")
+    assert resources.workspaces.get(descriptor.workspace_id).owner_user_id == "alice"
+    alice_cm, alice = _connect(authz_context, ALICE)
+    bob_cm, bob = _connect(authz_context, BOB)
+    try:
+        alice.result(
+            "server_call",
+            function="session.ensure",
+            args={"session_id": session_id},
+            session_id=session_id,
+        )
+        started = alice.result(
+            "start_run",
+            session_id=session_id,
+            prompt="Check inherited personal workspace",
+            environment_selection={"mode": "inherit"},
+        )
+        assert started["session_id"] == session_id
+        bob.result(
+            "server_call",
+            function="session.ensure",
+            args={"session_id": "bobs-side"},
+            session_id="bobs-side",
+        )
+        bob.expect_denied(
+            "start_run",
+            session_id="bobs-side",
+            prompt="Cannot use another principal's workspace",
+            environment_selection={"mode": "inherit"},
+        )
+    finally:
+        alice_cm.__exit__(None, None, None)
+        bob_cm.__exit__(None, None, None)

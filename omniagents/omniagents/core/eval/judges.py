@@ -105,6 +105,9 @@ async def evaluate_split(
     from omniagents.core.agents.specs import AgentSpec
     from omniagents.core.agents.builder import _default_build_agent
 
+    # The provider the judge model resolved to (set when the agent is built).
+    judge_model: Dict[str, Any] = {}
+
     async def _build_judge_agent(agent_cfg: Dict[str, Any], base_dir: Path):
         def _map_js_type(t: Optional[str]):
             t = (t or "").lower()
@@ -199,6 +202,13 @@ async def evaluate_split(
         def _get_instr() -> str:
             return instructions
 
+        from omniagents.core.eval.models import (
+            merged_model_settings,
+            resolve_eval_model,
+        )
+
+        resolved = resolve_eval_model(model)
+        judge_model["provider"] = resolved.provider if resolved else None
         nm = agent_cfg.get("name") or "Judge"
         spec = AgentSpec(
             name=nm,
@@ -206,7 +216,8 @@ async def evaluate_split(
             get_agent_instructions=_get_instr,
             build_agent=None,
             available_tools=tools_list,
-            model_name=model,
+            model_name=resolved.name if resolved else model,
+            model_settings=merged_model_settings(None, resolved),
             output_type=out_type,
             output_type_strict=output_type_strict,
             project_slug=None,
@@ -216,7 +227,7 @@ async def evaluate_split(
         return agent
 
     async def _run_judge(agent, prompt: str, max_turns: int = 1):
-        from agents import Runner as AgentsRunner
+        from omniagents.core.eval.models import run_to_final_output
 
         # Judges in this split-evaluation flow are post-hoc — there's
         # no live scenario workspace at this point. Anchor to cwd so
@@ -226,9 +237,10 @@ async def evaluate_split(
         from agents.exceptions import ModelBehaviorError
 
         try:
-            res = await AgentsRunner.run(
+            return await run_to_final_output(
                 agent,
                 prompt,
+                provider=judge_model.get("provider"),
                 context={"workspace_root": os.getcwd()},
                 max_turns=max_turns,
             )
@@ -236,7 +248,6 @@ async def evaluate_split(
             # A reply that is not the verdict schema is no verdict: counted
             # as unanswered, not as Pass or Fail, and the check goes on.
             return {"error": "invalid_judge_output", "detail": str(exc)}
-        return getattr(res, "final_output", None)
 
     def _predict_label_from_judge_output(val: Any, category: str) -> bool | None:
         try:
@@ -315,7 +326,11 @@ async def evaluate_split(
             agent_description=agent_meta.get("description"),
             agent_tools=agent_meta.get("tools"),
         )
-        out = await _run_judge(judge_agent, prompt, max_turns=max_turns)
+        from omniagents.core.eval.pipeline import normalize_fail_reason
+
+        out = normalize_fail_reason(
+            await _run_judge(judge_agent, prompt, max_turns=max_turns), jcfg
+        )
         pred = _predict_label_from_judge_output(out, sc.get("target_category") or "")
         agree = None if pred is None else (pred == label)
         # A label marks the failure present; Pass is the positive class.

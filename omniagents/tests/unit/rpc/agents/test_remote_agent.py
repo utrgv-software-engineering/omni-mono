@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 from importlib.metadata import version
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -224,14 +225,94 @@ async def test_run_streamed_with_variables(monkeypatch):
 
     assert start_run_params["variables"] == {"x": 1}
     assert start_run_params["context"] == {"y": 2}
+    # The client names the conversation, so the run can inherit its binding.
+    assert uuid.UUID(start_run_params.pop("session_id"))
     assert start_run_params == {
         "prompt": "hi",
-        "environment_selection": {"mode": "none"},
-        "session_id": None,
+        "environment_selection": {"mode": "inherit"},
         "variables": {"x": 1},
         "context": {"y": 2},
     }
     assert agent._session_id == "abc"
+
+
+async def _run_with(agent, events):
+    """Run one turn of ``agent`` against a fake server; returns what it sent."""
+    sent = {"start_run": {}, "tool": [], "mcp": []}
+
+    class Other:
+        async def start_run(self, **kwargs):
+            sent["start_run"].update(kwargs)
+            return SimpleNamespace(result={"session_id": "abc", "run_id": "rid"})
+
+        async def tool_approval_response(self, **kwargs):
+            sent["tool"].append(kwargs)
+            return True
+
+        async def mcp_approval_response(self, **kwargs):
+            sent["mcp"].append(kwargs)
+            return True
+
+    agent._client = SimpleNamespace(other=Other())
+    agent._ensure_client = AsyncMock()
+
+    async def produce():
+        await asyncio.sleep(0)
+        for event in events:
+            await agent._event_queue.put(event)
+        await agent._event_queue.put({"method": "run_end", "params": {"run_id": "rid"}})
+
+    runner = agent.run_streamed(
+        [{"role": "user", "content": "hi"}],
+        run_config=SimpleNamespace(workflow_name=None, group_id=None),
+    )
+    await asyncio.gather(
+        asyncio.create_task(produce()),
+        asyncio.create_task(consume(runner.stream_events())),
+    )
+    return sent
+
+
+APPROVAL_PROMPTS = [
+    {
+        "method": "tool_approval_requested",
+        "params": {"call_id": "apr_1", "tool_name": "apply_patch", "arguments": "{}"},
+    },
+    {
+        "method": "mcp_approval_requested",
+        "params": {
+            "kind": "mcp",
+            "request_id": "mcp_1",
+            "server_label": "s",
+            "tool_name": "t",
+            "arguments": "{}",
+        },
+    },
+]
+
+
+@pytest.mark.asyncio
+async def test_runs_carry_the_agents_approvals_reviewer():
+    sent = await _run_with(RemoteAgent("ws://host", approvals_reviewer="auto"), [])
+    assert sent["start_run"]["approvals_reviewer"] == "auto"
+    sent = await _run_with(RemoteAgent("ws://host"), [])
+    assert "approvals_reviewer" not in sent["start_run"]
+
+
+@pytest.mark.asyncio
+async def test_an_unattended_agent_rejects_prompts_nobody_will_answer():
+    sent = await _run_with(RemoteAgent("ws://host", unattended=True), APPROVAL_PROMPTS)
+    [tool] = sent["tool"]
+    [mcp] = sent["mcp"]
+    assert (tool["call_id"], tool["decision"]) == ("apr_1", "reject")
+    assert (mcp["request_id"], mcp["decision"]) == ("mcp_1", "reject")
+    assert "No person is attending" in tool["rejection_message"]
+
+
+@pytest.mark.asyncio
+async def test_an_attended_agent_leaves_prompts_to_its_person():
+    sent = await _run_with(RemoteAgent("ws://host"), APPROVAL_PROMPTS)
+    assert sent["tool"] == [] and sent["mcp"] == []
 
 
 @pytest.mark.asyncio
@@ -319,3 +400,15 @@ async def test_client_event_methods_preserve_legacy_and_unknown_notifications():
         "method": "future_notification",
         "params": {"value": 1},
     }
+
+
+@pytest.mark.asyncio
+async def test_a_named_conversation_is_the_one_the_first_run_starts():
+    # Event intake continues a Slack thread's conversation by naming it.
+    agent = RemoteAgent("ws://host", session_id="thread-conv", variables={"x": 1})
+    sent = await _run_with(agent, [])
+    assert sent["start_run"]["session_id"] == "thread-conv"
+    # Still the first run: it carries the variables.
+    assert sent["start_run"]["variables"] == {"x": 1}
+    sent = await _run_with(agent, [])
+    assert "variables" not in sent["start_run"]

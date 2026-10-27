@@ -199,7 +199,12 @@ async def test_build_handoffs_from_configs_builds_agents(monkeypatch, tmp_path):
     build_calls = []
 
     async def fake_build(
-        settings, mcp_servers, spec, approval_callback, _loading_stack=None
+        settings,
+        mcp_servers,
+        spec,
+        approval_callback,
+        _loading_stack=None,
+        mcp_pool=None,
     ):
         build_calls.append((_loading_stack, approval_callback, spec.name))
         return types.SimpleNamespace(name=spec.name)
@@ -211,6 +216,7 @@ async def test_build_handoffs_from_configs_builds_agents(monkeypatch, tmp_path):
         server_functions_registry=None,
         agents_map=None,
         capability_registry=None,
+        project_defaults=None,
     ):
         return child_spec
 
@@ -323,16 +329,19 @@ async def test_agent_service_configures_needs_approval_when_safe_set(monkeypatch
     agent = await service._build_agent_for_session(session, None)
 
     assert isinstance(agent, Agent)
-    # Both tools have a callable predicate now.
-    assert callable(tool_a.needs_approval)
-    assert callable(tool_b.needs_approval)
+    # The agent's own copies of both tools have a callable predicate now;
+    # the shared tool objects are unchanged.
+    own = {t.name: t for t in agent.tools}
+    assert callable(own[tool_a.name].needs_approval)
+    assert callable(own[tool_b.name].needs_approval)
+    assert tool_a.needs_approval is False and tool_b.needs_approval is False
 
     # The "allowed" tool is in the spec safe list, so its predicate
     # returns False (no approval needed).
-    no_approval = await tool_b.needs_approval(None, {}, "call-1")
+    no_approval = await own[tool_b.name].needs_approval(None, {}, "call-1")
     assert no_approval is False
     # The "risky" tool is not allowlisted, so it does need approval.
-    needs = await tool_a.needs_approval(None, {}, "call-2")
+    needs = await own[tool_a.name].needs_approval(None, {}, "call-2")
     assert needs is True
 
 
@@ -366,8 +375,9 @@ async def test_agent_service_skip_approvals_disables_predicate(monkeypatch):
         AgentHostResources.create("test-unit-core-agent_builder-host"),
     )
     session = service._session_manager.get_or_create(None)
-    await service._build_agent_for_session(session, None)
+    agent = await service._build_agent_for_session(session, None)
 
     # skip_approvals=True → predicate is attached but always returns False.
-    assert callable(tool.needs_approval)
-    assert (await tool.needs_approval(None, {}, "call-1")) is False
+    [own] = agent.tools
+    assert callable(own.needs_approval)
+    assert (await own.needs_approval(None, {}, "call-1")) is False

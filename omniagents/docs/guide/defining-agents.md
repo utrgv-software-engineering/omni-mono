@@ -192,6 +192,74 @@ with the same Jinja2 context as the parent template. A missing fragment
 raises an error naming the searched directories. Templates that use no
 includes render exactly as before.
 
+#### Building on a base agent (`extends:`)
+
+Several agents that should share one setup (the same tools, context and
+model settings, and the same core prompt) can each extend a base
+definition instead of repeating it:
+
+```yaml
+# agents/reviewer/agent.yml
+name: reviewer
+extends: base               # base/agent.yml, relative to the project root
+instructions_file: instructions.md
+model: gpt-5.2              # overrides the base's model
+capabilities: [github]      # added to the base's capabilities
+```
+
+```jinja
+{# base/instructions.md #}
+{% include "identity.md" %}
+
+{{ role }}
+
+{{ available_skills_block }}
+```
+
+- `extends:` names a folder, relative to the project root, that holds an
+  `agent.yml`. The base can extend another base in turn.
+- The extending agent's own keys override the base's (a whole key at a
+  time: `model_settings` replaces the base's `model_settings`).
+- `capabilities` add to the base's list, in order, without duplicates.
+- The extending agent's instructions are rendered into the base's
+  `{{ role }}` slot. A base without a slot gets them appended.
+- Includes resolve from both agents' folders (and their `_shared/`
+  conventions) as well as `paths.instruction_fragments`; the base's
+  context factory is found too (below).
+
+The base is a folder like any other, so a project can keep everything
+its agents are built on in one place it can change, for example `base/`
+with `base/agent.yml`, `base/instructions.md`, `base/fragments/`,
+`base/context.py`, `base/capabilities/` and `base/agents/` for the base's
+sub-agents, wired with `paths.agents: [agents, base/agents]`,
+`paths.capabilities`, `paths.instruction_fragments` and `paths.context`.
+
+#### Context factories (`context:`)
+
+`context: build_context` names a function decorated with
+`@context_factory` that builds the variables an agent's instructions
+render with. It is found in, in order: the agent's own folder, the folders
+of any definition it extends, and the folders listed under `paths.context`
+in `project.yml`, so one factory can serve every agent:
+
+```yaml
+# project.yml
+paths:
+  context: [base]          # string or list
+```
+
+#### Skill folders
+
+Besides the workspace's own skills (`.<product>/skills` in the repository)
+and the user's global ones, an agent sees the skills its definition
+brings: its own `agents/<name>/skills/`, the `skills/` folder of any base it
+extends, and the project's `paths.skills` folders (default `skills/`).
+Each is a folder of `<skill-name>/SKILL.md`. The workspace's folder comes
+first, so a repository can override a skill; then the agent's own, then
+its bases', then the project's. They apply to that agent only: a
+sub-agent called as a tool lists and loads its own skills, not its
+caller's.
+
 ### Tools
 
 #### tools
@@ -453,6 +521,9 @@ mcp_servers:
 - **options**: Additional options
   - **name**: Display name for UI
   - **cache_tools_list**: Cache tool list for performance (optional)
+  - **optional**: `true` leaves the server out when its `url` (or `command`)
+    is empty, for a server only some environments have, e.g.
+    `url: ${CANVAS_MCP_URL:-}`
 
 #### mcp_config
 Extended MCP configuration options:

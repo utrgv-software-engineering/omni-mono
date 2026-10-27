@@ -6,6 +6,8 @@ export type AgentRuntimeConnection = {
   /** Absolute, or relative to the page. */
   baseUrl: string;
   authToken?: string;
+  /** False when the embedding host does not expose a realtime endpoint. */
+  realtime?: boolean;
 };
 
 export type UiConfig = {
@@ -57,7 +59,7 @@ export const resolveUiConfig = (connection: AgentRuntimeConnection): UiConfig =>
   const httpBaseUrl = `${url.protocol}//${url.host}`;
   const wsOrigin = buildWsUrl(url, '');
   const wsBaseUrl = `${wsOrigin}${resolvePath('/ws')}`;
-  const wsRealtimeUrl = `${wsOrigin}${resolvePath('/ws/realtime')}`;
+  const wsRealtimeUrl = connection.realtime === false ? '' : `${wsOrigin}${resolvePath('/ws/realtime')}`;
   return {
     runtimeBaseUrl: connection.baseUrl,
     url,
@@ -82,7 +84,7 @@ export const UiConfigProvider = ({
   connection: AgentRuntimeConnection;
   children: ReactNode;
 }) => {
-  const value = useMemo<UiConfig>(() => resolveUiConfig(connection), [connection.authToken, connection.baseUrl]);
+  const value = useMemo<UiConfig>(() => resolveUiConfig(connection), [connection.authToken, connection.baseUrl, connection.realtime]);
 
   return <UiConfigContext.Provider value={value}>{children}</UiConfigContext.Provider>;
 };

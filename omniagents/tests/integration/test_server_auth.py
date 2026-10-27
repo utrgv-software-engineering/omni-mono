@@ -459,3 +459,33 @@ def test_remote_agent_url_never_contains_token():
 
     agent = RemoteAgent(url="ws://example.test/ws", token="secret")
     assert "secret" not in (agent._url or "")
+
+
+def test_model_login_requires_admin_credential(agent_host_control_context, monkeypatch):
+    calls = []
+
+    async def start(self, provider, mode, **kwargs):
+        calls.append((provider, mode))
+        return {"state": "pending", "login_id": "test-login"}
+
+    monkeypatch.setattr(server_app.AgentService, "account_login_start", start)
+    for token, permitted in [("secret", False), ("control-secret", True)]:
+        with agent_host_control_context.client.websocket_connect(
+            "/ws", headers={"Authorization": f"Bearer {token}"}
+        ) as ws:
+            perform_gui_handshake(ws)
+            ws.send_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 41,
+                    "method": "account_login_start",
+                    "params": {"provider": "openai-chatgpt", "mode": "device_code"},
+                }
+            )
+            reply = ws.receive_json()
+            if permitted:
+                assert reply["result"]["state"] == "pending"
+            else:
+                assert reply["error"]["code"] == -32014
+                assert calls == []
+    assert calls == [("openai-chatgpt", "device_code")]

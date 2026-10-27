@@ -68,7 +68,9 @@ ProgressCallback = Callable[[Dict[str, Any]], None]
 
 
 def _empty_usage() -> Dict[str, int]:
-    return {"requests": 0, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+    from .telemetry import _empty_usage as empty
+
+    return empty()
 
 
 def is_synthetic(scenario: Dict[str, Any]) -> bool:
@@ -316,11 +318,16 @@ async def _drive_synthetic(
     max_exchanges = int(
         scenario.get("max_exchanges", defaults.get("max_exchanges", 10)) or 10
     )
+    from .models import resolve_eval_model, with_provider
+
+    user_model = resolve_eval_model(scenario.get("model"))
     user = SimulatedUser(
         persona=UserPersona.from_scenario(scenario, base_dir),
         agent_description=run.description,
-        model=scenario.get("model", "gpt-4.1"),
-        run_config=trace.user_run_config,
+        model=(user_model.name if user_model else scenario.get("model", "gpt-4.1")),
+        run_config=with_provider(
+            trace.user_run_config, user_model.provider if user_model else None
+        ),
     )
     message = await user.get_initial_message()
     for _ in range(max_exchanges):
@@ -406,9 +413,23 @@ async def run_scenario(
     """Run ``scenario`` once against ``target`` and return its run record."""
     from .pipeline import run_judges
 
+    from omniagents.core.config.loader import substitution_environment
+
+    from .targets import resolve_scenario_start
+
     defaults = defaults or {}
     eval_cfg = eval_cfg or {}
     env = environment or NoOpEnvironment()
+    # A scenario that names an agent or an automation starts the way
+    # production starts it: that agent, with that automation's input.
+    try:
+        target, scenario = resolve_scenario_start(target, scenario)
+    except Exception as exc:
+        return _failed_record(
+            {"scenario": scenario.get("name", "scenario"), "type": "scripted"},
+            "setup_failed",
+            exc,
+        )
     scenario_type = "synthetic" if is_synthetic(scenario) else "scripted"
     base = {
         "scenario": scenario.get("name", "scenario"),
@@ -427,13 +448,19 @@ async def run_scenario(
     record: Dict[str, Any]
     try:
         # Env vars go in before the agent is built: spec loading reads them.
-        if context:
-            for key, value in env.get_env_vars(context).items():
-                saved_env[key] = os.environ.get(key)
-                os.environ[key] = str(value)
-        run = await target.start(
-            scenario, defaults=defaults, environment=env, context=context
-        )
+        # ``${VAR}`` in the agent's definition resolves from this scenario's
+        # values (not another's running beside it); tools that read the
+        # process environment see them there.
+        scenario_env = {
+            k: str(v) for k, v in (env.get_env_vars(context) if context else {}).items()
+        }
+        for key, value in scenario_env.items():
+            saved_env[key] = os.environ.get(key)
+            os.environ[key] = value
+        with substitution_environment(scenario_env):
+            run = await target.start(
+                scenario, defaults=defaults, environment=env, context=context
+            )
         trace = _Trace(
             scenario,
             (
@@ -472,6 +499,12 @@ async def run_scenario(
         if scenario_type == "synthetic":
             drive["exchanges"] = sum(1 for m in history if m.get("role") == "user")
 
+        # What the run changed outside the conversation (e.g. on a fake
+        # GitHub), for measures to read through ctx.get_env_data().
+        try:
+            await env.collect(context)
+        except Exception as exc:
+            _logger.debug("Environment collect failed: %s", exc)
         # Judges first, so measures can read them (ctx.judge_result(key)).
         judge_metadata = await run_judges(eval_cfg, scenario, history, base_dir)
         environment_data = context.data if context else {}
@@ -653,9 +686,8 @@ async def run_suite(
     ``selection`` (``select``/``exclude``/``split``/``holdout``) only
     describes, for the manifest, how the scenarios were chosen.
 
-    Returns ``{"runs", "metrics", "summary", "stats", "manifest"}`` (plus
-    ``environment_error``/``warnings`` when a declared environment failed
-    to build).
+    Returns ``{"runs", "metrics", "summary", "stats", "manifest"}``. A declared
+    environment that cannot be built is an error: nothing runs.
     """
     from omniagents.core.evaluation.registry import _MEASURES
 
@@ -668,8 +700,6 @@ async def run_suite(
         else [sc for sc in all_scenarios if measure_names(sc.get("measures"))]
     )
 
-    warnings: List[str] = []
-    env_error: Optional[str] = None
     env_cfg = eval_cfg.get("environment")
     if environment is None and env_cfg:
         from .environment_config import build_environment
@@ -681,9 +711,12 @@ async def run_suite(
                 eval_dir=eval_dir,
             )
         except Exception as exc:
-            env_error = f"Failed to build declared environment: {exc}"
-            warnings.append(f"Environment loading failed: {env_error}")
-            _logger.error(env_error)
+            # Its scenarios are written for that environment: run without it,
+            # they would act on whatever this machine has (its credentials, its
+            # services) and be graded as if they had not.
+            raise RuntimeError(
+                f"The evaluation's environment could not be built: {exc}"
+            ) from exc
 
     discovered = sorted(_MEASURES.keys())
     unknown_counts: Dict[str, int] = {}
@@ -788,7 +821,4 @@ async def run_suite(
             scenarios=len(all_scenarios),
         ),
     }
-    if env_error:
-        out["environment_error"] = env_error
-        out["warnings"] = warnings
     return out

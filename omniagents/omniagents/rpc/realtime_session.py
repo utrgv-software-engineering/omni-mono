@@ -596,7 +596,7 @@ class RealtimeSession:
                 attach_tool_approval_predicates,
             )
 
-            attach_tool_approval_predicates(
+            tools = attach_tool_approval_predicates(
                 tools,
                 session=self.paired_session,
                 safe_tool_names=getattr(safe_opts, "safe_tool_names", None),

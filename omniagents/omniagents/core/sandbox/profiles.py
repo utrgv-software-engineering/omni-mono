@@ -114,6 +114,13 @@ class ResolvedProfile:
     ``omniagents.core.sandbox.factory.build_sandbox_client`` /
     ``build_manifest`` to get SDK objects."""
 
+    build: List[str]
+    """Shell commands built into the profile's image once, as ``RUN``
+    steps on ``options.image`` (docker only): toolchains, browsers, CLIs.
+    :func:`omniagents.core.sandbox.images.prepare_profile_image` builds
+    the image (cached by the base image and the steps) and points the
+    profile at it, so containers start with them already installed."""
+
     init: List[str]
     """Shell commands to run synchronously inside the freshly-started
     session, before any service is launched. Useful for one-shot setup
@@ -182,6 +189,7 @@ def resolve_profile(
     merged = _substitute(merged, {"workspace_dir": str(workspace_dir.resolve())})
     _inject_network_allowlist(merged, config_dir)
     _inject_user_env(merged, config_dir)
+    build = _parse_init(merged.get("build"), key="build")
     init = _parse_init(merged.get("init"))
     services = _parse_services(merged.get("services") or {})
     terminal = _parse_terminal(merged.get("terminal"), run_as=merged.get("run_as"))
@@ -189,6 +197,7 @@ def resolve_profile(
 
     return ResolvedProfile(
         raw=merged,
+        build=build,
         init=init,
         services=services,
         terminal=terminal,
@@ -408,17 +417,17 @@ def _load_network_allowlist(config_dir: Path) -> Optional[List[str]]:
     return hosts or None
 
 
-def _parse_init(raw: Any) -> List[str]:
-    """Parse the optional ``init:`` block — a list of shell command strings."""
+def _parse_init(raw: Any, *, key: str = "init") -> List[str]:
+    """Parse an optional ``init:`` / ``build:`` block — a list of shell command strings."""
     if raw is None:
         return []
     if not isinstance(raw, list):
-        raise ValueError("sandbox.init must be a list of shell command strings")
+        raise ValueError(f"sandbox.{key} must be a list of shell command strings")
     out: List[str] = []
     for idx, item in enumerate(raw):
         if not isinstance(item, str) or not item.strip():
             raise ValueError(
-                f"sandbox.init[{idx}] must be a non-empty shell command string"
+                f"sandbox.{key}[{idx}] must be a non-empty shell command string"
             )
         out.append(item)
     return out

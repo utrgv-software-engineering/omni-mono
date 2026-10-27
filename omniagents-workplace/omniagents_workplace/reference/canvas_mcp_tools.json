@@ -1,0 +1,280 @@
+{
+ "serverInfo": {
+  "name": "canvas",
+  "version": "1.0.0"
+ },
+ "instructions": "Canvases are design boards people and agents make together. Read a canvas (get_canvas, read_file), change its files and publish them with the version you read; a refused publish means someone published first: read again and merge. Comments are how people ask for changes: answer them with reply_comment and resolve them when done.",
+ "tools": [
+  {
+   "name": "list_canvases",
+   "description": "List the workplace's canvases: their IDs, titles, owners, current versions and boards.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "query": {
+      "type": "string",
+      "description": "Only canvases whose title contains this"
+     }
+    },
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "create_canvas",
+   "description": "Create a canvas: an index (canvas.json) with no boards, version 1. Add boards with publish.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "title": {
+      "type": "string",
+      "description": "The canvas's title"
+     }
+    },
+    "required": [
+     "title"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "get_canvas",
+   "description": "A canvas's index (canvas.json, parsed), its files with their sizes, and its current version. Read this before publishing: publish needs the version you read.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "canvas": {
+      "type": "string",
+      "description": "Canvas ID or title"
+     }
+    },
+    "required": [
+     "canvas"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "read_file",
+   "description": "Read one file (path) or several (paths) of a canvas, at its current version or an older one. Text files come back as text, others as base64.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "canvas": {
+      "type": "string",
+      "description": "Canvas ID or title"
+     },
+     "path": {
+      "type": "string",
+      "description": "A file's path, as get_canvas lists it (canvas.json, Main.dc.html)"
+     },
+     "paths": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "maxItems": 50,
+      "description": "Several paths in place of path"
+     },
+     "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "An older version to read; omit for the current one"
+     }
+    },
+    "required": [
+     "canvas"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "publish",
+   "description": "Publish changes to a canvas as its next version. files maps a path to its new text, to {\"base64\": ...} for binary content, or to null to remove it; files not sent keep their content. base_version is the version your changes were made on (from get_canvas or read_file): if the canvas has moved on, the publish is refused, and you read the newer version, merge your change onto it and publish again. The index (canvas.json) must hold after the change: \"v\": 3, every board in \"boards\" (keyed by its file name, with numeric x, y, w, h) is a file, \"order\" lists every board once, and \"createdOnFiles\" stays as it is. A board is a <Name>.dc.html page: ./support.js, a <helmet> with its head content, an <x-dc> body whose {{values}}, <sc-if value> and <sc-for list as> come from the <script type=\"text/x-dc\"> component (class Component extends DCLogic, renderVals()).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "canvas": {
+      "type": "string",
+      "description": "Canvas ID or title"
+     },
+     "files": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 100,
+      "additionalProperties": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        },
+        {
+         "type": "object",
+         "properties": {
+          "base64": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "base64"
+         ],
+         "additionalProperties": false
+        }
+       ]
+      },
+      "description": "path -> new content (text, {base64}, or null to remove)"
+     },
+     "base_version": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "The version your changes were made on"
+     },
+     "label": {
+      "type": "string",
+      "maxLength": 60,
+      "description": "A few words for the version history"
+     }
+    },
+    "required": [
+     "canvas",
+     "files",
+     "base_version"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "list_versions",
+   "description": "A canvas's versions, oldest first: who published each, when, its label and the files it changed.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "canvas": {
+      "type": "string",
+      "description": "Canvas ID or title"
+     }
+    },
+    "required": [
+     "canvas"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "restore_version",
+   "description": "Publish an older version's files as the canvas's next version.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "canvas": {
+      "type": "string",
+      "description": "Canvas ID or title"
+     },
+     "version": {
+      "type": "integer",
+      "minimum": 1
+     }
+    },
+    "required": [
+     "canvas",
+     "version"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "list_comments",
+   "description": "The comments on a canvas, as threads: each pinned to a board (and a point on it) or to the canvas.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "canvas": {
+      "type": "string",
+      "description": "Canvas ID or title"
+     },
+     "include_resolved": {
+      "type": "boolean",
+      "description": "Include resolved threads"
+     }
+    },
+    "required": [
+     "canvas"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "add_comment",
+   "description": "Comment on a canvas, or on one of its boards at a point (x, y in the board's pixels).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "canvas": {
+      "type": "string",
+      "description": "Canvas ID or title"
+     },
+     "body": {
+      "type": "string"
+     },
+     "board": {
+      "type": "string",
+      "description": "A board's file name"
+     },
+     "x": {
+      "type": "number"
+     },
+     "y": {
+      "type": "number"
+     }
+    },
+    "required": [
+     "canvas",
+     "body"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "reply_comment",
+   "description": "Reply in a comment's thread.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "comment": {
+      "type": "string",
+      "description": "A comment's ID"
+     },
+     "body": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "comment",
+     "body"
+    ],
+    "additionalProperties": false
+   }
+  },
+  {
+   "name": "resolve_comment",
+   "description": "Resolve a comment's thread, or reopen it.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "comment": {
+      "type": "string"
+     },
+     "resolved": {
+      "type": "boolean",
+      "description": "false reopens it (default true)"
+     }
+    },
+    "required": [
+     "comment"
+    ],
+    "additionalProperties": false
+   }
+  }
+ ]
+}

@@ -10,6 +10,33 @@ from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
+#: Processors that stay whatever tracing is configured: the usage recorder
+#: (``omniagents.core.usage``), which records what model calls used and exports
+#: nothing.
+_permanent: list = []
+
+
+def set_processors(processors: list) -> None:
+    """The SDK's trace processors, as ``set_trace_processors``, keeping the permanent ones."""
+    from agents import set_trace_processors
+
+    set_trace_processors([*processors, *_permanent])
+
+
+def add_permanent_processor(processor: Any) -> None:
+    """A processor every configuration keeps (and that runs from now on)."""
+    from agents import add_trace_processor
+
+    if processor not in _permanent:
+        _permanent.append(processor)
+        add_trace_processor(processor)
+
+
+def remove_permanent_processor(processor: Any) -> None:
+    if processor in _permanent:
+        _permanent.remove(processor)
+        set_processors([])
+
 
 def setup_tracing(tracing_config: Optional[Dict[str, Any]]) -> None:
     """Setup tracing based on configuration.
@@ -68,17 +95,13 @@ def setup_tracing(tracing_config: Optional[Dict[str, Any]]) -> None:
             print("    Tracing disabled (no data sent to OpenAI)")
             # Disable tracing on error instead of falling back to OpenAI
             try:
-                from agents import set_trace_processors
-
-                set_trace_processors([])
+                set_processors([])
             except ImportError:
                 pass
 
     elif provider == "none":
         try:
-            from agents import set_trace_processors
-
-            set_trace_processors([])
+            set_processors([])
             logger.info("Tracing disabled")
         except ImportError as e:
             logger.error(f"Failed to disable tracing: {e}", exc_info=True)
@@ -90,8 +113,6 @@ def setup_tracing(tracing_config: Optional[Dict[str, Any]]) -> None:
         print("    Tracing disabled (no data sent to OpenAI)")
         # Disable tracing for unknown providers instead of falling back to OpenAI
         try:
-            from agents import set_trace_processors
-
-            set_trace_processors([])
+            set_processors([])
         except ImportError:
             pass

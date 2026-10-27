@@ -77,7 +77,8 @@ Peer communication does not synchronize isolated files or merge worktrees.
 Assign non-overlapping file ownership. Review and integrate each worker's
 changes before explicit workspace cleanup.
 
-Workers keep the existing provider scope, Guardian review and parent approval
-routing. Role instructions do not grant permissions or override credentials.
+Workers keep the existing provider scope and Guardian review; a worker's
+approvals are decided by its policy or the Guardian, which fails closed, and
+never wait on a person. Role instructions do not grant permissions or override credentials.
 Interrupted tool effects may be uncertain: inspect recorded results and files
 before deciding whether an action is safe to retry.

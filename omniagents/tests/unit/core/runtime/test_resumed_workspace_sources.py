@@ -156,7 +156,7 @@ async def test_resume_materializes_additions_before_services(
     )
     saved = Mock()
     monkeypatch.setattr(serve_harness, "write_session_state", saved)
-    profile = SimpleNamespace(raw={}, init=["initialize"], services=[])
+    profile = SimpleNamespace(raw={}, build=[], init=["initialize"], services=[])
     await serve_harness.bring_up_session(
         profile=profile,
         sources_parsed=[],
@@ -167,3 +167,51 @@ async def test_resume_materializes_additions_before_services(
     assert init.await_count == (0 if same_container else 1)
     assert saved.call_args.args[2].state.manifest.entries == desired.entries
     assert (root / "old/file").read_text() == "uncommitted agent work"
+
+
+@pytest.mark.asyncio
+async def test_durable_resume_retains_deselected_repositories(tmp_path):
+    root, session, desired = fixture(tmp_path)
+    desired = desired.model_copy(update={"entries": {"new": desired.entries["new"]}})
+    await _reconcile_resumed_sources(session, desired, retain_removed=True)
+    assert (root / "old/file").read_text() == "uncommitted agent work"
+    assert (root / "new/syllabus.md").is_file()
+    assert set(session.state.manifest.entries) == {"old", "new"}
+    await _reconcile_resumed_sources(session, desired, retain_removed=True)
+    assert session.applied == ["new"]
+
+
+@pytest.mark.asyncio
+async def test_durable_resume_refuses_replacement_container(monkeypatch, tmp_path):
+    from unittest.mock import AsyncMock
+    from omniagents.core.runtime import serve_harness
+
+    root, session, desired = fixture(tmp_path)
+    session.state.container_id = "unexpected-replacement"
+    session.start = AsyncMock()
+    client = SimpleNamespace(
+        resume=AsyncMock(return_value=session),
+        deserialize_session_state=lambda state: state,
+    )
+    state = tmp_path / "state.json"
+    state.write_text(
+        '{"container_id":"original","session_state":{"container_id":"original"}}'
+    )
+    monkeypatch.setattr(
+        serve_harness, "_build_sandbox", lambda *a, **k: (client, {}, desired)
+    )
+    monkeypatch.setattr(serve_harness, "_build_snapshot", lambda **k: None)
+    cleanup = AsyncMock()
+    monkeypatch.setattr(serve_harness, "teardown_session", cleanup)
+    with pytest.raises(RuntimeError, match="missing"):
+        await serve_harness.bring_up_session(
+            profile=SimpleNamespace(raw={}, build=[]),
+            sources_parsed=[],
+            snapshot_ref="personal",
+            snapshot_dir=None,
+            state_path=state,
+            durable=True,
+        )
+    cleanup.assert_awaited_once_with(session, [], destroy=True)
+    session.start.assert_not_awaited()
+    assert "original" in state.read_text()

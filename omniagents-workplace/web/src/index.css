@@ -1,0 +1,43 @@
+@import "tailwindcss";
+/* The shared design system: the same tokens, themes and components as the
+ * desktop app, Studio and the omniagents web UI. */
+@import "@omniagents/ui/theme.css";
+/* The shared chat UI: a run's sessions on the Factory page (FactoryRun.tsx). */
+@import "@omniagents/chat-ui/styles.css";
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/* Phones: the shell is the visible viewport (not the one behind the
+   browser's toolbars). */
+#root {
+  height: 100dvh;
+}
+/* Phones: a tall dialog scrolls within the screen. */
+@media (max-width: 767px) {
+  [data-slot="dialog-content"] {
+    max-height: calc(100dvh - 2rem);
+    overflow-y: auto;
+  }
+}
+
+/* Highlighted code (highlight.tsx): tokens carry GitHub's dark theme as --shiki-dark. */
+.dark .hl {
+  color: var(--shiki-dark) !important;
+}
+
+/* Charts (charts.tsx): categorical slots and the frontier's ink, validated for
+   both surfaces (light, then dark steps of the same hues). */
+.viz {
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+}
+.dark .viz {
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+}

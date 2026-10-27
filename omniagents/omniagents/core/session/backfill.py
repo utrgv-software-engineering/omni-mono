@@ -12,7 +12,10 @@ naming the principal that should own the pre-auth history::
     python -m omniagents.core.session.backfill --user-id alice
     python -m omniagents.core.session.backfill --user-id alice --dry-run
 
-Sessions that already have an owner are never touched.
+Sessions that already have an owner are never touched. An assigned
+session's thread, and its unowned descendant threads (an agent tool's
+``sub_<hash>`` thread, which has no session row), are assigned with it, as
+new ones are owned when they are made.
 """
 
 from __future__ import annotations
@@ -68,6 +71,9 @@ def backfill_session_owners(
     targets = find_unowned_sessions(project_slug=project_slug, agent_slug=agent_slug)
     if dry_run:
         return targets
+    from omniagents.core.conversation.store import get_conversation_store
+
+    convo = get_conversation_store(project_slug, agent_slug)
     for session_id in targets:
         update_session_user_id(
             session_id,
@@ -75,6 +81,11 @@ def backfill_session_owners(
             project_slug=project_slug,
             agent_slug=agent_slug,
         )
+        own = convo.get_thread(session_id)
+        rows = [(session_id, own.user_id, None)] if own is not None else []
+        for thread_id, owner, _ in rows + convo.descendant_thread_rows(session_id):
+            if owner is None:
+                convo.mutate_thread(thread_id, lambda t: setattr(t, "user_id", user_id))
     return targets
 
 

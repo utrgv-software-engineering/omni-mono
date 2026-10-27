@@ -1036,6 +1036,20 @@ class McpServerManager:
         if source in (SOURCE_USER, SOURCE_PROJECT_LOCAL):
             if not self.user_mcp_allowed():
                 return False, "user_mcp_disabled"
+        config = self._find_config(server_name)
+        if config is not None and (config.options or {}).get("optional"):
+            import copy as _copy
+
+            from omniagents.core.agents.mcp import (
+                _resolve_setting_placeholders,
+                is_absent_optional,
+            )
+
+            resolved = _resolve_setting_placeholders(
+                _copy.deepcopy(config.params), dict(self._settings_provider())
+            )
+            if is_absent_optional(config, resolved):
+                return False, "not_configured"
         return True, None
 
     # -- snapshots -------------------------------------------------------

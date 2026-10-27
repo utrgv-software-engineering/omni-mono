@@ -141,6 +141,17 @@ def guardian_model_ref(service: Any) -> str | None:
     return value or None
 
 
+def guardian_policy_config(service: Any) -> tuple[str | None, str | None]:
+    """The configured organization policy and additional policy (``None`` = unset)."""
+
+    def text(key: str) -> str | None:
+        value = _config_value(service, key, "", None)
+        value = value.strip() if isinstance(value, str) else ""
+        return value or None
+
+    return text("approvals.guardian_policy"), text("approvals.guardian_extra_policy")
+
+
 def resolve_route(
     *, reviewer: str, sandbox_tier: str, environment: EnvironmentSummary
 ) -> ApprovalRoute:

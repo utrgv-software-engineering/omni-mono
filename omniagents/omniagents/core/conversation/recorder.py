@@ -167,7 +167,10 @@ class ConversationRecorder:
                 intent = entry["intent"]
                 message = entry["message"]
                 self.validate_projection(message, intent)
-                if intent.get("kind") == "queued_message":
+                if intent.get("kind") == "voice_transcript":
+                    recorded = self.record_voice_transcript(thread_id, message)
+                    self._settled(recorded)
+                elif intent.get("kind") == "queued_message":
                     recorded = self.record_queued_message(
                         thread_id,
                         queue_id=intent["queue_id"],
@@ -207,7 +210,16 @@ class ConversationRecorder:
     def validate_projection(cls, message: dict, intent: dict) -> None:
         kind = intent.get("kind")
         valid = intent.get("version") == 1
-        if kind in ("queued_message", "user_message"):
+        if kind == "voice_transcript":
+            metadata = message.get("omniagents") or {}
+            valid = valid and message.get("role") in ("user", "assistant")
+            valid = valid and metadata.get("source") == "voice:codex-live"
+            valid = valid and all(
+                isinstance(metadata.get(key), str) and metadata[key]
+                for key in ("live_call", "voice_id")
+            )
+            valid = valid and isinstance(message.get("content"), (str, list))
+        elif kind in ("queued_message", "user_message"):
             identity = intent.get(
                 "queue_id" if kind == "queued_message" else "natural_key"
             )
@@ -701,6 +713,32 @@ class ConversationRecorder:
             and isinstance(item.get("id"), str)
             and bool(item["id"])
             and _checkpoint_kind(item) is None
+        )
+
+    def record_voice_transcript(self, thread_id: str, message: dict) -> Item:
+        """Project saved speech with identity distinct from delegated task output."""
+        from .adapter import _message_text
+
+        self.validate_projection(message, {"version": 1, "kind": "voice_transcript"})
+        metadata = message["omniagents"]
+        return self._append_item(
+            thread_id,
+            natural_key=f"voice:{metadata['live_call']}:{metadata['voice_id']}",
+            kind=(
+                ItemKind.USER_MESSAGE
+                if message["role"] == "user"
+                else ItemKind.AGENT_MESSAGE
+            ),
+            turn_id=None,
+            status=ItemStatus.COMPLETED,
+            role=message["role"],
+            content={"text": _message_text(message["content"])},
+            source_ref={
+                "event": "voice_transcript",
+                "voice_caption": True,
+                "live_call": metadata["live_call"],
+                "voice_id": metadata["voice_id"],
+            },
         )
 
     def record_persisted_message(
@@ -1556,6 +1594,7 @@ class ConversationRecorder:
         the model produced it. The SDK writes the same block to history
         only after those tools ran; see :meth:`record_persisted_reasoning`.
         """
+
         def joined(entries: Any) -> str:
             parts: list[str] = []
             if isinstance(entries, list):

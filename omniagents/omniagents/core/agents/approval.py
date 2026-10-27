@@ -16,6 +16,7 @@ tool gets its own predicate that closes over its name and the session.
 
 from __future__ import annotations
 
+import copy
 import re
 from typing import Any, Callable, Awaitable, Iterable, List, Pattern
 
@@ -147,8 +148,8 @@ def attach_tool_approval_predicates(
     safe_tool_patterns: Iterable[str] | None = None,
     skip_approvals: bool = False,
     exempt: Iterable[Any] = (),
-) -> None:
-    """Attach per-tool ``needs_approval`` predicates to a bare tool list.
+) -> List[Any]:
+    """``tools`` with per-tool ``needs_approval`` predicates, as copies.
 
     The realtime (voice) pipeline builds its ``RealtimeAgent`` from a flat
     tool list rather than through :func:`configure_tool_approval`'s agent
@@ -162,18 +163,8 @@ def attach_tool_approval_predicates(
     spec_names: set[str] = set(safe_tool_names or [])
     spec_patterns: List[Pattern] = [re.compile(p) for p in (safe_tool_patterns or [])]
     exempt_ids = {id(t) for t in exempt}
-    for tool in tools:
-        if not isinstance(tool, FunctionTool) or id(tool) in exempt_ids:
-            continue
-        if getattr(tool, "_output_reader", False) or getattr(
-            tool, "_orchestrator", False
-        ):
-            continue
-        if tool.needs_approval not in (False, None):
-            continue
-        tool.needs_approval = _make_predicate(
-            tool.name, session, spec_names, spec_patterns, skip_approvals
-        )
+    attach = _make_attacher(session, spec_names, spec_patterns, skip_approvals)
+    return [tool if id(tool) in exempt_ids else attach(tool) for tool in tools]
 
 
 def _walk_agents(root: Any) -> Iterable[Any]:
@@ -207,34 +198,42 @@ def _make_attacher(
     spec_names: set[str],
     spec_patterns: List[Pattern],
     skip_approvals: bool,
-) -> Callable[[Any], None]:
-    """The per-tool attach step shared by every approval entry point."""
+) -> Callable[[Any], Any]:
+    """The per-tool gating step shared by every approval entry point.
 
-    def _attach(tool: Any) -> None:
+    Returns ``tool`` itself when it needs no predicate, else a copy carrying
+    this session's predicate. Tool objects are shared by every agent and
+    session in the process (registries, capability packs); setting the
+    predicate on them in place gated every later agent with the first
+    session's predicate, so whether a call was reviewed depended on which
+    agent (a worker, say) had been set up first.
+    """
+
+    def _attach(tool: Any) -> Any:
         if not isinstance(tool, FunctionTool):
-            return
+            return tool
         if getattr(tool, "_output_reader", False) or getattr(
             tool, "_orchestrator", False
         ):
-            return
+            return tool
         if tool.needs_approval not in (False, None):
-            return
+            return tool
         identity = getattr(tool, "_mcp_identity", None)
+        gated = copy.copy(tool)
         if identity is not None:
-            tool.needs_approval = _make_mcp_predicate(
+            gated.needs_approval = _make_mcp_predicate(
                 identity, tool.name, session, spec_names, spec_patterns, skip_approvals
             )
         else:
-            tool.needs_approval = _make_predicate(
+            gated.needs_approval = _make_predicate(
                 tool.name, session, spec_names, spec_patterns, skip_approvals
             )
+        return gated
 
     return _attach
 
 
-def _wrap_get_all_tools(
-    agent: Any, attach: Callable[[Any], None], session: Any
-) -> None:
+def _wrap_get_all_tools(agent: Any, attach: Callable[[Any], Any], session: Any) -> None:
     """Patch ``agent.get_all_tools`` so lazily-resolved tools are gated.
 
     Both agent flavors resolve MCP tools inside ``get_all_tools`` on every
@@ -253,9 +252,7 @@ def _wrap_get_all_tools(
             await stamp_mcp_tool_identities(_agent, run_context, tools, session)
         except Exception:
             pass
-        for t in tools:
-            attach(t)
-        return tools
+        return [attach(t) for t in tools]
 
     try:
         agent.get_all_tools = _patched  # type: ignore[assignment]
@@ -323,8 +320,12 @@ def configure_tool_approval(
     _attach = _make_attacher(session, spec_names, spec_patterns, skip_approvals)
 
     for sub_agent in _walk_agents(agent):
-        for tool in getattr(sub_agent, "tools", None) or []:
-            _attach(tool)
+        tools = getattr(sub_agent, "tools", None)
+        if tools:
+            try:
+                sub_agent.tools = [_attach(tool) for tool in tools]
+            except Exception:
+                pass
 
         for capability in getattr(sub_agent, "capabilities", None) or []:
             original_tools = getattr(capability, "tools", None)
@@ -334,10 +335,7 @@ def configure_tool_approval(
                 continue
 
             def _patched_capability_tools(*args, _orig=original_tools, **kwargs):  # type: ignore[no-untyped-def]
-                tools = list(_orig(*args, **kwargs))
-                for t in tools:
-                    _attach(t)
-                return tools
+                return [_attach(t) for t in _orig(*args, **kwargs)]
 
             try:
                 setattr(capability, "tools", _patched_capability_tools)

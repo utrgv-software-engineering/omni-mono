@@ -59,8 +59,10 @@ async def test_predicate_requires_approval_by_default():
     session = _FakeSession()
     configure_tool_approval(agent, session=session)
 
-    assert callable(tool.needs_approval)
-    assert (await tool.needs_approval(None, {}, "call_1")) is True
+    [own] = agent.tools
+    assert callable(own.needs_approval)
+    assert (await own.needs_approval(None, {}, "call_1")) is True
+    assert tool.needs_approval is False  # the shared tool is not changed
 
 
 @pytest.mark.asyncio
@@ -72,7 +74,7 @@ async def test_predicate_skips_when_session_allows_tool():
     session.always_allow_tools.add("read_file")
     configure_tool_approval(agent, session=session)
 
-    assert (await tool.needs_approval(None, {}, "call_1")) is False
+    assert (await agent.tools[0].needs_approval(None, {}, "call_1")) is False
 
 
 @pytest.mark.asyncio
@@ -84,7 +86,7 @@ async def test_predicate_honors_session_pattern():
     session.always_allow_patterns.add(r"^get_")
     configure_tool_approval(agent, session=session)
 
-    assert (await tool.needs_approval(None, {}, "call_1")) is False
+    assert (await agent.tools[0].needs_approval(None, {}, "call_1")) is False
 
 
 @pytest.mark.asyncio
@@ -104,9 +106,10 @@ async def test_predicate_honors_spec_allow_list_and_patterns():
         safe_tool_patterns=[r".*_health$"],
     )
 
-    assert (await safe.needs_approval(None, {}, "c1")) is False
-    assert (await safe_pattern.needs_approval(None, {}, "c2")) is False
-    assert (await risky.needs_approval(None, {}, "c3")) is True
+    own = {t.name: t for t in agent.tools}
+    assert (await own["list_dir"].needs_approval(None, {}, "c1")) is False
+    assert (await own["status_health"].needs_approval(None, {}, "c2")) is False
+    assert (await own["rm_rf"].needs_approval(None, {}, "c3")) is True
 
 
 @pytest.mark.asyncio
@@ -118,8 +121,9 @@ async def test_skip_approvals_disables_predicate():
     configure_tool_approval(agent, session=session, skip_approvals=True)
 
     # Predicate is attached but always returns False.
-    assert callable(tool.needs_approval)
-    assert (await tool.needs_approval(None, {}, "c1")) is False
+    [own] = agent.tools
+    assert callable(own.needs_approval)
+    assert (await own.needs_approval(None, {}, "c1")) is False
 
 
 @pytest.mark.asyncio
@@ -135,7 +139,7 @@ async def test_existing_needs_approval_is_not_overridden():
     session = _FakeSession()
     configure_tool_approval(agent, session=session)
 
-    assert tool.needs_approval is custom_predicate
+    assert agent.tools[0].needs_approval is custom_predicate
 
 
 @pytest.mark.asyncio
@@ -156,9 +160,9 @@ async def test_predicate_propagates_to_handoff_agents():
     configure_tool_approval(main_agent, session=session)
 
     # Both the main agent's tool and the handoff target's tool should be configured.
-    assert callable(main_tool.needs_approval)
-    assert callable(sub_tool.needs_approval)
-    assert (await sub_tool.needs_approval(None, {}, "c1")) is True
+    assert callable(main_agent.tools[0].needs_approval)
+    assert callable(sub_agent.tools[0].needs_approval)
+    assert (await sub_agent.tools[0].needs_approval(None, {}, "c1")) is True
 
 
 @pytest.mark.asyncio
@@ -171,9 +175,10 @@ async def test_predicate_propagates_to_sandbox_capability_tools():
     configure_tool_approval(agent, session=session)
 
     [configured_tool] = agent.capabilities[0].tools()
-    assert configured_tool is tool
-    assert callable(tool.needs_approval)
-    assert (await tool.needs_approval(None, {}, "c1")) is True
+    assert configured_tool.name == tool.name and configured_tool is not tool
+    assert callable(configured_tool.needs_approval)
+    assert (await configured_tool.needs_approval(None, {}, "c1")) is True
+    assert tool.needs_approval is False  # the shared tool is not changed
 
 
 @pytest.mark.asyncio
@@ -186,6 +191,6 @@ async def test_sandbox_capability_tools_honor_safe_overrides():
     session = _FakeSession()
     configure_tool_approval(agent, session=session, safe_tool_names=["read_file"])
 
-    agent.capabilities[0].tools()
-    assert (await safe.needs_approval(None, {}, "c1")) is False
-    assert (await risky.needs_approval(None, {}, "c2")) is True
+    own = {t.name: t for t in agent.capabilities[0].tools()}
+    assert (await own["read_file"].needs_approval(None, {}, "c1")) is False
+    assert (await own["execute_bash"].needs_approval(None, {}, "c2")) is True

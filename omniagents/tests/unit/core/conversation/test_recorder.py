@@ -1500,7 +1500,9 @@ class TestReasoning:
         recorder.record_persisted_reasoning(
             THREAD, run_id=RUN, item={"type": "reasoning", "id": "rs_2", "summary": []}
         )
-        assert [r.content.get("reasoning_id") for r in only(store, ItemKind.REASONING)] == [
+        assert [
+            r.content.get("reasoning_id") for r in only(store, ItemKind.REASONING)
+        ] == [
             None,
             "rs_2",
         ]
@@ -1799,3 +1801,75 @@ def test_parent_turn_end_does_not_finalize_worker_approval(store, recorder, kind
     assert approval.content["worker_session_id"] == "child"
     feed(recorder, (f"{kind}_approval_resolved", {key: "worker-approval"}))
     assert store.get_item(THREAD, approval.item_id).status == ItemStatus.COMPLETED
+
+
+def test_voice_projection_is_tagged_deduplicated_and_not_a_task_turn(recorder, store):
+    spoken = {
+        "role": "user",
+        "content": "Hello",
+        "omniagents": {
+            "source": "voice:codex-live",
+            "live_call": "call",
+            "voice_id": "1",
+        },
+    }
+    first = recorder.record_voice_transcript(THREAD, spoken)
+    again = recorder.record_voice_transcript(THREAD, spoken)
+    assert first.item_id == again.item_id
+    saved = store.get_item(THREAD, first.item_id)
+    assert saved.source_ref["voice_caption"] is True
+    assert saved.turn_id is None
+    assert saved.content["text"] == "Hello"
+    assert store.count_items(THREAD) == 1
+
+
+def test_legacy_voice_projection_retains_caption_identity():
+    from omniagents.core.conversation.adapter import project_thread
+
+    raw = {
+        "role": "assistant",
+        "content": "Hello",
+        "omniagents": {
+            "source": "voice:codex-live",
+            "live_call": "call",
+            "voice_id": "1",
+        },
+    }
+    _, _, projected = project_thread("legacy", iter([raw]))
+    assert projected[0].source_ref["voice_caption"] is True
+    assert projected[0].source_ref["voice_id"] == "1"
+
+
+def test_voice_history_projection_recovers_after_write_failure(monkeypatch):
+    from omniagents.core.session.manager import Session
+    from omniagents.core.session.history_db import load_history, pending_projections
+    from omniagents.core.conversation.recorder import recorder_for_session
+
+    session = Session("voice", "agent", "saved-speech")
+    recorder = recorder_for_session(session)
+    original = ConversationRecorder.record_voice_transcript
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("simulated projection failure")
+
+    monkeypatch.setattr(ConversationRecorder, "record_voice_transcript", fail)
+    message = {
+        "role": "assistant",
+        "content": "Spoken reply",
+        "omniagents": {
+            "source": "voice:codex-live",
+            "live_call": "call",
+            "voice_id": "1",
+        },
+    }
+    session.append_message(
+        message, projection={"version": 1, "kind": "voice_transcript"}
+    )
+    assert len(load_history(session.id, project_slug="voice", agent_slug="agent")) == 1
+    assert pending_projections(session.id, project_slug="voice", agent_slug="agent")
+    monkeypatch.setattr(ConversationRecorder, "record_voice_transcript", original)
+    recorder.recover_pending_messages(session.id)
+    saved = recorder.store.list_items(session.id, limit=10)
+    assert len(saved) == 1 and saved[0].source_ref["voice_caption"] is True
+    assert saved[0].content["text"] == "Spoken reply"
+    assert not pending_projections(session.id, project_slug="voice", agent_slug="agent")

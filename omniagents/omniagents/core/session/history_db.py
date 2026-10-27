@@ -363,6 +363,28 @@ def get_session_user_id(
     )
 
 
+def get_session_owner(
+    session_id: str,
+    *,
+    project_slug: str | None = None,
+    agent_slug: str | None = None,
+) -> str | None:
+    """Who owns *session_id*: its session row's owner or, for a thread with no
+    session row (an agent tool's child, ``sub_<hash>``), its thread row's,
+    which the recorder stamps with the parent session's owner. ``None``:
+    unowned."""
+    owner = get_session_user_id(
+        session_id, project_slug=project_slug, agent_slug=agent_slug
+    )
+    if owner is None:
+        from omniagents.core.conversation.store import get_conversation_store
+
+        thread = get_conversation_store(project_slug, agent_slug).get_thread(session_id)
+        if thread is not None and thread.user_id:
+            return thread.user_id
+    return owner
+
+
 def session_exists(
     session_id: str,
     *,

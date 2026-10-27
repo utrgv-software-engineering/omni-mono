@@ -7,6 +7,22 @@ from omniagents.core.eval import engine, pipeline, targets
 from omniagents.core.evaluation import registry
 
 
+class _Streamed:
+    """A streamed run over a fake ``Runner.run``: no events, then its final output."""
+
+    def __init__(self, pending):
+        self._pending = pending
+        self.final_output = None
+
+    async def stream_events(self):
+        self.final_output = (await self._pending).final_output
+        return
+        yield
+
+    def cancel(self):
+        pass
+
+
 def _configure_pipeline(monkeypatch, history_text="final"):
     def fake_load_spec(path, **kw):
         return types.SimpleNamespace(
@@ -37,7 +53,7 @@ def _configure_pipeline(monkeypatch, history_text="final"):
         def get_last_run_end(self):
             return None
 
-    async def fake_create_agent(spec):
+    async def fake_create_agent(spec, **kwargs):
         return FakeAgent()
 
     monkeypatch.setattr(targets, "create_unified_agent", fake_create_agent)
@@ -95,6 +111,11 @@ def test_pipeline_executes_multiple_judges_per_scenario(tmp_path, monkeypatch):
             return types.SimpleNamespace(
                 final_output={"answer": "Pass", "reasoning": f"{key}-ok"}
             )
+
+        @staticmethod
+        def run_streamed(agent, prompt, max_turns=1, context=None, **_kwargs):
+            # Judges run streamed (the Codex backend accepts only streaming).
+            return _Streamed(Runner.run(agent, prompt, max_turns, context=context))
 
     class RunConfig:
         def __init__(self, **kwargs):
@@ -195,6 +216,11 @@ def test_pipeline_judge_selection_modes(tmp_path, monkeypatch):
             return types.SimpleNamespace(
                 final_output={"answer": "Pass", "reasoning": key}
             )
+
+        @staticmethod
+        def run_streamed(agent, prompt, max_turns=1, context=None, **_kwargs):
+            # Judges run streamed (the Codex backend accepts only streaming).
+            return _Streamed(Runner.run(agent, prompt, max_turns, context=context))
 
     class RunConfig:
         def __init__(self, **kwargs):

@@ -13,6 +13,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 export type RealtimeVoice = {
   actor: RealtimeVoiceController['actor'];
+  levels: RealtimeVoiceController['levels'];
   /** Open a session paired to `sessionId` (falls back to the surface's handoff session). */
   open: (sessionId?: string) => void;
   close: () => void;
@@ -41,5 +42,5 @@ export function useRealtimeVoice(): RealtimeVoice {
   const interrupt = useCallback(() => controller.interrupt(), [controller]);
   const sendText = useCallback((text: string) => controller.sendText(text), [controller]);
 
-  return { actor: controller.actor, open, close, toggleMute, interrupt, sendText };
+  return { actor: controller.actor, levels: controller.levels, open, close, toggleMute, interrupt, sendText };
 }

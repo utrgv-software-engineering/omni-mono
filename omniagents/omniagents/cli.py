@@ -105,6 +105,173 @@ def _run_auth_command(args) -> None:
         sys.exit(status)
 
 
+def _run_integrations_command(args) -> None:
+    """``omniagents integrations {replay,compare,run-schedule}``: staging's replays
+    (integrations/replay.py), and firing a schedule now."""
+    import time
+
+    import httpx
+
+    from omniagents.integrations.replay import (
+        REPLAY_PATH,
+        compare,
+        event_json,
+        format_comparison,
+        regressions,
+    )
+    from omniagents.integrations.schedule import parse_duration
+    from omniagents.integrations.store import EventStore
+
+    def store(path: str) -> EventStore:
+        if not Path(path).is_file():
+            print(f"No event store at {path}", file=sys.stderr)
+            sys.exit(1)
+        return EventStore(Path(path))
+
+    def post(url: str, **kwargs) -> "httpx.Response":
+        try:
+            return httpx.post(
+                url,
+                headers={"Authorization": f"Bearer {args.token}"},
+                timeout=60,
+                **kwargs,
+            )
+        except httpx.HTTPError as exc:
+            print(f"Could not reach {args.to}: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+    if args.integrations_command == "wait":
+        candidate = store(args.events)
+        deadline = time.time() + parse_duration(args.timeout)
+        # A moment for events just sent to be recorded as dispatched.
+        time.sleep(2)
+        while candidate.unsettled():
+            if time.time() > deadline:
+                print(
+                    f"Still {candidate.unsettled()} event(s) or run(s) going after {args.timeout}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            time.sleep(5)
+        print("Every event is handled and every run finished")
+        return
+    if args.integrations_command == "run-schedule":
+        from omniagents.integrations.schedule import RUN_SCHEDULE_PATH
+
+        response = post(args.to.rstrip("/") + RUN_SCHEDULE_PATH.format(name=args.name))
+        if response.status_code != 200:
+            print(
+                f"The factory said {response.status_code}: {response.text}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(f"Fired {args.name} on {args.to}")
+        return
+    try:
+        since = time.time() - parse_duration(args.since)
+    except ValueError as exc:
+        print(f"--since: {exc}", file=sys.stderr)
+        sys.exit(1)
+    if args.integrations_command == "replay":
+        events = [
+            event_json(e)
+            for e in store(args.events).events_since(since)
+            if e.control is None
+        ]
+        if args.limit:
+            events = events[-args.limit :]  # the latest
+        if not events:
+            print("No events to replay.")
+            return
+        response = post(args.to.rstrip("/") + REPLAY_PATH, json={"events": events})
+        if response.status_code != 200:
+            print(
+                f"The factory said {response.status_code}: {response.text}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(
+            f"Replayed {response.json()['accepted']} of {len(events)} event(s) into {args.to}"
+        )
+    elif args.integrations_command == "compare":
+        rows = compare(store(args.baseline), store(args.candidate), since)
+        print(format_comparison(rows))
+        worse = regressions(rows)
+        if worse:
+            print("\nWorse than the baseline:\n" + "\n".join(f"- {w}" for w in worse))
+            if args.fail_on_regression:
+                sys.exit(1)
+    else:
+        print(
+            "usage: omniagents integrations {replay,compare,run-schedule}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
+def _run_benchmark(
+    workspace, scenario_set: str, matrix_path: Path, args, include_unmeasured: bool
+) -> None:
+    """``eval scenarios run --set <tasks> --matrix <configs>``: a benchmark (core/eval/benchmark.py)."""
+    import time
+
+    from omniagents.core.eval.benchmark import load_matrix, run_matrix, write
+    from omniagents.core.pricing import project_price_list
+
+    if not scenario_set:
+        print(
+            "--matrix runs a set of tasks: give it with --set (a benchmark suite's file)",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    try:
+        matrix = load_matrix(matrix_path)
+    except (OSError, ValueError) as exc:
+        print(f"--matrix: {exc}", file=sys.stderr)
+        sys.exit(2)
+    prices = project_price_list(workspace.root)
+    chosen = workspace.resolve_set(scenario_set)
+
+    def once():
+        return workspace.run(
+            scenario_set=chosen,
+            include_unmeasured=include_unmeasured,
+            name=f"benchmark-{Path(scenario_set).stem}",
+            source="cli",
+        )
+
+    def report(row):
+        cost = (
+            "no price"
+            if row["cost_per_task"] is None
+            else f"${row['cost_per_task']:.2f} a task"
+        )
+        print(
+            f"{row['name']}: {row['passed']}/{row['runs']} correct ({row['correctness']:.0%}), {cost}, "
+            f"{row['input_tokens']} in ({row['cached_tokens']} cached), {row['output_tokens']} out",
+            flush=True,
+        )
+
+    result = run_matrix(
+        once, matrix, prices=prices, suite=Path(scenario_set).stem, on_config=report
+    )
+    output = str(getattr(args, "output", "") or "").strip()
+    path = (
+        Path(output)
+        if output
+        else (
+            workspace.root
+            / "evaluations"
+            / "runs"
+            / "benchmarks"
+            / f"{time.strftime('%Y%m%d_%H%M%S')}-{result['suite']}.json"
+        )
+    )
+    write(result, path)
+    print(f"Frontier: {', '.join(result['frontier']) or 'none (no prices)'}")
+    print(f"Wrote benchmark: {path}")
+
+
 def _judge_line(judged: dict) -> str:
     """One line on what a judge's verdicts in a run say."""
 
@@ -528,6 +695,12 @@ def main():
         default="",
         help="Run every scenario in this set (a generated set's name, or a "
         "scenario file's path) instead of the project's suite",
+    )
+    scen_run.add_argument(
+        "--matrix",
+        default="",
+        help="A benchmark: run the set under each configuration in this file "
+        "(configs: [{name, model, reasoning}], runs: N) and compare cost and correctness",
     )
     scen_holdout = scen_sub.add_parser(
         "holdout",
@@ -1198,7 +1371,83 @@ def main():
         help="login (device flow) | logout | status",
     )
 
+    # Integrations: staging's replays of production's events.
+    integrations_parser = subparsers.add_parser(
+        "integrations",
+        help="Replay a factory's events into another, and compare how each did",
+    )
+    integrations_sub = integrations_parser.add_subparsers(dest="integrations_command")
+    replay_parser = integrations_sub.add_parser(
+        "replay", help="Send a factory's recent events to another factory to run again"
+    )
+    replay_parser.add_argument(
+        "--events",
+        required=True,
+        help="The event store to replay from (~/.omniagents/integrations/<product>.db)",
+    )
+    replay_parser.add_argument(
+        "--to", required=True, help="The factory server to replay into (http://...)"
+    )
+    replay_parser.add_argument(
+        "--token", required=True, help="That server's auth token"
+    )
+    replay_parser.add_argument(
+        "--since",
+        default="24h",
+        help="How far back (24h, 7d, 90m; default: %(default)s)",
+    )
+    replay_parser.add_argument(
+        "--limit", type=int, default=0, help="Only the latest N events (default: all)"
+    )
+    wait_parser = integrations_sub.add_parser(
+        "wait",
+        help="Wait until a factory has handled every event and finished every run",
+    )
+    wait_parser.add_argument("--events", required=True, help="Its event store")
+    wait_parser.add_argument(
+        "--timeout", default="90m", help="How long at most (default: %(default)s)"
+    )
+    run_schedule_parser = integrations_sub.add_parser(
+        "run-schedule",
+        help="Fire one of a factory's schedules now (a nightly review, an audit)",
+    )
+    run_schedule_parser.add_argument(
+        "name", help="The schedule's name (its trigger's schedule.name)"
+    )
+    run_schedule_parser.add_argument(
+        "--to", required=True, help="The factory server (http://...)"
+    )
+    run_schedule_parser.add_argument(
+        "--token", required=True, help="That server's auth token"
+    )
+    compare_parser = integrations_sub.add_parser(
+        "compare",
+        help="The replayed runs beside the originals: how each ended and its grades",
+    )
+    compare_parser.add_argument(
+        "--baseline", required=True, help="The original factory's event store"
+    )
+    compare_parser.add_argument(
+        "--candidate",
+        required=True,
+        help="The event store the events were replayed into",
+    )
+    compare_parser.add_argument(
+        "--since",
+        default="24h",
+        help="The candidate's replays since (default: %(default)s)",
+    )
+    compare_parser.add_argument(
+        "--fail-on-regression",
+        action="store_true",
+        help="Exit 1 when the candidate did worse (a check)",
+    )
+
     args = parser.parse_args()
+
+    if args.command == "integrations":
+        _run_integrations_command(args)
+        return
 
     if args.command == "auth":
         _run_auth_command(args)
@@ -1686,6 +1935,16 @@ def main():
                     proj_path, agent=(str(getattr(args, "agent", "") or "") or None)
                 )
                 scenario_set = str(getattr(args, "scenario_set", "") or "").strip()
+                matrix_path = str(getattr(args, "matrix", "") or "").strip()
+                if matrix_path:
+                    _run_benchmark(
+                        workspace,
+                        scenario_set,
+                        Path(matrix_path),
+                        args,
+                        include_unmeasured,
+                    )
+                    return
                 data = workspace.run(
                     scenario_set=(
                         workspace.resolve_set(scenario_set) if scenario_set else None

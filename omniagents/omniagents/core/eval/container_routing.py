@@ -1,15 +1,14 @@
 """Container routing for evaluation environments.
 
 ``ContainerRoutingMixin`` gives any :class:`EvalEnvironment` the
-"environment in container" shape: the agent runs **on the host** in the
-standard in-process eval pipeline, and only the *environment* —
-filesystem and shell — lives in a container, reached through a live
-``SandboxSession``. Mechanically it's the SDK ``SandboxAgent`` path:
-``prepare_spec`` flips ``spec.sandbox_use_sandbox_agent`` and attaches
-the session to ``spec.sandbox_run_config``, so the builder prepends
-``WorkspaceBindingCapability`` and the agent's shell/file tools exec
-inside the container while the LLM loop, model client, and all measures
-stay host-side.
+"environment in container" shape: the agent's model loop runs **on the
+host** in the standard in-process eval pipeline, and its environment -
+filesystem, shell, processes - is a container. The container is registered
+as the scenario's execution environment
+(:meth:`register_environment`), exactly as ``omni serve`` registers a
+profile's sandbox, so the service routes every run there: file tools go
+through a ``SandboxWorkspace`` and shell tools through the SDK sandbox
+session, while the model client and all measures stay host-side.
 
 The container shape comes entirely from a **sandbox profile**
 (:mod:`omniagents.core.sandbox.profiles`); the mixin carries no default
@@ -29,8 +28,9 @@ product's built-in default + the named file and skips the user/project
 layers — hermetic and reproducible. ``environment.image`` is supported
 as a quick override (it just overwrites ``options.image`` of the
 resolved profile). Scenarios with neither ``profile`` nor ``image``
-fall through to the composing environment's behavior unchanged, so a
-mixed class is safe as the global eval environment.
+(and no class-level ``default_profile``) fall through to the composing
+environment's behavior unchanged, so a mixed class is safe as the global
+eval environment.
 
 Compose it BEFORE the workspace environment in the bases list — the
 mixin's overrides must win the MRO, and each falls through to the
@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import dataclasses
 import logging
 import shlex
 from pathlib import Path
@@ -108,6 +109,7 @@ class ContainerRoutingMixin:
     # (ConfiguredWorkspaceEnvironment wires them in __init__).
     profile_resolver: Optional[Callable[..., Any]] = None
     default_profile_path: Optional[Path] = None
+    profile_base_dir: Optional[Path] = None
 
     # Live sessions keyed by session_id. Kept off EnvironmentContext.data
     # because the runner merges context.data into spec.context (tool
@@ -125,12 +127,13 @@ class ContainerRoutingMixin:
     async def setup(self, scenario: Dict[str, Any]) -> Any:
         # Host staging first (the composing workspace environment).
         context = await super().setup(scenario)
-
-        env_block = scenario.get("environment") or {}
-        profile_ref = env_block.get("profile") or getattr(self, "default_profile", None)
-        image_override = env_block.get("image") or getattr(self, "default_image", None)
-        if not profile_ref and not image_override:
+        profile_path, image_override = self._requested_container(scenario)
+        await self.prepare_runtime(
+            context, scenario, in_container=profile_path is not None
+        )
+        if profile_path is None:
             # No container requested — behave exactly like the parent.
+            await self.runtime_ready(context, scenario)
             return context
 
         if self.profile_resolver is None:
@@ -142,6 +145,8 @@ class ContainerRoutingMixin:
 
         tmp_dir = context.get("workspace_root")
 
+        from agents.sandbox.manifest import Environment
+
         from omniagents.core.sandbox.factory import (
             build_manifest,
             build_sandbox_client,
@@ -149,18 +154,20 @@ class ContainerRoutingMixin:
 
         # Resolve the container shape through the profile system (hermetic via
         # explicit_path: the product's built-in default + this file only).
-        if profile_ref:
-            profile_path = self._resolve_profile_path(profile_ref)
-        else:
-            if self.default_profile_path is None:
-                raise RuntimeError(
-                    "Scenario sets environment.image without a profile, but "
-                    "no default_profile_path is configured on the environment."
-                )
-            profile_path = Path(self.default_profile_path)
         profile = self.profile_resolver(
             workspace_dir=Path(tmp_dir), explicit_path=profile_path
         )
+        # Quick image override (ad-hoc pin without authoring a profile file),
+        # applied before the build so `build:` steps land on that image.
+        if image_override:
+            raw = copy.deepcopy(profile.raw)
+            raw.setdefault("options", {})["image"] = image_override
+            profile = dataclasses.replace(profile, raw=raw)
+        # The profile's `build:` steps are built into its image once, not
+        # rerun in every scenario's container.
+        from omniagents.core.sandbox.images import prepare_profile_image
+
+        profile = await prepare_profile_image(profile)
         raw = copy.deepcopy(profile.raw)
 
         # Workspace is a per-scenario concern, not part of the profile: pin the
@@ -175,12 +182,21 @@ class ContainerRoutingMixin:
             "src": tmp_dir,
         }
 
-        # Quick image override (ad-hoc pin without authoring a profile file).
-        if image_override:
-            raw.setdefault("options", {})["image"] = image_override
-
         client, options = build_sandbox_client(raw)
         manifest = build_manifest(raw)
+
+        # The scenario's environment variables reach the agents' processes
+        # in the container, as the profile's own do.
+        manifest = manifest.model_copy(
+            update={
+                "environment": Environment(
+                    value={
+                        **manifest.environment.value,
+                        **self.container_env_vars(context),
+                    }
+                )
+            }
+        )
 
         # Pre-declare the run_as user on the manifest so the SDK's per-run User
         # injection validates. Skipped when the profile sets no run_as (the
@@ -195,6 +211,13 @@ class ContainerRoutingMixin:
             )
 
         session = await client.create(manifest=manifest, options=options, snapshot=None)
+        # Recorded before start, so teardown stops a container whose start or
+        # init failed.
+        self._sessions[context.session_id] = {
+            "session": session,
+            "run_as": run_as if isinstance(run_as, str) and run_as else None,
+            "profile_raw": raw,
+        }
         await session.start()
 
         # Run the profile's init hooks (user remap, daemon init, ...)
@@ -217,58 +240,73 @@ class ContainerRoutingMixin:
             (raw.get("options") or {}).get("image"),
             run_as,
         )
-
-        self._sessions[context.session_id] = {
-            "session": session,
-            "run_as": run_as if isinstance(run_as, str) and run_as else None,
-        }
+        await self.runtime_ready(context, scenario)
         return context
 
-    def get_env_vars(self, context: Any) -> Dict[str, str]:
-        env = super().get_env_vars(context)
-        # For container scenarios the agent's shell/fs tools exec *inside* the
-        # container (via WorkspaceBindingCapability), so the composing
-        # environment's host workspace paths are wrong — the bash tool would
-        # `cd` to a host path that doesn't exist in the container. Point
-        # workspace-shaped env values at the container manifest root instead.
-        if context is not None and context.session_id in self._sessions:
-            host_root = context.get("workspace_root", "")
-            for key, value in list(env.items()):
-                if value == host_root:
-                    env[key] = self.CONTAINER_WORKSPACE_ROOT
+    def _requested_container(
+        self, scenario: Dict[str, Any]
+    ) -> tuple[Optional[Path], Optional[str]]:
+        """The profile (and image override) a scenario's container uses, if any."""
+        env_block = scenario.get("environment") or {}
+        profile_ref = env_block.get("profile") or getattr(self, "default_profile", None)
+        image_override = env_block.get("image") or getattr(self, "default_image", None)
+        if profile_ref:
+            return self._resolve_profile_path(profile_ref), image_override
+        if not image_override:
+            return None, None
+        if self.default_profile_path is None:
+            raise RuntimeError(
+                "Scenario sets environment.image without a profile, but "
+                "no default_profile_path is configured on the environment."
+            )
+        return Path(self.default_profile_path), image_override
+
+    async def prepare_runtime(
+        self, context: Any, scenario: Dict[str, Any], *, in_container: bool
+    ) -> None:
+        """Hook: before the scenario's runtime exists; a container is
+        created with :meth:`container_env_vars` as they stand after it."""
+
+    async def runtime_ready(self, context: Any, scenario: Dict[str, Any]) -> None:
+        """Hook: the scenario's runtime (its container, or the host) is up."""
+
+    def container_session(self, context: Any) -> Optional[Dict[str, Any]]:
+        """The scenario's live container (``session``, ``run_as``), if any."""
+        return self._sessions.get(context.session_id) if context else None
+
+    def container_env_vars(self, context: Any) -> Dict[str, str]:
+        """Environment variables the container's processes get.
+
+        Default: :meth:`get_env_vars`, with workspace-shaped values pointed
+        at the container's workspace.
+        """
+        env = dict(super().get_env_vars(context))
+        host_root = context.get("workspace_root", "")
+        for key, value in list(env.items()):
+            if value == host_root:
+                env[key] = self.CONTAINER_WORKSPACE_ROOT
         return env
 
-    async def prepare_spec(self, spec: Any, context: Optional[Any]) -> None:
-        await super().prepare_spec(spec, context)
-        if context is None:
-            return
-        record = self._sessions.get(context.session_id)
+    async def register_environment(self, resources: Any, context: Any) -> Any:
+        record = self.container_session(context)
         if not record:
-            return  # host-only scenario
+            return await super().register_environment(resources, context)
+        from omniagents.core.runtime.environment_provisioner import (
+            sandbox_capabilities,
+        )
+        from omniagents.execution import register_sandbox_environment
 
-        spec.sandbox_use_sandbox_agent = True
-        run_as = record.get("run_as")
-        if run_as:
-            spec.sandbox_run_as = run_as
-
-        # The runner merged context.data["workspace_root"] (the *host* staging
-        # dir) into spec.context. The agent's tools exec in the container, so
-        # the bash tool's `require_workspace_root` (used to anchor relative/
-        # null cwd) must resolve to the container root, not the host path —
-        # otherwise commands without an absolute cwd `cd` to a host path that
-        # doesn't exist in the container. prepare_spec runs after that merge,
-        # so this override sticks. (Measures still read the host path from the
-        # separate EnvironmentContext.data.)
-        if isinstance(getattr(spec, "context", None), dict):
-            spec.context["workspace_root"] = self.CONTAINER_WORKSPACE_ROOT
-
-        from agents.run_config import SandboxRunConfig
-
-        existing = getattr(spec, "sandbox_run_config", None)
-        if existing is None:
-            spec.sandbox_run_config = SandboxRunConfig(session=record["session"])
-        else:
-            existing.session = record["session"]
+        # The capabilities production gives this profile's sandbox
+        # (``contained`` for a docker container), so the approval policy
+        # treats the scenario's container as it would the real one.
+        return register_sandbox_environment(
+            resources,
+            record["session"],
+            self.CONTAINER_WORKSPACE_ROOT,
+            owner_user_id=None,
+            capabilities=sandbox_capabilities(record["profile_raw"]),
+            run_as=record.get("run_as"),
+        )
 
     def run_command(self, context: Any, command: str, timeout: int = 120) -> tuple:
         record = self._sessions.get(context.session_id) if context else None
@@ -333,12 +371,15 @@ class ContainerRoutingMixin:
 
     # ── helpers ─────────────────────────────────────────────────────
 
-    @staticmethod
-    def _resolve_profile_path(ref: str) -> Path:
-        """Resolve a scenario's ``environment.profile`` string to a path.
+    def _resolve_profile_path(self, ref: str | Path) -> Path:
+        """Resolve a scenario's ``environment.profile`` to a path.
 
-        Absolute paths are honored; relative paths resolve against the eval
-        invocation's cwd (the project root).
+        Absolute paths are honored; relative paths resolve against
+        :attr:`profile_base_dir` (the evaluation directory, for the
+        declarative environment), else the invocation's cwd.
         """
         p = Path(ref).expanduser()
-        return p if p.is_absolute() else (Path.cwd() / p)
+        if p.is_absolute():
+            return p
+        base = getattr(self, "profile_base_dir", None)
+        return (Path(base) if base else Path.cwd()) / p

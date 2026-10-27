@@ -752,6 +752,11 @@ class ConnectionAuthenticator:
             headers=websocket.headers, query_params=websocket.query_params
         )
 
+    async def authenticate_token(self, token: str) -> UserIdentity:
+        """The principal a bearer *token* authenticates as: the server's own,
+        for work it starts itself (an integration's runs)."""
+        return await self._authenticate_token(token)
+
     async def authenticate_http(self, request: Request) -> UserIdentity:
         """Authenticate an HTTP request (used by ``/auth/ws-ticket``)."""
         return await self._authenticate(headers=request.headers, query_params=None)

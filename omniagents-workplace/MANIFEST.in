@@ -1,0 +1,3 @@
+recursive-include omniagents_workplace/static *
+recursive-include omniagents_workplace/reference *.json
+recursive-include omniagents_workplace/seeds *

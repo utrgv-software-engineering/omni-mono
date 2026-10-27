@@ -230,6 +230,7 @@ async def _build_handoffs_from_configs(
     approval_callback: Optional[Any] = None,
     _loading_stack: Optional[Set[Path]] = None,
     parent_spec: Optional["AgentSpec"] = None,
+    mcp_pool: Optional[List[Any]] = None,
 ) -> List["Handoff"]:
     """Build handoff objects from HandoffConfig list."""
     from agents import handoff
@@ -278,6 +279,7 @@ async def _build_handoffs_from_configs(
                     server_functions_registry=server_functions_registry,
                     agents_map=agents_map,
                     capability_registry=capability_registry,
+                    project_defaults=getattr(parent_spec, "_project_defaults", None),
                 )
 
                 # Add this path to building stack for recursive building
@@ -296,10 +298,11 @@ async def _build_handoffs_from_configs(
             # Build the handoff agent
             handoff_agent = await _default_build_agent(
                 settings=settings,
-                mcp_servers=None,
+                mcp_servers=_connected_for(handoff_spec, mcp_pool),
                 spec=handoff_spec,
                 approval_callback=approval_callback,
                 _loading_stack=new_loading_stack,
+                mcp_pool=mcp_pool,
             )
 
             # Create the handoff with optional overrides
@@ -328,6 +331,66 @@ async def _build_handoffs_from_configs(
     return handoffs
 
 
+def subagent_specs(
+    spec: "AgentSpec", _seen: Optional[Set[Path]] = None
+) -> List["AgentSpec"]:
+    """Every agent ``spec`` can hand off to or call as a tool, nested ones included."""
+    from omniagents.core.config.loader import load_agent_spec_from_yaml
+
+    seen = set(_seen or ())
+    found: List["AgentSpec"] = []
+    configs = list(getattr(spec, "handoff_configs", None) or []) + list(
+        getattr(spec, "agent_tool_configs", None) or []
+    )
+    for cfg in configs:
+        sub = getattr(cfg, "inline_spec", None)
+        if getattr(cfg, "yaml_path", None):
+            path = Path(cfg.yaml_path).resolve()
+            if path in seen:
+                continue
+            seen.add(path)
+            try:
+                sub = load_agent_spec_from_yaml(
+                    str(path),
+                    tool_registry=getattr(spec, "_tool_registry", None),
+                    guardrails_registry=getattr(spec, "_guardrails_registry", None),
+                    server_functions_registry=getattr(
+                        spec, "_server_functions_registry", None
+                    ),
+                    agents_map=getattr(spec, "_agents_map", None),
+                    capability_registry=getattr(spec, "_capability_registry", None),
+                    project_defaults=getattr(spec, "_project_defaults", None),
+                )
+            except Exception as exc:
+                logger.error(f"Failed to load sub-agent {path}: {exc}")
+                continue
+        if sub is None:
+            continue
+        found.append(sub)
+        found.extend(subagent_specs(sub, seen))
+    return found
+
+
+def _connected_for(
+    sub_spec: "AgentSpec", pool: Optional[List[Any]]
+) -> Optional[List[Any]]:
+    """The connected servers a sub-agent declares, from its caller's pool.
+
+    ``None`` (no pool: nothing connects for the caller) lets the sub-agent
+    build its own, as before.
+    """
+    if pool is None:
+        return None
+    names = [cfg.name for cfg in (sub_spec.mcp_servers or [])]
+    chosen = [s for s in pool if getattr(s, "name", None) in names]
+    missing = sorted(set(names) - {getattr(s, "name", None) for s in chosen})
+    if missing:
+        logger.warning(
+            f"Sub-agent '{sub_spec.name}': MCP servers {missing} are not connected"
+        )
+    return chosen
+
+
 async def _build_agent_tools_from_configs(
     agent_tool_configs: List["AgentToolConfig"],
     settings: Dict[str, Any],
@@ -335,6 +398,7 @@ async def _build_agent_tools_from_configs(
     _loading_stack: Optional[Set[Path]] = None,
     parent_spec: Optional["AgentSpec"] = None,
     session: Optional[Any] = None,
+    mcp_pool: Optional[List[Any]] = None,
 ) -> List[Any]:
     """Build agent-as-tool FunctionTool objects via Agent.as_tool().
 
@@ -379,6 +443,7 @@ async def _build_agent_tools_from_configs(
                     server_functions_registry=server_functions_registry,
                     agents_map=agents_map,
                     capability_registry=capability_registry,
+                    project_defaults=getattr(parent_spec, "_project_defaults", None),
                 )
                 new_loading_stack = _loading_stack.copy()
                 new_loading_stack.add(yaml_path)
@@ -391,11 +456,12 @@ async def _build_agent_tools_from_configs(
 
             sub_agent = await _default_build_agent(
                 settings=settings,
-                mcp_servers=None,
+                mcp_servers=_connected_for(sub_spec, mcp_pool),
                 spec=sub_spec,
                 approval_callback=approval_callback,
                 _loading_stack=new_loading_stack,
                 session=session,
+                mcp_pool=mcp_pool,
             )
 
             # Build kwargs for as_tool(); only pass keys we have to keep
@@ -467,6 +533,188 @@ async def _build_agent_tools_from_configs(
     return built_tools
 
 
+class _ContextOverride:
+    """A run-context wrapper whose ``context`` is replaced, for rendering only."""
+
+    def __init__(self, wrapper: Any, context: Any) -> None:
+        self._wrapper = wrapper
+        self.context = context
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._wrapper, name)
+
+
+def _bind_agent_skill_roots(
+    spec: "AgentSpec", instructions: Any, tools: List[Any]
+) -> tuple:
+    """Give this agent its own skill folders (``spec.skill_roots``), where its Run works.
+
+    While its instructions render, ``available_skills_block`` is rebuilt
+    with its folders (the run context's block was built for the run's top
+    agent, which a sub-agent called as a tool shares, and before the Run's
+    environment was known); while its ``load_skill`` runs, the same folders
+    are searched. Rendering also copies the offered skill folders into a
+    sandbox Run's container (read-only, refreshed when they change on the
+    host), and the block shows the copies, so the files a skill points to
+    resolve where the agent's tools work; folders inside a sandbox Run's
+    workspace are listed through the workspace.
+    """
+    roots = list(getattr(spec, "skill_roots", None) or [])
+    from omniagents.core.agents.rendered_instructions import record_instructions
+    from omniagents.core.skills import (
+        agent_skill_roots,
+        provide_skill_dirs,
+        run_skills,
+        run_skills_prompt,
+        skill_roots,
+    )
+
+    if callable(instructions):
+        inner = instructions
+
+        async def render_instructions(context_wrapper: Any, agent: Any) -> Any:
+            with agent_skill_roots(roots):
+                ctx = getattr(context_wrapper, "context", None)
+                if isinstance(ctx, dict) and "available_skills_block" in ctx:
+                    ws = ctx.get("workspace_root")
+                    ws = ws if isinstance(ws, str) and ws.strip() else None
+                    offered = await run_skills(skill_roots(ws))
+                    await provide_skill_dirs(
+                        [skill.host_dir for skill in offered if skill.host_dir]
+                    )
+                    context_wrapper = _ContextOverride(
+                        context_wrapper,
+                        {**ctx, "available_skills_block": run_skills_prompt(offered)},
+                    )
+                out = inner(context_wrapper, agent)
+                text = await out if inspect.isawaitable(out) else out
+            # The acting agent's instructions are trusted developer content
+            # for the approval reviewer (core/agents/guardian.py).
+            ctx = getattr(context_wrapper, "context", None)
+            if isinstance(ctx, dict):
+                record_instructions(ctx.get("session_id"), text)
+            return text
+
+        instructions = render_instructions
+
+    return instructions, _bind_load_skill(roots, tools)
+
+
+def _bind_load_skill(roots: List[Any], tools: List[Any]) -> List[Any]:
+    """``tools`` with ``load_skill`` searching ``roots`` (the agent's folders)."""
+    if not roots:
+        return list(tools)
+    import dataclasses
+
+    from omniagents.core.skills import agent_skill_roots
+
+    bound: List[Any] = []
+    for tool in tools:
+        if getattr(tool, "name", None) == "load_skill" and hasattr(
+            tool, "on_invoke_tool"
+        ):
+            original = tool.on_invoke_tool
+
+            async def invoke(ctx: Any, args: str, _original: Any = original) -> Any:
+                with agent_skill_roots(roots):
+                    return await _original(ctx, args)
+
+            tool = dataclasses.replace(tool, on_invoke_tool=invoke)
+        bound.append(tool)
+    return bound
+
+
+def _capability_tools_for_agent(spec: Any, cap: Any, tools: List[Any]) -> List[Any]:
+    """This agent's copies of a capability's tools.
+
+    The capability's approval rule for a tool (its ``approvals:`` block, or
+    the agent's override of it) and the agent's tool guardrails go on a
+    copy: the tool objects themselves are shared by every agent with the
+    capability in the process, so setting them in place gave every agent
+    the rules of whichever was built first.
+    """
+    import copy
+
+    cap_label = getattr(cap, "capability_name", None) or getattr(cap, "type", "?")
+    approvals_spec = getattr(cap, "approvals_spec", None) or {}
+    guardrails = {
+        "tool_input_guardrails": list(
+            getattr(spec, "tool_input_guardrails", None) or []
+        ),
+        "tool_output_guardrails": list(
+            getattr(spec, "tool_output_guardrails", None) or []
+        ),
+    }
+    out: List[Any] = []
+    for tool in tools:
+        changes: Dict[str, Any] = {}
+        tname = getattr(tool, "name", None)
+        # Tool-level explicit needs_approval already wins over everything
+        # (loader behavior at approval.py:123).
+        if tname in approvals_spec and getattr(tool, "needs_approval", None) in (
+            False,
+            None,
+        ):
+            resolved = _resolve_capability_approval_policy(approvals_spec[tname])
+            if resolved is None:
+                logger.warning(
+                    "Capability %r approval for tool %r could not be resolved "
+                    "(policy=%r). Tool will fall through to agent-level allowlist.",
+                    cap_label,
+                    tname,
+                    approvals_spec[tname],
+                )
+            else:
+                changes["needs_approval"] = resolved
+        for attr, wanted in guardrails.items():
+            if wanted and hasattr(tool, attr):
+                have = list(getattr(tool, attr) or [])
+                changes[attr] = have + [g for g in wanted if g not in have]
+        if changes:
+            tool = copy.copy(tool)
+            for attr, value in changes.items():
+                setattr(tool, attr, value)
+        out.append(tool)
+    return out
+
+
+def _capabilities_for_agent(spec: Any, capabilities: List[Any]) -> List[Any]:
+    """This agent's copies of its capability packs, for a SandboxAgent.
+
+    A SandboxAgent collects its packs' tools itself at run time, so they never
+    pass through the agent's ``tools`` list: each pack is copied so that its
+    ``tools()`` returns this agent's copies (approval rules, guardrails, and
+    ``load_skill`` searching the agent's skill folders).
+    """
+    roots = list(getattr(spec, "skill_roots", None) or [])
+    out: List[Any] = []
+    for cap in capabilities:
+        try:
+            copy = cap.model_copy(deep=False)
+        except Exception:
+            logger.warning(
+                "Capability %r cannot be copied for agent %r; its tools run "
+                "without the agent's approval rules and guardrails.",
+                getattr(cap, "capability_name", None) or getattr(cap, "type", "?"),
+                getattr(spec, "name", None),
+            )
+            out.append(cap)
+            continue
+        original = cap.tools
+
+        def tools(
+            *args: Any, _original: Any = original, _cap: Any = cap, **kwargs: Any
+        ):
+            own = _capability_tools_for_agent(
+                spec, _cap, list(_original(*args, **kwargs))
+            )
+            return _bind_load_skill(roots, own)
+
+        object.__setattr__(copy, "tools", tools)
+        out.append(copy)
+    return out
+
+
 async def _default_build_agent(
     settings: Dict[str, Any],
     mcp_servers: Optional[Any],
@@ -474,12 +722,18 @@ async def _default_build_agent(
     approval_callback: Optional[Any] = None,
     _loading_stack: Optional[Set[Path]] = None,
     session: Optional[Any] = None,
+    mcp_pool: Optional[List[Any]] = None,
 ) -> "AgentLike":
     """Internal default function to build the agent instance.
 
     Args:
         settings: Settings dictionary
-        mcp_servers: Pre-built MCP servers or None
+        mcp_servers: Pre-built MCP servers or None. Connected servers the
+            caller's service connected for this agent and its sub-agents are
+            the agent's own, except those marked ``_omni_subagent_only``
+            (when no ``mcp_pool`` is given: a sub-agent's are all its own).
+        mcp_pool: Every connected server, from which sub-agents take the
+            ones they declare (defaults to ``mcp_servers``)
         spec: Agent specification
         approval_callback: Callback for tool approval
         _loading_stack: Internal stack for circular reference detection
@@ -544,6 +798,12 @@ async def _default_build_agent(
             model_name = session_model_config["model"]
             logger.debug(f"Using session model override: {model_name}")
 
+    # A benchmark configuration's model, for every agent built under it (overrides.py).
+    from omniagents.core.agents.overrides import current_overrides
+
+    if current_overrides().get("model"):
+        model_name = current_overrides()["model"]
+
     # When sandbox mode is on, the SDK's sandbox runtime owns the capability
     # lifecycle (bind, tools, instructions) — we must NOT also merge tools or
     # append instructions in this builder, otherwise the model sees both
@@ -572,8 +832,21 @@ async def _default_build_agent(
     instructions = process_instructions(
         raw_instructions,
         search_paths=getattr(spec, "instructions_search_paths", None),
+        globals=getattr(spec, "instruction_globals", None),
     )
-    tools = spec.available_tools
+    tools = list(spec.available_tools)
+    if getattr(spec, "memory_config", None):
+        from omniagents.core.memory import MemoryClient
+
+        memory = MemoryClient(spec.memory_config)
+        try:
+            core_memory = await memory.core()
+            from omniagents.core.memory.client import append_core
+
+            instructions = append_core(instructions, core_memory)
+        except Exception:
+            logger.exception("Could not load core memory")
+        tools.append(memory.function_tool())
 
     # Apply spec-level tool guardrails to every FunctionTool the agent uses.
     # SDK 0.7+ supports per-tool input/output guardrails; we propagate the
@@ -600,6 +873,16 @@ async def _default_build_agent(
             provided_mcp_servers = list(mcp_servers)
         else:
             provided_mcp_servers = [mcp_servers]
+        # The session's connected servers, for this agent and its sub-agents:
+        # the sub-agents take theirs from the pool, and the agent keeps its
+        # own. A sub-agent is handed exactly its own, from its caller's pool.
+        if mcp_pool is None:
+            mcp_pool = list(provided_mcp_servers)
+            provided_mcp_servers = [
+                s
+                for s in provided_mcp_servers
+                if not getattr(s, "_omni_subagent_only", False)
+            ]
     elif spec.mcp_servers:
         try:
             provided_mcp_servers = build_mcp_servers(spec, settings)
@@ -644,6 +927,7 @@ async def _default_build_agent(
             approval_callback=approval_callback,
             _loading_stack=_loading_stack,
             parent_spec=spec,
+            mcp_pool=mcp_pool,
         )
 
     # Build agent-as-tool FunctionTools and append to the tool list
@@ -656,6 +940,7 @@ async def _default_build_agent(
                 _loading_stack=_loading_stack,
                 parent_spec=spec,
                 session=session,
+                mcp_pool=mcp_pool,
             )
             if agent_tools_built:
                 # Don't mutate the caller's list — concatenate into a new one.
@@ -663,21 +948,21 @@ async def _default_build_agent(
         except Exception as e:
             logger.error(f"Failed to build agent_tools for '{spec.name}': {e}")
 
-    # Capability packs (Phase 0): merge each resolved capability's tools into
-    # the agent's tool list and attach per-tool approval predicates from the
-    # capability's approvals_spec. Predicates are set directly on the
-    # FunctionTool's needs_approval attribute, which the SDK consults before
-    # each call. configure_tool_approval (run later by AgentService) skips
-    # tools whose needs_approval is already non-default, so capability-level
-    # rules win over the agent-level safe_tool_names allowlist — matching the
+    # Capability packs: merge each resolved capability's tools into the
+    # agent's tool list, as this agent's own copies (its capability approval
+    # rules and tool guardrails; see _capability_tools_for_agent).
+    # configure_tool_approval (run later by AgentService) skips tools whose
+    # needs_approval is already non-default, so capability-level rules win
+    # over the agent-level safe_tool_names allowlist — matching the
     # precedence in CAPABILITY_PACKS_DESIGN.md §6.
     #
     # Instructions composition for capabilities happens earlier, before
     # process_instructions, so the appended fragments flow through Jinja2.
     #
-    # Sandbox mode: skip this merge entirely. SandboxAgent's runtime walks
+    # Sandbox mode: skip this merge. SandboxAgent's runtime walks
     # `capabilities` itself (binding session, calling tools()) and produces
-    # the final tool list. Doing both produces duplicates.
+    # the final tool list; the capabilities it gets are this agent's copies
+    # (_capabilities_for_agent). Doing both produces duplicates.
     if resolved_caps and not use_sandbox_agent:
         cap_tools: List[Any] = []
         for cap in resolved_caps:
@@ -693,57 +978,8 @@ async def _default_build_agent(
                     e,
                 )
                 continue
-
-            approvals_spec = getattr(cap, "approvals_spec", None) or {}
-            for tool in this_caps_tools:
-                tname = getattr(tool, "name", None)
-                if not tname or tname not in approvals_spec:
-                    continue
-                policy = approvals_spec[tname]
-                # Tool-level explicit needs_approval already wins over
-                # everything (loader behavior at approval.py:123). Don't
-                # overwrite it here.
-                if getattr(tool, "needs_approval", None) not in (False, None):
-                    continue
-                resolved = _resolve_capability_approval_policy(policy)
-                if resolved is None:
-                    logger.warning(
-                        "Capability %r approval for tool %r could not be resolved "
-                        "(policy=%r). Tool will fall through to agent-level allowlist.",
-                        cap_label,
-                        tname,
-                        policy,
-                    )
-                    continue
-                try:
-                    tool.needs_approval = resolved
-                except Exception as e:
-                    logger.warning(
-                        "Failed to attach capability %r approval to tool %r: %s",
-                        cap_label,
-                        tname,
-                        e,
-                    )
-
-            cap_tools.extend(this_caps_tools)
-
-        if cap_tools:
-            # The agent's tool guardrails reach its capabilities' tools too (a
-            # shell command needs them more than most): applied above only to
-            # the agent's own tools, which come before these are merged. (A
-            # capability's tools can be shared between builds: each guardrail
-            # is added once)
-            for _tool in cap_tools:
-                for attr, wanted in (
-                    ("tool_input_guardrails", spec.tool_input_guardrails),
-                    ("tool_output_guardrails", spec.tool_output_guardrails),
-                ):
-                    if wanted and hasattr(_tool, attr):
-                        have = list(getattr(_tool, attr) or [])
-                        setattr(
-                            _tool, attr, have + [g for g in wanted if g not in have]
-                        )
-            tools = list(tools) + cap_tools
+            cap_tools.extend(_capability_tools_for_agent(spec, cap, this_caps_tools))
+        tools = list(tools) + cap_tools
 
     # Configure API key for the default client if provided.
     # Note: We do this unconditionally so that server/TUI paths (where a default
@@ -888,9 +1124,11 @@ async def _default_build_agent(
         # Default settings without tools
         model_settings = ModelSettings()
 
-    # Session-level reasoning effort override
-    if session is not None:
-        session_reasoning = getattr(session, "reasoning_effort", None)
+    # Session-level reasoning effort override (a benchmark configuration's first)
+    if session is not None or current_overrides().get("reasoning"):
+        session_reasoning = current_overrides().get("reasoning") or getattr(
+            session, "reasoning_effort", None
+        )
         if session_reasoning:
             from agents.model_settings import Reasoning
 
@@ -925,6 +1163,8 @@ async def _default_build_agent(
             logger.debug(f"Using session reasoning effort: {session_reasoning}")
 
     # Build the agent
+    instructions, tools = _bind_agent_skill_roots(spec, instructions, list(tools or []))
+
     agent_kwargs: Dict[str, Any] = dict(
         name=agent_name,
         instructions=instructions,
@@ -972,7 +1212,7 @@ async def _default_build_agent(
             # the host-side FunctionTools they bundled (web/serpapi/tasks
             # etc. that don't touch workspace state).
             legacy_caps = list(getattr(spec, "sandbox_capabilities", None) or [])
-            pack_caps = list(resolved_caps or [])
+            pack_caps = _capabilities_for_agent(spec, list(resolved_caps or []))
 
             # Prepend a side-effect capability that wires the omniagents
             # workspace contextvar to the bound session — see

@@ -16,11 +16,14 @@ async def test_worker_can_resume_with_history_and_remain_out_of_chat_lists(
 ):
     observed = []
     from unittest.mock import AsyncMock
-    from omniagents.core.agents.guardian import GuardianAssessment
+    from omniagents.core.agents.guardian import GuardianAssessment, GuardianDecision
     from omniagents.core.agents.service import current_service
 
     review = AsyncMock(
-        return_value=GuardianAssessment("low", "explicit", "allow", "test")
+        return_value=GuardianDecision(
+            status="approved",
+            assessment=GuardianAssessment("low", "high", "allow", "test"),
+        )
     )
     monkeypatch.setattr("omniagents.core.agents.guardian.review_approval", review)
     from types import SimpleNamespace

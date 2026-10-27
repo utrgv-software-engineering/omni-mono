@@ -31,9 +31,9 @@ if TYPE_CHECKING:
 # Disable OpenAI tracing by default for notebook evaluation
 # Users can opt-in to tracing by setting it up explicitly before importing
 try:
-    from agents import set_trace_processors
+    from omniagents.core.tracing import set_processors
 
-    set_trace_processors([])
+    set_processors([])
 except ImportError:
     pass
 

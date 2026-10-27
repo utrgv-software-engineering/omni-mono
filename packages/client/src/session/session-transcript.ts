@@ -338,7 +338,12 @@ export function wireSessionTranscript(session: ConversationSession, client: RPCC
             item.source_ref.event === 'message_output' &&
             typeof item.content.message_id === 'string' &&
             item.content.message_id.length > 0;
-          if (message && item.source_ref.event !== 'enqueue_message' && !providerOutput) {
+          if (
+            message &&
+            item.source_ref.event !== 'enqueue_message' &&
+            item.source_ref.event !== 'voice_transcript' &&
+            !providerOutput
+          ) {
             return;
           }
           actor.send({

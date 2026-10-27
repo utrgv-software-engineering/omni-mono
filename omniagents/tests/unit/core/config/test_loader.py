@@ -989,3 +989,84 @@ def test_loader_inline_instructions_search_paths_anchor_at_yaml_dir(tmp_path):
         tmp_path / "_shared",
         tmp_path.parent / "_shared",
     ]
+
+
+def test_mcp_servers_substitute_environment_variables(tmp_path, monkeypatch):
+    # One definition: the workplace simulator in class, real Slack in production.
+    monkeypatch.delenv("SLACK_MCP_URL", raising=False)
+    monkeypatch.setenv("SLACK_MCP_TOKEN", "xoxp-1")
+    monkeypatch.delenv("UNSET_TOKEN", raising=False)
+    yaml_path = tmp_path / "agent.yml"
+    write(
+        yaml_path,
+        """
+        name: Foreman
+        instructions: Hi
+        mcp_servers:
+          - name: slack
+            type: http
+            params:
+              url: ${SLACK_MCP_URL:-https://mcp.slack.com/mcp}
+              headers:
+                Authorization: Bearer ${SLACK_MCP_TOKEN}
+          - name: broken
+            type: http
+            params:
+              url: http://x
+              headers:
+                Authorization: Bearer ${UNSET_TOKEN}
+        """,
+    )
+    spec = load_agent_spec_from_yaml(str(yaml_path))
+    [server] = spec.mcp_servers
+    assert server.params == {
+        "url": "https://mcp.slack.com/mcp",
+        "headers": {"Authorization": "Bearer xoxp-1"},
+    }
+
+
+def test_a_substitution_environment_resolves_ahead_of_the_process(
+    tmp_path, monkeypatch
+):
+    # Two evaluation scenarios load the same agent at once, each pointing it
+    # at its own workplace.
+    import asyncio
+
+    from omniagents.core.config.loader import substitution_environment
+
+    monkeypatch.setenv("SLACK_MCP_URL", "https://process.example/mcp")
+    yaml_path = tmp_path / "agent.yml"
+    write(
+        yaml_path,
+        """
+        name: Foreman
+        instructions: Hi
+        mcp_servers:
+          - name: slack
+            type: http
+            params:
+              url: ${SLACK_MCP_URL}
+        """,
+    )
+
+    async def load(url):
+        with substitution_environment({"SLACK_MCP_URL": url}):
+            await asyncio.sleep(0)
+            return (
+                load_agent_spec_from_yaml(str(yaml_path)).mcp_servers[0].params["url"]
+            )
+
+    async def both():
+        return await asyncio.gather(
+            load("http://127.0.0.1:7301/slack/mcp"),
+            load("http://127.0.0.1:7302/slack/mcp"),
+        )
+
+    assert asyncio.run(both()) == [
+        "http://127.0.0.1:7301/slack/mcp",
+        "http://127.0.0.1:7302/slack/mcp",
+    ]
+    assert (
+        load_agent_spec_from_yaml(str(yaml_path)).mcp_servers[0].params["url"]
+        == "https://process.example/mcp"
+    )

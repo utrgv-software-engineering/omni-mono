@@ -28,6 +28,7 @@ def evaluation_measure(
     *,
     name: Optional[str] = None,
     overwrite: bool = False,
+    live: Optional[Dict[str, Any]] = None,
 ):
     """Register a function as an evaluation measure.
 
@@ -36,6 +37,9 @@ def evaluation_measure(
         name: Optional name override (defaults to function name)
         overwrite: If True, silently replace existing measure with same name.
                    Useful in notebooks where cells may be re-run.
+        live: For checks that also grade real runs: ``{"sample": <percent>,
+              "agents": [<agent keys>]}``. Recorded on the measure as
+              ``_live``; evaluations ignore it.
 
     Example:
         @evaluation_measure
@@ -63,6 +67,15 @@ def evaluation_measure(
         _MEASURES[key] = f
         setattr(f, "_is_omni_evaluation_measure", True)
         setattr(f, "_measure_name", key)
+        if live is not None:
+            if (
+                not isinstance(live, dict)
+                or not 0 < float(live.get("sample", 0)) <= 100
+            ):
+                raise ValueError(
+                    f"evaluation measure '{key}': live needs a sample between 1 and 100"
+                )
+            setattr(f, "_live", dict(live))
         return f
 
     if func is None:

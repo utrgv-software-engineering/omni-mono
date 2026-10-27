@@ -347,6 +347,18 @@ def _atomic_compaction_session_cls(base: type) -> type:
                     raise RuntimeError(
                         "Native compaction returned empty context; history was preserved."
                     )
+                memory_config = getattr(self.underlying_session, "_memory_config", None)
+                if memory_config and "compaction" in (
+                    memory_config.get("extraction") or {}
+                ).get("triggers", []):
+                    from omniagents.core.memory.extract import schedule
+
+                    schedule(
+                        memory_config,
+                        previous_items,
+                        {"session_id": getattr(self.underlying_session, "id", None)},
+                        "compaction",
+                    )
                 replace = getattr(self.underlying_session, "replace_sdk_items", None)
                 if callable(replace):
                     await replace(output_items)

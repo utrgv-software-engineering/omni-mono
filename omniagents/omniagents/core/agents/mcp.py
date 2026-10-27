@@ -337,6 +337,17 @@ def _instantiate_server(cfg: MCPServerConfig, params: Dict[str, Any]) -> MCPServ
     )
 
 
+def is_absent_optional(cfg: MCPServerConfig, params: Any) -> bool:
+    """An ``optional`` server (``options.optional: true``) the environment does not
+    have: its url (or command) is empty. It is left out, not an error."""
+    if not (cfg.options or {}).get("optional"):
+        return False
+    if not isinstance(params, dict):
+        return True
+    key = "command" if cfg.type.lower() == "stdio" else "url"
+    return not params.get(key)
+
+
 def build_mcp_servers(
     spec: AgentSpec,
     settings: Dict[str, Any],
@@ -355,6 +366,8 @@ def build_mcp_servers(
         resolved_params = _resolve_setting_placeholders(deepcopy(cfg.params), settings)
         if resolved_params is None:
             raise ValueError(f"MCP server '{cfg.name}' has params that resolve to None")
+        if is_absent_optional(cfg, resolved_params):
+            continue
         if (
             auth_resolver is not None
             and isinstance(resolved_params, dict)
@@ -370,6 +383,33 @@ def build_mcp_servers(
         server = _instantiate_server(cfg, resolved_params)
         servers.append(server)
     return servers
+
+
+def subagent_mcp_configs(spec: AgentSpec) -> List[MCPServerConfig]:
+    """The MCP servers ``spec``'s sub-agents declare and ``spec`` does not.
+
+    A sub-agent (an agent tool or a handoff) runs inside its caller's run, on
+    the servers its caller's session connected; these are the ones to
+    connect for it. One per name: the first declaration wins.
+    """
+    cached = getattr(spec, "_subagent_mcp_configs", None)
+    if cached is not None:
+        return cached
+    from omniagents.core.agents.builder import subagent_specs
+
+    names = {getattr(cfg, "name", None) for cfg in (spec.mcp_servers or [])}
+    extra: List[MCPServerConfig] = []
+    for sub in subagent_specs(spec):
+        for cfg in sub.mcp_servers or []:
+            name = getattr(cfg, "name", None)
+            if name not in names:
+                names.add(name)
+                extra.append(cfg)
+    try:
+        spec._subagent_mcp_configs = extra
+    except Exception:
+        pass
+    return extra
 
 
 def mcp_configuration_signature(spec: AgentSpec, settings: Dict[str, Any]) -> str:

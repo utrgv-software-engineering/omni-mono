@@ -30,6 +30,7 @@ from omniagents.workspace.sandbox import SandboxWorkspace
 def profile(client_type: str) -> ResolvedProfile:
     return ResolvedProfile(
         raw={"client": {"type": client_type}, "run_as": "agent"},
+        build=[],
         init=[],
         services=[],
         terminal=TerminalSpec(command="bash", user="agent", cwd="/workspace"),
@@ -203,8 +204,10 @@ async def test_workspaces_of_one_project_share_its_remote_checkout(tmp_path):
     (tmp_path / "checkouts" / "remote" / "shared.txt").write_text("seen by both\n")
     assert await first.workspace.read_text("remote/shared.txt") == "seen by both\n"
     assert await second.workspace.read_text("remote/shared.txt") == "seen by both\n"
-    assert not (tmp_path / "chat-a" / "remote").resolve().is_relative_to(
-        tmp_path / "chat-a"
+    assert (
+        not (tmp_path / "chat-a" / "remote")
+        .resolve()
+        .is_relative_to(tmp_path / "chat-a")
     )
 
 
@@ -275,7 +278,10 @@ async def test_host_remote_auth_persists_repo_local_helper_without_the_token(
                 _remote(
                     tmp_path,
                     url,
-                    auth={"tokenEnv": "OMNI_TEST_GIT_TOKEN", "username": "x-access-token"},
+                    auth={
+                        "tokenEnv": "OMNI_TEST_GIT_TOKEN",
+                        "username": "x-access-token",
+                    },
                 )
             ]
         )
@@ -303,7 +309,9 @@ async def test_host_remote_auth_rejects_shell_syntax_in_token_env_name(
         await provisioner.provision(
             request(
                 sources=[
-                    _remote(tmp_path, url, auth={"tokenEnv": "BAD NAME", "username": "x"})
+                    _remote(
+                        tmp_path, url, auth={"tokenEnv": "BAD NAME", "username": "x"}
+                    )
                 ]
             )
         )
@@ -507,6 +515,7 @@ async def test_devbox_capabilities_reflect_network_truth(monkeypatch, tmp_path):
         raw["client"] = {**raw["client"], **profile_raw_extra}
         resolved = ResolvedProfile(
             raw=raw,
+            build=[],
             init=[],
             services=[],
             terminal=base.terminal,

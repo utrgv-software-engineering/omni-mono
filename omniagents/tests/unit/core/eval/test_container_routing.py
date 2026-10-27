@@ -9,6 +9,7 @@ import pytest
 import omniagents.core.sandbox.factory as factory
 from omniagents.core.eval.container_routing import ContainerRoutingMixin
 from omniagents.core.eval.local_workspace import LocalWorkspaceEnvironment
+from omniagents.core.sandbox.profiles import ResolvedProfile, TerminalSpec
 
 
 class _FakeSession:
@@ -29,7 +30,7 @@ class _FakeSession:
     async def aclose(self):
         self.closed = True
 
-    async def exec(self, cmd):
+    async def exec(self, cmd, *args, **kwargs):
         self.execed.append(cmd)
         return self.exec_results.get(
             cmd, SimpleNamespace(exit_code=0, stdout=b"", stderr=b"")
@@ -48,8 +49,13 @@ class _FakeClient:
 
 def _resolver_for(raw_profile, init=None):
     def resolve(*, workspace_dir, explicit_path):
-        return SimpleNamespace(
-            raw=dict(raw_profile), init=list(init or []), sources=[explicit_path]
+        return ResolvedProfile(
+            raw=dict(raw_profile),
+            build=[],
+            init=list(init or []),
+            services=[],
+            terminal=TerminalSpec(),
+            sources=[explicit_path],
         )
 
     return resolve
@@ -73,7 +79,7 @@ def fake_factory(monkeypatch):
                 data.update(update or {})
                 return _FakeManifest(**data)
 
-        return _FakeManifest(users=[])
+        return _FakeManifest(users=[], environment=SimpleNamespace(value={}))
 
     monkeypatch.setattr(factory, "build_sandbox_client", fake_build_sandbox_client)
     monkeypatch.setattr(factory, "build_manifest", fake_build_manifest)
@@ -157,29 +163,28 @@ def test_init_failure_aborts_with_command(tmp_path, fake_factory):
         asyncio.run(env.setup({"environment": {"profile": str(profile_file)}}))
 
 
-def test_prepare_spec_attaches_session_and_container_root(tmp_path, fake_factory):
+def test_container_gets_the_scenario_env_with_container_paths(tmp_path, fake_factory):
     client, _ = fake_factory
     profile_file = tmp_path / "p.yml"
     profile_file.write_text("client: {type: docker}\n")
-    resolver = _resolver_for({"client": {"type": "docker"}, "run_as": "dev"})
-    Env = _env_class(resolver)
+    Env = _env_class(_resolver_for({"client": {"type": "docker"}}))
     env = Env(workspace_cache_dir=tmp_path / "cache")
 
     ctx = asyncio.run(env.setup({"environment": {"profile": str(profile_file)}}))
     try:
-        spec = SimpleNamespace(
-            sandbox_use_sandbox_agent=False,
-            sandbox_run_as=None,
-            sandbox_run_config=None,
-            context={"workspace_root": ctx["workspace_root"]},
-        )
-        asyncio.run(env.prepare_spec(spec, ctx))
-        assert spec.sandbox_use_sandbox_agent is True
-        assert spec.sandbox_run_as == "dev"
-        assert spec.sandbox_run_config.session is client.session
-        assert spec.context["workspace_root"] == "/workspace"
+        manifest = client.created_with["manifest"]
+        assert manifest.environment.value["PWD"] == "/workspace"
+        # The host process keeps host paths (spec loading reads them).
+        assert env.get_env_vars(ctx)["PWD"] == ctx["workspace_root"]
     finally:
         asyncio.run(env.teardown(ctx))
+
+
+def test_relative_profiles_resolve_against_the_profile_base_dir(tmp_path):
+    Env = _env_class(_resolver_for({}))
+    env = Env(workspace_cache_dir=tmp_path / "cache")
+    env.profile_base_dir = tmp_path / "evaluations"
+    assert env._resolve_profile_path("../p.yml") == tmp_path / "evaluations/../p.yml"
 
 
 def test_command_and_file_primitives_route_into_container(tmp_path, fake_factory):
@@ -207,9 +212,6 @@ def test_command_and_file_primitives_route_into_container(tmp_path, fake_factory
             exit_code=0, stdout=b"print(1)", stderr=b""
         )
         assert asyncio.run(env._read_file(ctx, "a.py")) == "print(1)"
-
-        env_vars = env.get_env_vars(ctx)
-        assert env_vars["PWD"] == "/workspace"
     finally:
         asyncio.run(env.teardown(ctx))
 

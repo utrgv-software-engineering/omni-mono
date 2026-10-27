@@ -241,7 +241,7 @@ def _wasm_is_offline(network: Any) -> bool:
     return _wasm_network_boots_blocked(network)
 
 
-def _sandbox_capabilities(profile_raw: dict[str, Any], brought: Any) -> frozenset:
+def sandbox_capabilities(profile_raw: dict[str, Any], brought: Any = None) -> frozenset:
     """Capability truth for a sandbox environment at registration time.
 
     CONTAINED is granted only for client types that are real containment
@@ -612,7 +612,7 @@ class ServeEnvironmentProvisioner:
                     default_user=run_as,
                 ),
                 kind=_environment_kind(profile.raw),
-                capabilities=_sandbox_capabilities(profile.raw, brought),
+                capabilities=sandbox_capabilities(profile.raw, brought),
                 lifecycle_controller=controller,
                 sandbox_runtime=SandboxExecutionRuntime(
                     session=brought.session,

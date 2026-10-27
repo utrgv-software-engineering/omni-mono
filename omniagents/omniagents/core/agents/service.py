@@ -16,7 +16,7 @@ import json
 import logging
 from contextlib import AsyncExitStack, asynccontextmanager
 from types import SimpleNamespace
-from typing import Awaitable, Optional, Dict, Any, Callable
+from typing import Awaitable, Optional, Dict, Any, Callable, List
 from pathlib import Path
 import inspect
 from dataclasses import replace as dataclass_replace
@@ -96,6 +96,7 @@ from omniagents.core.runtime.bridge import stream_agent
 from omniagents.core.agents.builder import _default_build_agent
 from omniagents.core.agents.mcp import (
     build_mcp_servers,
+    subagent_mcp_configs,
     _instantiate_server,
     _resolve_setting_placeholders,
 )
@@ -479,6 +480,26 @@ def _binds(signature: inspect.Signature, args: tuple) -> bool:
     except TypeError:
         return False
     return True
+
+
+def _agents_in(agent: Any) -> List[Any]:
+    """``agent`` and every agent it calls as a tool or hands off to."""
+    found: List[Any] = []
+    pending = [agent]
+    while pending:
+        current = pending.pop()
+        if current is None or any(current is a for a in found):
+            continue
+        found.append(current)
+        for tool in getattr(current, "tools", None) or []:
+            pending.append(getattr(tool, "_agent_instance", None))
+        for handoff in getattr(current, "handoffs", None) or []:
+            pending.append(
+                handoff
+                if hasattr(handoff, "mcp_servers")
+                else getattr(handoff, "agent", None)
+            )
+    return found
 
 
 class AgentService(RpcMethodsBase):
@@ -1090,7 +1111,11 @@ class AgentService(RpcMethodsBase):
         """
         # Merge spec-level and session-level (dynamic) MCP server configs
         dynamic_cfgs: list = getattr(session, "_dynamic_mcp_servers", None) or []
-        if not self.spec.mcp_servers and not dynamic_cfgs:
+        if (
+            not self.spec.mcp_servers
+            and not dynamic_cfgs
+            and not subagent_mcp_configs(self.spec)
+        ):
             return []
 
         # Create Event to signal when servers are ready
@@ -1130,6 +1155,21 @@ class AgentService(RpcMethodsBase):
                         settings,
                         auth_resolver=self.mcp_manager.auth_resolver,
                     )
+                    # The servers its sub-agents (agent tools, handoffs)
+                    # declare and it does not: connected here too, so a
+                    # sub-agent works with the session's live servers.
+                    subagent_cfgs = subagent_mcp_configs(self.spec)
+                    for extra in (
+                        build_mcp_servers(
+                            SimpleNamespace(mcp_servers=subagent_cfgs),
+                            settings,
+                            auth_resolver=self.mcp_manager.auth_resolver,
+                        )
+                        if subagent_cfgs
+                        else []
+                    ):
+                        extra._omni_subagent_only = True
+                        servers.append(extra)
 
                     # Build dynamic MCP servers from session (e.g. launcher-provided)
                     for dyn_cfg in dynamic_cfgs:
@@ -1604,34 +1644,22 @@ class AgentService(RpcMethodsBase):
             raise
 
     def _clone_agent(self, agent: Any) -> Any:
-        static_mcp_servers = None
-        restored_original = False
-        if hasattr(agent, "mcp_servers"):
-            try:
-                servers = getattr(agent, "mcp_servers")
-                static_mcp_servers = servers
-                setattr(agent, "mcp_servers", [])
-                restored_original = True
-            except Exception:
-                static_mcp_servers = None
+        # Connected MCP servers are the session's, shared by every run: the
+        # clone keeps the same ones, its sub-agents' (agent tools, handoffs)
+        # included.
+        memo: Dict[int, Any] = {}
+        for owner in _agents_in(agent):
+            servers = getattr(owner, "mcp_servers", None)
+            if servers is not None:
+                memo[id(servers)] = servers
+                for server in servers:
+                    memo[id(server)] = server
         try:
-            cloned = copy.deepcopy(agent)
+            return copy.deepcopy(agent, memo)
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(
                 "Agent builder must return deepcopy-able agent instances for per-run isolation"
             ) from exc
-        finally:
-            if restored_original:
-                try:
-                    setattr(agent, "mcp_servers", static_mcp_servers)
-                except Exception:
-                    pass
-        if static_mcp_servers is not None:
-            try:
-                setattr(cloned, "mcp_servers", static_mcp_servers)
-            except Exception:
-                pass
-        return cloned
 
     def _apply_session_tool_policy(self, session: Session, agent: Any) -> None:
         # The session's always_allow_tools / always_allow_patterns sets are
@@ -3167,7 +3195,8 @@ class AgentService(RpcMethodsBase):
     ) -> dict | None:
         """Resolve an approval via the sandbox tier or guardian, or ``None``.
 
-        ``None`` means "route to the human" — the caller proceeds with the
+        ``None`` means the reviewer is a person (the ``user`` reviewer): the
+        guardian always decides, failing closed. On ``None`` the caller proceeds with the
         ordinary broadcast-and-await prompt. A non-None return is a complete
         response dict (``decision``/``always_approve``/``rejection_message``)
         that never reached the client; the decision is audited and broadcast
@@ -3215,11 +3244,12 @@ class AgentService(RpcMethodsBase):
                 "rejection_message": None,
             }
 
-        # GUARDIAN — codex-style: allow approves, deny rejects with the
-        # rationale; unsure/timeout/error and a tripped circuit breaker fall
-        # through to the human prompt.
-        if guardian.breaker_tripped(session, run_id):
-            return None
+        # GUARDIAN — codex's: allow approves; deny, a failed review and a
+        # timed-out one all reject the call back to the model with codex's
+        # instructions for each (fail closed). Too many denials interrupt
+        # the run.
+        context = current_request_context()
+        lease = context.environment_lease if context is not None else None
         request = guardian.GuardianRequest(
             kind=kind,
             tool_name=tool_name,
@@ -3228,24 +3258,10 @@ class AgentService(RpcMethodsBase):
             metadata=metadata,
             environment_kind=environment.kind,
             environment_has_network=environment.has_network,
+            workspace_root=lease.workspace.root if lease is not None else None,
         )
-        assessment = await guardian.review_approval(self, session, request)
-        if assessment is None:
-            return None
-        if assessment.allowed:
-            response = {
-                "decision": "approve",
-                "always_approve": False,
-                "rejection_message": None,
-            }
-        else:
-            response = {
-                "decision": "reject",
-                "always_approve": False,
-                "rejection_message": (
-                    f"Denied by the approval reviewer: {assessment.rationale}"
-                ),
-            }
+        decision = await guardian.review_approval(self, session, request, run_id=run_id)
+        assessment = decision.assessment
         await self._record_reviewed_approval(
             session,
             kind=kind,
@@ -3255,15 +3271,25 @@ class AgentService(RpcMethodsBase):
             run_id=run_id,
             reviewer="guardian",
             arguments=arguments,
-            outcome=assessment.outcome,
-            risk_level=assessment.risk_level,
-            rationale=assessment.rationale,
+            # A review that failed or timed out denies the action too.
+            outcome="allow" if decision.approved else "deny",
+            risk_level=assessment.risk_level if assessment is not None else None,
+            rationale=decision.rationale,
         )
-        if assessment.allowed:
-            guardian.record_allow(session, run_id)
-        else:
-            guardian.record_denial(session, run_id)
-        return response
+        if decision.interrupt and run_id:
+            logger.warning(guardian.interrupt_message(session, run_id))
+            asyncio.get_running_loop().create_task(self.stop_run(run_id))
+        if decision.approved:
+            return {
+                "decision": "approve",
+                "always_approve": False,
+                "rejection_message": None,
+            }
+        return {
+            "decision": "reject",
+            "always_approve": False,
+            "rejection_message": decision.message,
+        }
 
     async def _record_reviewed_approval(
         self,
@@ -3401,14 +3427,6 @@ class AgentService(RpcMethodsBase):
         )
         if resolved is not None:
             return resolved
-
-        worker = getattr(self, "_worker_approval_context", None)
-        if worker is not None:
-            delegated = await worker.escalate(
-                kind="tool", session=session, payload=payload
-            )
-            if delegated is not None:
-                return delegated
 
         # Keep provider correlation as metadata; only the new token authorizes
         # a decision. Reused provider IDs (even within one session) cannot alias.
@@ -3562,14 +3580,6 @@ class AgentService(RpcMethodsBase):
             "arguments": arguments or "",
             "session_id": session.id,
         }
-        worker = getattr(self, "_worker_approval_context", None)
-        if worker is not None:
-            delegated = await worker.escalate(
-                kind="mcp", session=session, payload={**payload, "run_id": run_id}
-            )
-            if delegated is not None:
-                return delegated
-
         request_id = f"apr_{uuid.uuid4().hex}"
         payload["request_id"] = request_id
         if run_id is not None:
@@ -4233,6 +4243,12 @@ class AgentService(RpcMethodsBase):
             environment_lease=environment_lease,
         )
 
+        if getattr(self.spec, "memory_config", None):
+            sess._memory_config = self.spec.memory_config
+            idle_task = getattr(sess, "_memory_idle_task", None)
+            if idle_task is not None and not idle_task.done():
+                idle_task.cancel()
+
         self._apply_safe_tool_overrides(sess, safe_tool_overrides)
         self._apply_approvals_reviewer(sess, approvals_reviewer)
 
@@ -4494,9 +4510,19 @@ class AgentService(RpcMethodsBase):
                             if session_model_config
                             else None
                         )
+                        memory_prompt = prompt
+                        if getattr(self.spec, "memory_config", None):
+                            from omniagents.core.memory import MemoryClient
+
+                            try:
+                                memory_prompt += await MemoryClient(
+                                    self.spec.memory_config
+                                ).relevant(prompt)
+                            except Exception:
+                                logger.exception("Could not retrieve turn memory")
                         final_details = await stream_agent(
                             agent,
-                            prompt,
+                            memory_prompt,
                             sess,
                             self.channel,
                             service=self,
@@ -4620,6 +4646,15 @@ class AgentService(RpcMethodsBase):
                         error_info = {"message": _msg, "type": e.__class__.__name__}
                         logger.error(f"Non-retryable error: {e}", exc_info=True)
                         break
+            except Exception as e:
+                # A failure before the agent runs (its model provider, its
+                # environment) ends the run too; run_end says why.
+                end_reason = "error"
+                error_info = {
+                    "message": str(e).strip() or e.__class__.__name__,
+                    "type": e.__class__.__name__,
+                }
+                logger.error(f"Run {run_name} could not start: {e}", exc_info=True)
             finally:
                 # Inform client the run finished
                 payload = {
@@ -4695,6 +4730,45 @@ class AgentService(RpcMethodsBase):
                             logger.warning(
                                 "run_end sent before run %s released its session",
                                 run_name,
+                            )
+
+                memory_config = getattr(self.spec, "memory_config", None)
+                if memory_config:
+                    from omniagents.core.memory.extract import schedule
+
+                    extraction = memory_config.get("extraction") or {}
+                    triggers = extraction.get("triggers", [])
+                    if "idle" in triggers or "daily" in triggers:
+                        try:
+                            history = await self.get_session_history(sess.id)
+                            source = {
+                                "session_id": sess.id,
+                                "run_id": run_name,
+                                "error": error_info,
+                            }
+                            if "idle" in triggers:
+                                sess._memory_idle_task = schedule(
+                                    memory_config,
+                                    history,
+                                    source,
+                                    "idle",
+                                    delay=float(extraction.get("idle_seconds", 60)),
+                                )
+                            if "daily" in triggers:
+                                from omniagents.core.memory.extract import (
+                                    schedule_daily,
+                                )
+
+                                daily_task = getattr(sess, "_memory_daily_task", None)
+                                if daily_task is None or daily_task.done():
+                                    sess._memory_daily_task = schedule_daily(
+                                        memory_config,
+                                        lambda: self.get_session_history(sess.id),
+                                        {"session_id": sess.id},
+                                    )
+                        except Exception:
+                            logger.exception(
+                                "Could not schedule personal memory extraction"
                             )
 
                 # Debug log the payload for visibility when debugging (single source)
@@ -5874,9 +5948,9 @@ class AgentService(RpcMethodsBase):
                 return OWNER_UNKNOWN
             return getattr(sess, "user_id", None)
         try:
-            from omniagents.core.session.history_db import get_session_user_id
+            from omniagents.core.session.history_db import get_session_owner
 
-            return get_session_user_id(
+            return get_session_owner(
                 session_id,
                 project_slug=getattr(self._session_manager, "_project_slug", None),
                 agent_slug=getattr(self._session_manager, "_agent_slug", None),

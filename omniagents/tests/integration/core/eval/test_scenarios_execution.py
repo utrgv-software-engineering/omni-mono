@@ -79,7 +79,7 @@ def _configure_execution(monkeypatch, responses):
         def get_last_run_end(self):
             return responses[self._prompt].get("last_run")
 
-    async def fake_create_agent(spec):
+    async def fake_create_agent(spec, **kwargs):
         return FakeAgent()
 
     def fake_load_history(session_id, project_slug, agent_slug):

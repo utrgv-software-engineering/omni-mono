@@ -281,6 +281,11 @@ def load_project(
     # Product prompt-template dirs (conventional filenames bound to
     # framework seams — see omniagents.core.project.prompts).
     prompts_dirs = _resolve_many("prompts", "prompts")
+    # Folders whose @context_factory functions any agent can name with
+    # `context:`, after the agent's own folder and any it extends.
+    context_dirs = _resolve_many("context")
+    # Skills every agent in the project sees (agents add their own skills/).
+    skills_dirs = _resolve_many("skills", "skills")
     paths: Dict[str, List[Path]] = {
         "tools": tools_dirs,
         "guardrails": guardrails_dirs,
@@ -291,10 +296,17 @@ def load_project(
         "target": target_dir,
         "instruction_fragments": instruction_fragments_dirs,
         "prompts": prompts_dirs,
+        "context": context_dirs,
+        "skills": skills_dirs,
     }
 
     agents_section = proj.get("agents") or {}
     entry = agents_section.get("entrypoint")
+    from omniagents.integrations.architecture import factory_architecture
+
+    architecture = factory_architecture()
+    if architecture:
+        entry = "generalist" if architecture == "personal" else "foreman"
     voice_entry = agents_section.get("voice_entrypoint")
     include = agents_section.get("include")
     exclude = agents_section.get("exclude")
@@ -643,6 +655,7 @@ def build_spec_from_project(
     selected_key = agent_key
     key, agent_yaml = resolve_agent(project, selected_key)
     pdefs = {
+        "memory": project.raw.get("memory"),
         "tracing": project.tracing_defaults or None,
         "settings": project.settings_defaults or [],
         "security": project.security.to_dict(),
@@ -650,6 +663,11 @@ def build_spec_from_project(
         "instruction_fragments": [
             str(p) for p in (project.paths.get("instruction_fragments") or [])
         ],
+        # `extends:` folders resolve against the project root; paths.context
+        # folders hold context factories every agent can name.
+        "project_root": str(project.root),
+        "context_dirs": [str(p) for p in (project.paths.get("context") or [])],
+        "skills_dirs": [str(p) for p in (project.paths.get("skills") or [])],
     }
     pdefs.update(project.ui_defaults or {})
     # Builtin server functions are capability-gated (registered by the
@@ -675,6 +693,9 @@ def build_spec_from_project(
     spec.project_slug = project.product.slug
     spec.agent_slug = _slugify(key, key)
     spec.manifest_path = str(project.root / "project.yml")
+    from .values import project_values
+
+    spec.instruction_globals = {"project": project_values(project.raw, project.product)}
 
     voice_spec = None
     voice_key = configured_voice_key

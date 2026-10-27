@@ -1,0 +1,6 @@
+name: library
+description: Persistent pages and documents in the Workplace Library.
+tools:
+  - artifact_create
+  - artifact_list
+  - artifact_show

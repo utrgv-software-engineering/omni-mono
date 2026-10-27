@@ -24,12 +24,43 @@ an installed provider fully replaces the default.
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
-from typing import Callable, Iterable, List, Optional
+from typing import Callable, Iterable, Iterator, List, Optional, Sequence
 
 SkillRootsProvider = Callable[[Optional[str]], List[Path]]
 
 _provider: Optional[SkillRootsProvider] = None
+
+# The skill folders of the agent whose instructions are rendering or whose
+# load_skill call is running: its own `skills/`, any definition it extends,
+# and the project's `skills/` (see AgentSpec.skill_roots). Set by the agent
+# builder around exactly those two moments, so a sub-agent called as a tool
+# sees its own skills, not its caller's.
+_agent_skill_roots: ContextVar[tuple] = ContextVar("agent_skill_roots", default=())
+
+
+@contextmanager
+def agent_skill_roots(roots: Sequence[Path | str]) -> Iterator[None]:
+    """Make ``roots`` the current agent's skill folders for the block's duration."""
+    token = _agent_skill_roots.set(tuple(Path(r) for r in roots))
+    try:
+        yield
+    finally:
+        _agent_skill_roots.reset(token)
+
+
+def _with_agent_roots(roots: List[Path]) -> List[Path]:
+    """Insert the current agent's folders after the workspace's own folder.
+
+    The repository's dot-dir skills stay first (a workspace can override),
+    then the agent's, then shared and global roots.
+    """
+    extra = list(_agent_skill_roots.get())
+    if not extra:
+        return roots
+    return dedupe_skill_roots([*roots[:1], *extra, *roots[1:]])
 
 
 def set_skill_roots_provider(provider: Optional[SkillRootsProvider]) -> None:
@@ -53,10 +84,10 @@ def skill_roots(workspace_root: str | None = None) -> List[Path]:
     """
     if _provider is not None:
         try:
-            return [Path(p) for p in _provider(workspace_root)]
+            return _with_agent_roots([Path(p) for p in _provider(workspace_root)])
         except Exception:
             pass
-    return default_skill_roots(workspace_root)
+    return _with_agent_roots(default_skill_roots(workspace_root))
 
 
 def dedupe_skill_roots(roots: Iterable[Path]) -> List[Path]:

@@ -121,7 +121,7 @@ async def test_review_uses_session_model_and_provider_together(
     async def prompt(*args):
         return "Review synthetic input"
 
-    monkeypatch.setattr(guardian, "_build_prompt", prompt)
+    monkeypatch.setattr(guardian, "build_review_request", prompt)
     monkeypatch.setattr(plan_review, "_build_prompt", prompt)
     monkeypatch.setattr(plan_review, "_bound_workspace_root", lambda: None)
     captured = []

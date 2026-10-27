@@ -16,11 +16,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from agents.tracing import add_trace_processor, set_trace_processors
+from agents.tracing import add_trace_processor
 from agents.tracing import trace as sdk_trace
 
 from omniagents.core.paths import get_traces_dir
 
+from . import set_processors
 from .processor import LocalTraceProcessor
 from .storage import SQLiteStorage
 from .utils import generate_readable_name
@@ -51,7 +52,7 @@ def init(
 
     if project is None:
         if replace_default:
-            set_trace_processors([])
+            set_processors([])
         return None
 
     if _processor:
@@ -70,7 +71,7 @@ def init(
         _current_name = _resolve_trace_name(resolved_db_path, project, name, resume)
 
     if replace_default:
-        set_trace_processors([_processor])
+        set_processors([_processor])
     else:
         add_trace_processor(_processor)
 

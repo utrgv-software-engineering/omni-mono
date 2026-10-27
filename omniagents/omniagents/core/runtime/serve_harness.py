@@ -41,6 +41,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import (
     Any,
+    Awaitable,
+    Callable,
     Dict,
     List,
     Mapping,
@@ -629,7 +631,10 @@ def write_session_state(state_path: Path, client: Any, session: Any) -> None:
         }
         state_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = state_path.with_name(state_path.name + ".tmp")
-        tmp.write_text(json.dumps(payload), encoding="utf-8")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as out:
+            out.write(json.dumps(payload))
+        tmp.chmod(0o600)
         tmp.replace(state_path)
     except Exception as exc:  # noqa: BLE001
         print(
@@ -638,7 +643,9 @@ def write_session_state(state_path: Path, client: Any, session: Any) -> None:
         )
 
 
-async def _reconcile_resumed_sources(session: Any, manifest: Any) -> None:
+async def _reconcile_resumed_sources(
+    session: Any, manifest: Any, *, retain_removed: bool = False
+) -> None:
     """Seed added entries without replaying init over a durable workspace.
 
     A resumed container retains its serialized manifest. Publishing the new
@@ -654,6 +661,8 @@ async def _reconcile_resumed_sources(session: Any, manifest: Any) -> None:
     old = {str(name): entry for name, entry in previous.entries.items()}
     wanted = {str(name): entry for name, entry in manifest.entries.items()}
     for name, entry in old.items():
+        if retain_removed and name not in wanted:
+            continue
         if name not in wanted or wanted[name] != entry:
             raise ValueError(
                 f"Resumed workspace source {name!r} changed or was removed; "
@@ -699,6 +708,13 @@ async def _reconcile_resumed_sources(session: Any, manifest: Any) -> None:
             update={"manifest": previous.model_copy(update={"entries": dict(old)})}
         )
 
+    if retain_removed:
+        session.state = session.state.model_copy(
+            update={
+                "manifest": manifest.model_copy(update={"entries": {**old, **wanted}})
+            }
+        )
+
 
 async def bring_up_session(
     *,
@@ -708,6 +724,8 @@ async def bring_up_session(
     snapshot_dir: Optional[Path],
     credentials_parsed: Optional[List[Dict[str, Any]]] = None,
     state_path: Optional[Path] = None,
+    durable: bool = False,
+    prepare_session: Optional[Callable[[Any], Awaitable[None]]] = None,
 ) -> BroughtUpSession:
     """Build the sandbox client from *profile* and attach a session.
 
@@ -722,6 +740,10 @@ async def bring_up_session(
     destroying a fresh container, but leaving a resumed one intact for
     the next attempt.
     """
+    from omniagents.core.sandbox.images import prepare_profile_image
+
+    # The profile's `build:` steps are already in the image it starts.
+    profile = await prepare_profile_image(profile)
     client, options, manifest = _build_sandbox(profile, sources=sources_parsed)
 
     client_type_raw = (profile.raw.get("client") or {}).get("type")
@@ -737,6 +759,14 @@ async def bring_up_session(
     if state_path is not None and state_path.is_file() and hasattr(client, "resume"):
         record = _read_session_state(state_path)
         recorded_state = record.get("session_state") if record else None
+        if durable and (
+            not isinstance(recorded_state, dict)
+            or not record.get("container_id")
+            or record["container_id"] != recorded_state.get("container_id")
+        ):
+            raise RuntimeError(
+                "Persistent sandbox state is invalid; restore a backup or explicitly reset it"
+            )
         if isinstance(recorded_state, dict):
             try:
                 session = await client.resume(
@@ -745,12 +775,26 @@ async def bring_up_session(
                 raw_id = record.get("container_id") if record else None
                 recorded_container_id = raw_id if isinstance(raw_id, str) else None
             except Exception as exc:  # noqa: BLE001
+                if durable:
+                    raise RuntimeError(
+                        "Cannot resume persistent sandbox; refusing to replace its files"
+                    ) from exc
                 print(
                     f"[serve] sandbox state {state_path} not resumable ({exc}); "
                     "creating a fresh session",
                     file=sys.stderr,
                 )
                 session = None
+
+    if (
+        durable
+        and recorded_container_id is not None
+        and getattr(session.state, "container_id", None) != recorded_container_id
+    ):
+        await teardown_session(session, [], destroy=True)
+        raise RuntimeError(
+            "Persistent sandbox container is missing; restore a backup or explicitly reset it"
+        )
 
     if session is None:
         session = await client.create(
@@ -768,7 +812,15 @@ async def bring_up_session(
         # bring_up_session runs on the shared serve loop.
         await asyncio.to_thread(_scrub_workspace_snapshot, session)
 
-    await session.start()
+    try:
+        await session.start()
+    except Exception:
+        # Starting materializes the workspace (clones its sources): a fresh
+        # container that fails there holds nothing — destroy it. A resumed
+        # one holds real work — leave it for the next attempt.
+        if recorded_container_id is None:
+            await teardown_session(session, [], destroy=True, state_path=state_path)
+        raise
     # Preserved = we resumed AND landed on the same container (resume falls
     # back to a fresh container when the recorded one is gone — that fresh
     # container was re-seeded from the manifest and needs full init).
@@ -800,6 +852,8 @@ async def bring_up_session(
             if await network_policy.network_blocked(session):
                 await network_policy.set_network_blocked(session, True)
                 session_network_blocked = True
+        if prepare_session is not None:
+            await prepare_session(session)
         # Configure git + CLI auth before init/services and before the agent
         # runs, so private clones already done during create() are joined by
         # working `gh` / `az devops` for the agent's own commands. Written as the
@@ -812,7 +866,9 @@ async def bring_up_session(
         )
         if recorded_container_id is not None:
             try:
-                await _reconcile_resumed_sources(session, manifest)
+                await _reconcile_resumed_sources(
+                    session, manifest, retain_removed=durable
+                )
             finally:
                 if state_path is not None:
                     write_session_state(state_path, client, session)
@@ -845,6 +901,14 @@ async def bring_up_session(
 
     if state_path is not None:
         write_session_state(state_path, client, session)
+        if (
+            durable
+            and (_read_session_state(state_path) or {}).get("container_id")
+            != session.state.container_id
+        ):
+            raise RuntimeError(
+                "Could not persist sandbox identity; container retained for recovery"
+            )
 
     return BroughtUpSession(
         session=session,

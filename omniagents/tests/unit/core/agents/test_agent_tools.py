@@ -173,3 +173,126 @@ async def test_default_build_agent_appends_agent_tools(monkeypatch):
     assert any(
         isinstance(t, tuple) and t[0] == "AGENT_TOOL_SENTINEL" for t in agent.tools
     )
+
+
+@pytest.mark.asyncio
+async def test_project_agent_tools_load_with_the_projects_fragments(
+    tmp_path, monkeypatch
+):
+    """A sub-agent named in `agent_tools` is a project agent: its
+    instructions include the project's `paths.instruction_fragments`."""
+    from omniagents.core.config.loader import load_agent_spec_from_yaml
+
+    (tmp_path / "fragments").mkdir()
+    (tmp_path / "fragments" / "identity.md").write_text("You work at Acme.")
+    for name, extra in (("foreman", "agent_tools: [triage]\n"), ("triage", "")):
+        d = tmp_path / "agents" / name
+        d.mkdir(parents=True)
+        (d / "agent.yml").write_text(
+            f"name: {name}\ninstructions_file: instructions.md\n{extra}"
+        )
+        (d / "instructions.md").write_text(
+            '{% include "identity.md" %} You are ' + name + "."
+        )
+    defaults = {
+        "instruction_fragments": [str(tmp_path / "fragments")],
+        "project_root": str(tmp_path),
+    }
+    agents_map = {
+        n: tmp_path / "agents" / n / "agent.yml" for n in ("foreman", "triage")
+    }
+    parent = load_agent_spec_from_yaml(
+        str(agents_map["foreman"]), agents_map=agents_map, project_defaults=defaults
+    )
+
+    built = {}
+
+    class _StubAgent:
+        def as_tool(self, **kwargs):
+            return SimpleNamespace(on_invoke_tool=AsyncMock(return_value="ok"))
+
+    async def fake_default_build_agent(*args, spec, **kwargs):
+        built["spec"] = spec
+        return _StubAgent()
+
+    monkeypatch.setattr(
+        "omniagents.core.agents.builder._default_build_agent", fake_default_build_agent
+    )
+    await _build_agent_tools_from_configs(
+        parent.agent_tool_configs, settings={}, parent_spec=parent
+    )
+    paths = [Path(p) for p in built["spec"].instructions_search_paths or []]
+    assert tmp_path / "fragments" in paths
+
+
+@pytest.mark.asyncio
+async def test_sub_agents_work_with_the_sessions_connected_mcp_servers(monkeypatch):
+    """An agent tool runs inside its caller's run: it gets the connected
+    servers it declares (by name) from the caller's pool, never fresh,
+    unconnected copies; the caller keeps its own."""
+    from types import SimpleNamespace
+
+    from omniagents.core.agents import builder
+    from omniagents.core.agents.mcp import subagent_mcp_configs
+    from omniagents.core.agents.specs import MCPServerConfig
+
+    github = MCPServerConfig(
+        name="github", type="streamable_http", params={"url": "http://g"}
+    )
+    linear = MCPServerConfig(
+        name="linear", type="streamable_http", params={"url": "http://l"}
+    )
+    sub = make_spec(name="Triage")
+    sub.mcp_servers = [github, linear]
+    parent = make_spec(name="Foreman")
+    parent.mcp_servers = [github]
+    parent.agent_tool_configs = [AgentToolConfig(inline_spec=sub, tool_name="triage")]
+    assert [c.name for c in subagent_mcp_configs(parent)] == ["linear"]
+
+    built = {}
+    real = builder._default_build_agent
+
+    async def spy(settings, mcp_servers, spec, *args, **kwargs):
+        agent = await real(settings, mcp_servers, spec, *args, **kwargs)
+        built[spec.name] = agent
+        return agent
+
+    monkeypatch.setattr(builder, "_default_build_agent", spy)
+    connected_github = SimpleNamespace(name="github")
+    connected_linear = SimpleNamespace(name="linear", _omni_subagent_only=True)
+    parent_agent = await spy({}, [connected_github, connected_linear], parent)
+    assert parent_agent.mcp_servers == [connected_github]
+    assert built["Triage"].mcp_servers == [connected_github, connected_linear]
+
+
+def test_a_runs_clone_shares_its_sub_agents_connected_servers():
+    """A run works on a copy of the agent; connected servers (which hold
+    sockets and locks) are the session's and stay shared, a sub-agent's
+    included (the SDK keeps an agent tool's agent on the tool)."""
+    import threading
+
+    from agents import Agent
+
+    from omniagents.core.agents.service import AgentService
+
+    class Connected:
+        name = "linear"
+
+        def __init__(self):
+            self.lock = threading.Lock()
+
+    server = Connected()
+    triage = Agent(name="Triage", mcp_servers=[server])
+    review = Agent(name="Review", mcp_servers=[server])
+    parent = Agent(
+        name="Foreman",
+        tools=[triage.as_tool(tool_name="triage", tool_description="t")],
+        handoffs=[review],
+    )
+    clone = AgentService._clone_agent(None, parent)
+    assert clone is not parent
+    clone_triage = clone.tools[0]._agent_instance
+    assert clone_triage is not triage and clone_triage.mcp_servers[0] is server
+    assert (
+        clone.handoffs[0] is not review and clone.handoffs[0].mcp_servers[0] is server
+    )

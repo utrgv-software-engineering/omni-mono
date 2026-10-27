@@ -293,6 +293,32 @@ CONFIG_FIELDS: Tuple[ConfigField, ...] = (
         reload=RELOAD_HOT,
     ),
     ConfigField(
+        key="approvals.guardian_policy",
+        type="string",
+        label="Guardian organization policy",
+        description=(
+            "The organization's security policy the guardian applies: which "
+            "code hosts, storage and services are trusted, and the allow/deny "
+            "rules for data exfiltration, credential probing, security "
+            "weakening and destructive actions. Replaces the default policy "
+            "(Codex's, core/agents/guardian_prompts/policy.md). Empty uses "
+            "the default."
+        ),
+        default="",
+        reload=RELOAD_HOT,
+    ),
+    ConfigField(
+        key="approvals.guardian_extra_policy",
+        type="string",
+        label="Guardian additional policy",
+        description=(
+            "Rules the guardian applies in addition to the organization "
+            "policy, rendered after it."
+        ),
+        default="",
+        reload=RELOAD_HOT,
+    ),
+    ConfigField(
         key="workflow.completion_reviewer",
         type="string",
         label="Completion reviewer",

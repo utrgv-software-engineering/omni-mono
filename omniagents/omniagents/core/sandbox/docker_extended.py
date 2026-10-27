@@ -14,6 +14,7 @@ override them. Real-world sandboxing needs more:
 * ``network_mode: "none"`` for offline-only sandboxes.
 * ``user: "root"`` to override the image's ``USER`` directive when the
   SDK's bookkeeping (PTY pid-path chown, archive writes) needs root.
+* ``host.docker.internal`` on Linux too, as Docker Desktop provides it.
 
 This module exposes :class:`ExtendedDockerSandboxClient`, a drop-in
 subclass that overrides ``_create_container`` to add those fields to the
@@ -85,6 +86,13 @@ class ExtendedDockerSandboxSession(DockerSandboxSession, PtyStreamingSession):
     batched PTY surface for interactive use (human terminals). See
     :mod:`omniagents.core.sandbox.pty_stream` for the contract.
     """
+
+    def _prepare_exec_command(self, *command, shell, user):
+        prepared = super()._prepare_exec_command(*command, shell=shell, user=user)
+        env_file = getattr(self, "runtime_environment_file", None)
+        if env_file:
+            return ["sh", "-c", '. "$1"; shift; exec "$@"', "sh", env_file, *prepared]
+        return prepared
 
     def should_provision_manifest_accounts_on_resume(self) -> bool:
         return False
@@ -464,6 +472,12 @@ class ExtendedDockerSandboxClient(LifecycleSessionClientMixin, DockerSandboxClie
             )
         if self._network_mode is not None and "network_mode" not in create_kwargs:
             create_kwargs["network_mode"] = self._network_mode
+        # ``host.docker.internal`` names the host on every platform, as
+        # Docker Desktop already provides: the egress allowlist admits it,
+        # and services the host runs for the sandbox (a git server) are
+        # reached through it.
+        if create_kwargs.get("network_mode") != "none":
+            create_kwargs["extra_hosts"] = {"host.docker.internal": "host-gateway"}
         if self._binds:
             # Append our bind mounts to whatever the parent built. We
             # don't deduplicate by target — docker rejects duplicate

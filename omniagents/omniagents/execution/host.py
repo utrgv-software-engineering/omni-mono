@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 import uuid
 
 from omniagents.workspace import HostWorkspace
@@ -14,6 +15,7 @@ from .models import (
     EnvironmentKind,
     EnvironmentState,
     ExecutionEnvironmentDescriptor,
+    SandboxExecutionRuntime,
     WorkspaceResource,
 )
 from .provisioning import EnvironmentProvisioner
@@ -23,6 +25,19 @@ from .registry import (
     WorkspaceRegistry,
 )
 from .routing import OperationRouter
+
+_FULL_CAPABILITIES = frozenset(
+    {
+        EnvironmentCapability.WORKSPACE_READ,
+        EnvironmentCapability.WORKSPACE_WRITE,
+        EnvironmentCapability.PROCESS,
+        EnvironmentCapability.NETWORK,
+        EnvironmentCapability.PTY,
+        EnvironmentCapability.HTTP,
+        EnvironmentCapability.SERVICES,
+        EnvironmentCapability.ENVIRONMENT_LIFECYCLE,
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,18 +119,52 @@ def register_host_environment(
         kind=EnvironmentKind.HOST,
         state=EnvironmentState.READY,
         generation=1,
-        capabilities=frozenset(
-            {
-                EnvironmentCapability.WORKSPACE_READ,
-                EnvironmentCapability.WORKSPACE_WRITE,
-                EnvironmentCapability.PROCESS,
-                EnvironmentCapability.NETWORK,
-                EnvironmentCapability.PTY,
-                EnvironmentCapability.HTTP,
-                EnvironmentCapability.SERVICES,
-                EnvironmentCapability.ENVIRONMENT_LIFECYCLE,
-            }
-        ),
+        capabilities=_FULL_CAPABILITIES,
     )
     resources.environments.register_initial(descriptor, workspace)
+    return descriptor
+
+
+def register_sandbox_environment(
+    resources: AgentHostResources,
+    session: Any,
+    root: str,
+    *,
+    owner_user_id: str | None,
+    capabilities: frozenset[EnvironmentCapability],
+    run_as: str | None = None,
+    workspace_id: str | None = None,
+    environment_id: str | None = None,
+) -> ExecutionEnvironmentDescriptor:
+    """Compose an explicit sandbox environment around a started SDK session.
+
+    The counterpart of :func:`register_host_environment` for a container:
+    file tools go through a :class:`SandboxWorkspace` on ``session`` and
+    runs get the session as their SDK sandbox runtime, as ``omni serve``
+    registers a profile's sandbox. ``capabilities`` is the environment's
+    truth (``contained`` above all, which the approval policy keys on); a
+    profile's come from
+    :func:`omniagents.core.runtime.environment_provisioner.sandbox_capabilities`.
+    """
+
+    from omniagents.workspace.sandbox import SandboxWorkspace
+
+    workspace_id = workspace_id or f"workspace_{uuid.uuid4().hex}"
+    environment_id = environment_id or f"environment_{uuid.uuid4().hex}"
+    resources.workspaces.register(
+        WorkspaceResource(workspace_id, owner_user_id=owner_user_id)
+    )
+    descriptor = ExecutionEnvironmentDescriptor(
+        environment_id=environment_id,
+        workspace_id=workspace_id,
+        kind=EnvironmentKind.CONTAINER,
+        state=EnvironmentState.READY,
+        generation=1,
+        capabilities=capabilities,
+    )
+    resources.environments.register_initial(
+        descriptor,
+        SandboxWorkspace(session=session, root=root, default_user=run_as),
+        sandbox_runtime=SandboxExecutionRuntime(session=session, run_as=run_as),
+    )
     return descriptor

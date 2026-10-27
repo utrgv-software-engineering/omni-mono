@@ -119,7 +119,13 @@ async def test_sandbox_mode_passes_caps_to_sandbox_agent(tmp_path, monkeypatch):
 
     # Sandbox path was taken — the capabilities kwarg holds our cap
     assert "capabilities" in captured
-    assert cap in captured["capabilities"]
+    # This agent's copy of the cap (its tools carry the agent's rules)
+    [own] = [
+        c
+        for c in captured["capabilities"]
+        if getattr(c, "capability_name", None) == "filesystem"
+    ]
+    assert [t.name for t in own.tools()] == ["alpha"]
 
     # Host-mode merge skipped — agent.tools does NOT include the cap's
     # alpha tool (SDK runtime will add it via capability.tools() at run prep)

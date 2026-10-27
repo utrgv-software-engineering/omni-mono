@@ -1,5 +1,7 @@
 """Server backend for OmniAgents."""
 
+import os
+
 from omniagents.core.agents.specs import AgentSpec
 
 
@@ -47,7 +49,15 @@ class ServerBackend:
         # have clients populate workspace_root explicitly so the agent
         # never anchors to the server process's cwd. A missing value
         # raises WorkspaceRootRequiredError on the offending start_run.
-        app = build_app(config_path, spec=spec, auth_token=auth_token)
+        app = build_app(
+            config_path,
+            spec=spec,
+            auth_token=auth_token,
+            agent_host_control_token=os.environ.get(
+                "OMNIAGENTS_AGENT_HOST_CONTROL_TOKEN"
+            )
+            or None,
+        )
         uvicorn.run(app, host=host, port=port, reload=reload)
 
 

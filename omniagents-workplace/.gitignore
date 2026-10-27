@@ -1,0 +1,12 @@
+omniagents_workplace/static/
+
+# Generated Python and frontend outputs
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+web/dist/
+*.tsbuildinfo
+build/
+dist/

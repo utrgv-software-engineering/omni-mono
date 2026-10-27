@@ -4,6 +4,7 @@ from typing import Any, AsyncGenerator, List, Dict, Optional
 
 from agents import RunConfig, StreamEvent
 import asyncio
+import uuid
 from importlib.metadata import version
 from pydantic import ValidationError
 
@@ -86,6 +87,9 @@ def _adapt_notification_params(method: str, params: Dict[str, Any]) -> Dict[str,
         return params
 
 
+_APPROVAL_PROMPTS = frozenset({"tool_approval_requested", "mcp_approval_requested"})
+
+
 class RemoteAgent(UnifiedAgentBase):
     """Agent that forwards operations to a remote server via WebSocket RPC."""
 
@@ -108,6 +112,9 @@ class RemoteAgent(UnifiedAgentBase):
         context: Any | None = None,
         transport: Any | None = None,
         policy: LifecyclePolicy = DEFAULT_LIFECYCLE_POLICY,
+        approvals_reviewer: str | None = None,
+        unattended: bool = False,
+        session_id: str | None = None,
     ) -> None:
         """
         Initialize remote agent.
@@ -119,6 +126,17 @@ class RemoteAgent(UnifiedAgentBase):
             context: Optional pre-built context to use as-is
             transport: Optional custom transport to use instead of WebSocket
             policy: Lifecycle policy (timeouts, backoff, retry limits)
+            approvals_reviewer: Who answers this agent's tool approvals,
+                sent with every run as the GUI sends its setting: ``"user"``
+                (a person is asked) or ``"auto"`` (the guardian decides).
+                ``None`` leaves the runtime's configured default.
+            unattended: Nobody watches this client. An approval prompt that
+                still reaches it (the guardian could not decide, or the
+                reviewer is a person) is rejected at once, with a message
+                the model sees, instead of leaving the run waiting.
+            session_id: The conversation to run in, when the caller has named
+                it (for example to bind its environment first). By default the
+                agent names its conversation before the first run.
         """
         super().__init__()
 
@@ -133,11 +151,14 @@ class RemoteAgent(UnifiedAgentBase):
         self._methods: _ClientEventMethods | None = None
         self._run_lock: asyncio.Lock = asyncio.Lock()
         self._event_queue: asyncio.Queue = asyncio.Queue()
-        self._session_id: str | None = None
+        self._session_id: str | None = session_id
+        self._started = False
         self._current_run_id: str | None = None
         self._variables = variables
         self._context = context
         self._last_run_end: Dict[str, Any] | None = None
+        self._approvals_reviewer = approvals_reviewer
+        self._unattended = unattended
 
     def get_all_tools(self) -> List[Any]:
         """Get all available tools (empty for remote agents)."""
@@ -158,15 +179,24 @@ class RemoteAgent(UnifiedAgentBase):
             # Extract prompt from last user message
             prompt = messages[-1]["content"] if messages else ""
 
-            # Prepare start_run parameters
+            # Like every client, the agent names its conversation before the
+            # first run, and each run inherits the conversation's binding:
+            # the host's default environment for a new one (an AgentHost
+            # composed with none runs it targetless).
+            first_run = not self._started
+            self._started = True
+            if self._session_id is None:
+                self._session_id = str(uuid.uuid4())
             start_params = {
                 "prompt": prompt,
-                "environment_selection": {"mode": "none"},
+                "environment_selection": {"mode": "inherit"},
                 "session_id": self._session_id,
             }
+            if self._approvals_reviewer is not None:
+                start_params["approvals_reviewer"] = self._approvals_reviewer
 
-            # Only send variables/context on first run (when we don't have a session_id yet)
-            if self._session_id is None:
+            # Only send variables/context on the conversation's first run
+            if first_run:
                 if self._variables is not None:
                     start_params["variables"] = self._variables
                 if self._context is not None:
@@ -193,8 +223,6 @@ class RemoteAgent(UnifiedAgentBase):
             # Extract and cache session_id if first run
             new_session_id = self._extract_session_id(resp)
             if new_session_id:
-                if self._session_id is None:
-                    Debug.log(f"[cli] ⎆ obtained session_id={new_session_id[:8]}")
                 self._session_id = new_session_id
 
             run_id = self._extract_run_id(resp)
@@ -230,6 +258,9 @@ class RemoteAgent(UnifiedAgentBase):
                     self._current_run_id = None
                     break
 
+                if self._unattended and msg["method"] in _APPROVAL_PROMPTS:
+                    await self._reject_unattended(msg["method"], msg["params"])
+
                 event = map_notification_to_event(msg["method"], msg["params"])
                 if event:
                     Debug.log(f"[cli]   ← {msg['method']} details={msg['params']}")
@@ -243,6 +274,29 @@ class RemoteAgent(UnifiedAgentBase):
                 return self._gen
 
         return _Result(_events_gen())
+
+    async def _reject_unattended(self, method: str, params: Dict[str, Any]) -> None:
+        """Answer an approval prompt no person will see: reject it."""
+        message = (
+            "No person is attending this run and the automatic reviewer did "
+            "not approve this action, so it was not run. Continue without it "
+            "or report that it needs a person's approval."
+        )
+        try:
+            if method == "tool_approval_requested" and params.get("call_id"):
+                await self._client.other.tool_approval_response(
+                    call_id=params["call_id"],
+                    decision="reject",
+                    rejection_message=message,
+                )
+            elif method == "mcp_approval_requested" and params.get("request_id"):
+                await self._client.other.mcp_approval_response(
+                    request_id=params["request_id"],
+                    decision="reject",
+                    rejection_message=message,
+                )
+        except Exception as exc:  # noqa: BLE001 - the run reports its own state
+            Debug.log(f"[cli] unattended approval reply failed: {exc!r}")
 
     def get_last_run_end(self) -> Optional[Dict[str, Any]]:
         """Return the payload from the most recent run_end notification.

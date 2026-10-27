@@ -10,6 +10,22 @@ from omniagents.core.eval import engine, pipeline, targets
 from omniagents.core.evaluation import registry
 
 
+class _Streamed:
+    """A streamed run over a fake ``Runner.run``: no events, then its final output."""
+
+    def __init__(self, pending):
+        self._pending = pending
+        self.final_output = None
+
+    async def stream_events(self):
+        self.final_output = (await self._pending).final_output
+        return
+        yield
+
+    def cancel(self):
+        pass
+
+
 def test_run_evaluation_async_handles_failure_categories(monkeypatch, tmp_path):
     config_text = textwrap.dedent("""
         evaluation:
@@ -121,6 +137,11 @@ def test_run_judges_parses_coded_output(monkeypatch, tmp_path):
             return types.SimpleNamespace(
                 final_output='```json\n{"answer": "Pass", "reasoning": "ok"}\n```'
             )
+
+        @staticmethod
+        def run_streamed(agent, prompt, max_turns=1, context=None, **_kwargs):
+            # Judges run streamed (the Codex backend accepts only streaming).
+            return _Streamed(Runner.run(agent, prompt, max_turns, context=context))
 
     agents_mod.Runner = Runner
     monkeypatch.setitem(sys.modules, "agents", agents_mod)
@@ -315,16 +336,14 @@ def test_run_judges_records_failure(monkeypatch, tmp_path):
 
 def test_run_scenario_traces_and_records_agent_error(monkeypatch, tmp_path):
     agent_yaml = tmp_path / "agent.yaml"
-    agent_yaml.write_text(
-        textwrap.dedent("""
+    agent_yaml.write_text(textwrap.dedent("""
             evaluation:
               synthetic_data_generation:
                 dimensions:
                   - name: tone
                     values:
                       - name: serious
-            """)
-    )
+            """))
 
     spec_holder = {}
 
@@ -363,7 +382,7 @@ def test_run_scenario_traces_and_records_agent_error(monkeypatch, tmp_path):
         def get_last_run_end(self):
             return {"error": {"message": "bad", "type": "AgentError"}}
 
-    async def fake_create_agent(spec):
+    async def fake_create_agent(spec, **kwargs):
         agent = FakeAgent()
         fake_agents.append(agent)
         return agent
@@ -580,12 +599,11 @@ def test_derive_judge_keys_from_measures_handles_mixed_values():
     assert result == ["quality", "custom", "speed"]
 
 
-def test_run_evaluation_with_environment_returns_error_on_failed_build(
+def test_run_evaluation_stops_when_its_environment_cannot_be_built(
     monkeypatch, tmp_path
 ):
-    """A declared environment that fails to build is captured in the result."""
-    # Config with an unknown environment type and no scenarios so no
-    # actual agent runs.
+    """Scenarios written for an environment never run without it: on this
+    machine they would act on its own credentials and services."""
     config_text = textwrap.dedent("""
         evaluation:
           environment:
@@ -594,22 +612,10 @@ def test_run_evaluation_with_environment_returns_error_on_failed_build(
         """)
     cfg_path = tmp_path / "compiled.yaml"
     cfg_path.write_text(config_text)
-
-    # _load_local_measures is imported from .pipeline inside the function
     monkeypatch.setattr(pipeline, "load_project_measures", lambda cfg, **kw: None)
 
-    result = asyncio.run(
-        pipeline.run_evaluation_async(cfg_path, include_unmeasured=True)
-    )
-
-    # Verify the error is captured even with no scenarios
-    assert "environment_error" in result
-    assert "nonexistent_type" in result["environment_error"]
-    assert "warnings" in result
-    assert len(result["warnings"]) == 1
-    assert "Environment loading failed" in result["warnings"][0]
-    # Verify runs are empty since we have no scenarios
-    assert result["runs"] == []
+    with pytest.raises(RuntimeError, match="nonexistent_type"):
+        asyncio.run(pipeline.run_evaluation_async(cfg_path, include_unmeasured=True))
 
 
 def test_run_evaluation_async_indexes_repeats_and_records_answered(

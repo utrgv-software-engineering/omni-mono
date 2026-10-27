@@ -202,7 +202,9 @@ def test_consume_stream_events_counts_project_agent_token_usage():
                 "totals": {
                     "requests": 1,
                     "input_tokens": i,
+                    "input_tokens_details": {"cached_tokens": i - 1},
                     "output_tokens": o,
+                    "output_tokens_details": {"reasoning_tokens": 1},
                     "total_tokens": i + o,
                 },
             },
@@ -213,9 +215,13 @@ def test_consume_stream_events_counts_project_agent_token_usage():
         yield _usage(7, 1)
 
     result = asyncio.run(consume_stream_events(_stream()))
+    # Cached and reasoning tokens too: what a run costs depends on them.
     assert result["usage"] == {
         "requests": 2,
         "input_tokens": 10,
+        "cached_tokens": 8,
+        "cache_write_tokens": 0,
         "output_tokens": 3,
+        "reasoning_tokens": 2,
         "total_tokens": 13,
     }

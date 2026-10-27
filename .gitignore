@@ -1,1 +1,5 @@
 node_modules/
+
+# Local browser verification and deployment planning
+.playwright-cli/
+/8020-factory-deployment-plan.md

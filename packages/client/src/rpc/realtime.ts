@@ -276,6 +276,7 @@ export class RealtimeRPCClient {
         console.log('[rpc] close', event.code, event.reason);
       }
       this.rejectAllPending(error);
+      this.emit('transport_closed', { reason: error.message });
       if (!this.closedByUser && !error.permanent) {
         void this.reconnectAfterClose(generation);
       }
@@ -451,7 +452,13 @@ export class RealtimeRPCClient {
     this.ws.send(JSON.stringify(message));
   }
 
-  async capabilities(): Promise<{ enabled: boolean; kind?: string; agent_name?: string | null }> {
+  async capabilities(): Promise<{
+    enabled: boolean;
+    kind?: string;
+    transport?: string;
+    detail?: string;
+    agent_name?: string | null;
+  }> {
     return this.call('capabilities');
   }
 
@@ -461,6 +468,21 @@ export class RealtimeRPCClient {
       params.session_id = sessionId;
     }
     return this.call('start_session', params);
+  }
+
+  async startLive(sessionId: string, sdp: string): Promise<{ session_id: string; sdp: string; call_id?: string }> {
+    return this.call('start_session', { session_id: sessionId, sdp });
+  }
+
+  async delegate(sessionId: string, delegationId: string, text: string): Promise<unknown> {
+    return this.call('delegate', { session_id: sessionId, delegation_id: delegationId, text });
+  }
+
+  async syncContext(
+    sessionId: string,
+    turns: { id: string; role: string; text: string }[]
+  ): Promise<{ saved: string[]; context: string }> {
+    return this.call('sync_context', { session_id: sessionId, turns });
   }
 
   async stopSession(sessionId: string): Promise<boolean> {

@@ -43,6 +43,9 @@ litellm = [
 server = [
     "fastapi[all]>=0.115.12",
     "uvicorn>=0.34.1",
+    # Event intake: Slack Socket Mode (apps.connections.open + its WebSocket).
+    "httpx>=0.27",
+    "websockets>=13",
     # Host terminals on Windows (ConPTY); POSIX hosts use the stdlib pty.
     "pywinpty>=2.0.14; sys_platform == 'win32'",
 ]
@@ -284,10 +287,10 @@ include-package-data = true
 "omniagents.builtin" = [
     "capabilities/*.yml",
 ]
-# Guardian reviewer risk policy and plan-completion review policy —
-# data files read at review time.
+# Guardian reviewer prompts (Codex's, see guardian_prompts/SOURCE.md) and
+# the plan-completion review policy — data files read at review time.
 "omniagents.core.agents" = [
-    "guardian_policy.md",
+    "guardian_prompts/*.md",
     "plan_review_policy.md",
 ]
 # The built Ink TUI bundle; its sources build in the monorepo workspace.
