@@ -32,7 +32,7 @@ class OmniAgentsJudgeAdapter:
         self,
         compiled_yaml: Path,
         judge_key: str,
-        runs_file: Path,
+        conversations: Dict[str, Dict[str, Any]],
         *,
         category: Optional[str] = None,
         source: str = "final_assistant_text",
@@ -42,7 +42,6 @@ class OmniAgentsJudgeAdapter:
         eval_config: Any = None,
     ) -> None:
         self.judge_key = str(judge_key)
-        self.runs_file = Path(runs_file).resolve()
         self.category = category
         self.source = str(source)
         self.judge_max_turns = int(judge_max_turns)
@@ -81,11 +80,8 @@ class OmniAgentsJudgeAdapter:
             "description": self._cfg.get("description"),
             "tools": self._cfg.get("tools") or [],
         }
-        runs_blob = json.loads(self.runs_file.read_text(encoding="utf-8"))
-        runs_list = list(runs_blob.get("runs") or [])
-        self._runs_by_id: Dict[str, Dict[str, Any]] = {
-            str(r.get("scenario_id")): r for r in runs_list
-        }
+        # Each dataset scenario's saved run, by scenario id (or name).
+        self._runs_by_id: Dict[str, Dict[str, Any]] = dict(conversations)
 
         self._optimizer_cfg: Optional[Dict[str, Any]] = None
         self._optimizer_agent: Optional[Any] = None
@@ -335,7 +331,6 @@ class OmniAgentsJudgeAdapter:
                     tools_list.append(registry[nm])
 
         nm = self._judge_cfg.get("agent", {}).get("name") or f"Judge:{self.judge_key}"
-        lbl = self._judge_cfg.get("agent", {}).get("label") or nm
         try:
             instructions = render_template(
                 instructions,
@@ -477,6 +472,13 @@ class OmniAgentsJudgeAdapter:
                 default_instructions or "You are an evaluation agent. Return ONLY JSON."
             )
         )
+        # The judge's few-shot examples stay as they are; only its
+        # instructions and template are optimized.
+        from omniagents.core.eval.loader import judge_examples_text
+
+        examples = judge_examples_text(self._judge_cfg)
+        if examples:
+            instructions = f"{instructions}\n\n{examples}"
 
         # Build judge agent once per evaluation
         judge_agent = None
@@ -533,7 +535,7 @@ class OmniAgentsJudgeAdapter:
             try:
                 if self.workflow_name:
                     try:
-                        from omniagents.studio.tracing import trace as studio_trace  # type: ignore
+                        from omniagents.core.tracing.local import trace as studio_trace
                         import uuid as _uuid
 
                         run_uid = _uuid.uuid4().hex[:8]
@@ -562,7 +564,14 @@ class OmniAgentsJudgeAdapter:
                         with studio_trace(
                             self.workflow_name, group_id=run_uid, metadata=meta
                         ):
-                            res = asyncio.run(AgentsRunner.run(judge_agent, prompt, context={"workspace_root": os.getcwd()}, max_turns=self.judge_max_turns))  # type: ignore
+                            res = asyncio.run(
+                                AgentsRunner.run(
+                                    judge_agent,
+                                    prompt,
+                                    context={"workspace_root": os.getcwd()},
+                                    max_turns=self.judge_max_turns,
+                                )
+                            )  # type: ignore
                     except RuntimeError:
                         import asyncio as _asyncio
 
@@ -575,9 +584,23 @@ class OmniAgentsJudgeAdapter:
                             )
                         )
                     except Exception:
-                        res = asyncio.run(AgentsRunner.run(judge_agent, prompt, context={"workspace_root": os.getcwd()}, max_turns=self.judge_max_turns))  # type: ignore
+                        res = asyncio.run(
+                            AgentsRunner.run(
+                                judge_agent,
+                                prompt,
+                                context={"workspace_root": os.getcwd()},
+                                max_turns=self.judge_max_turns,
+                            )
+                        )  # type: ignore
                 else:
-                    res = asyncio.run(AgentsRunner.run(judge_agent, prompt, context={"workspace_root": os.getcwd()}, max_turns=self.judge_max_turns))  # type: ignore
+                    res = asyncio.run(
+                        AgentsRunner.run(
+                            judge_agent,
+                            prompt,
+                            context={"workspace_root": os.getcwd()},
+                            max_turns=self.judge_max_turns,
+                        )
+                    )  # type: ignore
             except RuntimeError:
                 import asyncio as _asyncio
 
@@ -1096,7 +1119,7 @@ class OmniAgentsJudgeAdapter:
                 prompt = self._render_optimizer_prompt(name, base_text, ds_items)
                 if self.workflow_name:
                     try:
-                        from omniagents.studio.tracing import trace as studio_trace  # type: ignore
+                        from omniagents.core.tracing.local import trace as studio_trace
                         import uuid as _uuid
 
                         run_uid = _uuid.uuid4().hex[:8]
@@ -1180,8 +1203,6 @@ class OmniAgentsJudgeAdapter:
         for comp in components_to_update:
             items: List[Dict[str, Any]] = []
             for t in selected:
-                label = bool(t.get("label"))
-                pred = t.get("pred")
                 k = t.get("kind")
                 prompt = t.get("prompt")
                 jout = t.get("judge_output") or {}

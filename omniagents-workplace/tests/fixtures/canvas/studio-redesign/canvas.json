@@ -1,0 +1,58 @@
+{
+  "v": 3,
+  "attachments": {},
+  "boards": {
+    "FHome.dc.html": {
+      "expand": "fill",
+      "h": 1040,
+      "is_interactive": true,
+      "title": "Home",
+      "w": 1440,
+      "x": 0,
+      "y": 0
+    },
+    "FAgents.dc.html": {
+      "expand": "fill",
+      "h": 1040,
+      "is_interactive": true,
+      "title": "Agents",
+      "w": 1440,
+      "x": 1520,
+      "y": 0
+    },
+    "FRuns.dc.html": {
+      "expand": "fill",
+      "h": 1040,
+      "is_interactive": true,
+      "title": "Runs",
+      "w": 1440,
+      "x": 4560,
+      "y": 0
+    }
+  },
+  "createdOnFiles": {
+    "at": "2026-10-23T18:45:00Z",
+    "v": 1
+  },
+  "designSystems": [],
+  "launch": {
+    "view": "canvas"
+  },
+  "notes": {
+    "heading": {
+      "kind": "title1",
+      "maxW": 10560,
+      "text": "Agents, the automations that start them, real runs, checks that grade tests and a sample of real runs, tests for trying versions, and reviews that keep checks honest. Builder as copilot. All data invented.",
+      "w": 240,
+      "x": 0,
+      "y": -300
+    }
+  },
+  "order": [
+    "FHome.dc.html",
+    "FAgents.dc.html",
+    "FRuns.dc.html"
+  ],
+  "pages": [],
+  "title": "OmniAgents Studio redesign"
+}

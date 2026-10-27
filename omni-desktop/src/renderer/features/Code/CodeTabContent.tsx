@@ -1,49 +1,39 @@
 import { useStore } from '@nanostores/react';
+import type { ClientToolCallHandler } from '@omniagents/chat-ui/App';
+import { ChatShell, type PendingMessage } from '@omniagents/chat-ui/ChatShell';
+import { ConversationComposerProvider } from '@omniagents/chat-ui/components/ConversationComposer';
+import { getGreeting } from '@omniagents/chat-ui/greeting';
+import { useAutoRetry } from '@omniagents/chat-ui/hooks/use-auto-retry';
+import { $hoveredVoiceScope, VoiceScopeContext } from '@omniagents/chat-ui/services/voice-recording';
+import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
+import { uuidv4 } from '@omniagents/client/util/uuid';
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
+import { Spinner } from '@omniagents/ui/spinner';
 import { motion } from 'framer-motion';
 import { FolderOpen } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 
-import { getArtifactsDir, getContainerArtifactsDir, profileRunsOnHost } from '@/lib/artifacts';
 import { conversationTitle } from '@/lib/chat-conversations';
 import { buildSessionVariables } from '@/lib/client-tools';
-import { uuidv4 } from '@/lib/uuid';
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
-import { Spinner } from '@/renderer/ds/ui/spinner';
 import { SessionStatusBanner } from '@/renderer/features/Banner/SessionStatusBanner';
-import { $sandboxProfiles, $substrateStatus } from '@/renderer/features/Sandboxes/state';
-import {
-  getAvailableProfileNames,
-  getProfileDescription,
-  getProfileMenuLabel,
-  getProfileTitle,
-} from '@/renderer/features/SandboxProfile/profile-list';
+import { buildClientToolHandler } from '@/renderer/features/Code/client-tool-handler';
+import { $pendingPlan, resolvePlanApproval } from '@/renderer/features/Code/plan-approval-bridge';
 import { openSettingsTab } from '@/renderer/features/SettingsModal/settings-nav';
-import { buildClientToolHandler } from '@/renderer/features/Tickets/client-tool-handler';
-import { $pendingPlan, resolvePlanApproval } from '@/renderer/features/Tickets/plan-approval-bridge';
-import { useAutoRetry } from '@/renderer/hooks/use-auto-retry';
 import { useSessionWorkspaceDir } from '@/renderer/hooks/use-session-workspace-dir';
-import type { ClientToolCallHandler } from '@/renderer/omniagents-ui/App';
-import { ChatShell, type PendingMessage } from '@/renderer/omniagents-ui/ChatShell';
-import { ConversationComposerProvider } from '@/renderer/omniagents-ui/components/ConversationComposer';
 import { DraftSessionControls } from '@/renderer/omniagents-ui/components/DraftSessionControls';
-import { getGreeting } from '@/renderer/omniagents-ui/greeting';
-import { buildProfileLabel } from '@/renderer/omniagents-ui/sandbox-label';
-import { configApi } from '@/renderer/services/config';
+import { $agentStatuses } from '@/renderer/services/agent-process';
 import { emitter, serverOrigin } from '@/renderer/services/ipc';
-import { $machines } from '@/renderer/services/machines';
 import { persistedStoreApi } from '@/renderer/services/store';
-import { isLocalVoiceCapable } from '@/renderer/services/voice-client';
-import { $hoveredVoiceScope, VoiceScopeContext } from '@/renderer/services/voice-recording';
 import type { AppId } from '@/shared/app-registry';
-import type { CodeTab, CodeTabId, ExecutionTarget, TicketId, WorkspaceMountDescriptor } from '@/shared/types';
+import type { CodeTab, CodeTabId, WorkspaceMountDescriptor } from '@/shared/types';
 import { firstSource, isChatColumn } from '@/shared/types';
 import { getActivePersona } from '@/shared/voice-personas';
 
 import { AttachProjectMenu } from './AttachProjectMenu';
 import { CodeWorkspaceLayout } from './CodeWorkspaceLayout';
 import { CHAT_SUGGESTIONS, COLUMN_SUGGESTIONS } from './empty-suggestions';
-import { $codeTabErrors, $codeTabStatuses, codeApi } from './state';
+import { $codeTabErrors, codeApi } from './state';
 import { useCodeAutoLaunch } from './use-code-auto-launch';
 import { workspaceScopeFromMounts } from './workspace-mounts';
 
@@ -66,7 +56,7 @@ CodeErrorView.displayName = 'CodeErrorView';
 
 const CodeRunningView = memo(
   ({
-    sandboxUrls,
+    runtime,
     executionTarget,
     sessionId,
     onSessionChange,
@@ -78,10 +68,6 @@ const CodeRunningView = memo(
     uiMinimal,
     headerActionsTargetId,
     headerActionsCompact,
-    sandboxLabel,
-    sandboxOptions,
-    currentSandboxProfile,
-    onSandboxChange,
     composerExtras,
     onClientToolCall,
     tabId,
@@ -91,19 +77,15 @@ const CodeRunningView = memo(
     filesHost,
     gitHost,
     reviewHost,
-    ticketId,
     routineId,
-    switching,
     greeting,
     suggestions,
     pendingMessages,
     onPendingMessagesFlushed,
   }: {
-    sandboxUrls: {
+    runtime: {
       uiUrl: string;
       authToken?: string;
-      services?: Record<string, string>;
-      environmentCapabilities?: string[];
     };
     executionTarget?: ExecutionTarget;
     sessionId?: string;
@@ -116,10 +98,6 @@ const CodeRunningView = memo(
     uiMinimal?: boolean;
     headerActionsTargetId?: string;
     headerActionsCompact?: boolean;
-    sandboxLabel?: string;
-    sandboxOptions?: { value: string; label: string; description?: string }[];
-    currentSandboxProfile?: string;
-    onSandboxChange?: (value: string) => void;
     composerExtras?: React.ReactNode;
     onClientToolCall?: ClientToolCallHandler;
     tabId?: string;
@@ -131,9 +109,7 @@ const CodeRunningView = memo(
     filesHost: HTMLDivElement;
     gitHost: HTMLDivElement;
     reviewHost: HTMLDivElement;
-    ticketId?: TicketId;
     routineId?: string;
-    switching?: boolean;
     /** Chat mode: time-of-day greeting shown on the empty conversation. */
     greeting?: string;
     /** One-tap example tasks shown on the empty conversation. */
@@ -147,20 +123,18 @@ const CodeRunningView = memo(
     const pendingPlan = useStore($pendingPlan);
 
     const runtimeConnection = useMemo(() => {
-      // serverOrigin() returns the cloud baseUrl in cloud-linked Electron;
+      // serverOrigin() returns the backend baseUrl in remote-linked Electron;
       // resolving the agent's relative /proxy/... against window.location
       // would (wrongly) anchor to localhost:5173 / file:// in that mode.
-      const url = new URL(sandboxUrls.uiUrl, serverOrigin());
+      const url = new URL(runtime.uiUrl, serverOrigin());
       if (theme !== 'default') {
         url.searchParams.set('theme', theme);
       }
       if (uiMinimal) {
         url.searchParams.set('minimal', 'true');
       }
-      return { baseUrl: url.toString(), authToken: sandboxUrls.authToken };
-    }, [sandboxUrls.authToken, sandboxUrls.uiUrl, theme, uiMinimal]);
-    const codeServerSrc = sandboxUrls.services?.['code_server'];
-    const vncSrc = sandboxUrls.services?.['vnc'];
+      return { baseUrl: url.toString(), authToken: runtime.authToken };
+    }, [runtime.authToken, runtime.uiUrl, theme, uiMinimal]);
 
     return (
       <div className="flex flex-col w-full h-full relative">
@@ -172,18 +146,11 @@ const CodeRunningView = memo(
             onSessionChange={onSessionChange}
             variables={variables}
             voiceVariables={voiceVariables}
-            codeServerSrc={codeServerSrc}
-            vncSrc={vncSrc}
             activeApp={activeApp}
             onActiveAppChange={onActiveAppChange}
             onReady={onReady}
             headerActionsTargetId={headerActionsTargetId}
             headerActionsCompact={headerActionsCompact}
-            sandboxLabel={sandboxLabel}
-            sandboxOptions={sandboxOptions}
-            currentSandboxProfile={currentSandboxProfile}
-            onSandboxChange={onSandboxChange}
-            environmentCapabilities={sandboxUrls.environmentCapabilities}
             composerExtras={composerExtras}
             onClientToolCall={onClientToolCall}
             pendingPlan={pendingPlan}
@@ -195,7 +162,6 @@ const CodeRunningView = memo(
             filesHost={filesHost}
             gitHost={gitHost}
             reviewHost={reviewHost}
-            ticketId={ticketId}
             routineId={routineId}
             greeting={greeting}
             suggestions={suggestions}
@@ -203,17 +169,6 @@ const CodeRunningView = memo(
             onPendingMessagesFlushed={onPendingMessagesFlushed}
           />
         </div>
-        {switching && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-card">
-            <div className="flex max-w-80 flex-col items-center gap-2 rounded-2xl bg-card px-8 py-6 text-center shadow-xl">
-              <Spinner />
-              <span className="text-base font-semibold text-foreground">
-                Switching to {getProfileMenuLabel(currentSandboxProfile ?? 'host')}…
-              </span>
-              <span className="text-xs text-muted-foreground">Your conversation and files are preserved.</span>
-            </div>
-          </div>
-        )}
       </div>
     );
   }
@@ -257,12 +212,10 @@ export const CodeTabContent = memo(
     );
     // Projects without a linked local source still have a managed directory on
     // disk (`Projects/<slug>/` or `~/Omni/Workspace/` for Personal). Resolve it
-    // lazily so the sandbox can start even when the user hasn't picked a
+    // lazily so the agent can start even when the user hasn't picked a
     // workspace.
     const projectSource = firstSource(project);
-    const primaryLocalSource = project?.sources.find((source) => source.kind === 'local');
-    const linkedWorkspaceDir =
-      tab.workspaceDir ?? (projectSource?.kind === 'local' ? projectSource.workspaceDir : null) ?? null;
+    const linkedWorkspaceDir = projectSource?.kind === 'local' ? projectSource.workspaceDir : null;
     const [resolvedProjectDir, setResolvedProjectDir] = useState<string | null>(null);
     useEffect(() => {
       if (linkedWorkspaceDir || !tab.projectId) {
@@ -287,18 +240,10 @@ export const CodeTabContent = memo(
       }
     }, [chatMode, tab.sessionId, tab.id]);
 
-    // Older local state predates explicit Workspace snapshot identity. Mint it
-    // independently instead of reusing the conversation id.
-    useEffect(() => {
-      if (!tab.snapshotRef) {
-        void codeApi.setTabSnapshotRef(tab.id, uuidv4());
-      }
-    }, [tab.id, tab.snapshotRef]);
-
     // Chat is an ambient surface, not a project — each conversation gets an
     // isolated `<workspaceDir>/Sessions/<sessionId>` scratch dir. Switching
     // conversations changes the workspace, which useAutoLaunch's reset effect
-    // turns into a sandbox restart. Hook is called unconditionally (null base
+    // turns into an agent restart. Hook is called unconditionally (null base
     // for non-chat tabs) to keep hook order static.
     //
     // Lazy launch: the base dir is withheld until the column is ACTIVATED
@@ -310,53 +255,8 @@ export const CodeTabContent = memo(
     );
 
     const workspaceDir = chatMode ? chatScratchDir : (linkedWorkspaceDir ?? resolvedProjectDir);
-    const sourceOverrideDir =
-      tab.workspaceDir && primaryLocalSource?.kind === 'local' && tab.workspaceDir !== primaryLocalSource.workspaceDir
-        ? tab.workspaceDir
-        : undefined;
 
-    // Sticky profile binding persisted on the tab. The migration backfills
-    // existing installs; ``codeApi.addTab*`` seeds new tabs from the same
-    // resolution chain (per-project ``sandboxProfile`` → user default) so we
-    // don't drift if the user changes defaults later. The picker writes
-    // through ``codeApi.setTabProfile`` and the new value flows back via
-    // ``useStore``. The ``project?.sandboxProfile`` / ``store.defaultProfileName``
-    // fallbacks below only kick in for tabs predating the migration that
-    // somehow got loaded without a stored profileName (defensive).
-    const profileName = tab.profileName ?? project?.sandboxProfile ?? store.defaultProfileName ?? 'host';
-    const handleProfileChange = useCallback(
-      (value: string) => {
-        void codeApi.setTabProfile(tab.id, value);
-      },
-      [tab.id]
-    );
-    const machines = useStore($machines);
-    const localVoice = store.localVoiceEnabled && isLocalVoiceCapable();
-    const sandboxLabel = useMemo(() => buildProfileLabel(profileName, machines), [profileName, machines]);
-
-    const [isEnterprise, setIsEnterprise] = useState(false);
-    useEffect(() => {
-      emitter.invoke('platform:is-enterprise').then(setIsEnterprise);
-    }, []);
-    // Subscribe to the discovered catalog so the picker re-renders when the
-    // boot-time `sandbox:list-profiles` fetch lands (bundled + user YAMLs).
-    const discoveredProfiles = useStore($sandboxProfiles);
-    const substrate = useStore($substrateStatus);
-    const sandboxOptions = useMemo(
-      () =>
-        getAvailableProfileNames({
-          isEnterprise,
-          available: store.availableSandboxProfiles,
-          discovered: discoveredProfiles,
-          substrate,
-        }).map((name) => ({
-          value: name,
-          label: getProfileTitle(name, machines),
-          description: getProfileDescription(name) ?? undefined,
-        })),
-      [isEnterprise, store.availableSandboxProfiles, discoveredProfiles, substrate, machines]
-    );
-
+    const localVoice = store.localVoiceEnabled;
     // Attach-project chip for projectless chats, rendered in the composer chip
     // row pre- and post-launch (same node both places, so the composer never
     // changes shape when the session starts). Attaching mid-conversation is
@@ -386,7 +286,7 @@ export const CodeTabContent = memo(
     const [greeting] = useState(getGreeting);
     const allLaunchErrors = useStore($codeTabErrors);
 
-    // Messages typed before the sandbox is up. The first submit activates the
+    // Messages typed before the agent is up. The first submit activates the
     // column (which triggers the launch); OmniAgentsApp flushes the queue the
     // moment its RPC connects, so nothing typed during boot is lost.
     const [pendingMessages, setPendingMessages] = useState<PendingMessage[]>([]);
@@ -404,7 +304,7 @@ export const CodeTabContent = memo(
         }
         setPendingMessages((prev) => [...prev, msg]);
         if (!tab.activatedAt) {
-          // First intent: title the conversation and boot the sandbox.
+          // First intent: title the conversation and boot the agent.
           if (tab.sessionId && msg.text.trim()) {
             void codeApi.recordConversation(tab.sessionId, { title: conversationTitle(msg.text) });
           }
@@ -414,20 +314,17 @@ export const CodeTabContent = memo(
       [store.workspaceDir, tab.activatedAt, tab.sessionId, tab.id]
     );
 
-    const { phase, retry } = useCodeAutoLaunch(tab.id, tab.snapshotRef ? workspaceDir : null, {
+    const { phase, retry } = useCodeAutoLaunch(tab.id, workspaceDir, {
       ...(tab.projectId ? { projectId: tab.projectId } : {}),
-      ...(sourceOverrideDir ? { sourceOverrideDir } : {}),
-      profileNameOverride: profileName,
       ...(tab.sessionId ? { sessionId: tab.sessionId } : {}),
-      ...(tab.snapshotRef ? { snapshotRef: tab.snapshotRef } : {}),
     });
 
     // A launch failure is retried quietly on a capped backoff; the column
     // keeps its launching look and only a long, continuous failure shows
     // the error surface (which keeps retrying behind it).
-    // A sandbox that fails to start usually fails the same way again
-    // (docker missing, image gone), so give it a couple of quiet retries and
-    // then ask, rather than the full minute a dropped connection gets.
+    // An agent that fails to start usually fails the same way again, so
+    // give it a couple of quiet retries and then ask, rather than the full
+    // minute a dropped connection gets.
     const launchRetry = useAutoRetry({
       failing: phase === 'error',
       healthy: phase === 'running' || phase === 'idle',
@@ -436,8 +333,8 @@ export const CodeTabContent = memo(
     });
     const launchFailed = phase === 'error' && launchRetry.exhausted;
 
-    const allStatuses = useStore($codeTabStatuses);
-    const sandboxStatus = allStatuses[tab.id];
+    const allStatuses = useStore($agentStatuses);
+    const agentStatus = allStatuses[tab.id];
 
     // Only mount the iframe on ``running``. ``connecting`` arrives the
     // moment omni-serve emits its JSON readiness line — that's before
@@ -445,33 +342,33 @@ export const CodeTabContent = memo(
     // briefly shows ERR_CONNECTION_REFUSED / a uvicorn error before the
     // real UI loads. ``agent-process.ts`` already gates ``running`` on
     // an HTTP+WS health probe, so by then the port is truly serving.
-    const sandboxUrls = useMemo(() => {
-      if (!sandboxStatus || sandboxStatus.type !== 'running') {
+    const runtime = useMemo(() => {
+      if (!agentStatus || agentStatus.type !== 'running') {
         return null;
       }
-      return sandboxStatus.data;
-    }, [sandboxStatus]);
+      return agentStatus.data;
+    }, [agentStatus]);
     useEffect(() => {
       if (pendingMessages.length > 0) {
         console.info(
-          `[pending-intent] owner tab=${tab.id} session=${tab.sessionId ?? 'none'} count=${pendingMessages.length} runtime=${sandboxUrls ? 'running' : 'waiting'}`
+          `[pending-intent] owner tab=${tab.id} session=${tab.sessionId ?? 'none'} count=${pendingMessages.length} runtime=${runtime ? 'running' : 'waiting'}`
         );
       }
-    }, [pendingMessages, sandboxUrls, tab.id, tab.sessionId]);
+    }, [pendingMessages, runtime, tab.id, tab.sessionId]);
     const executionTarget = useMemo(
       () =>
-        sandboxUrls?.workspaceId && sandboxUrls.environmentId && sandboxUrls.environmentGeneration !== undefined
+        runtime?.workspaceId && runtime.environmentId && runtime.environmentGeneration !== undefined
           ? {
-              workspaceId: sandboxUrls.workspaceId,
-              environmentId: sandboxUrls.environmentId,
-              environmentGeneration: sandboxUrls.environmentGeneration,
+              workspaceId: runtime.workspaceId,
+              environmentId: runtime.environmentId,
+              environmentGeneration: runtime.environmentGeneration,
             }
           : undefined,
-      [sandboxUrls?.workspaceId, sandboxUrls?.environmentId, sandboxUrls?.environmentGeneration]
+      [runtime?.workspaceId, runtime?.environmentId, runtime?.environmentGeneration]
     );
     // The provisioned environment owns this value. Renderer guesses were the
     // source of Host/Devbox drift whenever source layouts differed.
-    const agentWorkspaceDir = sandboxUrls?.workspaceRoot;
+    const agentWorkspaceDir = runtime?.workspaceRoot;
 
     // Scope the Files/Git/Review surfaces from the environment's
     // authoritative mount table: a single mount that landed under the root
@@ -479,7 +376,7 @@ export const CodeTabContent = memo(
     // session id) collapses so paths read `index.html`, not
     // `<session-id>/index.html`. Multi-mount environments keep the
     // composite root — there the mount level is real information.
-    const workspaceRootPrefix = useMemo(() => workspaceScopeFromMounts(sandboxUrls?.mounts), [sandboxUrls?.mounts]);
+    const workspaceRootPrefix = useMemo(() => workspaceScopeFromMounts(runtime?.mounts), [runtime?.mounts]);
 
     const handleSessionChange = useCallback(
       (sessionId: string | undefined) => {
@@ -491,35 +388,10 @@ export const CodeTabContent = memo(
     const handleClientToolCall = useMemo(
       () =>
         buildClientToolHandler({
-          ...(tab.ticketId && tab.projectId ? { ticketId: tab.ticketId as TicketId, projectId: tab.projectId } : {}),
           tabId: tab.id,
         }),
-      [tab.id, tab.ticketId, tab.projectId]
+      [tab.id]
     );
-
-    // Resolve the host omni config dir once — we need it to tell the agent
-    // where to write PR artifacts when it runs on the host (no sandbox).
-    const [hostConfigDir, setHostConfigDir] = useState<string | null>(null);
-    useEffect(() => {
-      let cancelled = false;
-      void configApi.getOmniConfigDir().then((dir) => {
-        if (!cancelled) {
-          setHostConfigDir(dir);
-        }
-      });
-      return () => {
-        cancelled = true;
-      };
-    }, []);
-
-    // Look up the ticket's autopilot flag so the column builds its variables
-    // with catch-all safe_tool_overrides when autopilot is driving it.
-    const ticketAutopilot = useMemo(() => {
-      if (!tab.ticketId) {
-        return false;
-      }
-      return store.tickets.some((t) => t.id === tab.ticketId && t.autopilot === true);
-    }, [tab.ticketId, store.tickets]);
 
     const baseSessionArgs = useMemo(() => {
       if (chatMode) {
@@ -531,24 +403,13 @@ export const CodeTabContent = memo(
           ...(workspaceDir ? { context: { workspaceDir } } : {}),
         };
       }
-      const artifactsDir = tab.ticketId
-        ? profileRunsOnHost(profileName)
-          ? hostConfigDir
-            ? getArtifactsDir(hostConfigDir, tab.ticketId)
-            : undefined
-          : getContainerArtifactsDir(tab.ticketId)
-        : undefined;
       return {
         surface: 'code' as const,
-        autopilot: ticketAutopilot,
         context: {
           ...(project ? { projectId: project.id, projectLabel: project.label, sources: project.sources } : {}),
-          ...(tab.ticketId ? { ticketId: tab.ticketId } : {}),
-          ...(artifactsDir ? { artifactsDir } : {}),
-          ...(tab.workspaceDir ? { workspaceDir: tab.workspaceDir } : {}),
         },
       };
-    }, [chatMode, workspaceDir, tab.ticketId, tab.workspaceDir, project, profileName, hostConfigDir, ticketAutopilot]);
+    }, [chatMode, workspaceDir, project]);
 
     // Base runs are speak-free; the mic button arms the voice variant per-run.
     const clientToolVariables = useMemo(() => buildSessionVariables(baseSessionArgs), [baseSessionArgs]);
@@ -577,11 +438,11 @@ export const CodeTabContent = memo(
             onMouseEnter={onColumnMouseEnter}
             onMouseLeave={onColumnMouseLeave}
           >
-            <SessionStatusBanner status={sandboxStatus} />
-            {sandboxUrls ? (
+            <SessionStatusBanner status={agentStatus} />
+            {runtime ? (
               <VoiceScopeContext.Provider value={tab.id}>
                 <CodeRunningView
-                  sandboxUrls={sandboxUrls}
+                  runtime={runtime}
                   executionTarget={executionTarget}
                   sessionId={tab.sessionId}
                   onSessionChange={handleSessionChange}
@@ -593,22 +454,16 @@ export const CodeTabContent = memo(
                   uiMinimal={uiMinimal}
                   headerActionsTargetId={headerActionsTargetId}
                   headerActionsCompact={headerActionsCompact}
-                  sandboxLabel={sandboxLabel}
-                  sandboxOptions={sandboxOptions}
-                  currentSandboxProfile={profileName}
-                  onSandboxChange={handleProfileChange}
                   composerExtras={composerExtras}
                   onClientToolCall={handleClientToolCall}
                   tabId={tab.id}
                   agentWorkspaceDir={agentWorkspaceDir}
                   workspaceRootPrefix={workspaceRootPrefix}
-                  workspaceMounts={sandboxUrls?.mounts}
+                  workspaceMounts={runtime?.mounts}
                   filesHost={filesHost}
                   gitHost={gitHost}
                   reviewHost={reviewHost}
-                  ticketId={tab.ticketId as TicketId | undefined}
                   routineId={tab.routineId}
-                  switching={sandboxStatus?.type === 'running' && !!sandboxStatus.data.switching}
                   greeting={chatMode ? greeting : undefined}
                   suggestions={chatMode ? CHAT_SUGGESTIONS : COLUMN_SUGGESTIONS}
                   pendingMessages={chatMode ? pendingMessages : undefined}
@@ -619,7 +474,7 @@ export const CodeTabContent = memo(
               /* Chat pre-launch / launching / error — the greeting shell. The
              composer is live the whole time: the first submit activates the
              column (lazy launch) and queues the message; queued messages
-             flush into the session once the sandbox connects. */
+             flush into the session once the agent connects. */
               <ChatShell
                 conversationId={tab.sessionId}
                 sessionControls={
@@ -634,10 +489,6 @@ export const CodeTabContent = memo(
                 onSubmit={handlePrelaunchSubmit}
                 pendingMessages={pendingMessages}
                 suggestions={!tab.activatedAt ? CHAT_SUGGESTIONS : undefined}
-                sandboxLabel={sandboxLabel}
-                sandboxOptions={!tab.activatedAt ? sandboxOptions : undefined}
-                currentSandboxProfile={profileName}
-                onSandboxChange={handleProfileChange}
                 composerExtras={composerExtras}
                 workspaceReady={Boolean(store.workspaceDir)}
                 onOpenWorkspaceSettings={() => openSettingsTab('Workspace')}
@@ -648,8 +499,7 @@ export const CodeTabContent = memo(
               /* idle / checking / installing / ready / starting / connecting —
              at this point we already have a project or Routine session
              workspace (we passed the early return above), so auto-launch will
-             drive the machine to ``running`` shortly. The in-composer sandbox
-             picker handles profile changes; no pre-launch picker needed here. */
+             drive the machine to ``running`` shortly. */
               <div className="w-full h-full flex items-center justify-center">
                 <motion.div
                   className="inline-flex items-center gap-2 rounded-full bg-card pl-5 pr-5 pt-2 pb-2"
@@ -659,7 +509,7 @@ export const CodeTabContent = memo(
                 >
                   <Spinner className="text-muted-foreground" />
                   <span className="text-sm text-muted-foreground">
-                    {phase === 'idle' ? 'Restarting sandbox…' : 'Connecting…'}
+                    {phase === 'idle' ? 'Restarting agent…' : 'Connecting…'}
                   </span>
                 </motion.div>
               </div>

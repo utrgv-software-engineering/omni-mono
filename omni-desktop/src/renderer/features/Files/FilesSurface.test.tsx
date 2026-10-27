@@ -27,7 +27,7 @@ class ResizeObserverStub {
 }
 (globalThis as { ResizeObserver?: unknown }).ResizeObserver ??= ResizeObserverStub;
 
-vi.mock('@/renderer/omniagents-ui/rpc-context', () => ({
+vi.mock('@omniagents/chat-ui/rpc-context', () => ({
   useRPCClient: () => mocks.rpc,
   useRPCConnected: () => true,
 }));
@@ -36,7 +36,7 @@ vi.mock('@nanostores/react', () => ({ useStore: () => ({}) }));
 
 vi.mock('@/renderer/services/store', () => ({ persistedStoreApi: { $atom: {} } }));
 
-vi.mock('@/renderer/omniagents-ui/rpc/fs', () => {
+vi.mock('@omniagents/client/rpc/fs', () => {
   class FsClient {
     disposed = false;
 

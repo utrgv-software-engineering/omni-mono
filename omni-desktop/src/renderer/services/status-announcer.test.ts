@@ -1,6 +1,6 @@
+import type { ColumnActivity } from '@omniagents/chat-ui/services/column-activity';
 import { describe, expect, it } from 'vitest';
 
-import type { ColumnActivity } from '@/renderer/services/column-activity';
 import { buildAnnouncements } from '@/renderer/services/status-announcer';
 
 const label = (scope: string) => `Col ${scope}`;

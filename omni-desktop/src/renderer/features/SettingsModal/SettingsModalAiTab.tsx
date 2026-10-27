@@ -1,20 +1,31 @@
 import { useStore } from '@nanostores/react';
+import { modelProvider } from '@omniagents/client/rpc/model-catalog';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@omniagents/ui/accordion';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@omniagents/ui/alert-dialog';
+import { Button } from '@omniagents/ui/button';
+import { Card, CardContent } from '@omniagents/ui/card';
+import { Checkbox } from '@omniagents/ui/checkbox';
+import { Field, FieldLabel } from '@omniagents/ui/field';
+import { Input } from '@omniagents/ui/input';
+import { NativeSelect as Select } from '@omniagents/ui/native-select';
+import { RadioGroup, RadioGroupItem } from '@omniagents/ui/radio-group';
+import { Skeleton } from '@omniagents/ui/skeleton';
+import { Spinner } from '@omniagents/ui/spinner';
 import { Plus, Trash2 } from 'lucide-react';
 import type { ChangeEvent } from 'react';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { buildCodexConfig, probeForProvider } from '@/lib/provider-config';
 import { SaveBar } from '@/renderer/ds/SaveBar';
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/renderer/ds/ui/accordion';
-import { Button } from '@/renderer/ds/ui/button';
-import { Card, CardContent } from '@/renderer/ds/ui/card';
-import { Checkbox } from '@/renderer/ds/ui/checkbox';
-import { Field, FieldLabel } from '@/renderer/ds/ui/field';
-import { Input } from '@/renderer/ds/ui/input';
-import { NativeSelect as Select } from '@/renderer/ds/ui/native-select';
-import { RadioGroup, RadioGroupItem } from '@/renderer/ds/ui/radio-group';
-import { Skeleton } from '@/renderer/ds/ui/skeleton';
-import { Spinner } from '@/renderer/ds/ui/spinner';
 import {
   settingsCardContentClassName,
   SettingsPane,
@@ -30,7 +41,6 @@ import {
 import { agentConfigApi } from '@/renderer/services/config';
 import { emitter, ipc } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
-import { isLocalVoiceCapable } from '@/renderer/services/voice-client';
 import type {
   CodexDeviceCode,
   ModelEntry,
@@ -92,6 +102,8 @@ export const SettingsModalAiTab = memo(() => {
   const managementSnapshot = useProductManagementSnapshot();
   const [config, setConfig] = useState<ModelsConfig | null>(null);
   const [loading, setLoading] = useState(true);
+  const [savedProvider, setSavedProvider] = useState<string | null>(null);
+  const [confirmChange, setConfirmChange] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -114,7 +126,9 @@ export const SettingsModalAiTab = memo(() => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setConfig(await agentConfigApi.getModels());
+      const loaded = await agentConfigApi.getModels();
+      setConfig(loaded);
+      setSavedProvider(modelProvider(loaded.default));
       setDirty(false);
       setError(null);
     } catch (e) {
@@ -157,37 +171,38 @@ export const SettingsModalAiTab = memo(() => {
           : undefined,
     };
   }, [managementSnapshot.accounts]);
-  const [legacyCodexBroken, setLegacyCodexBroken] = useState(false);
-  useEffect(() => {
-    if (canonicalCodexStatus || (management.status !== 'error' && managementSnapshot.accounts.status !== 'error')) {
-      return;
-    }
-    emitter
-      .invoke('codex:status')
-      .then((s) => setLegacyCodexBroken(Boolean(s.broken)))
-      .catch(() => setLegacyCodexBroken(false));
-  }, [canonicalCodexStatus, management.status, managementSnapshot.accounts.status]);
-  const codexBroken = canonicalCodexStatus?.broken ?? legacyCodexBroken;
+  const codexBroken = canonicalCodexStatus?.broken ?? false;
 
   // Union of store-configured keys and the live runtime list, so discovered
   // models (e.g. Codex) are selectable as the default model. Realtime models
   // are filtered from both halves — they belong to the Voice row only.
-  const modelKeys = useMemo(() => {
+  const allModelKeys = useMemo(() => {
     const storeKeys = config ? collectModelKeys(config) : [];
     const runtimeKeys = runtimeModels.filter((m) => !m.realtime).map((m) => m.name);
     return Array.from(new Set([...storeKeys, ...runtimeKeys])).sort();
   }, [config, runtimeModels]);
 
+  const selectedProvider = modelProvider(config?.default);
+  const providerNames = Array.from(
+    new Set([
+      ...Object.keys(config?.providers ?? {}),
+      ...allModelKeys.map((key) => modelProvider(key)).filter((name): name is string => Boolean(name)),
+    ])
+  ).sort();
+  const modelKeys = allModelKeys.filter((key) => modelProvider(key) === selectedProvider);
+
   // Same union, narrowed to realtime-capable models — what Hosted voice may use.
   const realtimeModelKeys = useMemo(() => {
     const storeKeys = config ? collectRealtimeModelKeys(config) : [];
     const runtimeKeys = runtimeModels.filter((m) => m.realtime).map((m) => m.name);
-    return Array.from(new Set([...storeKeys, ...runtimeKeys])).sort();
-  }, [config, runtimeModels]);
+    return Array.from(new Set([...storeKeys, ...runtimeKeys]))
+      .filter((key) => modelProvider(key) === selectedProvider)
+      .sort();
+  }, [config, runtimeModels, selectedProvider]);
 
   // Offering Hosted with nothing to point it at would write null and bounce
   // the radio back to Off. An already-set voice_default keeps it reachable.
-  const hostedVoiceAvailable = realtimeModelKeys.length > 0 || (config?.voice_default ?? null) !== null;
+  const hostedVoiceAvailable = realtimeModelKeys.length > 0;
 
   /**
    * Called after a successful ChatGPT sign-in. Registers the built-in `codex`
@@ -241,21 +256,35 @@ export const SettingsModalAiTab = memo(() => {
     [load]
   );
 
-  const save = useCallback(async () => {
-    if (!config) {
-      return;
+  const persist = useCallback(
+    async (confirmed = false) => {
+      if (!config) {
+        return;
+      }
+      setSaving(true);
+      setError(null);
+      try {
+        await agentConfigApi.setModels(config, { expectedProvider: savedProvider, confirmProviderChange: confirmed });
+        setConfig({ ...config, provider_scope_version: 1 });
+        setSavedProvider(modelProvider(config.default));
+        setDirty(false);
+        void refreshManagement();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to save');
+      } finally {
+        setSaving(false);
+      }
+    },
+    [config, savedProvider, refreshManagement]
+  );
+
+  const save = useCallback(() => {
+    if (savedProvider && (savedProvider !== modelProvider(config?.default) || config?.provider_scope_version !== 1)) {
+      setConfirmChange(true);
+    } else {
+      void persist();
     }
-    setSaving(true);
-    setError(null);
-    try {
-      await agentConfigApi.setModels(config);
-      setDirty(false);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to save');
-    } finally {
-      setSaving(false);
-    }
-  }, [config]);
+  }, [savedProvider, config, persist]);
 
   const updateConfig = useCallback((updater: (prev: ModelsConfig) => ModelsConfig) => {
     setConfig((prev) => {
@@ -285,7 +314,6 @@ export const SettingsModalAiTab = memo(() => {
   // Local is the launcher-side on-device stack (Parakeet + Pocket), persisted
   // separately. They're mutually exclusive.
   const localVoiceEnabled = useStore(persistedStoreApi.$atom).localVoiceEnabled;
-  const localVoiceCapable = isLocalVoiceCapable();
   const onChangeVoiceProvider = useCallback(
     (value: string) => {
       void persistedStoreApi.setKey('localVoiceEnabled', value === 'local');
@@ -316,6 +344,10 @@ export const SettingsModalAiTab = memo(() => {
 
   const removeProvider = useCallback(
     (name: string) => {
+      if (name === selectedProvider) {
+        setError('Choose another workspace provider before removing this provider.');
+        return;
+      }
       updateConfig((c) => {
         const { [name]: _, ...rest } = c.providers;
         return { ...c, providers: rest };
@@ -324,7 +356,7 @@ export const SettingsModalAiTab = memo(() => {
         setExpandedProvider(null);
       }
     },
-    [expandedProvider, updateConfig]
+    [expandedProvider, updateConfig, selectedProvider]
   );
 
   const updateProvider = useCallback(
@@ -454,12 +486,23 @@ export const SettingsModalAiTab = memo(() => {
 
   return (
     <SettingsPane>
+      <AlertDialog open={confirmChange} onOpenChange={setConfirmChange}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Use this provider throughout the workspace?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Continuing existing conversations will send their history to {selectedProvider}. All chats and projects
+              will use this provider for subsequent runs.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void persist(true)}>Change provider</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <SettingsSection title="Connections">
-        <CodexSignInCard
-          onSignedIn={applyCodexSignIn}
-          canonicalStatus={canonicalCodexStatus}
-          allowLegacyStatus={management.status === 'error' || managementSnapshot.accounts.status === 'error'}
-        />
+        <CodexSignInCard onSignedIn={applyCodexSignIn} canonicalStatus={canonicalCodexStatus} />
         <SettingsModalConnectionCards
           config={config}
           onFixKey={applyKeyFix}
@@ -468,15 +511,45 @@ export const SettingsModalAiTab = memo(() => {
         />
       </SettingsSection>
 
-      <SettingsSection title="Defaults">
+      <SettingsSection title="Workspace AI">
         <Card>
           <CardContent className={settingsCardContentClassName}>
+            <Field orientation="horizontal" className="justify-between gap-4">
+              <FieldLabel htmlFor="workspace-provider">Provider</FieldLabel>
+              <Select
+                id="workspace-provider"
+                value={selectedProvider ?? ''}
+                onChange={(event) => {
+                  const provider = event.target.value;
+                  const model = allModelKeys.find((key) => modelProvider(key) === provider);
+                  if (!model) {
+                    setError('Add a model or deployment to this provider first.');
+                    return;
+                  }
+                  updateConfig((current) => ({ ...current, default: model, voice_default: null }));
+                }}
+              >
+                <option value="" disabled>
+                  Choose a provider
+                </option>
+                {providerNames.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <p className="text-sm text-muted-foreground">
+              All chats, projects, subagents, reviews, and recaps use this provider.
+            </p>
             <Field orientation="horizontal" className="justify-between gap-4">
               <div className="min-w-0">
                 <FieldLabel>Default model</FieldLabel>
               </div>
-              <Select value={config.default ?? ''} onChange={onChangeDefault}>
-                <option value="">None</option>
+              <Select aria-label="Default model" value={config.default ?? ''} onChange={onChangeDefault}>
+                <option value="" disabled>
+                  Choose a model
+                </option>
                 {modelKeys.map((k) => (
                   <option key={k} value={k}>
                     {k}
@@ -507,11 +580,8 @@ export const SettingsModalAiTab = memo(() => {
                   Hosted
                 </label>
 
-                <label
-                  className="inline-flex items-center gap-2 text-sm"
-                  title={localVoiceCapable ? undefined : 'Not available in this deployment'}
-                >
-                  <RadioGroupItem value="local" disabled={!localVoiceCapable} />
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <RadioGroupItem value="local" />
                   Local
                 </label>
               </RadioGroup>
@@ -642,11 +712,9 @@ const CodexSignInCard = memo(
   ({
     onSignedIn,
     canonicalStatus,
-    allowLegacyStatus,
   }: {
     onSignedIn: () => Promise<string | undefined>;
     canonicalStatus: { signedIn: boolean; accountId?: string; broken?: boolean } | null;
-    allowLegacyStatus: boolean;
   }) => {
     const [status, setStatus] = useState<{ signedIn: boolean; accountId?: string; broken?: boolean } | null>(
       canonicalStatus
@@ -660,16 +728,8 @@ const CodexSignInCard = memo(
     useEffect(() => {
       if (canonicalStatus) {
         setStatus(canonicalStatus);
-        return;
       }
-      if (!allowLegacyStatus) {
-        return;
-      }
-      emitter
-        .invoke('codex:status')
-        .then(setStatus)
-        .catch(() => setStatus({ signedIn: false }));
-    }, [allowLegacyStatus, canonicalStatus]);
+    }, [canonicalStatus]);
 
     // Main pushes the user code mid-flow; show it while we poll.
     useEffect(() => ipc.on('codex:device-code', setDeviceCode), []);
@@ -866,6 +926,17 @@ const ProviderRow = memo(
                 ))}
               </Select>
             </Field>
+            {provider.type === 'litellm' && (
+              <Field orientation="horizontal" className="justify-between gap-4">
+                <FieldLabel htmlFor={`routing-prefix-${name}`}>Routing prefix</FieldLabel>
+                <Input
+                  id={`routing-prefix-${name}`}
+                  value={provider.routing_prefix ?? ''}
+                  placeholder="anthropic"
+                  onChange={(event) => onUpdateProvider(name, 'routing_prefix', event.target.value)}
+                />
+              </Field>
+            )}
             {showApiKey && (
               <Field orientation="horizontal" className="justify-between gap-4">
                 <div className="min-w-0">
@@ -1037,8 +1108,7 @@ const ModelRow = memo(
 
     const storeValue = (model.model_settings as Record<string, unknown> | undefined)?.store !== false;
     const extraBody = (model.model_settings as Record<string, unknown> | undefined)?.extra_body as
-      | Record<string, unknown>
-      | undefined;
+      Record<string, unknown> | undefined;
     const includeArr = Array.isArray(extraBody?.include) ? (extraBody.include as string[]) : [];
     const hasEncryptedReasoning = includeArr.includes('reasoning.encrypted_content');
 

@@ -1,20 +1,11 @@
 import { useStore } from '@nanostores/react';
-import { Archive, ArchiveRestore, Ellipsis, FolderArchive, LoaderCircle } from 'lucide-react';
-import { memo, useCallback, useMemo, useState } from 'react';
-
-import { NavSection } from '@/renderer/common/NavSection';
-import { SidebarRow, SidebarRowActions } from '@/renderer/common/SidebarRow';
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/renderer/ds/ui/dialog';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/renderer/ds/ui/dropdown-menu';
-import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from '@/renderer/ds/ui/item';
-import { ScrollArea } from '@/renderer/ds/ui/scroll-area';
+import { $columnActivity, activityStatusText } from '@omniagents/chat-ui/services/column-activity';
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@omniagents/ui/dialog';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@omniagents/ui/dropdown-menu';
+import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from '@omniagents/ui/item';
+import { ScrollArea } from '@omniagents/ui/scroll-area';
 import {
   SidebarGroupAction,
   SidebarMenu,
@@ -23,13 +14,17 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSub,
-} from '@/renderer/ds/ui/sidebar';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/renderer/ds/ui/tooltip';
-import { $columnActivity, activityStatusText } from '@/renderer/services/column-activity';
+} from '@omniagents/ui/sidebar';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@omniagents/ui/tooltip';
+import { Archive, ArchiveRestore, Ellipsis, FolderArchive, LoaderCircle } from 'lucide-react';
+import { memo, useCallback, useMemo, useState } from 'react';
+
+import { NavSection } from '@/renderer/common/NavSection';
+import { SidebarRow, SidebarRowActions } from '@/renderer/common/SidebarRow';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { ChatConversation, CodeTab, ProjectId } from '@/shared/types';
 
-import { APP_LAUNCHER_ID, codeApi } from './state';
+import { codeApi } from './state';
 const PAGE_SIZE = 5;
 const PROJECT_PAGE_SIZE = 15;
 
@@ -166,7 +161,7 @@ export const ProjectSessionRows = memo(function ProjectSessionRows({
   const historyCount = projectEntries.filter((entry) => entry.kind === 'history').length;
   const historyHidden = Math.max(0, historyCount - historyVisible);
   const activeTabId = store.activeCodeTabId ?? null;
-  const selectedKey = store.layoutMode === 'chat' && store.codeLayoutMode === 'focus' ? activeTabId : null;
+  const selectedKey = store.layoutMode === 'chat' ? activeTabId : null;
 
   const handleActivate = useCallback(
     (entry: SessionEntry) => {
@@ -207,7 +202,6 @@ export const ProjectSessionRows = memo(function ProjectSessionRows({
             entry.kind === 'history'
               ? entry.conversation.title
               : ((entry.tab.sessionId ? sessionTitles.get(entry.tab.sessionId) : undefined) ??
-                entry.tab.ticketTitle ??
                 entry.tab.routineName ??
                 'New chat');
           return (
@@ -323,8 +317,6 @@ export function RecentsSection({
   );
   const [archiveOpen, setArchiveOpen] = useState(false);
 
-  const customApps = useMemo(() => store.customApps ?? [], [store.customApps]);
-
   // Same resolution the deck uses for column titles (identity must match
   // between the sidebar row and the column it opens).
   const resolveLabel = useCallback(
@@ -333,36 +325,23 @@ export function RecentsSection({
         return entry.conversation.title;
       }
       const tab = entry.tab;
-      if (tab.customAppId === APP_LAUNCHER_ID) {
-        return 'Apps';
-      }
-      if (tab.customAppId === 'browser') {
-        return 'Browser';
-      }
-      if (tab.customAppId) {
-        return customApps.find((a) => a.id === tab.customAppId)?.label ?? 'App';
-      }
       if (tab.routineName) {
         return tab.routineName;
       }
       return (tab.sessionId ? sessionTitles.get(tab.sessionId) : undefined) ?? 'New chat';
     },
-    [customApps, sessionTitles]
+    [sessionTitles]
   );
 
   // One list, recency-sorted; open columns and retained history interleave.
   // Empty chats stay out: a chat column earns its row when its session
   // becomes a conversation (first message titles it). The pristine landing
-  // column in particular never shows. Bound columns (apps and routines)
+  // column in particular never shows. Bound columns (routines)
   // always have identities and always list. Project-bound tabs are rendered
   // beneath their project instead of being duplicated here.
   const entries = useMemo((): SessionEntry[] => {
     const isEmptyChat = (tab: CodeTab): boolean =>
-      !tab.projectId &&
-      !tab.customAppId &&
-      !tab.ticketId &&
-      !tab.routineId &&
-      (!tab.sessionId || !sessionTitles.has(tab.sessionId));
+      !tab.projectId && !tab.routineId && (!tab.sessionId || !sessionTitles.has(tab.sessionId));
     const open: SessionEntry[] = tabs
       .filter((tab) => !tab.projectId && !isEmptyChat(tab))
       .map((tab) => ({ kind: 'open', key: tab.id, tab, ts: tab.createdAt }));
@@ -396,7 +375,7 @@ export function RecentsSection({
 
   const activeTabId = store.activeCodeTabId ?? tabs[0]?.id ?? null;
   // Selection mirrors what fills the plane (see module doc).
-  const selectedKey = store.layoutMode === 'chat' && store.codeLayoutMode === 'focus' ? activeTabId : null;
+  const selectedKey = store.layoutMode === 'chat' ? activeTabId : null;
 
   const raiseDeck = useCallback(() => {
     if (persistedStoreApi.$atom.get().layoutMode !== 'chat') {
@@ -405,8 +384,7 @@ export function RecentsSection({
   }, []);
 
   // "Take me to this conversation" — whether that means activating a column
-  // or materializing one from retained history is the app's business. Layout
-  // mode is preserved: in Spaces the deck scrolls the column into view.
+  // or materializing one from retained history is the app's business.
   const handleActivate = useCallback(
     (entry: SessionEntry) => {
       if (entry.kind === 'open') {

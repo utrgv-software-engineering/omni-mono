@@ -6,9 +6,6 @@
  * shadcn DropdownMenu. Radix owns focus, keyboard navigation, dismissal and
  * collision handling.
  */
-import { memo } from 'react';
-
-import type { ContextMenuParams } from '@/renderer/common/Webview';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,7 +13,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuShortcut,
   DropdownMenuTrigger,
-} from '@/renderer/ds/ui/dropdown-menu';
+} from '@omniagents/ui/dropdown-menu';
+import { memo } from 'react';
+
+import type { ContextMenuParams } from '@/renderer/common/Webview';
 
 export type PageContextMenuActions = {
   back: () => void;

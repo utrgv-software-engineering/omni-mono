@@ -1,7 +1,10 @@
 // Presentation logic for the model picker, kept out of the component so it
 // is unit-testable without an Ink render (same split as ./task-model).
 
-import type { ListModelsResult, ModelDescriptor } from "../protocol/catalog.js";
+import type {
+  ListModelsResult,
+  ModelDescriptor,
+} from "@omniagents/client/rpc/model-catalog";
 
 export type ModelRow = {
   id: string;

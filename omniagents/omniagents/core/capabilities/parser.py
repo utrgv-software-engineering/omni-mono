@@ -453,10 +453,9 @@ def discover_capabilities_in_dir(
     capability spec. Returns a name → Capability instance map.
 
     *capability_registry* seeds ``extends:`` resolution (e.g. builtins when
-    discovering a project's packs). Packs parsed earlier in this directory
-    are also visible to later files (files parse in sorted-name order, so
-    same-dir extends is ordering-sensitive — prefer extending across
-    layers, not within one directory).
+    discovering a project's packs). A pack may also extend another pack in
+    this directory: files parse in sorted-name order, and a pack whose base
+    is a not-yet-parsed sibling waits until that sibling has parsed.
 
     Errors during a single file's parse are logged and the file is skipped
     so one broken capability doesn't disable the whole project. Duplicate
@@ -467,7 +466,7 @@ def discover_capabilities_in_dir(
     if not base_path.is_dir():
         return {}
 
-    out: Dict[str, Any] = {}
+    specs: list[tuple[Path, Any]] = []
     for yaml_file in sorted(base_path.glob("*.yml")) + sorted(base_path.glob("*.yaml")):
         try:
             with yaml_file.open("r", encoding="utf-8") as f:
@@ -477,8 +476,12 @@ def discover_capabilities_in_dir(
                 "Failed to read capability YAML %s: %s. Skipping.", yaml_file, e
             )
             continue
-        if spec is None:
-            continue
+        if spec is not None:
+            specs.append((yaml_file, spec))
+
+    out: Dict[str, Any] = {}
+
+    def parse_one(yaml_file: Path, spec: Any) -> None:
         try:
             cap = parse_capability_spec(
                 spec,
@@ -490,7 +493,7 @@ def discover_capabilities_in_dir(
             )
         except ValueError as e:
             logger.warning("Failed to parse capability %s: %s. Skipping.", yaml_file, e)
-            continue
+            return
         cap_name = getattr(cap, "capability_name", None) or spec.get("name")
         if cap_name in out:
             raise ValueError(
@@ -498,4 +501,24 @@ def discover_capabilities_in_dir(
                 f"(also defined elsewhere under {base_path})"
             )
         out[cap_name] = cap
+
+    def waits_on_sibling(spec: Any, pending: list[tuple[Path, Any]]) -> bool:
+        base = spec.get("extends") if isinstance(spec, dict) else None
+        if not isinstance(base, str) or base in out:
+            return False
+        return any(
+            isinstance(other, dict) and other.get("name") == base and other is not spec
+            for _, other in pending
+        )
+
+    pending = specs
+    while pending:
+        deferred = [(f, s) for f, s in pending if waits_on_sibling(s, pending)]
+        ready = [(f, s) for f, s in pending if not waits_on_sibling(s, pending)]
+        if not ready:
+            # A cycle: parse anyway so each pack reports its unresolved base.
+            ready, deferred = deferred, []
+        for yaml_file, spec in ready:
+            parse_one(yaml_file, spec)
+        pending = deferred
     return out

@@ -1,9 +1,9 @@
 # Serve Protocol
 
-**Protocol version: 2** (`omniagents.product_serve.SERVE_PROTOCOL_VERSION`)
+**Protocol version: 3** (`omniagents.product_serve.SERVE_PROTOCOL_VERSION`)
 
 The wire contract between a desktop/cloud **launcher** and a product's
-reserved `serve` / `sandbox-host` subcommands
+reserved `serve` subcommand
 (`omniagents.product_serve`, mounted by `omniagents.product_cli`). Any
 product with a `product:` block in its `project.yml` speaks this
 protocol from convention; this document is what launchers target.
@@ -23,8 +23,9 @@ The launcher spawns the product CLI with:
 <prog> serve --output json
     --auth-token <client-secret>
     --agent-host-control-token <control-secret>
+    --exit-on-stdin-close
     [--credential <json>]...
-    --snapshot-dir <dir>
+    [--snapshot-dir <dir>]
 ```
 
 There is no port flag: serve picks a free port and reports it in the
@@ -35,8 +36,9 @@ readiness payload. Flag semantics:
 | `--output json` | yes | Emit the machine-readable readiness line (the only format launchers parse). |
 | `--auth-token <client-secret>` | yes | Authenticate ordinary launcher/renderer RPC clients. This value is reported as `auth_token` in readiness. |
 | `--agent-host-control-token <control-secret>` | yes | Authenticate the launcher main process for privileged AgentHost workspace, profile, environment, and binding operations. It must differ from the client secret and is never reported in readiness. |
-| `--credential <json>` | repeatable | One boot-time git/CLI credential descriptor per flag (see below). |
-| `--snapshot-dir <dir>` | yes (launcher always passes it) | Root directory for Workspace snapshots. Each registered Workspace supplies its own `snapshot_ref`. |
+| `--exit-on-stdin-close` | recommended | Shut down when stdin reaches EOF. The launcher spawns serve with a stdin pipe it never writes, so serve exits with the launcher even after a launcher crash. |
+| `--credential <json>` | repeatable | One boot-time git/CLI credential descriptor per flag (see below). Container profiles only; host mode skips it. |
+| `--snapshot-dir <dir>` | optional | Root directory for Workspace snapshots. Each registered Workspace supplies its own `snapshot_ref`. Container profiles only; host mode never snapshots. |
 
 Additional flags exist (`--host`, `--port`, `--agent-project`, `--agent`,
 `--output human`) for tests, scripting and terminal users; launchers do not
@@ -126,27 +128,6 @@ graceful drain, quiesces in-flight runs (bounded), and always reaches
 teardown — which persists the workspace snapshot unless
 `sandbox.discard_snapshot` was called.
 
-## `<prog> sandbox-host`
-
-The laptop half of computer-as-sandbox. Spawn:
-
-```
-<prog> sandbox-host --host 127.0.0.1 --port 0 --workspace <ws>
-```
-
-The **first stdout line** is the handshake:
-
-```json
-{"exec_port": <bound port>, "host": "127.0.0.1"}
-```
-
-The launcher registers `exec_port` with its relay; a cloud
-`HostBridgeSandboxSession` then drives this machine's exec/file/PTY
-surface over the WebSocket
-(`omniagents.core.sandbox.host_bridge.serve_host_connection`). One
-long-lived server serves many sessions (one per connection). `--port 0`
-(the launcher's spawn) binds an ephemeral port.
-
 ## `<prog> describe`
 
 Product introspection for launchers and tooling:
@@ -166,7 +147,7 @@ prints one JSON object:
  "config_dir": "<resolved absolute path>",
  "env_prefix": "<ENV_PREFIX>",
  "update": {"index_url": "<pep503 page>", "command_hint": "<prog> update"} | null,
- "serve_protocol": 2}
+ "serve_protocol": 3}
 ```
 
 `serve_protocol` is the version of this document the installation
@@ -216,3 +197,20 @@ on key conflicts:
 
 The same resolver is used for AgentHost environment provisioning, so product
 layers apply consistently to replacement environments.
+
+A docker profile's `build:` list (shell commands, like `init:`) is built
+into an image once: each command is a `RUN` step on `options.image`, the
+result is tagged `omniagents-profile:<digest>` of the image and the steps,
+and every environment the profile starts uses that image
+(`omniagents.core.sandbox.images.prepare_profile_image`). Toolchains,
+browsers and CLIs belong there; `init:` runs in every container at start
+and keeps work that needs the running container, the workspace or
+credentials. Changing a step builds a new image.
+
+Skill folders that are not in a container environment's workspace (an
+agent's `skills/`, the project's, the product's global root) are copied
+into the container read-only under `/opt/omniagents/skills/` when the
+agent's instructions render or a skill loads, and again when they change on
+the host. The agent is shown those copies, so the files a skill points to
+resolve inside the container. File tools read paths under `/opt/omniagents`
+and refuse to write them.

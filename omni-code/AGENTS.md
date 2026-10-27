@@ -12,6 +12,13 @@ capability packs. This root file covers the whole repo; a nearer
 `AGENTS.md` (e.g. `evaluations/AGENTS.md`) overrides it for its
 directory.
 
+## Branches and releases
+
+Work on `dev`; `main` holds released code only. `make publish` refuses
+to run off a clean `main` that is in sync with `origin/main`. Releases go
+omniagents → omni-code → launcher; the steps are in the launcher's
+CLAUDE.md ("Branches and releases").
+
 ## Repo map
 
 - `omni_code/project.yml` — the manifest. Product identity follows the
@@ -54,14 +61,14 @@ framework's generic entry (`omniagents.product_cli:main`); identity is
 discovered through the `omniagents.products` entry point
 (`omni-code = "omni_code"`). Reserved subcommands mount from
 convention: `model`, `provider`, `auth`, `update`, `sessions`, `serve`,
-`sandbox-host`, `describe`. Anything else falls through to the agent
+`describe`. Anything else falls through to the agent
 run (`omniagents run --project <manifest> --mode ink ...`, so `--mode
 web|server`, `--host`, `--port`, `--output json` etc. pass through);
 `omni -- <words>` forces prompt mode even for reserved words.
 
 ## Checks
 
-All four gates run in CI (`.github/workflows/quality.yml`) and must
+All four gates run in CI (`.github/workflows/omni-code-quality.yml` at the repository root) and must
 pass locally before pushing; the tools are in the `dev` dependency
 group and configured in `pyproject.toml`:
 
@@ -108,9 +115,8 @@ python -m omniagents.cli eval suite run -P omni_code/project.yml \
   `voice_entrypoint` stay declared even though convention would resolve
   the same values — which agent runs is too load-bearing to be implicit.
 - **No platform code.** The management-plane/platform/governance
-  integration was removed from this repo and is being rebuilt
-  framework-side. Do not resurrect `platform*`, `governance`, or overlay
-  modules here.
+  integration has been removed from the stack entirely. Do not
+  resurrect `platform*`, `governance`, or overlay modules.
 - **Scope edits tightly.** No opportunistic refactors or formatter
   passes; mirror the nearest working pattern.
 - Python 3.10+, `snake_case`, type hints; match nearby style.

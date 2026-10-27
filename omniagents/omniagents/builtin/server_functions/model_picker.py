@@ -48,7 +48,6 @@ def _no_store_result() -> dict:
 from omniagents.core.server_functions.slash import (
     slash_command,
     text as slash_text,
-    words as slash_words,
 )
 
 
@@ -67,6 +66,10 @@ async def list_models(session: Session) -> dict:
         return _no_store_result()
 
     models = store.list_text_models()
+    if store.single_provider:
+        models = [
+            m for m in models if m.get("provider_name") == store.selected_provider()
+        ]
     default_name = store.get_default_model_name()
 
     active_model = getattr(session, "active_model", None)
@@ -425,3 +428,76 @@ setattr(switch_model, "_server_function_on_invoke", _switch_model_on_invoke)
 setattr(set_reasoning, "_server_function_on_invoke", _set_reasoning_on_invoke)
 setattr(list_voice_models, "_server_function_on_invoke", _list_voice_models_on_invoke)
 setattr(switch_voice_model, "_server_function_on_invoke", _switch_voice_model_on_invoke)
+
+
+@server_function(
+    description="List configured workspace providers and their default text models.",
+    strict=True,
+    name_override="model_providers",
+    resource_scope=ResourceScope.AGENT,
+    execution_requirements=ExecutionRequirement.NONE,
+)
+async def list_model_providers() -> dict:
+    store = model_store()
+    if store is None or not store.single_provider:
+        return {
+            "providers": [],
+            "current": None,
+            "error": "Workspace provider selection is not enabled.",
+        }
+    default = store.get_default_model_name()
+    providers = {}
+    for model in store.list_text_models():
+        name = model.get("provider_name")
+        if not name or model.get("hidden"):
+            continue
+        if name not in providers or model["name"] == default:
+            providers[name] = {
+                "name": name,
+                "model": model["name"],
+                "label": model["label"],
+            }
+    return {"providers": list(providers.values()), "current": store.selected_provider()}
+
+
+@server_function(
+    description="Change the workspace provider after explicit user confirmation.",
+    strict=True,
+    name_override="switch_provider",
+    resource_scope=ResourceScope.AGENT,
+    execution_requirements=ExecutionRequirement.NONE,
+)
+async def switch_provider(
+    model: str, expected_provider: str | None, confirm: bool
+) -> dict:
+    choices = await list_model_providers()
+    if choices.get("error"):
+        return {"ok": False, "error": choices["error"]}
+    if not confirm:
+        return {
+            "ok": False,
+            "error": "Confirm that continuing conversations will send history to the new provider.",
+        }
+    if choices["current"] != expected_provider:
+        return {
+            "ok": False,
+            "error": "The workspace provider changed. Refresh the list and confirm again.",
+        }
+    choice = next(
+        (entry for entry in choices["providers"] if entry["model"] == model), None
+    )
+    if choice is None:
+        return {
+            "ok": False,
+            "error": "This provider or its default model is no longer available. Refresh the list.",
+        }
+    store = model_store()
+    assert store is not None
+    # Resolve and validate the connection before changing the default, without
+    # sending a model request or touching any active run's frozen configuration.
+    store.get_model_config(model)
+    config = store.load_config()
+    config["default"] = model
+    config["provider_scope_version"] = 1
+    store.save_config(config)
+    return {"ok": True, "provider": choice["name"], "model": model}

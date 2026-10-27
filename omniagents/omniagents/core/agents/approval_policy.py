@@ -11,8 +11,8 @@ environment's actual blast radius plus the session's chosen reviewer.
   it upgrades "Approve for me" to promptless, never overrides "Ask me
   first"; the approval policy is the user's, and no sandbox state changes
   it. Kind is deliberately NOT the signal: kind records placement,
-  and backends like ``unix_local``/``host_bridge`` carry sandbox sessions
-  while executing raw host processes, so they must never auto-approve. The
+  and backends like ``unix_local`` carry sandbox sessions while
+  executing raw host processes, so they must never auto-approve. The
   call runs without any review; the decision is audited and broadcast so
   the transcript shows what happened.
 * ``GUARDIAN`` — an LLM reviewer (:mod:`omniagents.core.agents.guardian`)
@@ -139,6 +139,17 @@ def guardian_model_ref(service: Any) -> str | None:
     value = _config_value(service, "approvals.guardian_model", "", None)
     value = value.strip() if isinstance(value, str) else ""
     return value or None
+
+
+def guardian_policy_config(service: Any) -> tuple[str | None, str | None]:
+    """The configured organization policy and additional policy (``None`` = unset)."""
+
+    def text(key: str) -> str | None:
+        value = _config_value(service, key, "", None)
+        value = value.strip() if isinstance(value, str) else ""
+        return value or None
+
+    return text("approvals.guardian_policy"), text("approvals.guardian_extra_policy")
 
 
 def resolve_route(

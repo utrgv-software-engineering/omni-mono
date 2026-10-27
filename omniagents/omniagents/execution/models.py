@@ -60,8 +60,8 @@ class EnvironmentCapability(str, Enum):
     #: The environment is a genuine containment boundary (container, VM, or
     #: syscall sandbox) — the agent's tools cannot reach the hosting machine.
     #: Granted per backend client type at provisioning; NOT implied by
-    #: ``kind``, which records placement only: ``unix_local`` and
-    #: ``host_bridge`` carry sandbox sessions yet run raw host processes.
+    #: ``kind``, which records placement only: ``unix_local`` carries
+    #: sandbox sessions yet runs raw host processes.
     #: The approval policy's sandbox auto-approve tiers key on this, never
     #: on ``kind``.
     CONTAINED = "contained"

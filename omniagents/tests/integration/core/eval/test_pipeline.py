@@ -3,8 +3,24 @@ import sys
 import textwrap
 import types
 
-from omniagents.core.eval import pipeline
+from omniagents.core.eval import engine, pipeline, targets
 from omniagents.core.evaluation import registry
+
+
+class _Streamed:
+    """A streamed run over a fake ``Runner.run``: no events, then its final output."""
+
+    def __init__(self, pending):
+        self._pending = pending
+        self.final_output = None
+
+    async def stream_events(self):
+        self.final_output = (await self._pending).final_output
+        return
+        yield
+
+    def cancel(self):
+        pass
 
 
 def _configure_pipeline(monkeypatch, history_text="final"):
@@ -21,7 +37,7 @@ def _configure_pipeline(monkeypatch, history_text="final"):
             variables=None,
         )
 
-    monkeypatch.setattr(pipeline, "load_agent_spec_from_yaml", fake_load_spec)
+    monkeypatch.setattr(targets, "load_agent_spec_from_yaml", fake_load_spec)
 
     class FakeRunResult:
         async def stream_events(self):
@@ -31,18 +47,18 @@ def _configure_pipeline(monkeypatch, history_text="final"):
         def __init__(self):
             self._session_id = "session"
 
-        def run_streamed(self, msgs):
+        def run_streamed(self, msgs, run_config=None):
             return FakeRunResult()
 
         def get_last_run_end(self):
             return None
 
-    async def fake_create_agent(spec):
+    async def fake_create_agent(spec, **kwargs):
         return FakeAgent()
 
-    monkeypatch.setattr(pipeline, "create_unified_agent", fake_create_agent)
+    monkeypatch.setattr(targets, "create_unified_agent", fake_create_agent)
     monkeypatch.setattr(
-        pipeline,
+        targets,
         "load_history",
         lambda session_id, project_slug, agent_slug: [
             {"role": "assistant", "content": history_text}
@@ -52,16 +68,18 @@ def _configure_pipeline(monkeypatch, history_text="final"):
     def fake_build_eval_context(*, history, tools, metadata, session=None, agent=None):
         return types.SimpleNamespace(history=history, tools=tools, metadata=metadata)
 
-    monkeypatch.setattr(pipeline, "build_eval_context", fake_build_eval_context)
+    monkeypatch.setattr(engine, "build_eval_context", fake_build_eval_context)
     monkeypatch.setattr(
-        pipeline,
+        engine,
         "final_assistant_text",
         lambda history: history[-1]["content"] if history else "",
     )
     monkeypatch.setattr(
-        pipeline, "compute_metrics", lambda runs, metrics_cfg: {"run_total": len(runs)}
+        engine,
+        "compute_metrics",
+        lambda runs, metrics_cfg, **kw: {"run_total": len(runs)},
     )
-    monkeypatch.setattr(pipeline, "_load_local_measures", lambda cfg, **kw: None)
+    monkeypatch.setattr(pipeline, "load_project_measures", lambda cfg, **kw: None)
 
 
 def test_pipeline_executes_multiple_judges_per_scenario(tmp_path, monkeypatch):
@@ -93,6 +111,11 @@ def test_pipeline_executes_multiple_judges_per_scenario(tmp_path, monkeypatch):
             return types.SimpleNamespace(
                 final_output={"answer": "Pass", "reasoning": f"{key}-ok"}
             )
+
+        @staticmethod
+        def run_streamed(agent, prompt, max_turns=1, context=None, **_kwargs):
+            # Judges run streamed (the Codex backend accepts only streaming).
+            return _Streamed(Runner.run(agent, prompt, max_turns, context=context))
 
     class RunConfig:
         def __init__(self, **kwargs):
@@ -148,11 +171,20 @@ def test_pipeline_executes_multiple_judges_per_scenario(tmp_path, monkeypatch):
     }
 
     run = result["runs"][0]
-    assert sorted(run["metadata"].keys()) == ["accuracy", "completeness"]
+    assert sorted(run["metadata"].keys()) == [
+        "accuracy",
+        "completeness",
+        "environment_context",
+    ]
     for measure in run["measures"]:
         assert measure["passed"] is True
         # ctx.metadata always includes "scenario" so measures can read ctx.expect/ctx.scenario
-        assert measure["judge_keys"] == ["accuracy", "completeness", "scenario"]
+        assert measure["judge_keys"] == [
+            "accuracy",
+            "completeness",
+            "environment_context",
+            "scenario",
+        ]
 
 
 def test_pipeline_judge_selection_modes(tmp_path, monkeypatch):
@@ -184,6 +216,11 @@ def test_pipeline_judge_selection_modes(tmp_path, monkeypatch):
             return types.SimpleNamespace(
                 final_output={"answer": "Pass", "reasoning": key}
             )
+
+        @staticmethod
+        def run_streamed(agent, prompt, max_turns=1, context=None, **_kwargs):
+            # Judges run streamed (the Codex backend accepts only streaming).
+            return _Streamed(Runner.run(agent, prompt, max_turns, context=context))
 
     class RunConfig:
         def __init__(self, **kwargs):
@@ -253,16 +290,17 @@ def test_pipeline_judge_selection_modes(tmp_path, monkeypatch):
     # ctx.metadata always includes "scenario" so measures can read ctx.expect/ctx.scenario,
     # but the run's "metadata" field still excludes it (keeps backward-compat with consumers).
     auto_run = runs_by_id["auto"]
-    assert sorted(auto_run["metadata"].keys()) == ["consistency", "quality"]
+    env = "environment_context"
+    assert sorted(auto_run["metadata"].keys()) == ["consistency", env, "quality"]
     for measure in auto_run["measures"]:
-        assert measure["judge_keys"] == ["consistency", "quality", "scenario"]
+        assert measure["judge_keys"] == ["consistency", env, "quality", "scenario"]
 
     none_run = runs_by_id["none"]
-    assert none_run["metadata"] == {}
+    assert none_run["metadata"] == {env: {}}
     for measure in none_run["measures"]:
-        assert measure["judge_keys"] == ["scenario"]
+        assert measure["judge_keys"] == [env, "scenario"]
 
     explicit_run = runs_by_id["explicit"]
-    assert sorted(explicit_run["metadata"].keys()) == ["custom", "quality"]
+    assert sorted(explicit_run["metadata"].keys()) == ["custom", env, "quality"]
     for measure in explicit_run["measures"]:
-        assert measure["judge_keys"] == ["custom", "quality", "scenario"]
+        assert measure["judge_keys"] == ["custom", env, "quality", "scenario"]

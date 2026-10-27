@@ -1,4 +1,5 @@
 import argparse
+import os
 import black
 import hashlib
 import json
@@ -17,13 +18,10 @@ SCHEMA_PATH = ROOT / "protocol/openrpc/schemas/gui-v1.schema.json"
 PYTHON_PATH = ROOT / "omniagents/rpc/generated/gui_v1/models.py"
 PYTHON_SCHEMA_PATH = ROOT / "omniagents/rpc/generated/gui_v1/schema_models.py"
 PYTHON_INIT_PATH = ROOT / "omniagents/rpc/generated/gui_v1/__init__.py"
-TYPESCRIPT_PATH = ROOT / "omniagents/backends/web/ui/src/protocol/generated/gui-v1.ts"
-INK_TYPESCRIPT_PATH = (
-    ROOT / "omniagents/backends/ink/tui/src/protocol/generated/gui-v1.ts"
-)
-TYPESCRIPT_SCHEMA_PATH = (
-    ROOT / "omniagents/backends/web/ui/src/protocol/generated/schema-types.ts"
-)
+# Every TypeScript client imports the protocol from the shared client package.
+CLIENT_PACKAGE = ROOT.parent / "packages/client"
+TYPESCRIPT_PATH = CLIENT_PACKAGE / "src/protocol/gui-v1.ts"
+TYPESCRIPT_SCHEMA_PATH = CLIENT_PACKAGE / "src/protocol/schema-types.ts"
 MANIFEST_PATH = ROOT / "protocol/openrpc/manifest.json"
 INVENTORY_PATH = ROOT / "protocol/openrpc/inventory.json"
 GENERATOR_VERSION = "1"
@@ -237,7 +235,6 @@ OPTIONAL_FIELDS = {
         "submission_id",
         "role",
         "input_content",
-        "trigger_run",
         "variables",
         "safe_tool_overrides",
         "source",
@@ -469,7 +466,6 @@ BOOLEAN_FIELDS = {
     "recursive",
     "redact",
     "refresh",
-    "trigger_run",
 }
 INTEGER_FIELDS = {
     "after_seq",
@@ -2217,7 +2213,7 @@ def build_pinned_tool_outputs(schema: dict) -> tuple[bytes, bytes]:
                 # by bare name.
                 shutil.which("npx") or "npx",
                 "--prefix",
-                "omniagents/backends/web/ui",
+                str(CLIENT_PACKAGE),
                 "json2ts",
                 "-i",
                 str(schema_path),
@@ -2252,19 +2248,22 @@ def validate_external_references(document: dict, schema: dict) -> None:
                 raise ValueError(f"Missing schema property: {reference}")
 
 
+def _relative(path: Path) -> str:
+    """An artifact's name: its path from the omniagents project root."""
+    return Path(os.path.relpath(path, ROOT)).as_posix()
+
+
 def artifact_path(path: Path, major: int) -> Path:
     """Separate candidates; never target an immutable release baseline."""
     if major == 1:
         return path
     if major != 2:
         raise ValueError(f"Unsupported GUI protocol major: {major}")
-    relative = str(path.relative_to(ROOT))
+    relative = _relative(path)
     relative = relative.replace("protocol/openrpc/", "protocol/openrpc/v2/")
     relative = relative.replace("gui-v1", "gui-v2").replace("gui_v1", "gui_v2")
-    relative = relative.replace(
-        "generated/schema-types.ts", "generated/schema-types-v2.ts"
-    )
-    return ROOT / relative
+    relative = relative.replace("schema-types.ts", "schema-types-v2.ts")
+    return Path(os.path.normpath(ROOT / relative))
 
 
 def render(major: int = 1) -> dict[Path, bytes]:
@@ -2302,11 +2301,10 @@ def render(major: int = 1) -> dict[Path, bytes]:
         },
         "canonical_sha256": canonical_digest,
         "artifacts": [
-            str(PYTHON_PATH.relative_to(ROOT)),
-            str(PYTHON_SCHEMA_PATH.relative_to(ROOT)),
-            str(TYPESCRIPT_PATH.relative_to(ROOT)),
-            str(INK_TYPESCRIPT_PATH.relative_to(ROOT)),
-            str(TYPESCRIPT_SCHEMA_PATH.relative_to(ROOT)),
+            _relative(PYTHON_PATH),
+            _relative(PYTHON_SCHEMA_PATH),
+            _relative(TYPESCRIPT_PATH),
+            _relative(TYPESCRIPT_SCHEMA_PATH),
         ],
     }
     inventory = {
@@ -2352,7 +2350,6 @@ def render(major: int = 1) -> dict[Path, bytes]:
         PYTHON_SCHEMA_PATH: generated_python_schema,
         PYTHON_INIT_PATH: b"from .models import *\n",
         TYPESCRIPT_PATH: build_typescript(),
-        INK_TYPESCRIPT_PATH: build_typescript(),
         TYPESCRIPT_SCHEMA_PATH: generated_typescript_schema,
         MANIFEST_PATH: _json_bytes(manifest),
         INVENTORY_PATH: _json_bytes(inventory),
@@ -2360,12 +2357,12 @@ def render(major: int = 1) -> dict[Path, bytes]:
     if major == 2:
         manifest["generator_version"] = "2"
         manifest["artifacts"] = [
-            str(artifact_path(ROOT / path, major).relative_to(ROOT))
+            _relative(artifact_path(Path(os.path.normpath(ROOT / path)), major))
             for path in manifest["artifacts"]
         ]
         outputs[MANIFEST_PATH] = _json_bytes(manifest)
         outputs[PYTHON_PATH] += b'\nGUI_PROTOCOL_VERSION = "2.0.0"\n'
-        for path in (TYPESCRIPT_PATH, INK_TYPESCRIPT_PATH):
+        for path in (TYPESCRIPT_PATH,):
             outputs[
                 path
             ] += b'\nexport const GUI_PROTOCOL_VERSION = "2.0.0" as const;\n'
@@ -2412,7 +2409,7 @@ def write_outputs(outputs: dict[Path, bytes]) -> None:
 def check_outputs(outputs: dict[Path, bytes]) -> None:
     with tempfile.TemporaryDirectory():
         mismatches = [
-            str(path.relative_to(ROOT))
+            _relative(path)
             for path, content in outputs.items()
             if not path.exists() or path.read_bytes() != content
         ]

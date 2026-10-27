@@ -9,8 +9,9 @@
  *   column starts waiting for approval or finishes a run while the document
  *   is hidden. Clicking one focuses the window and jumps to that column.
  */
+import { $columnActivity, type ColumnActivity } from '@omniagents/chat-ui/services/column-activity';
+
 import { codeApi } from '@/renderer/features/Code/state';
-import { $columnActivity, type ColumnActivity } from '@/renderer/services/column-activity';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { CodeTabId } from '@/shared/types';
 

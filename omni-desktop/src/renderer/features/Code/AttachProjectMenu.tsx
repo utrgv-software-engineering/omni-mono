@@ -1,8 +1,5 @@
 import { useStore } from '@nanostores/react';
-import { FolderOpen } from 'lucide-react';
-import { memo, useCallback, useState } from 'react';
-
-import { Button } from '@/renderer/ds/ui/button';
+import { Button } from '@omniagents/ui/button';
 /**
  * "Attach project" affordance for a chat (projectless) column. A project is
  * deferrable context here, not an admission gate: picking one binds
@@ -18,7 +15,10 @@ import { Button } from '@/renderer/ds/ui/button';
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/renderer/ds/ui/dropdown-menu';
+} from '@omniagents/ui/dropdown-menu';
+import { FolderOpen } from 'lucide-react';
+import { memo, useCallback, useState } from 'react';
+
 import { ProjectCreateDialog } from '@/renderer/features/Projects/ProjectCreateDialog';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { CodeTabId, Project } from '@/shared/types';
@@ -69,7 +69,6 @@ export const AttachProjectMenu = memo(({ tabId, trigger }: { tabId: CodeTabId; t
       <ProjectCreateDialog
         open={showNewProject}
         onClose={handleCloseNewProject}
-        showSandboxProfile
         submitLabel="Create and attach"
         onCreated={handleCreated}
       />

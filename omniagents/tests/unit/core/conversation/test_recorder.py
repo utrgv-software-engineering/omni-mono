@@ -74,6 +74,28 @@ class TestThreadAndTurns:
         assert [p.content["text"] for p in prompts] == ["hi"]
         assert prompts[0].status is ItemStatus.COMPLETED
 
+    def test_the_prompt_keeps_what_it_was_sent_with(self, store, recorder):
+        sent = [
+            {
+                "type": "image",
+                "url": "data:image/jpeg;base64,AAAA",
+                "mime": "image/png",
+            },
+            {"type": "file", "filename": "notes.pdf"},
+        ]
+        feed(
+            recorder,
+            (
+                "run_started",
+                {"run_id": RUN, "prompt": "what is this?", "attachments": sent},
+            ),
+        )
+        [prompt] = only(store, ItemKind.USER_MESSAGE)
+        assert prompt.content["attachments"] == sent
+        from omniagents.core.conversation.model import derive_search_text
+
+        assert "AAAA" not in derive_search_text(prompt.kind, prompt.content)
+
     def test_assistant_role_prompt_records_as_an_agent_message(self, store, recorder):
         """Notification-batch wakeups arrive with prompt_role='assistant' so
         the transcript reads as the agent observing its own background work,
@@ -1424,7 +1446,7 @@ class TestReasoning:
     conversation. The adapter projects reasoning from history, so the
     recorder has to record it too."""
 
-    def test_reasoning_is_recorded_from_the_history_append_path(self, store, recorder):
+    def test_reasoning_is_recorded_when_streamed(self, store, recorder):
         feed(recorder, ("run_started", {"run_id": RUN, "prompt": "hi"}))
         recorder.record_reasoning(
             THREAD,
@@ -1441,11 +1463,49 @@ class TestReasoning:
         assert reasoning.turn_id == RUN
         assert reasoning.status is ItemStatus.COMPLETED
 
+    def test_chat_completions_reasoning_records_its_raw_text(self, store, recorder):
+        """Chat-completions providers return reasoning as ``reasoning_text``
+        content with no summary; that text is the record."""
+        feed(recorder, ("run_started", {"run_id": RUN, "prompt": "hi"}))
+        recorder.record_reasoning(
+            THREAD,
+            run_id=RUN,
+            item={
+                "type": "reasoning",
+                "summary": [],
+                "content": [{"type": "reasoning_text", "text": "read the file"}],
+            },
+        )
+        [reasoning] = only(store, ItemKind.REASONING)
+        assert reasoning.content["summary"] == "read the file"
+
     def test_reasoning_is_idempotent_on_its_model_id(self, store, recorder):
         item = {"type": "reasoning", "id": "rs_1", "summary": []}
         recorder.record_reasoning(THREAD, run_id=RUN, item=item)
-        recorder.record_reasoning(THREAD, run_id=RUN, item=item)
+        recorder.record_persisted_reasoning(THREAD, run_id=RUN, item=item)
         assert len(only(store, ItemKind.REASONING)) == 1
+
+    def test_history_write_records_only_identifiable_reasoning(self, store, recorder):
+        """An id-less block is the stream path's alone: the history write
+        cannot tell it from a second block with the same text."""
+        feed(recorder, ("run_started", {"run_id": RUN, "prompt": "hi"}))
+        raw = {
+            "type": "reasoning",
+            "id": "__fake_id__",
+            "summary": [],
+            "content": [{"type": "reasoning_text", "text": "look"}],
+        }
+        recorder.record_reasoning(THREAD, run_id=RUN, item=raw)
+        recorder.record_persisted_reasoning(THREAD, run_id=RUN, item=raw)
+        recorder.record_persisted_reasoning(
+            THREAD, run_id=RUN, item={"type": "reasoning", "id": "rs_2", "summary": []}
+        )
+        assert [
+            r.content.get("reasoning_id") for r in only(store, ItemKind.REASONING)
+        ] == [
+            None,
+            "rs_2",
+        ]
 
 
 class TestReservedKinds:
@@ -1717,3 +1777,99 @@ def test_completed_conversation_reconstructs_from_the_store_alone(store, recorde
     turn_one_items = store.list_items(THREAD, limit=100, turn_id="r1")
     assert [i.seq for i in turn_one_items] == [1, 2, 3, 4, 5]
     assert turns[0].first_seq == 1 and turns[0].last_seq == 5
+
+
+@pytest.mark.parametrize("kind,key", [("tool", "call_id"), ("mcp", "request_id")])
+def test_parent_turn_end_does_not_finalize_worker_approval(store, recorder, kind, key):
+    feed(
+        recorder,
+        ("run_started", {"run_id": RUN, "prompt": "worker message"}),
+        (
+            f"{kind}_approval_requested",
+            {
+                key: "worker-approval",
+                "tool_name": "read_file",
+                "worker_id": "worker",
+                "worker_session_id": "child",
+                "worker_run_id": "child-run",
+            },
+        ),
+        ("run_end", {"run_id": RUN, "end_reason": "completed"}),
+    )
+    approval = next(item for item in items(store) if item.kind == ItemKind.APPROVAL)
+    assert approval.status == ItemStatus.STARTED
+    assert approval.content["worker_session_id"] == "child"
+    feed(recorder, (f"{kind}_approval_resolved", {key: "worker-approval"}))
+    assert store.get_item(THREAD, approval.item_id).status == ItemStatus.COMPLETED
+
+
+def test_voice_projection_is_tagged_deduplicated_and_not_a_task_turn(recorder, store):
+    spoken = {
+        "role": "user",
+        "content": "Hello",
+        "omniagents": {
+            "source": "voice:codex-live",
+            "live_call": "call",
+            "voice_id": "1",
+        },
+    }
+    first = recorder.record_voice_transcript(THREAD, spoken)
+    again = recorder.record_voice_transcript(THREAD, spoken)
+    assert first.item_id == again.item_id
+    saved = store.get_item(THREAD, first.item_id)
+    assert saved.source_ref["voice_caption"] is True
+    assert saved.turn_id is None
+    assert saved.content["text"] == "Hello"
+    assert store.count_items(THREAD) == 1
+
+
+def test_legacy_voice_projection_retains_caption_identity():
+    from omniagents.core.conversation.adapter import project_thread
+
+    raw = {
+        "role": "assistant",
+        "content": "Hello",
+        "omniagents": {
+            "source": "voice:codex-live",
+            "live_call": "call",
+            "voice_id": "1",
+        },
+    }
+    _, _, projected = project_thread("legacy", iter([raw]))
+    assert projected[0].source_ref["voice_caption"] is True
+    assert projected[0].source_ref["voice_id"] == "1"
+
+
+def test_voice_history_projection_recovers_after_write_failure(monkeypatch):
+    from omniagents.core.session.manager import Session
+    from omniagents.core.session.history_db import load_history, pending_projections
+    from omniagents.core.conversation.recorder import recorder_for_session
+
+    session = Session("voice", "agent", "saved-speech")
+    recorder = recorder_for_session(session)
+    original = ConversationRecorder.record_voice_transcript
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("simulated projection failure")
+
+    monkeypatch.setattr(ConversationRecorder, "record_voice_transcript", fail)
+    message = {
+        "role": "assistant",
+        "content": "Spoken reply",
+        "omniagents": {
+            "source": "voice:codex-live",
+            "live_call": "call",
+            "voice_id": "1",
+        },
+    }
+    session.append_message(
+        message, projection={"version": 1, "kind": "voice_transcript"}
+    )
+    assert len(load_history(session.id, project_slug="voice", agent_slug="agent")) == 1
+    assert pending_projections(session.id, project_slug="voice", agent_slug="agent")
+    monkeypatch.setattr(ConversationRecorder, "record_voice_transcript", original)
+    recorder.recover_pending_messages(session.id)
+    saved = recorder.store.list_items(session.id, limit=10)
+    assert len(saved) == 1 and saved[0].source_ref["voice_caption"] is True
+    assert saved[0].content["text"] == "Spoken reply"
+    assert not pending_projections(session.id, project_slug="voice", agent_slug="agent")

@@ -6,8 +6,8 @@ The typed contract behind the GUI protocol's model-catalog RPC methods
 — see ``omniagents/rpc/protocol.md`` § "Model & Capability Catalog").
 
 The :class:`~omniagents.core.models.store.ModelConfigStore` remains the
-single source of model/provider truth (defaults → governance → user
-config → live discovery). This module only *shapes* that data into the
+single source of model/provider truth (defaults → user config → live
+discovery). This module only *shapes* that data into the
 stable wire contract every maintained client consumes:
 
 - **Model descriptors** — display metadata, provider identity,
@@ -59,16 +59,6 @@ def _reason(code: str, message: str, action: Optional[str] = None) -> Dict[str, 
     if action:
         entry["action"] = action
     return entry
-
-
-def _no_store_reason() -> Dict[str, Any]:
-    from . import model_setup_hint
-
-    return _reason(
-        "no_model_store",
-        "No model registry is configured for this product.",
-        model_setup_hint(),
-    )
 
 
 def _string_list(value: Any) -> List[str]:
@@ -144,8 +134,6 @@ def _deprecation(merged: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _credential_source(store: ModelConfigStore, merged: Dict[str, Any]) -> str:
-    if merged.get("credential_ref"):
-        return "platform"
     if (merged.get("provider") or "").strip().lower() == "openai-oauth":
         return "oauth"
     if merged.get("api_key"):
@@ -199,8 +187,7 @@ def _availability(
             _reason(
                 "missing_credentials",
                 "No API key or credential is configured for this model.",
-                "Add an API key for the provider or sign in to the "
-                "management plane.",
+                "Add an API key for the provider.",
             )
         )
 
@@ -525,6 +512,19 @@ def apply_session_model(
     at run time) but carries its availability reasons as ``warnings`` so
     pickers can flag it.
     """
+    try:
+        store.require_selected_provider(ref)
+    except ValueError as exc:
+        return {
+            "ok": False,
+            "reasons": [
+                _reason(
+                    "provider_mismatch",
+                    str(exc),
+                    "Change the workspace provider in AI Settings or with the model default CLI command.",
+                )
+            ],
+        }
     normalized = store.normalize_model_ref(ref)
     merged = store.get_model_config(normalized) if normalized else None
     if not normalized or not merged:
@@ -596,6 +596,19 @@ def apply_session_reasoning(session: Any, effort: str) -> Dict[str, Any]:
 
 def set_voice_default_model(store: ModelConfigStore, ref: str) -> Dict[str, Any]:
     """Set the process-wide voice (realtime) default to catalog model *ref*."""
+    try:
+        store.require_selected_provider(ref)
+    except ValueError as exc:
+        return {
+            "ok": False,
+            "reasons": [
+                _reason(
+                    "provider_mismatch",
+                    str(exc),
+                    "Change the workspace provider in AI Settings or with the model default CLI command.",
+                )
+            ],
+        }
     normalized = store.normalize_model_ref(ref)
     merged = store.get_model_config(normalized) if normalized else None
     if not normalized or not merged:

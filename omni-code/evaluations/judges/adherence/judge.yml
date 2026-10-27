@@ -1,0 +1,13 @@
+agent:
+  model: gpt-4.1-2025-04-14
+  output_type: dict
+  output_type_strict: true
+  output_schema:
+    properties:
+      reasoning: { type: string }
+      answer: { type: string, enum: [Pass, Fail] }
+    required: [reasoning, answer]
+  instructions_file: instructions.md
+input:
+  source: history
+  template_file: template.md

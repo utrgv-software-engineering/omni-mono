@@ -121,12 +121,12 @@ def test_uppercase(input, expected):
 ### All Components
 
 ```bash
-make coverage-all
+./scripts/run_coverage.sh
 ```
 
 This runs:
 - Python coverage (pytest)
-- Web coverage (Vitest)
+- Ink TUI coverage
 
 ### Python Coverage
 
@@ -140,14 +140,6 @@ View HTML report:
 ```bash
 open htmlcov/index.html
 ```
-
-### Web Coverage (React/Vitest)
-
-```bash
-make coverage-web
-```
-
-Coverage for Studio web UIs and Ink TUI.
 
 ## Test Categories
 

@@ -1,6 +1,8 @@
+import asyncio
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -28,6 +30,7 @@ from omniagents.workspace.sandbox import SandboxWorkspace
 def profile(client_type: str) -> ResolvedProfile:
     return ResolvedProfile(
         raw={"client": {"type": client_type}, "run_as": "agent"},
+        build=[],
         init=[],
         services=[],
         terminal=TerminalSpec(command="bash", user="agent", cwd="/workspace"),
@@ -147,6 +150,16 @@ def _host_provisioner(layout: Path) -> ServeEnvironmentProvisioner:
     )
 
 
+def _remote(tmp_path: Path, url: str, **extra: Any) -> dict[str, Any]:
+    return {
+        "kind": "git-remote",
+        "mountName": "remote",
+        "repoUrl": url,
+        "checkoutPath": str(tmp_path / "checkouts" / "remote"),
+        **extra,
+    }
+
+
 @pytest.mark.asyncio
 async def test_host_profile_materializes_remote_source_and_reuses_the_checkout(
     tmp_path,
@@ -154,15 +167,16 @@ async def test_host_profile_materializes_remote_source_and_reuses_the_checkout(
     url = _make_remote(tmp_path)
     layout = tmp_path / "layout"
     provisioner = _host_provisioner(layout)
-    remote_source = {"kind": "git-remote", "mountName": "remote", "repoUrl": url}
+    remote_source = _remote(tmp_path, url)
 
     provisioned = await provisioner.provision(request(sources=[remote_source]))
 
     assert provisioned.kind is EnvironmentKind.HOST
     assert isinstance(provisioned.workspace, MountedHostWorkspace)
     assert provisioned.terminal_defaults.cwd == str(layout)
-    checkout = layout / "remote"
+    checkout = tmp_path / "checkouts" / "remote"
     assert (checkout / ".git").is_dir()
+    assert (layout / "remote").resolve() == checkout.resolve()
     assert await provisioned.workspace.read_text("remote/README.md") == (
         "hello from remote\n"
     )
@@ -174,22 +188,49 @@ async def test_host_profile_materializes_remote_source_and_reuses_the_checkout(
 
 
 @pytest.mark.asyncio
+async def test_workspaces_of_one_project_share_its_remote_checkout(tmp_path):
+    """Two chats on a project get one clone, the way local folders are shared."""
+    url = _make_remote(tmp_path)
+    remote_source = _remote(tmp_path, url)
+    first, second = await asyncio.gather(
+        _host_provisioner(tmp_path / "chat-a").provision(
+            request(sources=[remote_source])
+        ),
+        _host_provisioner(tmp_path / "chat-b").provision(
+            request(sources=[remote_source])
+        ),
+    )
+
+    (tmp_path / "checkouts" / "remote" / "shared.txt").write_text("seen by both\n")
+    assert await first.workspace.read_text("remote/shared.txt") == "seen by both\n"
+    assert await second.workspace.read_text("remote/shared.txt") == "seen by both\n"
+    assert (
+        not (tmp_path / "chat-a" / "remote")
+        .resolve()
+        .is_relative_to(tmp_path / "chat-a")
+    )
+
+
+@pytest.mark.asyncio
+async def test_host_remote_source_requires_a_checkout_path(tmp_path):
+    url = _make_remote(tmp_path)
+    source = _remote(tmp_path, url)
+    del source["checkoutPath"]
+
+    with pytest.raises(ValueError, match="has no checkoutPath"):
+        await _host_provisioner(tmp_path / "layout").provision(
+            request(sources=[source])
+        )
+
+
+@pytest.mark.asyncio
 async def test_host_remote_materialization_honors_ref(tmp_path):
     url = _make_remote(tmp_path)
     layout = tmp_path / "layout"
     provisioner = _host_provisioner(layout)
 
     provisioned = await provisioner.provision(
-        request(
-            sources=[
-                {
-                    "kind": "git-remote",
-                    "mountName": "remote",
-                    "repoUrl": url,
-                    "ref": "feature",
-                }
-            ]
-        )
+        request(sources=[_remote(tmp_path, url, ref="feature")])
     )
 
     assert await provisioned.workspace.read_text("remote/feature.txt") == (
@@ -204,39 +245,22 @@ async def test_host_profile_refuses_checkout_of_a_different_remote(tmp_path):
     _run_git("clone", "--bare", url, str(other))
     layout = tmp_path / "layout"
     provisioner = _host_provisioner(layout)
-    await provisioner.provision(
-        request(sources=[{"kind": "git-remote", "mountName": "remote", "repoUrl": url}])
-    )
+    await provisioner.provision(request(sources=[_remote(tmp_path, url)]))
 
     with pytest.raises(ValueError, match="refusing to reuse"):
-        await provisioner.provision(
-            request(
-                sources=[
-                    {
-                        "kind": "git-remote",
-                        "mountName": "remote",
-                        "repoUrl": str(other),
-                    }
-                ]
-            )
-        )
+        await provisioner.provision(request(sources=[_remote(tmp_path, str(other))]))
 
 
 @pytest.mark.asyncio
 async def test_host_profile_refuses_non_checkout_mount_directory(tmp_path):
     url = _make_remote(tmp_path)
-    layout = tmp_path / "layout"
-    stray = layout / "remote"
+    stray = tmp_path / "checkouts" / "remote"
     stray.mkdir(parents=True)
     (stray / "existing.txt").write_text("not a clone\n")
-    provisioner = _host_provisioner(layout)
+    provisioner = _host_provisioner(tmp_path / "layout")
 
     with pytest.raises(ValueError, match="is not a checkout"):
-        await provisioner.provision(
-            request(
-                sources=[{"kind": "git-remote", "mountName": "remote", "repoUrl": url}]
-            )
-        )
+        await provisioner.provision(request(sources=[_remote(tmp_path, url)]))
 
 
 @pytest.mark.asyncio
@@ -251,20 +275,19 @@ async def test_host_remote_auth_persists_repo_local_helper_without_the_token(
     await provisioner.provision(
         request(
             sources=[
-                {
-                    "kind": "git-remote",
-                    "mountName": "remote",
-                    "repoUrl": url,
-                    "auth": {
+                _remote(
+                    tmp_path,
+                    url,
+                    auth={
                         "tokenEnv": "OMNI_TEST_GIT_TOKEN",
                         "username": "x-access-token",
                     },
-                }
+                )
             ]
         )
     )
 
-    checkout = layout / "remote"
+    checkout = tmp_path / "checkouts" / "remote"
     helper = _run_git("-C", str(checkout), "config", "credential.helper")
     assert "$OMNI_TEST_GIT_TOKEN" in helper
     assert "secret-token-value" not in helper
@@ -286,12 +309,9 @@ async def test_host_remote_auth_rejects_shell_syntax_in_token_env_name(
         await provisioner.provision(
             request(
                 sources=[
-                    {
-                        "kind": "git-remote",
-                        "mountName": "remote",
-                        "repoUrl": url,
-                        "auth": {"tokenEnv": "BAD NAME", "username": "x"},
-                    }
+                    _remote(
+                        tmp_path, url, auth={"tokenEnv": "BAD NAME", "username": "x"}
+                    )
                 ]
             )
         )
@@ -495,6 +515,7 @@ async def test_devbox_capabilities_reflect_network_truth(monkeypatch, tmp_path):
         raw["client"] = {**raw["client"], **profile_raw_extra}
         resolved = ResolvedProfile(
             raw=raw,
+            build=[],
             init=[],
             services=[],
             terminal=base.terminal,
@@ -537,21 +558,6 @@ async def test_devbox_capabilities_reflect_network_truth(monkeypatch, tmp_path):
     assert provisioned.kind is EnvironmentKind.HOST
     assert EnvironmentCapability.CONTAINED not in provisioned.capabilities
     assert EnvironmentCapability.NETWORK in provisioned.capabilities
-
-    # process (omni-sandbox): host-placed but a real boundary; network
-    # blocked by default, unrestricted only by explicit opt-in.
-    provisioned = await _provision_with({"type": "process"})
-    assert provisioned.kind is EnvironmentKind.HOST
-    assert EnvironmentCapability.CONTAINED in provisioned.capabilities
-    assert EnvironmentCapability.NETWORK not in provisioned.capabilities
-    provisioned = await _provision_with({"type": "process", "network": "unrestricted"})
-    assert EnvironmentCapability.NETWORK in provisioned.capabilities
-
-    # host_bridge (computer-as-sandbox) executes on another machine: kind
-    # remote, never contained.
-    provisioned = await _provision_with({"type": "host_bridge"})
-    assert provisioned.kind is EnvironmentKind.REMOTE
-    assert EnvironmentCapability.CONTAINED not in provisioned.capabilities
 
     # wasm sandbox (bashkit + pyodide): host-placed, genuinely contained,
     # no processes to attach PTYs or services to. Network is OFF by

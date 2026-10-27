@@ -2100,9 +2100,6 @@ class GitManager:
         for state in [s for s in self._status_watches.values() if s.channel is channel]:
             self._drop_status_watch(state)
 
-    def status_watch_count(self) -> int:
-        return len(self._status_watches)
-
     async def diff(
         self,
         environment_id: str,
@@ -3917,18 +3914,6 @@ def _same_path(left: str, right: str, path_module: Any = posixpath) -> bool:
     (``C:/Users/...``); the workspace spells them ``C:\\Users\\...``."""
     pm = path_module
     return pm.normcase(pm.normpath(left)) == pm.normcase(pm.normpath(right))
-
-
-def _relative_to(candidate: str, root: str) -> Optional[str]:
-    """Workspace-relative POSIX path of *candidate*, or None when outside."""
-    candidate = candidate.rstrip("/")
-    root = root.rstrip("/")
-    if candidate == root:
-        return "."
-    prefix = root + "/"
-    if not candidate.startswith(prefix):
-        return None
-    return candidate[len(prefix) :]
 
 
 def _checked_revision(value: str) -> str:

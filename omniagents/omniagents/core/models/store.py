@@ -25,9 +25,7 @@ profile; other providers use "<provider_name>/<model_name>".
 Merge order for the effective provider map:
 
 1. Product defaults (the ``default_providers`` hook)
-2. Governed providers (the ``governed_config`` hook — e.g. a management
-   plane policy; may also veto user models via ``_allow_user_models``)
-3. User config (models.json)
+2. User config (models.json)
 
 The store is generic; products supply identity and integrations through
 constructor hooks (see :class:`ModelConfigStore`). All hooks are
@@ -115,6 +113,53 @@ def expand_env_vars(value: Any) -> Any:
     return value
 
 
+# Connection identity belongs to a provider, never to an individual model.
+PROVIDER_CONNECTION_KEYS = frozenset(
+    {
+        "api_key",
+        "base_url",
+        "api_version",
+        "routing_prefix",
+        "realtime_url",
+        "realtime_base_url",
+        "websocket_base_url",
+        "organization",
+        "project",
+        "provider",
+        "provider_name",
+        "type",
+        "use_responses",
+        "use_responses_websocket",
+    }
+)
+
+
+def validate_model_connection(model: Dict[str, Any], ref: str) -> None:
+    forbidden = sorted(PROVIDER_CONNECTION_KEYS.intersection(model))
+    settings = model.get("model_settings") or {}
+    if isinstance(settings, dict):
+        forbidden.extend(
+            f"model_settings.{key}"
+            for key in ("extra_headers", "extra_query", "extra_args")
+            if key in settings
+        )
+    if forbidden:
+        raise ValueError(
+            f"Model {ref!r} contains provider-only fields: {', '.join(forbidden)}. "
+            "Move these fields to its provider, or create a separate provider. "
+            "The existing configuration has not been changed."
+        )
+
+
+def validate_provider_connections(providers: Dict[str, Any]) -> None:
+    for provider_name, provider in providers.items():
+        if not isinstance(provider, dict):
+            continue
+        for model_name, model in (provider.get("models") or {}).items():
+            if isinstance(model, dict):
+                validate_model_connection(model, f"{provider_name}/{model_name}")
+
+
 class ModelConfigStore:
     """A per-user model/provider registry with layered merge + resolution.
 
@@ -122,20 +167,12 @@ class ModelConfigStore:
         config_dir: Callable returning the product config directory
             (``models.json`` lives directly inside it).
         default_providers: Product's built-in provider/model catalog.
-        default_model_fallback: Model ref to fall back to when neither
-            governance nor the user configured a default.
-        governed_config: Returns the governed model config (dict with
-            optional ``providers``, ``default``, ``_allow_user_models``)
-            or None when governance doesn't apply. The hook owns any
-            auth checks and cache refreshing.
+        default_model_fallback: Model ref to fall back to when the user
+            configured no default.
         oauth_models: Live model discovery for ``type: openai-oauth``
             providers (slug → model entry), or None when signed out.
         oauth_authenticated: Whether the OAuth provider is signed in
             (used by :meth:`has_models_configured`).
-        credential_resolver: Resolves a ``credential_ref`` on a model
-            config to a credential dict (``credential_type`` of
-            ``api_key``/``entra_token`` plus optional base_url and
-            api_version), or None.
         default_provider_name: Provider profile implied by unprefixed
             model refs.
     """
@@ -146,22 +183,81 @@ class ModelConfigStore:
         config_dir: Callable[[], Path],
         default_providers: Optional[Callable[[], Dict[str, Dict[str, Any]]]] = None,
         default_model_fallback: Optional[Callable[[], Optional[str]]] = None,
-        governed_config: Optional[Callable[[], Optional[Dict[str, Any]]]] = None,
         oauth_models: Optional[
             Callable[[], Optional[Dict[str, Dict[str, Any]]]]
         ] = None,
         oauth_authenticated: Optional[Callable[[], bool]] = None,
-        credential_resolver: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None,
         default_provider_name: str = "openai",
+        single_provider: bool = False,
     ) -> None:
         self._config_dir = config_dir
         self._default_providers = default_providers or (lambda: {})
         self._default_model_fallback = default_model_fallback or (lambda: None)
-        self._governed_config = governed_config
         self._oauth_models = oauth_models
         self._oauth_authenticated = oauth_authenticated
-        self._credential_resolver = credential_resolver
         self.default_provider_name = default_provider_name
+        self.single_provider = single_provider
+        self._run_model_ref: Optional[str] = None
+
+    def snapshot_for_run(self, session: Any) -> "ModelConfigStore":
+        """Freeze model configuration for this run and its helper calls."""
+        from copy import copy, deepcopy
+
+        snapshot = copy(self)
+        config = deepcopy(self.load_config())
+        providers = deepcopy(self._default_providers())
+        snapshot.load_config = lambda: deepcopy(config)  # type: ignore[method-assign]
+        snapshot._default_providers = lambda: deepcopy(providers)
+        snapshot.reconcile_session_model(session)
+        snapshot._run_model_ref = self._run_model_ref or session.active_model
+        return snapshot
+
+    def selected_provider(self) -> Optional[str]:
+        if not self.single_provider:
+            return None
+        ref = self.get_default_model_name()
+        parsed = self.parse_model_ref(ref) if ref else None
+        return parsed[0] if parsed else None
+
+    def require_selected_provider(self, ref: str) -> None:
+        if not self.single_provider:
+            return
+        parsed = self.parse_model_ref(ref)
+        selected = self.selected_provider()
+        if not selected or not parsed or parsed[0] != selected:
+            raise ValueError(
+                "This model is outside the workspace's selected provider. "
+                "Change the workspace provider in AI Settings or with the model default CLI command first."
+            )
+
+    def reconcile_session_model(self, session: Any) -> None:
+        if not self.single_provider:
+            return
+        ref = getattr(session, "active_model", None)
+        parsed = self.parse_model_ref(ref) if ref else None
+        if (
+            parsed
+            and parsed[0] != self.selected_provider()
+            and self.load_config().get("provider_scope_version") != 1
+        ):
+            raise ValueError(
+                "This conversation used a different provider. Confirm the workspace provider in AI Settings or with model default --confirm-provider-change before continuing."
+            )
+        if not parsed or parsed[0] != self.selected_provider():
+            ref = self.get_default_model_name()
+            session.reasoning_effort = None
+        if not ref:
+            raise ValueError(
+                "Choose a workspace provider and model in AI Settings or with the model setup CLI command."
+            )
+        self.require_selected_provider(ref)
+        config = self.get_model_config(ref)
+        if not config:
+            raise ValueError(
+                "The selected model is unavailable. Choose another model from this provider."
+            )
+        session.active_model = self.normalize_model_ref(ref)
+        session.model_config = config
 
     # -- config file ----------------------------------------------------
 
@@ -212,11 +308,13 @@ class ModelConfigStore:
             "version": MODELS_CONFIG_VERSION,
             "default": default_value,
             "voice_default": voice_default_value,
+            "provider_scope_version": raw.get("provider_scope_version"),
             "providers": providers,
         }
 
     def save_config(self, config: Dict[str, Any]) -> None:
         """Save models.json with secure permissions."""
+        validate_provider_connections(config.get("providers") or {})
         path = self.config_path()
         path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -224,18 +322,22 @@ class ModelConfigStore:
             "version": MODELS_CONFIG_VERSION,
             "default": config.get("default"),
             "voice_default": config.get("voice_default"),
+            "provider_scope_version": config.get("provider_scope_version"),
             "providers": config.get("providers") or {},
         }
 
         content = json.dumps(to_write, indent=2)
 
-        if os.name == "nt":
-            path.write_text(content, encoding="utf-8")
-            return
+        import tempfile
 
-        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(content)
+        fd, temporary = tempfile.mkstemp(prefix=".models-", dir=path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(content)
+            os.replace(temporary, path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
 
     # -- merge ----------------------------------------------------------
 
@@ -263,14 +365,6 @@ class ModelConfigStore:
 
         merged["models"] = merged_models
         return merged
-
-    def _governed(self) -> Optional[Dict[str, Any]]:
-        if self._governed_config is None:
-            return None
-        try:
-            return self._governed_config()
-        except Exception:
-            return None
 
     def _apply_oauth_discovery(
         self, merged: Dict[str, Dict[str, Any]]
@@ -313,24 +407,8 @@ class ModelConfigStore:
         return merged
 
     def _merge_providers_config(self) -> Dict[str, Dict[str, Any]]:
-        """Static provider merge (defaults → governance → user config)."""
+        """Static provider merge (defaults → user config)."""
         merged = self._default_providers()
-
-        governed = self._governed()
-        if governed:
-            platform_providers = governed.get("providers")
-            if isinstance(platform_providers, dict):
-                for provider_name, provider_config in platform_providers.items():
-                    if not isinstance(provider_config, dict):
-                        continue
-                    existing = merged.get(provider_name) or {}
-                    merged[provider_name] = self._merge_provider_config(
-                        existing, provider_config
-                    )
-
-            # Governance may veto user-defined models entirely.
-            if not governed.get("_allow_user_models", True):
-                return merged
 
         user_config = self.load_config()
         user_providers = user_config.get("providers")
@@ -348,7 +426,7 @@ class ModelConfigStore:
         return merged
 
     def merged_providers(self) -> Dict[str, Dict[str, Any]]:
-        """All providers merged from defaults, governance, and user config."""
+        """All providers merged from defaults and user config."""
         return self._apply_oauth_discovery(self._merge_providers_config())
 
     # -- refs -----------------------------------------------------------
@@ -386,7 +464,7 @@ class ModelConfigStore:
         "api_key",
         "base_url",
         "api_version",
-        "credential_ref",
+        "routing_prefix",
         "realtime_url",
         "realtime_base_url",
         "realtime",
@@ -429,6 +507,7 @@ class ModelConfigStore:
         if not isinstance(model_config, dict):
             return None
 
+        validate_model_connection(model_config, ref)
         provider_type = (
             provider_config.get("type") or provider_config.get("provider") or "unknown"
         )
@@ -449,17 +528,7 @@ class ModelConfigStore:
         return merged
 
     def get_default_model_name(self) -> Optional[str]:
-        """The default model ref: governance, then user config, then the
-        product fallback."""
-        governed = self._governed()
-        if governed and governed.get("default"):
-            gov_default = governed["default"]
-            merged = self.get_model_config(gov_default)
-            if merged and not merged.get("realtime"):
-                normalized = self.normalize_model_ref(gov_default)
-                if normalized:
-                    return normalized
-
+        """The default model ref: user config, then the product fallback."""
         config = self.load_config()
         user_default = config.get("default")
 
@@ -470,6 +539,10 @@ class ModelConfigStore:
                 if normalized:
                     return normalized
 
+        if user_default and self.single_provider:
+            raise ValueError(
+                "The selected workspace model is unavailable. Update its provider in Settings."
+            )
         return self._default_model_fallback()
 
     def get_default_model_config(self) -> Optional[Dict[str, Any]]:
@@ -482,6 +555,12 @@ class ModelConfigStore:
         """The default voice (realtime) model ref, or None."""
         config = self.load_config()
         user_default = config.get("voice_default")
+        if user_default and self.single_provider:
+            parsed = self.parse_model_ref(user_default)
+            if not parsed or parsed[0] != self.selected_provider():
+                # Preserve the saved preference for switching back, but never
+                # activate another provider's voice model or let it break browsing.
+                return None
         if user_default and self.get_model_config(user_default):
             normalized = self.normalize_model_ref(user_default)
             if normalized:
@@ -621,14 +700,15 @@ class ModelConfigStore:
             "model": model,
             "label": label or model_name,
         }
-        if model_api_key is not None:
-            model_config["api_key"] = model_api_key
+        if any(
+            value is not None
+            for value in (model_api_key, realtime_url, realtime_base_url)
+        ):
+            raise ValueError(
+                "Model connection overrides are not supported; configure the provider instead."
+            )
         if realtime is not None:
             model_config["realtime"] = bool(realtime)
-        if realtime_url is not None:
-            model_config["realtime_url"] = realtime_url
-        if realtime_base_url is not None:
-            model_config["realtime_base_url"] = realtime_base_url
         if reasoning:
             model_config["reasoning"] = reasoning
         if max_input_tokens is not None:
@@ -849,9 +929,8 @@ class ModelConfigStore:
 
         Returns a dict with provider/model/api_key/base_url/api_version/
         reasoning/token limits/model_settings/label, with ``${VAR}``
-        expansion applied. Credential resolution order: platform
-        ``credential_ref`` (via the hook), then configured api_key, then
-        the provider-appropriate environment variable.
+        expansion applied. Credential resolution order: configured api_key,
+        then the provider-appropriate environment variable.
         """
         name = (
             self.normalize_model_ref(model_name)
@@ -861,11 +940,32 @@ class ModelConfigStore:
         if not name:
             return {}
 
+        self.require_selected_provider(name)
         merged = self.get_model_config(name)
         if not merged:
             return {}
 
         provider = (merged.get("provider") or "openai").strip().lower()
+
+        if self.single_provider and provider in {"multi", "any-llm", "any_llm"}:
+            raise ValueError(
+                "Choose a provider with one connection; automatic provider routing is unavailable."
+            )
+        routing_prefix = merged.get("routing_prefix")
+        if self.single_provider and provider == "litellm":
+            if not isinstance(routing_prefix, str) or not re.fullmatch(
+                r"[a-z][a-z0-9_-]*", routing_prefix
+            ):
+                raise ValueError(
+                    "Set the provider's routing_prefix in AI Settings before using LiteLLM."
+                )
+            model_id = expand_env_vars(merged.get("model", ""))
+            if not model_id.startswith(routing_prefix + "/"):
+                raise ValueError("The model must use its provider's routing prefix.")
+            if (merged.get("model_settings") or {}).get("extra_body"):
+                raise ValueError(
+                    "LiteLLM model request overrides cannot change provider connections."
+                )
 
         result: Dict[str, Any] = {
             "name": name,
@@ -877,6 +977,9 @@ class ModelConfigStore:
             "max_input_tokens": merged.get("max_input_tokens"),
             "max_output_tokens": merged.get("max_output_tokens"),
         }
+
+        if self.single_provider and provider == "litellm":
+            result["routing_prefix"] = routing_prefix
 
         if "use_responses" in merged:
             result["use_responses"] = merged["use_responses"]
@@ -892,25 +995,16 @@ class ModelConfigStore:
         if merged.get("api_version"):
             result["api_version"] = merged["api_version"]
 
-        # Priority 1: platform credential via credential_ref
-        credential_ref = merged.get("credential_ref")
-        if credential_ref and self._credential_resolver is not None:
-            try:
-                cred = self._credential_resolver(credential_ref)
-                if cred:
-                    cred_type = cred.get("credential_type")
-                    if cred_type == "entra_token":
-                        result["api_key"] = cred["access_token"]
-                    elif cred_type == "api_key":
-                        result["api_key"] = cred["api_key"]
-                    if not result.get("base_url") and cred.get("base_url"):
-                        result["base_url"] = cred["base_url"]
-                    if not result.get("api_version") and cred.get("api_version"):
-                        result["api_version"] = cred["api_version"]
-            except Exception:
-                pass
+        if (
+            self.single_provider
+            and provider in {"azure", "openai-compatible"}
+            and not result.get("base_url")
+        ):
+            raise ValueError(
+                "The selected provider requires an endpoint. Configure it in Settings; no default endpoint will be used."
+            )
 
-        # Priority 2: configured api_key
+        # Configured api_key, then the environment variable.
         if not result.get("api_key"):
             api_key_value = merged.get("api_key")
             if api_key_value:
@@ -918,7 +1012,7 @@ class ModelConfigStore:
             else:
                 result["api_key"] = None
 
-        # Priority 3: environment variable fallback. Never for openai-oauth:
+        # Environment variable fallback. Never for openai-oauth:
         # its credential is the ChatGPT token, and an ambient OPENAI_API_KEY
         # (e.g. from a workspace .env) would shadow it downstream.
         if not result.get("api_key") and provider != "openai-oauth":
@@ -982,25 +1076,6 @@ class ModelConfigStore:
             settings["openai_realtime_base_url"] = expand_env_vars(realtime_base_url)
 
         return settings
-
-    def apply_api_keys_to_env(self) -> None:
-        """Export the default model's API key into the environment (no clobber)."""
-        default_config = self.resolve_model_for_runtime()
-        if not default_config:
-            return
-
-        api_key = default_config.get("api_key")
-        provider = default_config.get("provider", "openai")
-
-        if api_key:
-            if provider == "azure":
-                env_key = "AZURE_OPENAI_API_KEY"
-            elif provider == "litellm":
-                env_key = litellm_api_key_env(default_config.get("model"))
-            else:
-                env_key = "OPENAI_API_KEY"
-            if env_key not in os.environ:
-                os.environ[env_key] = api_key
 
     def has_models_configured(self) -> bool:
         """Whether a usable default model is configured."""

@@ -1,5 +1,5 @@
 /**
- * XState v5 machine for auto-launching a sandbox/process.
+ * XState v5 machine for auto-launching an agent process.
  *
  * Side effects are driven by invoked actors (fromCallback), not React useEffect.
  * Placeholder actors are defined in setup() — real implementations are injected
@@ -7,21 +7,14 @@
  *
  * Pure definition — no React, no IPC imports.
  */
-import { type ActorRefFrom, assign, fromCallback, setup } from 'xstate';
+import { assign, fromCallback, setup } from 'xstate';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export type AutoLaunchPhase =
-  | 'idle'
-  | 'checking'
-  | 'installing'
-  | 'ready'
-  | 'configChecking'
-  | 'starting'
-  | 'running'
-  | 'error';
+  'idle' | 'checking' | 'installing' | 'ready' | 'configChecking' | 'starting' | 'running' | 'error';
 
 export type AutoLaunchContext = {
   error: string | null;
@@ -40,10 +33,10 @@ export type AutoLaunchEvent =
   | { type: 'CONFIG_MISSING' }
   | { type: 'CONFIG_CHECK_FAILED'; error: string }
   | { type: 'PROCESS_STARTED' }
-  | { type: 'SANDBOX_RUNNING' }
-  | { type: 'SANDBOX_ERROR'; error: string }
-  | { type: 'SANDBOX_EXITED' }
-  | { type: 'SANDBOX_LOST' }
+  | { type: 'AGENT_RUNNING' }
+  | { type: 'AGENT_ERROR'; error: string }
+  | { type: 'AGENT_EXITED' }
+  | { type: 'AGENT_LOST' }
   | { type: 'RETRY' }
   | { type: 'RELAUNCH' }
   | { type: 'RESET' };
@@ -68,7 +61,7 @@ export const autoLaunchMachine = setup({
     checkConfigAndStart: fromCallback<AutoLaunchEvent>(({ sendBack }) => {
       sendBack({ type: 'CONFIG_MISSING' });
     }),
-    /** Start the sandbox/process while the machine is in `starting`. */
+    /** Start the agent process while the machine is in `starting`. */
     startProcess: fromCallback<AutoLaunchEvent>(() => () => {}),
     /** Watch external process status for state changes. */
     watchProcessStatus: fromCallback<AutoLaunchEvent>(() => () => {}),
@@ -161,16 +154,16 @@ export const autoLaunchMachine = setup({
     starting: {
       invoke: [{ src: 'watchProcessStatus' }, { src: 'startProcess' }],
       on: {
-        SANDBOX_LOST: { target: 'checking', actions: ['clearError', 'clearLaunched'] },
-        SANDBOX_RUNNING: 'running',
-        SANDBOX_ERROR: {
+        AGENT_LOST: { target: 'checking', actions: ['clearError', 'clearLaunched'] },
+        AGENT_RUNNING: 'running',
+        AGENT_ERROR: {
           target: 'error',
           actions: {
             type: 'setError',
             params: ({ event }) => ({ error: event.error }),
           },
         },
-        SANDBOX_EXITED: 'idle',
+        AGENT_EXITED: 'idle',
         RESET: { target: 'idle', actions: ['clearError', 'clearLaunched'] },
       },
     },
@@ -178,15 +171,15 @@ export const autoLaunchMachine = setup({
     running: {
       invoke: { src: 'watchProcessStatus' },
       on: {
-        SANDBOX_LOST: { target: 'checking', actions: ['clearError', 'clearLaunched'] },
+        AGENT_LOST: { target: 'checking', actions: ['clearError', 'clearLaunched'] },
         // No-op handler: the status watcher re-seeds after re-invoke on
         // state transitions (the invoker's subscription fires synchronously
         // with the current value, which is still 'running'). Acknowledge
         // the event explicitly with a registered no-op action so both
         // XState and the drop-event detector recognize it as handled.
-        SANDBOX_RUNNING: { actions: 'noop' },
-        SANDBOX_EXITED: 'idle',
-        SANDBOX_ERROR: 'idle',
+        AGENT_RUNNING: { actions: 'noop' },
+        AGENT_EXITED: 'idle',
+        AGENT_ERROR: 'idle',
         RESET: { target: 'idle', actions: ['clearError', 'clearLaunched'] },
       },
     },
@@ -203,5 +196,3 @@ export const autoLaunchMachine = setup({
     },
   },
 });
-
-export type AutoLaunchActor = ActorRefFrom<typeof autoLaunchMachine>;

@@ -421,6 +421,7 @@ def test_v2_explicitly_records_the_break_from_released_v1():
     assert report.baseline_version == "1.0.0"
     assert report.candidate_version == "2.0.0"
     assert report.violations == (
+        "enqueue_message.params.trigger_run removed",
         "start_run.params.content added oneOf constraint to unconstrained input",
         "start_run.params.environment_selection added as required",
     )

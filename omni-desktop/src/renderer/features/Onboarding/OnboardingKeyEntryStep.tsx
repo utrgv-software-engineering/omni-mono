@@ -1,10 +1,10 @@
+import { Button } from '@omniagents/ui/button';
+import { Input } from '@omniagents/ui/input';
+import { Spinner } from '@omniagents/ui/spinner';
 import { CircleCheck } from 'lucide-react';
 import type { ChangeEvent, KeyboardEvent } from 'react';
 import { memo, useCallback, useState } from 'react';
 
-import { Button } from '@/renderer/ds/ui/button';
-import { Input } from '@/renderer/ds/ui/input';
-import { Spinner } from '@/renderer/ds/ui/spinner';
 import { probeFailureCopy } from '@/renderer/features/Onboarding/probe-copy';
 import { emitter } from '@/renderer/services/ipc';
 

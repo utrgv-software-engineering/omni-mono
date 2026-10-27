@@ -1,7 +1,6 @@
 """OmniAgents - A wrapper around OpenAI's agents library."""
 
 import importlib
-import sys
 
 try:
     from ._version import __version__, __version_info__
@@ -62,6 +61,11 @@ __all__ = [
 
 try:
     from .patches import disable_token_streaming as _no_token_stream_patch  # noqa: F401
+except Exception:
+    pass
+
+try:
+    from .patches import loop_local_http_client as _loop_http_patch  # noqa: F401
 except Exception:
     pass
 

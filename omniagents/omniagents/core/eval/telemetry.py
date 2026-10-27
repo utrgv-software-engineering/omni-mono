@@ -16,7 +16,10 @@ def _empty_usage() -> Dict[str, Any]:
     return {
         "requests": 0,
         "input_tokens": 0,
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
         "output_tokens": 0,
+        "reasoning_tokens": 0,
         "total_tokens": 0,
     }
 
@@ -24,8 +27,13 @@ def _empty_usage() -> Dict[str, Any]:
 async def consume_stream_events(stream: AsyncIterator) -> Dict[str, Any]:
     """Consume stream events and accumulate token usage.
 
-    Mirrors the usage-tracking logic in ``runtime/bridge.py`` but returns
-    the totals instead of broadcasting them.
+    Two shapes carry usage: the SDK's own stream (``raw_response_event``
+    with a ``ResponseCompletedEvent``, what ``Runner.run_streamed`` yields)
+    and a project agent's RPC stream, where the runtime bridge has already
+    turned each completed response into a ``token_usage`` item. The bridge's
+    ``totals`` there are that response's own ``usage`` (it treats them as a
+    running context figure, so its ``delta`` is context growth, not spend);
+    summing ``totals`` per response gives the same count as the SDK stream.
 
     Returns a dict with ``usage`` (token counters).
     """
@@ -34,7 +42,16 @@ async def consume_stream_events(stream: AsyncIterator) -> Dict[str, Any]:
     usage = _empty_usage()
 
     async for event in stream:
-        if getattr(event, "type", None) != "raw_response_event":
+        etype = getattr(event, "type", None)
+        if etype == "run_item_stream_event" and getattr(event, "name", None) == (
+            "token_usage"
+        ):
+            item = getattr(event, "item", None)
+            totals = item.get("totals") if isinstance(item, dict) else None
+            if isinstance(totals, dict):
+                _add(usage, totals)
+            continue
+        if etype != "raw_response_event":
             continue
         data = getattr(event, "data", None)
         if not isinstance(data, ResponseCompletedEvent):
@@ -43,13 +60,27 @@ async def consume_stream_events(stream: AsyncIterator) -> Dict[str, Any]:
         if not response or not response.usage:
             continue
 
-        raw = response.usage
-        usage["requests"] += 1
-        usage["input_tokens"] += raw.input_tokens or 0
-        usage["output_tokens"] += raw.output_tokens or 0
-        usage["total_tokens"] += raw.total_tokens or 0
+        _add(usage, response.usage)
 
     return {"usage": usage}
+
+
+def _add(usage: Dict[str, Any], response_usage: Any) -> None:
+    """One response's usage (the SDK's object or the bridge's dict) into ``usage``."""
+    from omniagents.core.usage import response_usage as flat
+
+    tokens = flat(response_usage)
+    usage["requests"] += 1
+    for key, value in tokens.items():
+        usage[key] += value
+    total = (
+        response_usage.get("total_tokens")
+        if isinstance(response_usage, dict)
+        else getattr(response_usage, "total_tokens", None)
+    )
+    usage["total_tokens"] += int(
+        total or tokens["input_tokens"] + tokens["output_tokens"]
+    )
 
 
 def count_tool_calls(history: List[Dict[str, Any]]) -> int:

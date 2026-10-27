@@ -2,7 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import { useKeypress } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
-import type { FsListEntry, RPCClient } from "../rpc/client.js";
+import type { RPCClient } from "@omniagents/client/rpc/client";
+import { FsClient } from "@omniagents/client/rpc/fs";
+import { defaultEnvironmentId } from "../rpc/host.js";
 import {
   buildCommandRows,
   completionFor,
@@ -16,7 +18,7 @@ import {
   type MentionRow,
 } from "./mention-model.js";
 import type { ComposerCompletion, ComposerToken } from "./composer-token.js";
-import { enterCompletion } from "../rpc/slash.js";
+import { enterCompletion } from "@omniagents/client/rpc/slash";
 import { windowStart } from "./model-picker-model.js";
 import { Theme } from "../theme.js";
 import { themedMemo } from "../theme/themed-memo.js";
@@ -70,25 +72,27 @@ export const ComposerPopup = themedMemo<Props>(
     // the network; the list fills in when it lands.
     useEffect(() => {
       if (kind !== "mention" || !client) return;
-      const environmentId = client.defaultEnvironmentId?.() ?? null;
+      const environmentId = defaultEnvironmentId(client);
       const fresh = Date.now() - filesLoadedAt.current < MENTION_INDEX_TTL_MS;
       if (
         !environmentId ||
-        !client.isGranted("fs_list") ||
+        !client.supportsExperimentalOperation("fs_list") ||
         fresh ||
         loading.current
       )
         return;
-      loading.current = client
-        .fsList(environmentId, ".", true)
+      const fs = new FsClient(client);
+      loading.current = fs
+        .list(environmentId, ".", true)
         .then((result) => {
           filesLoadedAt.current = Date.now();
-          setFiles(buildMentionRows(result.entries as FsListEntry[]));
+          setFiles(buildMentionRows(result.entries));
           setTruncated(Boolean(result.truncated));
         })
         .catch(() => setFiles([]))
         .finally(() => {
           loading.current = null;
+          fs.dispose();
         });
     }, [kind, client]);
 

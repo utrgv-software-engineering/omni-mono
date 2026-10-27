@@ -7,7 +7,7 @@ model: gpt-4o
 
 # Tracing configuration
 tracing:
-  provider: studio  # Options: default, studio, none
+  provider: studio  # Options: none (default), studio, openai
   project: test_project
   name: test_trace
   settings:

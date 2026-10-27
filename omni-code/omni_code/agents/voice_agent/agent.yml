@@ -14,9 +14,6 @@ voice_backend: realtime
 welcome_text: |
   Welcome to Omni Code Voice! I'm ready to help with your coding needs.
 
-additional_tools_dirs:
-  - ../../tools
-
 # Voice reads and delegates, and that is the whole surface: read-only
 # file inspection and delegation (`spawn_worker`,
 # `explore`). Everything that writes, runs commands, reaches the
@@ -34,6 +31,7 @@ additional_tools_dirs:
 #                        fabricated calls
 #   notebook/tasks     — voice latency favors a tight tool surface
 capabilities:
+  - tool_outputs # retained result range/search access
   - filesystem_readonly
   - workers
   - exploration
@@ -68,8 +66,3 @@ context: build_voice_context
 model_config_resolver: resolve_default_model
 realtime_settings_resolver: resolve_voice_realtime_settings
 variables: {}
-
-# Launcher residents select this session profile; regular chats keep workers.
-capability_profiles:
-  resident:
-    workers: swarms

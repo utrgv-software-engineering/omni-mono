@@ -26,7 +26,10 @@ from omniagents.core.capabilities import (
     parse_capability_spec,
     discover_capabilities_in_dir,
 )
-from omniagents.core.config.loader import load_agent_spec_from_yaml
+from omniagents.core.config.loader import (
+    collect_config_problems,
+    load_agent_spec_from_yaml,
+)
 
 
 def _write(path: Path, content: str) -> None:
@@ -310,7 +313,7 @@ def test_loader_tool_name_conflict_across_capabilities(tmp_path):
         )
 
 
-def test_loader_unknown_capability_warns(tmp_path, capsys):
+def test_loader_unknown_capability_warns(tmp_path):
     agent_path = tmp_path / "agent.yml"
     _write(
         agent_path,
@@ -320,17 +323,18 @@ def test_loader_unknown_capability_warns(tmp_path, capsys):
         capabilities: [nonexistent]
         """,
     )
-    spec = load_agent_spec_from_yaml(
-        str(agent_path),
-        capability_registry={"filesystem": object()},
-    )
+    with collect_config_problems() as problems:
+        spec = load_agent_spec_from_yaml(
+            str(agent_path),
+            capability_registry={"filesystem": object()},
+        )
     assert spec.resolved_capabilities == []
-    out = capsys.readouterr().out
+    out = "\n".join(problems)
     assert "nonexistent" in out
     assert "filesystem" in out  # available list
 
 
-def test_loader_capabilities_without_registry_warns(tmp_path, capsys):
+def test_loader_capabilities_without_registry_warns(tmp_path):
     agent_path = tmp_path / "agent.yml"
     _write(
         agent_path,
@@ -340,9 +344,10 @@ def test_loader_capabilities_without_registry_warns(tmp_path, capsys):
         capabilities: [filesystem]
         """,
     )
-    spec = load_agent_spec_from_yaml(str(agent_path))  # no capability_registry
+    with collect_config_problems() as problems:
+        spec = load_agent_spec_from_yaml(str(agent_path))  # no capability_registry
     assert spec.resolved_capabilities == []
-    out = capsys.readouterr().out
+    out = "\n".join(problems)
     assert "filesystem" in out
     assert "capability_registry" in out
 
@@ -386,6 +391,11 @@ async def test_builder_merges_capability_tools_into_agent(tmp_path, monkeypatch)
     class _StubAgent:
         def __init__(self, **kwargs):
             captured.update(kwargs)
+            self.tools = kwargs.get("tools", [])
+
+        # install_output_budget wraps the built agent's tool resolution.
+        async def get_all_tools(self, run_context):
+            return list(self.tools)
 
     # Agent is imported inside _default_build_agent (`from agents import Agent`),
     # so patch on the source module rather than the builder module.
@@ -456,6 +466,11 @@ async def test_builder_attaches_capability_approvals(tmp_path, monkeypatch):
     class _StubAgent:
         def __init__(self, **kwargs):
             captured.update(kwargs)
+            self.tools = kwargs.get("tools", [])
+
+        # install_output_budget wraps the built agent's tool resolution.
+        async def get_all_tools(self, run_context):
+            return list(self.tools)
 
     # Agent is imported inside _default_build_agent (`from agents import Agent`),
     # so patch on the source module rather than the builder module.
@@ -466,6 +481,110 @@ async def test_builder_attaches_capability_approvals(tmp_path, monkeypatch):
     # The capability's approvals_spec attached to the matching tool
     alpha_tool = next(t for t in captured["tools"] if t.name == "alpha")
     assert alpha_tool.needs_approval is _approval_predicate
+
+
+def _agent_with(tmp_path, cap, name, approvals=None, sandbox=False):
+    override = (
+        f"\n    overrides:\n      approvals: {{alpha: {approvals}}}"
+        if approvals is not None
+        else ""
+    )
+    sandbox_block = (
+        "\nsandbox:\n  use_sandbox_agent: true\n  client:\n    type: unix_local\n"
+        if sandbox
+        else "\n"
+    )
+    path = tmp_path / f"{name}.yml"
+    _write(
+        path,
+        f"""
+name: {name}
+instructions: x
+capabilities:
+  - name: filesystem{override}
+{sandbox_block}""",
+    )
+    return load_agent_spec_from_yaml(str(path), capability_registry={"filesystem": cap})
+
+
+@pytest.mark.asyncio
+async def test_each_agent_gets_its_own_capability_approval_rule(tmp_path, monkeypatch):
+    """Two agents sharing a capability, with different overrides, each keep
+    their own rule; the shared tool object is never changed."""
+    from omniagents.core.agents.builder import _default_build_agent
+
+    shared = _stub_tool("alpha")
+    cap = parse_capability_spec(
+        {"name": "filesystem", "tools": ["alpha"], "approvals": {"alpha": True}},
+        tool_registry={"alpha": shared},
+    )
+
+    built: Dict[str, Any] = {}
+
+    class _StubAgent:
+        def __init__(self, **kwargs):
+            built[kwargs["name"]] = kwargs
+            self.tools = kwargs.get("tools", [])
+
+        async def get_all_tools(self, run_context):
+            return list(self.tools)
+
+    monkeypatch.setattr("agents.Agent", _StubAgent)
+    await _default_build_agent({}, None, _agent_with(tmp_path, cap, "strict"))
+    await _default_build_agent(
+        {}, None, _agent_with(tmp_path, cap, "relaxed", approvals="false")
+    )
+
+    def alpha(name):
+        return next(t for t in built[name]["tools"] if t.name == "alpha")
+
+    assert alpha("strict").needs_approval is True
+    assert alpha("relaxed").needs_approval is False
+    assert shared.needs_approval is False  # the registry's tool is untouched
+
+
+@pytest.mark.asyncio
+async def test_sandbox_agents_get_their_capability_approval_rules_and_guardrails(
+    tmp_path, monkeypatch
+):
+    """A SandboxAgent collects its packs' tools at run time: the packs it gets
+    return its copies, with the capability's approval rule and the agent's
+    tool guardrails."""
+    from omniagents.core.agents.builder import _default_build_agent
+
+    shared = _stub_tool("alpha")
+    shared.tool_input_guardrails = []
+    cap = parse_capability_spec(
+        {"name": "filesystem", "tools": ["alpha"], "approvals": {"alpha": True}},
+        tool_registry={"alpha": shared},
+    )
+    spec = _agent_with(tmp_path, cap, "boxed", sandbox=True)
+    guard = object()
+    spec.tool_input_guardrails = [guard]
+
+    captured: Dict[str, Any] = {}
+
+    class _StubSandboxAgent:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.tools = kwargs.get("tools", [])
+
+        async def get_all_tools(self, run_context):
+            return list(self.tools)
+
+    monkeypatch.setattr("agents.sandbox.SandboxAgent", _StubSandboxAgent)
+    await _default_build_agent({}, None, spec)
+
+    [own] = [
+        c
+        for c in captured["capabilities"]
+        if getattr(c, "capability_name", None) == "filesystem"
+    ]
+    [alpha] = own.tools()
+    assert alpha.needs_approval is True
+    assert alpha.tool_input_guardrails == [guard]
+    assert shared.needs_approval is False and shared.tool_input_guardrails == []
+    assert own.model_copy(deep=False).tools()[0].needs_approval is True  # per-run clone
 
 
 @pytest.mark.asyncio
@@ -507,6 +626,11 @@ async def test_builder_mixed_mode_tools_and_capabilities(tmp_path, monkeypatch):
     class _StubAgent:
         def __init__(self, **kwargs):
             captured.update(kwargs)
+            self.tools = kwargs.get("tools", [])
+
+        # install_output_budget wraps the built agent's tool resolution.
+        async def get_all_tools(self, run_context):
+            return list(self.tools)
 
     # Agent is imported inside _default_build_agent (`from agents import Agent`),
     # so patch on the source module rather than the builder module.

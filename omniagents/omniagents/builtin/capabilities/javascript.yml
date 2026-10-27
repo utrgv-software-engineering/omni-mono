@@ -1,0 +1,35 @@
+name: javascript
+tools:
+  - exec_javascript
+  - wait_javascript
+  - cancel_javascript
+instructions: |
+  Use exec_javascript to filter large results and chain dependent tools in JavaScript.
+  Discover tool names and JSON schemas with await tools.list(). Call with
+  await tools.call(name, args); read the returned envelope.value. All originals
+  are saved automatically, including small results. Discover prior results with
+  await session.results.list({after: 0, limit: 50}), then get(id) or
+  read({reference: id, offset: 0, limit: 8000, query: "literal"}).
+  Emit only needed information with text(value). Intermediate values stay out of
+  the context window. Await all calls; Promise.all permits independent parallel calls.
+  A new runtime starts each time; JavaScript variables do not survive calls.
+  If inline is false, page the saved result. Storage/worker failure never means a
+  side effect is safe to replay. Inspect saved results before considering recovery.
+  Each tool keeps its normal approvals and workspace routing. No direct Node,
+  filesystem, environment or network APIs. SDK guardrails also apply to nested calls and run before retained output is exposed.
+  Inspect conversation messages, tool activities and approvals with
+  await session.transcript.list({limit: 50, cursor: null}); follow next_cursor.
+  This reads the current session's canonical transcript, excluding model reasoning.
+  exec_javascript may return status running and a cell_id after yield_time_ms.
+  Use wait_javascript(cell_id, timeout_ms, offset) to retrieve output and continue
+  waiting, or cancel_javascript to stop it. Follow next_offset to avoid repeating
+  text. Always settle running cells before ending your run: run teardown cancels
+  outstanding cells. Completed cell outcomes survive restart; JS stacks do not.
+  Discover completed/interrupted cells with await session.cells.list({after: 0, limit: 50}).
+  session.subagents.list({limit, cursor, parent_id}) lists canonical child conversations;
+  omit parent_id for direct children, or pass a previously discovered descendant.
+  session.subagents.transcript({id, limit, cursor}) reads their persisted messages
+  and tool activities, including background workers. Only descendants of the current
+  conversation with the same owner are accessible.
+  Emit native image/file blocks with image(imageUrlOrBlock) and file(fileBlock).
+  Media is validated, bounded and retained separately from text previews.

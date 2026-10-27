@@ -3,7 +3,7 @@
  *
  * - mod+K opens the palette: type to filter, ↑/↓ to move, Enter to run,
  *   Esc to close.
- * - mod+1…9 jump straight to the Nth deck column (and switch to Spaces),
+ * - mod+1…9 jump straight to the Nth open chat,
  *   palette closed or open.
  *
  * Mounted once at the app root, renders nothing until opened.
@@ -11,12 +11,7 @@
 import './CommandPalette.css';
 
 import { useStore } from '@nanostores/react';
-import { atom } from 'nanostores';
-import { memo, useCallback, useMemo, useState } from 'react';
-import { useHotkeys } from 'react-hotkeys-hook';
-
-import { $viewportDebug } from '@/renderer/common/ViewportDebug';
-import { Button } from '@/renderer/ds/ui/button';
+import { Button } from '@omniagents/ui/button';
 import {
   CommandDialog,
   CommandEmpty,
@@ -25,19 +20,23 @@ import {
   CommandItem,
   CommandList,
   CommandShortcut,
-} from '@/renderer/ds/ui/command';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/renderer/ds/ui/dialog';
-import { Field, FieldLabel } from '@/renderer/ds/ui/field';
-import { Input } from '@/renderer/ds/ui/input';
+} from '@omniagents/ui/command';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@omniagents/ui/dialog';
+import { Field, FieldLabel } from '@omniagents/ui/field';
+import { Input } from '@omniagents/ui/input';
+import { atom } from 'nanostores';
+import { memo, useCallback, useMemo, useState } from 'react';
+import { useHotkeys } from 'react-hotkeys-hook';
+
+import { $viewportDebug } from '@/renderer/common/ViewportDebug';
 import { codeApi } from '@/renderer/features/Code/state';
-import { $quickCaptureOpen } from '@/renderer/features/Inbox/QuickCapture';
-import { goToInbox } from '@/renderer/features/Inbox/state';
+import { projectsApi } from '@/renderer/features/Projects/state';
+import { goToProject } from '@/renderer/features/Projects/view-state';
 import { goToRoutine } from '@/renderer/features/ScheduledTasks/state';
-import { ticketApi } from '@/renderer/features/Tickets/state';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { CodeTab, LayoutMode } from '@/shared/types';
 
-import { buildCommands, filterCommands, paletteColumns } from './commands';
+import { buildCommands, filterCommands } from './commands';
 
 const HOTKEY_OPTS = { enableOnFormTags: true, preventDefault: true } as const;
 
@@ -63,16 +62,8 @@ export const CommandPalette = memo(() => {
     persistedStoreApi.setKey('layoutMode', 'chat');
   }, []);
 
-  const handleGoToInbox = useCallback(() => {
-    goToInbox();
-  }, []);
-
   const handleGoToRoutines = useCallback(() => {
     goToRoutine();
-  }, []);
-
-  const addInboxItem = useCallback(() => {
-    $quickCaptureOpen.set(true);
   }, []);
 
   const createProject = useCallback(() => {
@@ -90,9 +81,9 @@ export const CommandPalette = memo(() => {
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-|-$/g, '') || 'project';
-    void ticketApi.addProject({ label, slug, sources: [] }).then((project) => {
-      // goToProject raises the Work rail tab itself.
-      ticketApi.goToProject(project.id);
+    void projectsApi.addProject({ label, slug, sources: [] }).then((project) => {
+      // goToProject raises the Projects surface itself.
+      goToProject(project.id);
     });
     setCreateProjectOpen(false);
   }, [projectName]);
@@ -101,7 +92,7 @@ export const CommandPalette = memo(() => {
     (tab: CodeTab) => {
       const project = store.projects.find((p) => p.id === tab.projectId);
       if (project) {
-        return tab.ticketTitle ? `${project.label} — ${tab.ticketTitle}` : project.label;
+        return project.label;
       }
       return 'New Session';
     },
@@ -112,37 +103,20 @@ export const CommandPalette = memo(() => {
     () =>
       buildCommands({
         codeTabs: store.codeTabs ?? [],
-        codeLayoutMode: store.codeLayoutMode,
         resolveTabLabel,
         navigate,
         activateColumn,
-        goToInbox: handleGoToInbox,
         goToRoutines: handleGoToRoutines,
-        addInboxItem,
         createProject,
         newSession: () => {
           void codeApi.addTab();
-          persistedStoreApi.setKey('layoutMode', 'chat');
-        },
-        setDeckLayout: (mode) => {
-          codeApi.setLayoutMode(mode);
           persistedStoreApi.setKey('layoutMode', 'chat');
         },
         toggleViewportDebug: () => {
           $viewportDebug.set(!$viewportDebug.get());
         },
       }),
-    [
-      store.codeTabs,
-      store.codeLayoutMode,
-      resolveTabLabel,
-      navigate,
-      activateColumn,
-      handleGoToInbox,
-      handleGoToRoutines,
-      addInboxItem,
-      createProject,
-    ]
+    [store.codeTabs, resolveTabLabel, navigate, activateColumn, handleGoToRoutines, createProject]
   );
 
   const filtered = useMemo(() => filterCommands(commands, query), [commands, query]);
@@ -170,7 +144,7 @@ export const CommandPalette = memo(() => {
       if (!Number.isInteger(digit) || digit < 1) {
         return;
       }
-      const columns = paletteColumns(persistedStoreApi.getKey('codeTabs') ?? []);
+      const columns = persistedStoreApi.getKey('codeTabs') ?? [];
       const target = columns[digit - 1];
       if (target) {
         activateColumn(target.id);

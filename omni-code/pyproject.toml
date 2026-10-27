@@ -3,12 +3,9 @@ name = "omni-code"
 version = "0.6.34"
 description = "Omni Code: a full‑stack coding agent built with OmniAgents"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "omniagents[all]==0.7.40",
-    "python-dotenv",
-    "markitdown[all,docx,pdf]>=0.1.1",
-    "litellm>=1.0.0",  # For non-OpenAI model support
 ]
 
 [tool.pytest.ini_options]
@@ -38,7 +35,7 @@ dev = [
 line-length = 88
 # Explicit floor from requires-python; without this black infers every
 # version through py315 and warns when run under an older interpreter.
-target-version = ["py310", "py311", "py312", "py313"]
+target-version = ["py311", "py312", "py313"]
 extend-exclude = "/evaluations/fixtures/"
 
 [tool.ruff]
@@ -82,7 +79,6 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["main"]
 include-package-data = true
 
 [tool.setuptools.packages.find]
@@ -104,9 +100,6 @@ exclude = [
     # built from this file at product bootstrap, so it must ship.
     "models.yml",
     "sandbox_profile_default.yml",
-    # Optional wheel-shipped omni-sandbox binary (built in the standalone
-    # omni-sandbox repo); governance.find_sandbox_binary checks here.
-    "assets/bin/*",
     "agents/*/*.yml",
     # Also matches agents/_shared/*.md — the {% include %} fragment files
     # shared by the omni and voice_agent instruction templates.
@@ -117,6 +110,3 @@ exclude = [
     "prompts/*.md",
     "capabilities/*.yml",
 ]
-"omni_agents.omni" = ["*.yml", "*.md"]
-"omni_agents.voice_agent" = ["*.yml", "*.md"]
-"omni_agents.init_agent" = ["*.yml", "*.md"]

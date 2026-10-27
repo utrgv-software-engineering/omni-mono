@@ -91,8 +91,9 @@ async def test_actual_builder_uses_profile_tools_and_instructions():
     session = SimpleNamespace(variables={"capability_profile": "resident"})
     resident = await _default_build_agent({}, None, spec, session=session)
     regular = await _default_build_agent({}, None, spec)
-    assert [t.name for t in resident.tools] == ["swarm_tool"]
-    assert [t.name for t in regular.tools] == ["worker_tool"]
+    # Every built agent also gets the output-budget reader.
+    assert [t.name for t in resident.tools] == ["swarm_tool", "read_tool_output"]
+    assert [t.name for t in regular.tools] == ["worker_tool", "read_tool_output"]
     rendered = await resident.instructions(SimpleNamespace(context={}), resident)
     assert "Use resident swarms." in rendered
     assert "Use existing workers." not in rendered

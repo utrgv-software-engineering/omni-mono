@@ -1,7 +1,7 @@
 import asyncio
 
 import pytest
-from omniagents.builtin.server_functions import goal as goal_mod
+from omniagents.core.autonomy import goal as goal_mod
 
 
 class FakeSession:
@@ -52,7 +52,6 @@ class FakeService:
         session_id,
         content,
         role="user",
-        trigger_run=False,
         source=None,
         safe_tool_overrides=None,
     ):
@@ -61,7 +60,6 @@ class FakeService:
                 "session_id": session_id,
                 "content": content,
                 "role": role,
-                "trigger_run": trigger_run,
                 "source": source,
                 "safe_tool_overrides": safe_tool_overrides,
             }
@@ -88,7 +86,7 @@ def test_goal_start_forwards_safe_tool_overrides_to_initial_run_and_tick():
     safe_tool_overrides = {"safe_tool_patterns": [".*"]}
 
     result = asyncio.run(
-        goal_mod._goal_start_on_invoke(
+        goal_mod.start_impl(
             service,
             session,
             {
@@ -102,7 +100,7 @@ def test_goal_start_forwards_safe_tool_overrides_to_initial_run_and_tick():
 
     assert result["ok"] is True
     assert service.enqueued_messages[0]["source"] == "goal.start"
-    assert service.enqueued_messages[0]["trigger_run"] is True
+    assert "trigger_run" not in service.enqueued_messages[0]
     assert service.enqueued_messages[0]["safe_tool_overrides"] == safe_tool_overrides
     assert session.tick_calls[0]["source"] == "goal.tick"
     assert session.tick_calls[0]["safe_tool_overrides"] == safe_tool_overrides

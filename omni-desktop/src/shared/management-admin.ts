@@ -1,4 +1,4 @@
-import type { RpcMethodMap } from '@/generated/omniagents-gui-v2/gui-v2';
+import type { RpcMethodMap } from '@omniagents/client/protocol/gui-v2';
 
 /**
  * Process-wide Omniagents mutations permitted through the main/server admin
@@ -7,8 +7,6 @@ import type { RpcMethodMap } from '@/generated/omniagents-gui-v2/gui-v2';
  * generic control-token tunnel.
  */
 export const MANAGEMENT_ADMIN_METHODS = [
-  'validate_config',
-  'write_config',
   'account_login_start',
   'account_login_complete',
   'account_login_cancel',

@@ -100,6 +100,12 @@ class _RecordingWorkspace(Workspace):
         self._record("is_dir", path)
         return False
 
+    async def is_exec_dir(self, path: str) -> bool:
+        # execute_bash checks its working directory before running. This fake
+        # models files, not directories, so every working directory exists.
+        self._record("is_exec_dir", path)
+        return True
+
     async def mkdir(self, path: str, **kwargs: Any) -> None:
         self._record("mkdir", path, **kwargs)
 
@@ -593,7 +599,8 @@ def test_read_job_log_falls_back_to_local_registered_job_log_on_root_mismatch(tm
     log_dir.mkdir(parents=True)
     log_path = log_dir / f"{job_id}.log"
     log_text = "local one\nlocal two\n"
-    log_path.write_text(log_text, encoding="utf-8")
+    # Job logs hold raw process output; text mode would add CRs on Windows.
+    log_path.write_bytes(log_text.encode("utf-8"))
 
     fake = _RootMismatchWorkspace(root="/other-root")
     job = type(

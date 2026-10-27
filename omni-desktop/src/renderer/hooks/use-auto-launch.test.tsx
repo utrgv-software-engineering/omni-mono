@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { $omniRuntimeReadiness } from '@/renderer/features/Omni/state';
-import { $agentStatuses, agentProcessApi } from '@/renderer/services/agent-process';
+import { $agentStatuses } from '@/renderer/services/agent-process';
 import { $initialized, persistedStoreApi } from '@/renderer/services/store';
 import type { AgentProcessStatus, StoreData, WithTimestamp } from '@/shared/types';
 
@@ -15,7 +15,6 @@ const setKey = vi.hoisted(() => vi.fn());
 const clearStatus = vi.hoisted(() => vi.fn());
 const start = vi.hoisted(() => vi.fn());
 const stop = vi.hoisted(() => vi.fn());
-const switchSandbox = vi.hoisted(() => vi.fn());
 const successToast = vi.hoisted(() => vi.fn());
 const errorToast = vi.hoisted(() => vi.fn());
 const warningToast = vi.hoisted(() => vi.fn());
@@ -53,15 +52,10 @@ vi.mock('@/renderer/services/agent-process', async () => {
     agentProcessApi: {
       start,
       stop,
-      switchSandbox,
     },
     clearStatus,
   };
 });
-
-vi.mock('@/renderer/features/SandboxProfile/profile-list', () => ({
-  getProfileMenuLabel: (profileName: string) => profileName,
-}));
 
 vi.mock('@/renderer/features/Toast/state', () => ({
   toast: {
@@ -71,7 +65,7 @@ vi.mock('@/renderer/features/Toast/state', () => ({
   },
 }));
 
-vi.mock('@/shared/machines/machine-logger', () => ({
+vi.mock('@omniagents/client/machines/machine-logger', () => ({
   createMachineLogger,
 }));
 
@@ -112,9 +106,7 @@ beforeEach(() => {
 
   ($initialized as { set: (value: boolean) => void }).set(true);
   ($omniRuntimeReadiness as { set: (value: { status: 'ready' }) => void }).set({ status: 'ready' });
-  (persistedStoreApi.$atom as unknown as { set: (value: Partial<StoreData>) => void }).set({
-    defaultProfileName: 'host',
-  });
+  (persistedStoreApi.$atom as unknown as { set: (value: Partial<StoreData>) => void }).set({});
   $agentStatuses.set({});
 
   invoke.mockImplementation((channel: string, processId?: string) => {
@@ -126,7 +118,6 @@ beforeEach(() => {
     }
     return Promise.resolve();
   });
-  switchSandbox.mockResolvedValue({ ok: true });
   stop.mockResolvedValue(undefined);
   start.mockResolvedValue(undefined);
   clearStatus.mockImplementation((id: string) => {
@@ -144,7 +135,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('useAutoLaunch sandbox profile override switching', () => {
+describe('useAutoLaunch', () => {
   it('does not let a delayed status seed overwrite a newer runtime endpoint', async () => {
     await renderHook({ processId: 'tile-a', workspaceDir: '/workspace/a' });
     let resolve!: (value: WithTimestamp<AgentProcessStatus>) => void;
@@ -175,8 +166,6 @@ describe('useAutoLaunch sandbox profile override switching', () => {
       processId: 'tile-a',
       workspaceDir: '/workspace/a',
       sessionId: 'session-a',
-      snapshotRef: 'snapshot-a',
-      profileNameOverride: 'host',
     };
     await renderHook(props);
     await act(async () => {
@@ -192,25 +181,8 @@ describe('useAutoLaunch sandbox profile override switching', () => {
     expect(start).toHaveBeenCalledWith('tile-a', {
       workspaceDir: '/workspace/a',
       sessionId: 'session-a',
-      snapshotRef: 'snapshot-a',
-      profileNameOverride: 'host',
     });
     expect(stop).not.toHaveBeenCalled();
-  });
-  it('labels lifecycle logs with the tab-selected profile instead of the global default', async () => {
-    (persistedStoreApi.$atom as unknown as { set: (value: Partial<StoreData>) => void }).set({
-      defaultProfileName: 'devbox',
-    });
-
-    await renderHook({
-      processId: 'code-tab-1',
-      workspaceDir: null,
-      profileNameOverride: 'host',
-    });
-
-    expect(createMachineLogger).toHaveBeenCalledWith('autoLaunch:code-tab-1', {
-      tags: { tab: 'code-tab-1', sandbox: 'host' },
-    });
   });
 
   it('surfaces a rejected process start through the launch state machine', async () => {
@@ -261,67 +233,5 @@ describe('useAutoLaunch sandbox profile override switching', () => {
     });
     expect(start).toHaveBeenCalledTimes(2);
     expect(value.phase).toBe('starting');
-  });
-
-  it('does not switch sandboxes when the profile override changes before launch', async () => {
-    await renderHook({
-      processId: 'code-tab-1',
-      workspaceDir: null,
-      profileNameOverride: 'host',
-    });
-
-    await renderHook({
-      processId: 'code-tab-1',
-      workspaceDir: null,
-      profileNameOverride: 'devbox',
-    });
-
-    expect(agentProcessApi.switchSandbox).not.toHaveBeenCalled();
-  });
-
-  it('switches sandboxes when the profile override changes for a running session', async () => {
-    $agentStatuses.set({ 'code-tab-1': runningStatus() });
-
-    await renderHook({
-      processId: 'code-tab-1',
-      workspaceDir: '/workspace/project',
-      profileNameOverride: 'host',
-    });
-    await flushEffects();
-
-    await renderHook({
-      processId: 'code-tab-1',
-      workspaceDir: '/workspace/project',
-      profileNameOverride: 'devbox',
-    });
-
-    expect(agentProcessApi.switchSandbox).toHaveBeenCalledWith('code-tab-1', 'devbox');
-  });
-
-  it('relaunches when the registered source override changes', async () => {
-    await renderHook({
-      processId: 'code-tab-1',
-      workspaceDir: '/workspace/project',
-      sourceOverrideDir: '/workspace/worktree-a',
-      profileNameOverride: 'host',
-    });
-    await flushEffects();
-    await act(async () => {
-      $agentStatuses.set({ 'code-tab-1': runningStatus() });
-      await flushEffects();
-    });
-    stop.mockClear();
-
-    await renderHook({
-      processId: 'code-tab-1',
-      workspaceDir: '/workspace/project',
-      sourceOverrideDir: '/workspace/worktree-b',
-      profileNameOverride: 'host',
-    });
-    await act(async () => {
-      await flushEffects();
-    });
-
-    expect(agentProcessApi.stop).toHaveBeenCalledWith('code-tab-1');
   });
 });

@@ -2,13 +2,13 @@ import pytest
 import asyncio
 from pathlib import Path
 
-from omniagents.core.session.audio_storage import AudioStorage
+from omniagents.core.session.audio_storage import LocalAudioStorage
 
 
 @pytest.mark.asyncio
 async def test_save_audio_chunk(tmp_path):
     """Test saving an audio chunk to disk."""
-    storage = AudioStorage(tmp_path)
+    storage = LocalAudioStorage(tmp_path)
     session_id = "test_session"
     item_id = "item_123"
     content_index = 0
@@ -27,7 +27,7 @@ async def test_save_audio_chunk(tmp_path):
 @pytest.mark.asyncio
 async def test_save_audio_chunk_different_format(tmp_path):
     """Test saving audio chunks with different formats."""
-    storage = AudioStorage(tmp_path)
+    storage = LocalAudioStorage(tmp_path)
     session_id = "test_session"
 
     # Save pcm16 format
@@ -52,7 +52,7 @@ async def test_save_audio_chunk_different_format(tmp_path):
 @pytest.mark.asyncio
 async def test_get_audio_chunk(tmp_path):
     """Test retrieving an audio chunk from disk."""
-    storage = AudioStorage(tmp_path)
+    storage = LocalAudioStorage(tmp_path)
     session_id = "test_session"
     item_id = "item_456"
     audio_data = b"test_audio_content"
@@ -68,7 +68,7 @@ async def test_get_audio_chunk(tmp_path):
 @pytest.mark.asyncio
 async def test_get_audio_chunk_not_found(tmp_path):
     """Test that get_audio_chunk raises FileNotFoundError for missing files."""
-    storage = AudioStorage(tmp_path)
+    storage = LocalAudioStorage(tmp_path)
 
     with pytest.raises(FileNotFoundError):
         await storage.get_audio_chunk("nonexistent/file.pcm16")
@@ -77,7 +77,7 @@ async def test_get_audio_chunk_not_found(tmp_path):
 @pytest.mark.asyncio
 async def test_delete_session_audio(tmp_path):
     """Test deleting all audio files for a session."""
-    storage = AudioStorage(tmp_path)
+    storage = LocalAudioStorage(tmp_path)
     session_id = "delete_test"
 
     # Save multiple audio chunks
@@ -99,7 +99,7 @@ async def test_delete_session_audio(tmp_path):
 @pytest.mark.asyncio
 async def test_delete_session_audio_nonexistent(tmp_path):
     """Test deleting audio for a nonexistent session returns 0."""
-    storage = AudioStorage(tmp_path)
+    storage = LocalAudioStorage(tmp_path)
     deleted_count = await storage.delete_session_audio("nonexistent_session")
     assert deleted_count == 0
 
@@ -107,7 +107,7 @@ async def test_delete_session_audio_nonexistent(tmp_path):
 @pytest.mark.asyncio
 async def test_get_session_audio_size(tmp_path):
     """Test calculating total size of session audio."""
-    storage = AudioStorage(tmp_path)
+    storage = LocalAudioStorage(tmp_path)
     session_id = "size_test"
 
     # Save multiple chunks of different sizes
@@ -126,26 +126,15 @@ async def test_get_session_audio_size(tmp_path):
 @pytest.mark.asyncio
 async def test_get_session_audio_size_nonexistent(tmp_path):
     """Test getting size of nonexistent session returns 0."""
-    storage = AudioStorage(tmp_path)
+    storage = LocalAudioStorage(tmp_path)
     size = await storage.get_session_audio_size("nonexistent_session")
     assert size == 0
 
 
 @pytest.mark.asyncio
-async def test_get_audio_file_path(tmp_path):
-    """Test getting absolute path for an audio file."""
-    storage = AudioStorage(tmp_path)
-    relative_path = "session_123/item_456_0.pcm16"
-
-    abs_path = storage.get_audio_file_path(relative_path)
-    assert abs_path == tmp_path / relative_path
-    assert abs_path.is_absolute()
-
-
-@pytest.mark.asyncio
 async def test_verify_audio_chunk_exists(tmp_path):
     """Test verifying an audio chunk exists."""
-    storage = AudioStorage(tmp_path)
+    storage = LocalAudioStorage(tmp_path)
     session_id = "verify_test"
     audio_data = b"verification_data"
 
@@ -160,7 +149,7 @@ async def test_verify_audio_chunk_exists(tmp_path):
 @pytest.mark.asyncio
 async def test_verify_audio_chunk_not_exists(tmp_path):
     """Test verifying a nonexistent audio chunk."""
-    storage = AudioStorage(tmp_path)
+    storage = LocalAudioStorage(tmp_path)
     exists = await storage.verify_audio_chunk("nonexistent/file.pcm16")
     assert exists is False
 
@@ -170,7 +159,7 @@ async def test_verify_audio_chunk_with_hash(tmp_path):
     """Test verifying an audio chunk with hash validation."""
     import hashlib
 
-    storage = AudioStorage(tmp_path)
+    storage = LocalAudioStorage(tmp_path)
     session_id = "hash_test"
     audio_data = b"hash_verification_data"
     expected_hash = hashlib.sha256(audio_data).hexdigest()
@@ -190,7 +179,7 @@ async def test_verify_audio_chunk_with_hash(tmp_path):
 @pytest.mark.asyncio
 async def test_multiple_content_indices(tmp_path):
     """Test saving multiple content indices for the same item."""
-    storage = AudioStorage(tmp_path)
+    storage = LocalAudioStorage(tmp_path)
     session_id = "multi_index"
     item_id = "item_789"
 
@@ -211,7 +200,7 @@ async def test_multiple_content_indices(tmp_path):
 @pytest.mark.asyncio
 async def test_concurrent_saves(tmp_path):
     """Test concurrent audio chunk saves."""
-    storage = AudioStorage(tmp_path)
+    storage = LocalAudioStorage(tmp_path)
     session_id = "concurrent_test"
 
     # Create multiple save tasks
@@ -238,6 +227,6 @@ async def test_base_path_creation(tmp_path):
     base_path = tmp_path / "audio_storage" / "nested" / "path"
     assert not base_path.exists()
 
-    storage = AudioStorage(base_path)
+    storage = LocalAudioStorage(base_path)
     assert base_path.exists()
     assert base_path.is_dir()

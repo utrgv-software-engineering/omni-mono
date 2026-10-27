@@ -12,8 +12,6 @@ Lifted from omni-code's ``omni_code/workers_runtime.py``.
 
 from __future__ import annotations
 
-import os
-import posixpath
 from typing import Any, Callable, Optional
 
 from .config import WorkerDefaults, set_worker_defaults
@@ -71,10 +69,9 @@ def serve_worker_sources() -> list[WorkerSource]:
             and kind in {"local", "local-git"}
             and isinstance(raw_path, str)
             and raw_path.strip()
-            # Sandbox placement is POSIX on any host OS.
-            else (os.path if host_environment else posixpath).join(
-                workspace_root, mount_name
-            )
+            # The lease workspace's own path syntax: POSIX for sandboxes on
+            # any host OS, the host's for host workspaces.
+            else lease.workspace.path_module.join(workspace_root, mount_name)
         )
         if path:
             out.append(
@@ -180,6 +177,7 @@ def install_project_worker_defaults(
                 model_resolver=model_resolver or default_worker_model_resolver,
             ),
             default_isolation=default_isolation,
+            recipe_id=f"{project_slug}:{agent_key}:v1",
         )
     )
     _installed = True

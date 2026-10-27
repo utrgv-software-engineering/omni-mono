@@ -1,16 +1,14 @@
-"""Reserved ``<prog> serve`` / ``<prog> sandbox-host`` — the launcher contract.
+"""Reserved ``<prog> serve`` — the launcher contract.
 
 Any product with a ``product:`` block in its project.yml gets a
 launcher-compatible agent server from convention: ``<prog> serve`` brings
 up a long-lived sandbox session (or the no-sandbox ``host`` target)
 against the product's layered profile chain, runs the product's
 entrypoint agent over it behind FastAPI/uvicorn, and emits the single
-JSON readiness line the desktop launcher parses. ``<prog> sandbox-host``
-is the laptop half of "computer-as-sandbox": it exposes this machine's
-exec/file/PTY surface over a WebSocket for a cloud serve process.
+JSON readiness line the desktop launcher parses.
 
-Both are mounted as reserved subcommands by
-:mod:`omniagents.product_cli`; a product may still override them via its
+It is mounted as a reserved subcommand by
+:mod:`omniagents.product_cli`; a product may still override it via its
 ``cli.extensions`` ``COMMANDS`` mapping, but the defaults here are
 launcher-complete. The wire contract (spawn argv, readiness payload,
 error protocol) is versioned as :data:`SERVE_PROTOCOL_VERSION` and
@@ -18,7 +16,7 @@ documented in ``docs/serve-protocol.md`` — that document is what the
 launcher targets; treat any change to the payload or flags as a protocol
 revision.
 
-Lifted from omni-code's ``serve_cli.py`` / ``sandbox_host_cli.py``; the
+Lifted from omni-code's ``serve_cli.py``; the
 session lifecycle itself lives in
 :mod:`omniagents.core.runtime.serve_harness`.
 """
@@ -27,28 +25,26 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import signal
-import socket
 import sys
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 #: Version of the serve wire contract (spawn argv + readiness payload +
-#: error protocol + sandbox-host handshake) documented in
+#: error protocol) documented in
 #: ``docs/serve-protocol.md``. Reported by ``<prog> describe`` so the
 #: launcher can verify compatibility before spawning.
-SERVE_PROTOCOL_VERSION = 2
+SERVE_PROTOCOL_VERSION = 3
 
 __all__ = [
     "SERVE_PROTOCOL_VERSION",
     "build_serve_parser",
     "build_readiness_payload",
     "serve_main",
-    "sandbox_host_main",
-    "exec_port_payload",
 ]
 
 
@@ -128,6 +124,15 @@ def build_serve_parser(prog: Optional[str] = None) -> argparse.ArgumentParser:
         help="Agent key in project.yml (default: entrypoint).",
     )
     p.add_argument(
+        "--exit-on-stdin-close",
+        action="store_true",
+        help=(
+            "Shut down when stdin reaches EOF. A launcher holds the pipe open "
+            "for the child's lifetime, so the server exits with its launcher "
+            "even when the launcher crashes."
+        ),
+    )
+    p.add_argument(
         "--output",
         choices=["json", "human"],
         default="json",
@@ -145,12 +150,35 @@ def build_serve_parser(prog: Optional[str] = None) -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 
 
-def _pick_port(host: str, requested: int) -> int:
-    if requested:
-        return requested
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind((host, 0))
-        return s.getsockname()[1]
+def _watch_stdin_eof(on_eof: Any, fd: int = 0) -> None:
+    """Call *on_eof* once the launcher's stdin pipe reaches EOF.
+
+    The watcher reads a private duplicate of *fd*, and *fd* itself is pointed
+    at the null device, so subprocesses serve spawns without an explicit stdin
+    see an empty input instead of inheriting the never-written launcher pipe
+    (a child that reads stdin would otherwise block forever).
+    """
+    import threading
+
+    watched = os.dup(fd)
+    null = os.open(os.devnull, os.O_RDONLY)
+    try:
+        os.dup2(null, fd)
+    finally:
+        os.close(null)
+
+    def _read() -> None:
+        with contextlib.suppress(OSError):
+            while os.read(watched, 4096):
+                pass
+        with contextlib.suppress(OSError):
+            os.close(watched)
+        try:
+            on_eof()
+        except RuntimeError:
+            pass  # the event loop already closed: serve is exiting anyway
+
+    threading.Thread(target=_read, name="stdin-eof-watch", daemon=True).start()
 
 
 def _resolve_agent_project_path(explicit: Optional[Path]) -> Path:
@@ -294,6 +322,22 @@ async def _serve(args: argparse.Namespace) -> int:
     import uvicorn
 
     from omniagents.backends.server.app import build_app
+    from omniagents.core.utils.serving import ReadyServer, bind_socket
+
+    # The listening socket is bound first (port 0 → the kernel picks) and
+    # handed to uvicorn, so the port in the readiness payload is the one the
+    # server holds — and a taken port fails here, before anything needs
+    # tearing down. The payload is printed once uvicorn has started, so a
+    # client that dials on reading it finds the server accepting.
+    try:
+        sock = bind_socket(args.host, args.port or 0)
+    except OSError as e:
+        print(
+            json.dumps({"error": f"bind {args.host}:{args.port}: {e}"}),
+            file=sys.stderr,
+        )
+        return 1
+    port = sock.getsockname()[1]
     from omniagents.core.runtime.environment_provisioner import (
         ServeEnvironmentProvisioner,
     )
@@ -352,15 +396,11 @@ async def _serve(args: argparse.Namespace) -> int:
     app.state.recap_scheduler = recap_scheduler
     await recap_scheduler.start()
 
-    port = _pick_port(args.host, args.port)
     config = uvicorn.Config(
         app,
-        host=args.host,
-        port=port,
         log_level="info",
         access_log=False,
     )
-    server = uvicorn.Server(config)
 
     # --- Readiness payload ---
     payload = build_readiness_payload(
@@ -369,23 +409,27 @@ async def _serve(args: argparse.Namespace) -> int:
         auth_token=args.auth_token,
         agent_host_id=agent_host_id,
     )
-    if args.output == "json":
-        # ``default=str`` coerces any stray non-JSON value (e.g. a PosixPath —
-        # manifest.root can arrive as one via pydantic ``model_copy(update=)``,
-        # which skips the ``str`` field coercion) to its string form. The
-        # readiness payload is the launcher's handshake; it must never fail to
-        # serialize and crash serve. str(PosixPath("/workspace")) == "/workspace",
-        # so the launcher still receives the value it expects.
-        print(json.dumps(payload, default=str), flush=True)
-    else:
-        label = None
-        try:
-            from omniagents.core.product import product_info
 
-            label = product_info().label
-        except Exception:
-            pass
-        print(f"{label or 'Agent server'}: {payload['ui_url']}", flush=True)
+    def _announce_ready(_server: ReadyServer) -> None:
+        if args.output == "json":
+            # ``default=str`` coerces any stray non-JSON value (e.g. a PosixPath —
+            # manifest.root can arrive as one via pydantic ``model_copy(update=)``,
+            # which skips the ``str`` field coercion) to its string form. The
+            # readiness payload is the launcher's handshake; it must never fail to
+            # serialize and crash serve. str(PosixPath("/workspace")) == "/workspace",
+            # so the launcher still receives the value it expects.
+            print(json.dumps(payload, default=str), flush=True)
+        else:
+            label = None
+            try:
+                from omniagents.core.product import product_info
+
+                label = product_info().label
+            except Exception:
+                pass
+            print(f"{label or 'Agent server'}: {payload['ui_url']}", flush=True)
+
+    server = ReadyServer(config, on_started=_announce_ready)
 
     # --- Run server + fast signal shutdown ---
     # Any exit signal skips uvicorn's graceful drain (``force_exit``): the
@@ -420,8 +464,11 @@ async def _serve(args: argparse.Namespace) -> int:
 
     server.handle_exit = _handle_exit  # type: ignore[method-assign]
 
+    if args.exit_on_stdin_close:
+        _watch_stdin_eof(lambda: loop.call_soon_threadsafe(_request_stop))
+
     try:
-        await server.serve()
+        await server.serve(sockets=[sock])
     finally:
         # Quiesce before teardown: with the drain skipped (force_exit), an
         # in-flight run would otherwise keep mutating the workspace while
@@ -463,71 +510,3 @@ def serve_main(argv: Optional[List[str]] = None) -> int:
         return asyncio.run(_serve(args))
     except KeyboardInterrupt:
         return 0
-
-
-# ---------------------------------------------------------------------------
-# sandbox-host — turn this machine into a remote sandbox backend
-# ---------------------------------------------------------------------------
-
-
-def exec_port_payload(port: int, host: str) -> Dict[str, Any]:
-    """The first-stdout-line handshake of ``<prog> sandbox-host``.
-
-    The launcher reads the first stdout line as JSON and registers
-    ``exec_port`` with its cloud relay; ``host`` is informational.
-    """
-    return {"exec_port": port, "host": host}
-
-
-async def _run_sandbox_host(host: str, port: int, workspace: Optional[str]) -> None:
-    import websockets
-
-    from omniagents.core.sandbox.host_bridge import serve_host_connection
-
-    async def handler(ws: Any) -> None:
-        await serve_host_connection(ws, workspace_root=workspace)
-
-    async with websockets.serve(handler, host, port, max_size=None) as server:
-        bound = next(iter(server.sockets)).getsockname()
-        sys.stdout.write(json.dumps(exec_port_payload(bound[1], host)) + "\n")
-        sys.stdout.flush()
-        await asyncio.Future()  # run forever
-
-
-def sandbox_host_main(argv: Optional[List[str]] = None) -> int:
-    """The reserved ``<prog> sandbox-host`` entry point.
-
-    The host (laptop) half of "computer-as-sandbox": the agent runs
-    elsewhere (a cloud ``<prog> serve``); this process exposes the sandbox
-    surface — exec / file IO / PTYs / exposed ports — over a WebSocket so
-    a cloud ``HostBridgeSandboxSession`` can drive *this* machine's
-    filesystem. The wire protocol + per-connection session handling live
-    in :func:`omniagents.core.sandbox.host_bridge.serve_host_connection`
-    (co-located with the cloud client so the protocol is defined once);
-    this is just the CLI: bind a loopback WebSocket, hand each connection
-    to that handler, and print ``{"exec_port": N}`` on stdout so the
-    launcher can register the port with its cloud relay. One long-lived
-    server serves many sessions (one per connection).
-    """
-    from omniagents.core.product import product_info
-
-    parser = argparse.ArgumentParser(prog=f"{product_info().prog} sandbox-host")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=0,
-        help="Port to bind (0 = auto; the chosen port is printed as JSON).",
-    )
-    parser.add_argument(
-        "--workspace",
-        default=None,
-        help="Local workspace dir to root every session at (overrides the "
-        "cloud-sent manifest root, which reflects the cloud's paths).",
-    )
-    args = parser.parse_args(argv)
-    try:
-        asyncio.run(_run_sandbox_host(args.host, args.port, args.workspace))
-    except KeyboardInterrupt:
-        return 0
-    return 0

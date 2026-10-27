@@ -14,7 +14,7 @@ import asyncio
 import os
 from typing import Any, Dict
 
-import omniagents.core.eval.multi_turn as multi_turn
+from omniagents.core.eval import engine, targets
 from omniagents.core.eval.environment import EnvironmentContext, EvalEnvironment
 
 VAR = "OMNIAGENTS_TEST_EVAL_ENV_ORDERING"
@@ -52,16 +52,16 @@ def test_env_vars_applied_before_spec_load(monkeypatch):
         seen_at_spec_load["at_spec_load"] = os.environ.get(VAR)
         raise RuntimeError("stop after recording")
 
-    monkeypatch.setattr(multi_turn, "_build_registries_for_eval", fake_registries)
-    monkeypatch.setattr(multi_turn, "_load_user_mcp_for_eval", fake_user_mcp)
-    monkeypatch.setattr(multi_turn, "load_agent_spec_from_yaml", fake_load_spec)
+    monkeypatch.setattr(targets, "_build_registries_for_eval", fake_registries)
+    monkeypatch.setattr(targets, "_load_user_mcp_for_eval", fake_user_mcp)
+    monkeypatch.setattr(targets, "load_agent_spec_from_yaml", fake_load_spec)
 
     env = _StagingEnvironment()
     result = asyncio.run(
-        multi_turn.run_scenario(
-            "agent.yml",
+        engine.run_scenario(
+            targets.ProjectAgentTarget("agent.yml"),
             {"name": "ordering", "prompt": "hi"},
-            env,
+            environment=env,
         )
     )
 
@@ -70,8 +70,10 @@ def test_env_vars_applied_before_spec_load(monkeypatch):
         "at_user_mcp": "staged-value",
         "at_spec_load": "staged-value",
     }
-    # ...the scenario surfaced the (deliberate) failure...
+    # ...the scenario surfaced the (deliberate) failure, which fails the run...
     assert result["error"]["type"] == "run_failed"
+    assert result["passed"] is False
+    assert [m["name"] for m in result["measures"]] == ["_run_error"]
     # ...and the runner restored the environment and tore down.
     assert os.environ.get(VAR) is None
     assert env.teardown_called

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 __all__ = ["EvalEnvironment", "EnvironmentContext", "NoOpEnvironment"]
 
@@ -226,20 +226,6 @@ class EvalEnvironment(ABC):
             return (124, "", f"command timed out after {timeout}s")
         return (result.returncode, result.stdout or "", result.stderr or "")
 
-    def get_tool_context(self, context: EnvironmentContext) -> Dict[str, Any]:
-        """Get context values to inject into tool calls.
-
-        Override this if tools need values from the environment context
-        (e.g., resource IDs, session tokens, etc.)
-
-        Args:
-            context: The context returned by setup().
-
-        Returns:
-            Dict of values to merge into tool call arguments.
-        """
-        return dict(context.data)
-
     def get_env_vars(self, context: EnvironmentContext) -> Dict[str, str]:
         """Get environment variables to set during scenario execution.
 
@@ -255,26 +241,43 @@ class EvalEnvironment(ABC):
         """
         return {}
 
-    async def prepare_spec(
-        self, spec: Any, context: Optional[EnvironmentContext]
-    ) -> None:
-        """Mutate the agent spec after load, before the agent is constructed.
+    async def register_environment(
+        self, resources: Any, context: Optional[EnvironmentContext]
+    ) -> Any:
+        """Register where this scenario's agent runs, and return it.
 
-        Called once per scenario by the runner, after ``setup()`` and after
-        ``context.data`` has been merged into ``spec.context``, but before
-        ``create_unified_agent(spec)``. This is the only hook that runs while
-        the spec is still mutable, so it's where an environment wires runtime
-        objects that cannot live in YAML — e.g. attaching a live
-        ``SandboxSession`` to ``spec.sandbox_run_config`` and flipping
-        ``spec.sandbox_use_sandbox_agent`` so the builder constructs a
-        SandboxAgent whose tools exec inside the container.
+        Called once per scenario by the runner, after ``setup()`` and before
+        the agent is built. ``resources`` is the AgentHostResources the
+        agent's service is composed with; the returned
+        ``ExecutionEnvironmentDescriptor`` becomes its default environment,
+        so every run (and every worker it starts) is routed there exactly
+        as ``omni serve`` routes a run to its workspace.
 
-        Default is a no-op, so environments that don't need it (and the
-        ``NoOpEnvironment``) are unaffected.
+        Default: the host, at ``context["workspace_root"]`` when setup
+        staged one, else the current directory. A container environment
+        registers its live sandbox session instead
+        (:class:`~omniagents.core.eval.container_routing.ContainerRoutingMixin`).
 
         Args:
-            spec: The loaded ``AgentSpec``, still mutable.
+            resources: The scenario's ``AgentHostResources``.
             context: The context returned by ``setup()`` (may be ``None``).
+        """
+        import os
+
+        from omniagents.execution import register_host_environment
+
+        root = (context.get("workspace_root") if context else None) or os.getcwd()
+        return register_host_environment(resources, str(root), owner_user_id=None)
+
+    async def collect(self, context: Optional[EnvironmentContext]) -> None:
+        """Record what the run changed, after the run and before it is graded.
+
+        Called once per scenario by the runner, after the agent's last turn
+        and before judges and measures run, so measures can read the result
+        with ``ctx.get_env_data(...)``. For example, the workplace environment
+        puts what is on its GitHub under ``context["github"]``.
+
+        Default is a no-op.
         """
         return None
 

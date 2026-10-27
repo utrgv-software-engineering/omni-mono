@@ -34,7 +34,10 @@ export default defineConfig<E2eOptions>({
     screenshot: visualProof ? 'on' : 'only-on-failure',
     trace: visualProof ? 'on' : 'retain-on-failure',
     video: visualProof ? 'on' : 'retain-on-failure',
-    launchOptions: visualProof ? { slowMo: proofSlowMo } : undefined,
+    launchOptions: {
+      ...(visualProof ? { slowMo: proofSlowMo } : {}),
+      ...(process.env.E2E_CHROMIUM_EXECUTABLE ? { executablePath: process.env.E2E_CHROMIUM_EXECUTABLE } : {}),
+    },
   },
   projects: [
     {

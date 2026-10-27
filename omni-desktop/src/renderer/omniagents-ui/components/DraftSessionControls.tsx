@@ -1,8 +1,8 @@
-import { updateConversationDraft } from '@/renderer/omniagents-ui/conversation-drafts';
-import { useProductManagementSnapshot } from '@/renderer/omniagents-ui/product-management-context';
-import type { ModelCatalogRpcTransport } from '@/renderer/omniagents-ui/rpc/model-catalog';
+import { ModelSessionControls } from '@omniagents/chat-ui/components/ModelSessionControls';
+import type { ModelCatalogRpcTransport } from '@omniagents/client/rpc/model-catalog';
+import { updateConversationDraft } from '@omniagents/client/session/conversation-drafts';
 
-import { ModelSessionControls } from './ModelSessionControls';
+import { useProductManagementSnapshot } from '@/renderer/omniagents-ui/product-management-context';
 
 const noTransport: ModelCatalogRpcTransport = {
   request: async () => {

@@ -1,12 +1,4 @@
 import { useStore } from '@nanostores/react';
-import { BotIcon } from 'lucide-react';
-import { Fragment, memo, useEffect, useMemo, useState } from 'react';
-
-import { formatTimestamp } from '@/lib/format-time';
-import { Alert, AlertDescription, AlertTitle } from '@/renderer/ds/ui/alert';
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/renderer/ds/ui/empty';
-import { ScrollArea } from '@/renderer/ds/ui/scroll-area';
-import { OmniAgentsApp } from '@/renderer/omniagents-ui';
 import {
   ActivityBackButton,
   ActivityDetailLabel,
@@ -25,7 +17,10 @@ import {
   SubagentTail,
   useActivityDetail,
   useStopController,
-} from '@/renderer/omniagents-ui/activity-presentation';
+} from '@omniagents/chat-ui/activity-presentation';
+import { MessageList } from '@omniagents/chat-ui/components/MessageList';
+import { formatTimestamp } from '@omniagents/chat-ui/lib/format-time';
+import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
 import {
   $activityActionsBySession,
   $activityBySession,
@@ -33,13 +28,23 @@ import {
   type ActivityActions,
   subagentItemId,
   type SubagentSummary,
-} from '@/renderer/omniagents-ui/activity-store';
-import type { TaskSummary } from '@/renderer/omniagents-ui/canonical-plan-tasks';
-import { MessageList } from '@/renderer/omniagents-ui/components/MessageList';
+} from '@omniagents/client/transcript/activity-store';
+import type { TaskSummary } from '@omniagents/client/transcript/canonical-plan-tasks';
+import type { MessageItem } from '@omniagents/client/transcript/chat-types';
+import { uuidv4 } from '@omniagents/client/util/uuid';
+import { Alert, AlertDescription, AlertTitle } from '@omniagents/ui/alert';
+import { Button } from '@omniagents/ui/button';
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@omniagents/ui/empty';
+import { ScrollArea } from '@omniagents/ui/scroll-area';
+import { Spinner } from '@omniagents/ui/spinner';
+import { BotIcon } from 'lucide-react';
+import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from 'sonner';
+
+import { OmniAgentsApp } from '@/renderer/omniagents-ui';
 import { serverOrigin } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
-import type { MessageItem } from '@/shared/chat-types';
-import type { AgentRuntimeConnection, ExecutionTarget } from '@/shared/types';
+import type { AgentRuntimeConnection } from '@/shared/types';
 
 /** Stable empty reference — a fresh literal per render would defeat memo. */
 const EMPTY_ITEMS: MessageItem[] = [];
@@ -88,6 +93,28 @@ const SubagentDetail = memo(
     onBack: () => void;
   }) => {
     const stoppable = actions && subagent.kind === 'worker' && subagent.worker_id && subagent.status === 'running';
+    const [resuming, setResuming] = useState(false);
+    const operationId = useRef<string | null>(null);
+    const canRecover =
+      subagent.kind === 'worker' && ['interrupted', 'blocked'].includes(subagent.status) && actions?.resumeWorker;
+    const resume = async () => {
+      if (!actions?.resumeWorker || !subagent.worker_id) {
+        return;
+      }
+      operationId.current ??= uuidv4();
+      setResuming(true);
+      try {
+        const result = await actions.resumeWorker(subagent.worker_id, operationId.current);
+        if (!result.ok) {
+          throw new Error(result.error ?? result.message ?? 'Worker could not resume');
+        }
+        operationId.current = null;
+      } catch (error) {
+        toast.error('Worker could not resume', { description: String(error) });
+      } finally {
+        setResuming(false);
+      }
+    };
 
     // Transcript items folded from this run's relayed beats. Empty for
     // workers — they own a session, so the viewer below reads the real
@@ -135,6 +162,12 @@ const SubagentDetail = memo(
             <SubagentElapsed subagent={subagent} />
           </span>
           <span className="flex-auto" />
+          {canRecover ? (
+            <Button variant="outline" size="sm" onClick={() => void resume()} disabled={resuming}>
+              {resuming ? <Spinner data-icon="inline-start" /> : null}
+              {subagent.status === 'blocked' ? 'Retry recovery' : 'Resume worker'}
+            </Button>
+          ) : null}
           {stoppable ? (
             <ActivityStopButton
               id={subagent.worker_id!}
@@ -154,6 +187,16 @@ const SubagentDetail = memo(
               ['Started', subagent.started_at ? formatTimestamp(subagent.started_at * 1000) : null],
               ['Isolation', subagent.isolation],
               [
+                'Completion report',
+                subagent.report_status === 'queued'
+                  ? 'Pending delivery'
+                  : subagent.report_status === 'delivered'
+                    ? 'Delivered'
+                    : subagent.report_status === 'dismissed'
+                      ? 'Dismissed'
+                      : null,
+              ],
+              [
                 'ID',
                 <span key="id" className="font-mono">
                   {subagent.subagent_id}
@@ -163,7 +206,13 @@ const SubagentDetail = memo(
           />
           {subagent.error ? (
             <Alert variant="destructive">
-              <AlertTitle>Subagent failed</AlertTitle>
+              <AlertTitle>
+                {subagent.status === 'interrupted'
+                  ? 'Worker interrupted'
+                  : subagent.status === 'blocked'
+                    ? 'Recovery blocked'
+                    : 'Subagent failed'}
+              </AlertTitle>
               <AlertDescription>
                 <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-xs">{subagent.error}</pre>
               </AlertDescription>
@@ -206,6 +255,7 @@ const SubagentDetail = memo(
             ) : connection ? (
               <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border">
                 <OmniAgentsApp
+                  transcriptRevision={`${subagent.run_id}:${subagent.status}`}
                   connection={connection}
                   executionTarget={executionTarget}
                   sessionId={subagent.session_id}

@@ -3,7 +3,7 @@ import { Box, Text } from "ink";
 import { useKeypress } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
 import { useGoal } from "../store/appStore.js";
-import type { GoalSnapshot } from "../store/appStore.js";
+import type { GoalSnapshot } from "@omniagents/client/session/panel-types";
 import { Theme, roleMap } from "../theme.js";
 import { themedMemo } from "../theme/themed-memo.js";
 

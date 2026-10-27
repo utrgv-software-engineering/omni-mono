@@ -140,21 +140,6 @@ def test_reserved_provider_dispatch(tmp_path, monkeypatch):
     assert called["argv"] == ["list"]
 
 
-def test_reserved_auth_platform_dispatch(tmp_path, monkeypatch):
-    manifest = _write_manifest(tmp_path, ACME_PRODUCT)
-
-    called = {}
-
-    def fake_platform_auth(argv, **kw):
-        called["argv"] = list(argv)
-        return 3
-
-    monkeypatch.setattr(fw_cli, "run_platform_auth_command", fake_platform_auth)
-
-    assert product_main(manifest, ["auth", "status"]) == 3
-    assert called["argv"] == ["status"]
-
-
 def test_reserved_auth_codex_passthrough(tmp_path, monkeypatch):
     manifest = _write_manifest(tmp_path, ACME_PRODUCT)
 

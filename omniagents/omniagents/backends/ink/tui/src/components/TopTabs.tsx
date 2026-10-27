@@ -1,5 +1,6 @@
 import React from "react";
-import { Box, Text, useStdout } from "ink";
+import { Box, Text } from "ink";
+import { useTerminalSize } from "../hooks/useTerminalSize.js";
 import {
   useApproval,
   useElicitation,
@@ -30,8 +31,7 @@ export const TopTabs = themedMemo<{
     !!approval || !!mcpApproval || !!escalation || !!elicitation;
   const runningWorkers = workers.filter((w) => w.status === "running").length;
 
-  const { stdout } = useStdout();
-  const width = stdout?.columns ?? 80;
+  const { columns: width } = useTerminalSize();
 
   const star = (id: Screen) => (unread[id] && screen !== id ? "*" : "");
   const labels: Array<{ id: Screen; text: string }> = [
@@ -41,15 +41,13 @@ export const TopTabs = themedMemo<{
         ? ` 1 chat${star("chat")} ⚠ `
         : ` 1 chat${star("chat")} `,
     },
-    { id: "review", text: ` 2 review${star("review")} ` },
     {
       id: "agents",
       text:
         runningWorkers > 0
-          ? ` 3 agents${star("agents")} ${runningWorkers} `
-          : ` 3 agents${star("agents")} `,
+          ? ` 2 agents${star("agents")} ${runningWorkers} `
+          : ` 2 agents${star("agents")} `,
     },
-    { id: "files", text: ` 4 files${star("files")} ` },
   ];
   const hint = "tab ";
   const tabsWidth = labels.reduce((sum, l) => sum + l.text.length, 0);

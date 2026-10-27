@@ -1,5 +1,13 @@
 import type { WebSocketRoute } from '@playwright/test';
 import { expect, test } from 'tests/e2e/fixtures/test';
+import {
+  activeSessionId,
+  expectRunFinished,
+  newDeckChat,
+  openSession,
+  sessionPane,
+  visibleComposer,
+} from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -47,31 +55,24 @@ test('recovers silently stalled RPC sockets while preserving each visible tile d
     });
   });
   await page.reload();
-  let input = page.getByRole('textbox', { name: 'How can I help you today?' });
-  await expect(input).toBeVisible({ timeout: 90_000 });
-  await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
-  await input.fill('SILENT_CONNECTION_SETUP');
-  await input.press('Enter');
+  const composer = visibleComposer(page);
+  await expect(composer).toBeVisible({ timeout: 90_000 });
+  const firstId = await activeSessionId(page);
+  await composer.fill('SILENT_CONNECTION_SETUP');
+  await composer.press('Enter');
   await expect(page.getByText('HOST_FIRST_MESSAGE_READY', { exact: true })).toBeVisible({ timeout: 90_000 });
-  await page.getByRole('button', { name: 'New chat', exact: true }).click();
-  await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
-  const first = page.locator('[data-deck-column]').nth(0);
-  const second = page.locator('[data-deck-column]').nth(1);
-  input = first.getByRole('textbox', { name: 'How can I help you today?' });
-  const otherInput = second.getByRole('textbox', { name: 'How can I help you today?' });
-  const picker = second.getByRole('button', { name: 'Workstation', exact: true });
-  if (await picker.isVisible()) {
-    await picker.click();
-    await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
-  }
-  await otherInput.fill('SILENT_SECOND_TILE');
-  await otherInput.press('Enter');
+  await newDeckChat(page);
+  await expect.poll(() => activeSessionId(page)).not.toBe(firstId);
+  const first = sessionPane(page, firstId);
+  const second = sessionPane(page, await activeSessionId(page));
+  await composer.fill('SILENT_SECOND_SESSION');
+  await composer.press('Enter');
   await expect(second.getByText('HOST_FIRST_MESSAGE_READY', { exact: true })).toBeVisible({ timeout: 90_000 });
-  await expect(otherInput).toBeEditable();
-  await otherInput.fill('independent second tile draft');
-  await expect(input).toBeEditable();
-  await input.fill('draft kept through silent connection failure');
+  await expect(composer).toBeEditable();
+  await composer.fill('independent second session draft');
+  await openSession(page, 'SILENT_CONNECTION_SETUP');
+  await expect(composer).toBeEditable();
+  await composer.fill('draft kept through silent connection failure');
   expect(rpcSockets.size).toBeGreaterThan(0);
   for (const socket of rpcSockets) {
     stalled.add(socket);
@@ -85,18 +86,21 @@ test('recovers silently stalled RPC sockets while preserving each visible tile d
   // Management and chat can use separate connections to the same endpoint.
   // A replacement URL alone is not proof that every original socket retired.
   await expect.poll(() => [...stalled].every((socket) => !rpcSockets.has(socket)), { timeout: 90_000 }).toBe(true);
-  await expect(input).toBeEditable({ timeout: 90_000 });
-  await expect(input).toHaveValue('draft kept through silent connection failure');
-  await expect(otherInput).toBeEditable({ timeout: 90_000 });
-  await expect(otherInput).toHaveValue('independent second tile draft');
+  await expect(composer).toBeEditable({ timeout: 90_000 });
+  await expect(composer).toHaveValue('draft kept through silent connection failure');
+  await openSession(page, 'SILENT_SECOND_SESSION');
+  await expect(composer).toBeEditable({ timeout: 90_000 });
+  await expect(composer).toHaveValue('independent second session draft');
+  await openSession(page, 'SILENT_CONNECTION_SETUP');
   // Reconnects for different endpoints finish independently. Unlike press(),
   // clicking Send waits for the button to be actionable through hydration.
   await first.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(
     first.getByRole('log').getByText('draft kept through silent connection failure', { exact: true })
   ).toHaveCount(1, { timeout: 90_000 });
-  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
+  await expectRunFinished(page);
+  await openSession(page, 'SILENT_SECOND_SESSION');
   await expect(second.getByRole('log')).not.toContainText('draft kept through silent connection failure');
-  await expect(otherInput).toHaveValue('independent second tile draft');
+  await expect(composer).toHaveValue('independent second session draft');
   await attachProofPng(info, 'silent socket recovered with draft intact', await app.captureScreenshot());
 });

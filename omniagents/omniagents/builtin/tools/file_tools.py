@@ -443,21 +443,8 @@ async def list_directory(
 
 # Constants for read_file
 _READ_FILE_DEFAULT_LIMIT = 2000
-_READ_FILE_MAX_LINE_LENGTH = 500
 _READ_FILE_TAB_WIDTH = 4
 _READ_FILE_COMMENT_PREFIXES = ("#", "//", "--", "/*", "<!--")
-
-
-def _truncate_line(line: str, max_length: int = _READ_FILE_MAX_LINE_LENGTH) -> str:
-    """Truncate a line to max_length, preserving UTF-8 char boundaries."""
-    if len(line) <= max_length:
-        return line
-    # Find a safe truncation point at a character boundary
-    truncated = line[:max_length]
-    # Ensure we don't cut in the middle of a multi-byte character
-    return truncated.encode("utf-8", errors="ignore")[:max_length].decode(
-        "utf-8", errors="ignore"
-    )
 
 
 def _measure_indent(line: str, tab_width: int = _READ_FILE_TAB_WIDTH) -> int:
@@ -625,7 +612,7 @@ async def read_file(
 
     Notes:
         - Lines are prefixed with "L{n}: " for easy reference
-        - Lines longer than 500 characters are truncated
+        - Long lines are preserved; oversized total output is saved with a bounded preview
         - In indentation mode, the tool expands from anchor_line to capture the
           logical code block based on indentation levels
     """
@@ -734,7 +721,7 @@ async def read_file(
                     f"[{remaining_lines} more lines not shown. Use start_line={end_idx + 1} to continue.]"
                 )
 
-        # Format lines with line numbers and truncate long lines
+        # Format selected lines without per-line clipping
         formatted_lines = []
         lines_truncated_count = 0
 
@@ -742,11 +729,7 @@ async def read_file(
             # Remove trailing newline for processing
             line_content = line.rstrip("\n\r")
 
-            # Truncate long lines
-            if len(line_content) > _READ_FILE_MAX_LINE_LENGTH:
-                original_len = len(line_content)
-                line_content = _truncate_line(line_content, _READ_FILE_MAX_LINE_LENGTH)
-                lines_truncated_count += 1
+            # Keep long lines intact; the shared boundary budgets total output.
 
             formatted_lines.append(f"L{line_num}: {line_content}")
 
@@ -754,12 +737,8 @@ async def read_file(
         llm_lines = []
 
         # Add header with truncation info if needed
-        if was_truncated or lines_truncated_count > 0:
+        if was_truncated:
             llm_lines.append(f"Total file lines: {total_file_lines}")
-            if lines_truncated_count > 0:
-                llm_lines.append(
-                    f"[{lines_truncated_count} lines exceeded {_READ_FILE_MAX_LINE_LENGTH} chars and were truncated]"
-                )
             llm_lines.append("")
 
         llm_lines.extend(formatted_lines)

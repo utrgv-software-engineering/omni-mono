@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .app_base import AgentApp  # Import only for type hinting
     from agents.mcp import MCPServerSse  # Add the import here
-    from agents.guardrail import InputGuardrail, OutputGuardrail
 
 
 # --- Add SettingField definition here ---
@@ -195,6 +194,7 @@ class AgentSpec:
             [Dict[str, Any], Optional[MCPServerSse], "AgentApp"], Awaitable[AgentLike]
         ]
     ]
+    memory_config: Optional[Dict[str, Any]] = None
     available_tools: List[Callable] = field(default_factory=list)
     model_name: Optional[str] = None  # Model name used by default builder
     # Maximum turns per run. ``None`` disables the limit (SDK 0.16+).
@@ -221,6 +221,7 @@ class AgentSpec:
     )
 
     voice_backend: str = "realtime"
+    voice_instructions: Optional[str] = None
 
     mcp_config: Optional[Dict[str, Any]] = None  # MCP configuration
     mcp_servers: List[MCPServerConfig] = field(default_factory=list)
@@ -448,6 +449,14 @@ class AgentSpec:
 
     voice_spec: Optional["AgentSpec"] = field(default=None, repr=False)
 
+    # --- Skills that belong to the agent definition ---
+    skill_roots: List[str] = field(default_factory=list)
+    """Skill folders this agent sees in addition to the workspace's: its own
+    ``skills/`` folder, the ``skills/`` of any definition it extends, and
+    the project's ``paths.skills`` folders. Populated by the YAML loader;
+    the builder applies them while this agent's instructions render and
+    while its ``load_skill`` runs (:func:`omniagents.core.skills.agent_skill_roots`)."""
+
     # --- Instruction template includes ---
     instructions_search_paths: Optional[List[Any]] = None
     """Directories searched, in order, for ``{% include %}`` fragments when the
@@ -461,3 +470,8 @@ class AgentSpec:
     ``None`` (e.g. for agents built in Python) leaves includes unsupported,
     matching pre-include behavior.
     """
+
+    instruction_globals: Optional[Dict[str, Any]] = None
+    """Names every render of the agent's instructions has in scope, under the
+    run's own context: a project's agents get ``project``
+    (:mod:`omniagents.core.project.values`)."""

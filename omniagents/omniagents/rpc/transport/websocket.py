@@ -38,7 +38,7 @@ class ClientWebSocketTransport(BaseTransport):
         if token:
             self._headers.setdefault("Authorization", f"Bearer {token}")
         self._policy = policy
-        self._ws: Optional["websockets.WebSocketClientProtocol"] = None
+        self._ws: Optional["websockets.ClientConnection"] = None
 
     async def connect(self) -> None:
         """Establish WebSocket connection."""
@@ -54,15 +54,9 @@ class ClientWebSocketTransport(BaseTransport):
                 "ping_interval": self._policy.ping_interval,
                 "ping_timeout": self._policy.ping_timeout,
             }
-            try:
-                self._ws = await websockets.connect(
-                    self.url, additional_headers=headers, **lifecycle_kwargs
-                )
-            except TypeError:
-                # Older websockets releases use ``extra_headers``.
-                self._ws = await websockets.connect(
-                    self.url, extra_headers=headers, **lifecycle_kwargs
-                )
+            self._ws = await websockets.connect(
+                self.url, additional_headers=headers, **lifecycle_kwargs
+            )
             self._connected = True
         except Exception as e:
             raise TransportError(f"Failed to connect to {self.url}: {e}")

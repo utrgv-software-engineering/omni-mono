@@ -77,14 +77,11 @@ new modules to it.
 ### Coverage
 
 ```bash
-# All coverage (Python, Web)
-make coverage-all
+# Python and Ink TUI
+./scripts/run_coverage.sh
 
 # Python only
 make coverage-python
-
-# Web only
-make coverage-web
 ```
 
 ## Project Structure
@@ -94,8 +91,7 @@ omniagents/
 ├── omniagents/
 │   ├── core/          # Core functionality
 │   ├── backends/      # Interface implementations
-│   ├── rpc/           # JSON-RPC protocol
-│   └── studio/        # Web UIs
+│   └── rpc/           # JSON-RPC protocol
 ├── tests/             # Test suite
 ├── examples/          # Example projects
 └── docs/              # Documentation
@@ -215,14 +211,15 @@ Visit `http://127.0.0.1:8000` to view local documentation.
 
 ### JavaScript/React (Web UI)
 
-Located in `omniagents/studio/server/web/` and `omniagents/backends/ink/`
+Located in `omniagents/backends/web/ui/` and `omniagents/backends/ink/tui/`
 
 Build:
 ```bash
-cd omniagents/studio/server/web
-npm install
-npm run build
+make web-assets ink-assets
 ```
+
+OmniAgents Studio's React UI lives in the separate `omniagents-studio/`
+package at the monorepo root.
 
 ## Version Management
 

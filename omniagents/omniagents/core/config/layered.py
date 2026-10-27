@@ -269,8 +269,8 @@ CONFIG_FIELDS: Tuple[ConfigField, ...] = (
         description=(
             "When a session's execution environment is a genuine containment "
             "boundary (it carries the 'contained' capability — docker, the "
-            "process sandbox, cloud micro-VMs; never the host, unix_local, "
-            "or host_bridge), auto-approve tool calls without prompting: "
+            "process sandbox, cloud micro-VMs; never the host or unix_local), "
+            "auto-approve tool calls without prompting: "
             "'no_network' only when the environment also lacks the network "
             "capability; 'always' for every contained environment; 'never' "
             "disables the tier. Uncontained environments always prompt or "
@@ -288,6 +288,32 @@ CONFIG_FIELDS: Tuple[ConfigField, ...] = (
             "Model reference powering the guardian reviewer. Empty resolves "
             "through the utility-agent preference order (session model, then "
             "the agent's configured model)."
+        ),
+        default="",
+        reload=RELOAD_HOT,
+    ),
+    ConfigField(
+        key="approvals.guardian_policy",
+        type="string",
+        label="Guardian organization policy",
+        description=(
+            "The organization's security policy the guardian applies: which "
+            "code hosts, storage and services are trusted, and the allow/deny "
+            "rules for data exfiltration, credential probing, security "
+            "weakening and destructive actions. Replaces the default policy "
+            "(Codex's, core/agents/guardian_prompts/policy.md). Empty uses "
+            "the default."
+        ),
+        default="",
+        reload=RELOAD_HOT,
+    ),
+    ConfigField(
+        key="approvals.guardian_extra_policy",
+        type="string",
+        label="Guardian additional policy",
+        description=(
+            "Rules the guardian applies in addition to the organization "
+            "policy, rendered after it."
         ),
         default="",
         reload=RELOAD_HOT,
@@ -431,6 +457,15 @@ class _LayerEntry:
     value: Any
 
 
+def _inherited_model_control(key: str) -> bool:
+    if key not in {"approvals.guardian_model", "workflow.guardian_model"}:
+        return False
+    from omniagents.core.models import model_store
+
+    store = model_store()
+    return store is not None and store.single_provider
+
+
 class LayeredConfigStore:
     """Reads, validates, and writes the layered project configuration.
 
@@ -455,10 +490,10 @@ class LayeredConfigStore:
         without a manifest the installed product identity applies.
         """
         if self.manifest_path is not None and self.manifest_path.is_file():
-            from omniagents.core.project.runtime import _manifest_product
+            from omniagents.core.project.runtime import manifest_product
 
             proj = _read_yaml_doc(self.manifest_path)
-            return _manifest_product(proj, self.manifest_path.parent).config_dir_name
+            return manifest_product(proj, self.manifest_path.parent).config_dir_name
         from omniagents.core.product import product_info
 
         return product_info().config_dir_name
@@ -601,6 +636,7 @@ class LayeredConfigStore:
         fields = [
             self._field_payload(field, self._layer_entries(field))
             for field in CONFIG_FIELDS
+            if not _inherited_model_control(field.key)
         ]
         return {"layers": layers, "fields": fields}
 
@@ -619,6 +655,15 @@ class LayeredConfigStore:
         errors: List[Dict[str, Any]] = []
         normalized: Dict[str, Any] = {}
         for key, value in updates.items():
+            if _inherited_model_control(key):
+                errors.append(
+                    {
+                        "key": key,
+                        "code": "read_only",
+                        "message": "Reviewers inherit the conversation model in this product.",
+                    }
+                )
+                continue
             field = CONFIG_FIELDS_BY_KEY.get(key)
             if field is None:
                 errors.append(

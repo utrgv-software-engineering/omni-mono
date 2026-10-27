@@ -6,11 +6,11 @@
  * Audio path mirrors the realtime voice capture (AudioWorklet → 24 kHz → Int16) but
  * is self-contained and routes to the local sidecar instead of the realtime WS.
  */
+import { voiceLevel } from '@omniagents/chat-ui/services/voice-recording';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { persistedStoreApi } from '@/renderer/services/store';
 import { getVoiceClient } from '@/renderer/services/voice-client';
-import { voiceLevel } from '@/renderer/services/voice-recording';
 
 const TARGET_RATE = 24000;
 

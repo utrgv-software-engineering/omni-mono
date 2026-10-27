@@ -6,6 +6,7 @@ from .registry import (
     evaluation_measure,
     get_measure,
     run_measures,
+    run_measures_async,
 )
 from .context import (
     EvalContext,
@@ -40,6 +41,7 @@ from .assertions import (
 __all__ = [
     "evaluation_measure",
     "run_measures",
+    "run_measures_async",
     "get_measure",
     "EvaluationRegistryError",
     "DuplicateMeasureError",

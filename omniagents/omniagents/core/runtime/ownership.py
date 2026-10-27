@@ -15,12 +15,15 @@ command may have partially run. That is the whole recovery story.
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextvars import ContextVar
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 import time
 from typing import Any
 import uuid
+
+logger = logging.getLogger(__name__)
 
 current_ownership = ContextVar("runtime_ownership", default=None)
 
@@ -70,6 +73,16 @@ class RunOwnership:
     #: It no longer blocks release; the transcript carries the uncertainty.
     execution_uncertain: bool = False
     _heartbeat_task: asyncio.Task | None = field(default=None, repr=False)
+    #: What else the run held, let go of once its reservation is released
+    #: (its MCP servers: AgentService._mcp_hold). Run once, in order.
+    _on_release: list = field(default_factory=list, repr=False)
+
+    def add_release_callback(self, callback) -> None:
+        """Run ``callback()`` once this reservation is released (at once if it is)."""
+        if self.released:
+            callback()
+        else:
+            self._on_release.append(callback)
 
     def _matches(self, record):
         return _identity(record) == {
@@ -164,9 +177,19 @@ class RunOwnership:
             state["runtime_owner"] = None
             return None, None
 
-        self.store.mutate_queue(self.thread_id, finish)
-        self._stop_heartbeat()
-        self.released = True
+        try:
+            self.store.mutate_queue(self.thread_id, finish)
+            self._stop_heartbeat()
+            self.released = True
+        finally:
+            # (what the run held is let go of even when the store can't be
+            # told: a held MCP server set would otherwise stay open)
+            callbacks, self._on_release = self._on_release, []
+            for callback in callbacks:
+                try:
+                    callback()
+                except Exception:
+                    logger.debug("Run release callback failed", exc_info=True)
 
     def record_recovery_scope(self, scope, *, journal=None):
         """Kept for call sites that fence I/O on a current reservation."""

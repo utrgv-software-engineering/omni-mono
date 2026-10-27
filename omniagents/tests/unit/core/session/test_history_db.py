@@ -1,4 +1,5 @@
 import concurrent.futures
+import pytest
 import importlib
 import json
 import sqlite3
@@ -142,6 +143,7 @@ def test_history_db_get_user_messages_skips_invalid_payloads():
     assert messages[0]["session_id"] == session_id
 
 
+@pytest.mark.timeout(300)  # thousands of durable commits; slow on Windows
 def test_history_db_get_user_messages_paginates_and_limits_results():
     project = "project"
     agent = "agent"

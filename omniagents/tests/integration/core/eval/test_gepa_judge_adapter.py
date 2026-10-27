@@ -1,5 +1,4 @@
 import asyncio
-import json
 import textwrap
 import types
 
@@ -39,11 +38,7 @@ def _create_adapter(tmp_path, *, category=None):
     """
     compiled_path = cfg_dir / "compiled.yaml"
     compiled_path.write_text(textwrap.dedent(config_text), encoding="utf-8")
-    runs_path = cfg_dir / "runs.json"
-    runs_path.write_text(json.dumps({"runs": []}), encoding="utf-8")
-    return OmniAgentsJudgeAdapter(
-        compiled_path, "accuracy", runs_path, category=category
-    )
+    return OmniAgentsJudgeAdapter(compiled_path, "accuracy", {}, category=category)
 
 
 def test_build_judge_agent_creates_typed_dict_output(monkeypatch, tmp_path):
@@ -99,7 +94,6 @@ def test_evaluate_full_workflow_scores(monkeypatch, tmp_path):
             },
         ]
     }
-    adapter.runs_file.write_text(json.dumps(runs_content), encoding="utf-8")
     adapter._runs_by_id = {r["scenario_id"]: r for r in runs_content["runs"]}
     captured = {}
 

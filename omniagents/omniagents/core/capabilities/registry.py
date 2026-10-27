@@ -61,10 +61,6 @@ def _load_entry_points_once() -> None:
         return
     try:
         eps = entry_points(group="omniagents.capabilities")
-    except TypeError:
-        # Older importlib.metadata — entry_points() returns a dict
-        legacy_eps = entry_points()
-        eps = legacy_eps.get("omniagents.capabilities", [])  # type: ignore[attr-defined, arg-type]
     except Exception:
         return
     for ep in eps:
@@ -97,6 +93,9 @@ def _load_sdk_builtins_once() -> None:
     if _SDK_BUILTINS_LOADED:
         return
     _SDK_BUILTINS_LOADED = True
+    from omniagents.core.memory.capability import WorkplaceMemory
+
+    register_capability("workplace_memory", WorkplaceMemory)
     try:
         from agents.sandbox.capabilities import (
             Compaction,

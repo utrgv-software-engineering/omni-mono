@@ -1,11 +1,10 @@
+import type { GitStatusEntry, GitStatusResult } from '@omniagents/client/rpc/git';
+import { Button } from '@omniagents/ui/button';
+import { Checkbox } from '@omniagents/ui/checkbox';
+import { cn } from '@omniagents/ui/cn';
+import { ScrollArea } from '@omniagents/ui/scroll-area';
+import { Textarea } from '@omniagents/ui/textarea';
 import { memo, useMemo, useState } from 'react';
-
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
-import { Checkbox } from '@/renderer/ds/ui/checkbox';
-import { ScrollArea } from '@/renderer/ds/ui/scroll-area';
-import { Textarea } from '@/renderer/ds/ui/textarea';
-import type { GitStatusEntry, GitStatusResult } from '@/renderer/omniagents-ui/rpc/git';
 
 import { statusBadge } from './diff-model';
 import type { GitMutations } from './use-git-mutations';
@@ -55,7 +54,7 @@ function FileRow({
           {badge.text}
         </span>
         <span className="min-w-0 truncate text-xs text-foreground">{name}</span>
-        {dir ? <span className="min-w-0 truncate text-[10px] text-muted-foreground">{dir}</span> : null}
+        {dir ? <span className="min-w-0 truncate text-3xs text-muted-foreground">{dir}</span> : null}
       </button>
     </li>
   );
@@ -80,14 +79,14 @@ function Group({
   return (
     <section aria-label={label}>
       <div className="flex items-center gap-1 px-1.5 pt-2">
-        <span className="text-[11px] font-medium tracking-wide text-muted-foreground">
+        <span className="text-2xs font-medium tracking-wide text-muted-foreground">
           {label} · {entries.length}
         </span>
         {action ? (
           <Button
             variant="ghost"
             size="xs"
-            className="ml-auto h-5 px-1.5 text-[11px] text-muted-foreground"
+            className="ml-auto h-5 px-1.5 text-2xs text-muted-foreground"
             disabled={action.disabled}
             onClick={action.onClick}
           >
@@ -173,7 +172,7 @@ export const GitSidebar = memo(
               }}
             />
             <div className="flex items-center gap-2">
-              <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <label className="flex items-center gap-1.5 text-2xs text-muted-foreground">
                 <Checkbox checked={amend} onCheckedChange={(checked) => setAmend(checked === true)} />
                 Amend
               </label>
@@ -181,9 +180,7 @@ export const GitSidebar = memo(
                 {amend ? 'Amend commit' : 'Commit'}
               </Button>
             </div>
-            {!hasStaged && !amend ? (
-              <p className="text-[11px] text-muted-foreground">Stage changes to commit.</p>
-            ) : null}
+            {!hasStaged && !amend ? <p className="text-2xs text-muted-foreground">Stage changes to commit.</p> : null}
           </div>
         ) : null}
         <ScrollArea className="min-h-0 flex-1">

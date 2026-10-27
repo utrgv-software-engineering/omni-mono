@@ -12,57 +12,6 @@ evaluation:
     type: booking_demo
     api_base_url: http://localhost:3000
 
-  scenarios:
-    # Scripted single-turn scenario (default type)
-    - name: simple_booking_lookup
-      prompt: "What's the status of booking ABC123?"
-      fixture: fixtures/existing_booking.json
-      measures:
-        - booking_found
-        - correct_booking_id
-
-    # Scripted multi-turn scenario (multiple prompts in sequence)
-    - name: scripted_booking_flow
-      prompts:
-        - "I need to book a meeting room"
-        - "Tomorrow at 2pm please"
-        - "Yes, confirm the booking"
-      fixture: fixtures/available_slots.json
-      measures:
-        - booking_created
-        - correct_time_slot
-
-    # Synthetic scenario with simulated user
-    - name: synthetic_booking_flow
-      type: synthetic
-      goal: "Book a meeting room for tomorrow at 2pm for 2 hours"
-      fixture: fixtures/available_slots.json
-      persona:
-        name: "Jane Smith"
-        email: "jane@example.com"
-        department: "Engineering"
-      model: gpt-4o-mini
-      max_exchanges: 8
-      measures:
-        - booking_created
-        - correct_time_slot
-        - user_info_collected
-
-    # Synthetic scenario with a difficult user
-    - name: vague_user_booking
-      type: synthetic
-      goal: "Book something for a team meeting"
-      fixture: fixtures/available_slots.json
-      persona:
-        name: "Bob Johnson"
-        team_size: 5
-        behavior: "Gives vague answers, says 'sometime next week' instead of dates, needs clarification"
-      max_exchanges: 12
-      measures:
-        - clarification_requested
-        - booking_created
-
-  # Metrics computed from measure results
   metrics:
     - name: booking_success_rate
       label: "Booking Success Rate"

@@ -7,7 +7,7 @@ import {
 import type {
   ListModelsResult,
   ModelDescriptor,
-} from "../../protocol/catalog.js";
+} from "@omniagents/client/rpc/model-catalog";
 
 function model(overrides: Partial<ModelDescriptor>): ModelDescriptor {
   return {
@@ -54,7 +54,13 @@ describe("buildModelRows", () => {
           model({ id: "c", label: "C" }),
         ],
         default_model: "a",
-        session: { session_id: "s", active_model: "c", reasoning_effort: null },
+        session: {
+          session_id: "s",
+          active_model: "c",
+          reasoning_effort: null,
+          approvals_reviewer: null,
+          workflow_reviewer: null,
+        },
       }),
       "a",
     );
@@ -125,7 +131,13 @@ describe("initialIndex", () => {
     const rows = buildModelRows(
       listResult({
         models: [model({ id: "a" }), model({ id: "b" })],
-        session: { session_id: "s", active_model: "b", reasoning_effort: null },
+        session: {
+          session_id: "s",
+          active_model: "b",
+          reasoning_effort: null,
+          approvals_reviewer: null,
+          workflow_reviewer: null,
+        },
       }),
       null,
     );

@@ -62,10 +62,13 @@ def test_wheel_ships_importable_product_cli(tmp_path):
             sys.executable,
             "-c",
             (
+                "import pathlib; "
                 "import omniagents.product_cli as cli; "
                 "import omniagents.product_serve as serve; "
-                "assert '.whl/' in cli.__file__, cli.__file__; "
-                "assert '.whl/' in serve.__file__, serve.__file__"
+                "from_wheel = lambda f: any("
+                "part.endswith('.whl') for part in pathlib.Path(f).parts); "
+                "assert from_wheel(cli.__file__), cli.__file__; "
+                "assert from_wheel(serve.__file__), serve.__file__"
             ),
         ],
         cwd=tmp_path,

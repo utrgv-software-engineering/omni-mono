@@ -5,109 +5,36 @@ import path from 'node:path';
 
 import { ipcMain } from 'electron';
 
-import { mirrorContainerChangesToHost } from '@/lib/container-sync';
-import { isResidentProcessId } from '@/lib/resident-agent';
 import { AgentHostManager } from '@/main/agent-host-manager';
 import {
   type AgentHostConsumerRuntime,
   AgentProcess,
-  type AgentProcessMode,
   type AgentProcessSource,
   type AgentProcessStartArg,
   type FetchFn,
 } from '@/main/agent-process';
-import { ChatRuntimeJournal } from '@/main/chat-runtime-journal';
-import { hasDurableHostCodexMutation, isDurableCodexAccountRequest } from '@/main/local-codex-account-owner';
-import {
-  hasDurableHostMcpMutation,
-  isMcpManagementMethod,
-  isProtectedManagedMcpRequest,
-} from '@/main/local-mcp-config-owner';
-import type { IComputeClient } from '@/main/platform-client';
-import { getDefaultWorkspaceDir } from '@/main/util';
+import { isCodexAccountRequest } from '@/main/local-codex-account';
+import { projectCheckoutPath } from '@/main/util';
 import { gitTokenEnvName, resolveCredentialForUrl } from '@/shared/git-credentials';
 import type { IIpcListener } from '@/shared/ipc-listener';
 import { assertManagementAdminRequest, type ManagementAdminResult } from '@/shared/management-admin';
 import type {
   AgentProcessStartOptions,
   AgentProcessStatus,
-  AgentProcessStopOptions,
   AgentProcessStopResult,
+  AgentRuntimeConnection,
   GitCredential,
   IpcRendererEvents,
-  ManagementRuntimeConnection,
   Project,
-  SandboxPauseResult,
-  SandboxSwitchResult,
   WithTimestamp,
 } from '@/shared/types';
 
 export type ProcessManagerStoreData = {
-  defaultProfileName: string;
   projects: Project[];
   /** Stored git credential metadata (host-scoped). Tokens are read lazily via
    *  `resolveGitToken`; this list only drives host matching. */
   gitCredentials?: GitCredential[];
 };
-
-/**
- * True for host directories the launcher itself manages: a per-conversation
- * scratch dir (`<workspace root>/Sessions/<sessionId>` — the root is
- * user-configurable, so the convention is the `Sessions` parent) or anything
- * under the default workspace tree (`~/Omni/Workspace`, which holds the
- * Personal root and managed `Projects/<slug>/` dirs). Container changes
- * auto-mirror into these without confirmation — the launcher created them, so
- * there is no foreign user data to clobber. This is only consulted for
- * synthesized sources; user-attached project sources never auto-mirror
- * regardless of where they live.
- */
-export const isLauncherOwnedDir = (dir: string): boolean => {
-  const resolved = path.resolve(dir);
-  if (path.basename(path.dirname(resolved)) === 'Sessions') {
-    return true;
-  }
-  const defaultRoot = path.resolve(getDefaultWorkspaceDir());
-  return resolved === defaultRoot || resolved.startsWith(defaultRoot + path.sep);
-};
-
-/** How often the auto-mirror sweep checks running launcher-owned sandboxes. */
-const AUTO_MIRROR_INTERVAL_MS = 15_000;
-
-/**
- * Detect the `local:<machineId>` profile-name shape and pull out the
- * machine id. `null` for non-local profiles.
- */
-export const parseLocalProfile = (profileName: string): string | null => {
-  if (!profileName.startsWith('local:')) {
-    return null;
-  }
-  const id = profileName.slice('local:'.length).trim();
-  return id.length > 0 ? id : null;
-};
-
-/**
- * Computer-as-sandbox: prepares a per-session `host_bridge` sandbox profile
- * pointing the cloud `omni serve`'s sandbox at a user's laptop. Implemented by
- * `HostBridgePreparer` (cloud); injected so `ProcessManager` stays free of
- * server imports. `prepare` asks the laptop to stand up `omni sandbox-host`
- * and returns the profile path; `release` tears it down.
- */
-export interface IHostBridgePreparer {
-  prepare(machineId: string, sandboxKey: string, opts: { workspaceDir?: string }): Promise<{ profilePath: string }>;
-  release(machineId: string, sandboxKey: string): Promise<void>;
-  /** Live online state + friendly label for a machine, for the host-offline
-   *  overlay. Backed by the cloud's `MachineRegistry`. */
-  machineState(machineId: string): { online: boolean; label?: string };
-}
-
-/**
- * Result envelope from `compute:adopt-session` (Phase 6). The cloud calls it
- * after a laptop reconnects; an `adopted: true` flips the cloud's view of
- * the session from `disconnected` → `running` without a fresh spawn.
- */
-export type AgentAdoptResult =
-  | { adopted: true; wsUrl: string; uiUrl: string; containerId?: string }
-  | { adopted: false };
 
 /**
  * Unified process manager for all agent processes (chat + code tabs).
@@ -116,10 +43,8 @@ export type AgentAdoptResult =
  *   - `"chat"` for the singleton chat process
  *   - A CodeTabId for code-tab processes
  *
- * Profile resolution: per-project override > user-default. The `"platform"`
- * profile routes to `compute` mode (an `IComputeClient` drives lifecycle);
- * everything else shares a compatible targetless ``omni serve`` AgentHost and
- * materializes its profile per consumer.
+ * Every consumer shares a compatible targetless ``omni serve`` AgentHost and
+ * materializes its own environment on omni-code's default profile.
  */
 export class ProcessManager {
   /** Consumer id -> compatible long-lived AgentHost connection. */
@@ -139,276 +64,52 @@ export class ProcessManager {
     { proc: AgentProcess; runtime?: AgentHostConsumerRuntime; lastConsumer: boolean }
   >();
   private retiredConsumers = new Set<string>();
-  private runtimeJournal?: ChatRuntimeJournal;
-  private claimChatRuntime?: (id: string) => void | Promise<void>;
-  private runtimeRecovery: Promise<void> = Promise.resolve();
-  recoverAbandonedRuntimes = (): Promise<void> => {
-    this.runtimeRecovery = this.runtimeRecovery
-      .catch(() => undefined)
-      .then(() => this.runtimeJournal?.recoverAbandoned());
-    return this.runtimeRecovery;
-  };
-  private pendingManagementConnection: Promise<ManagementRuntimeConnection> | null = null;
+  private pendingManagementConnection: Promise<AgentRuntimeConnection> | null = null;
+  /** The MCP reload in flight; each committed mutation queues behind it. */
+  private mcpReload: Promise<void> = Promise.resolve();
   /** Monotonic consumer intent; async results may publish only if their epoch still wins. */
   private consumerEpochs = new Map<string, number>();
   private sendToWindow: <T extends keyof IpcRendererEvents>(channel: T, ...args: IpcRendererEvents[T]) => void;
   private fetchFn: FetchFn;
   private getStoreData: () => ProcessManagerStoreData;
-  /**
-   * Resolves the env merged into each `omni serve` spawn (model API keys,
-   * runtime tokens, codex materialization, etc.).
-   *
-   * Public so the local-compute reverse handlers (cloud-dispatched starts on
-   * this Electron) can swap in the cloud-shipped materialized env per-start
-   * and restore the original afterwards. The cloud serialises its start calls
-   * per machine, so the temporary swap is race-free in that path.
-   *
-   * Receives the process id so per-process identity can ride the env — the
-   * cloud provider mints the runtime token's `agentId` claim from it for
-   * resident (`agent:<id>`) processes.
-   */
-  getExtraEnv?: (processId?: string) => Record<string, string> | Promise<Record<string, string>>;
+  /** Resolves the env merged into each `omni serve` spawn. Receives the
+   *  process id so per-process identity can ride the env. */
+  private getExtraEnv?: (processId?: string) => Record<string, string> | Promise<Record<string, string>>;
   /** Read a git token by credential id (from the SecretStore). Absent → no
    *  private-remote auth (tokens never reach this class except through here). */
   private resolveGitToken?: (credentialId: string) => Promise<string | undefined>;
-  /**
-   * When set, every launch is restricted to these profiles regardless of the
-   * per-project override or user default — a deployment-level allowlist the
-   * user picks within.
-   */
-  private allowedProfileNames?: string[];
-
-  /** Compute backend (omni-platform delegation). Set when configured. */
-  platformClient: IComputeClient | null = null;
-
-  /**
-   * Computer-as-sandbox: prepares a `host_bridge` profile so `local:<machineId>`
-   * launches run `omni serve` HERE (the agent stays put) with the user's laptop
-   * as the sandbox backend. Cloud-only; undefined elsewhere. See
-   * `src/server/host-bridge-preparer.ts`.
-   */
-  private hostBridge?: IHostBridgePreparer;
   /** Blocks local AgentHost operations while the runtime venv is being
    * installed or repaired. In particular, the omni-code console script may
    * exist before the development omniagents overlay is fully installed. */
   private waitForRuntimeInstall?: () => Promise<void>;
-  /** Trusted topology assertion. True only for the single-user local Electron
-   * manager; server managers must remain false even if child env is spoofed. */
-  private durableLocalCodexAccountMutations: boolean;
-  /** Independent trusted topology gate for canonical host MCP stores. */
-  private durableLocalMcpMutations: boolean;
-  /** One-time parity/ownership transfer, injected only by Electron main. */
-  private prepareLocalMcpOwnership?: (status: Record<string, unknown>) => void | Promise<void>;
-  /** Readiness hook for local ownership transfer; runs after the control
-   * channel is usable and never gates the legacy settings read. */
-  private onManagementReady?: (proc: AgentProcess) => void | Promise<void>;
-
-  /** processId → machineId for live `local:<machineId>` sessions, so stop()
-   *  can tell the laptop to tear down its `omni sandbox-host`. */
-  private localSandboxKeys = new Map<string, string>();
-
-  /** processId → launcher-owned local mounts whose container changes
-   *  auto-mirror back to the host (chat scratch dirs, managed project dirs). */
-  private mirrorSources = new Map<string, Array<{ mountName: string; workspaceDir: string }>>();
-  private mirrorTimer: ReturnType<typeof setInterval> | null = null;
-  private mirrorSweepRunning = false;
 
   constructor(arg: {
     sendToWindow: ProcessManager['sendToWindow'];
     fetchFn?: FetchFn;
     getStoreData?: () => ProcessManagerStoreData;
-    /** Extra env for spawned `omni serve` (e.g. cloud `OMNI_RUNTIME_TOKEN`).
-     *  May be async — used by cloud to materialize per-principal codex tokens
-     *  to the spawn's config dir from PgSecretStore before omni-serve starts.
-     *  Receives the process id (per-process identity, e.g. resident tokens). */
+    /** Extra env for spawned `omni serve`. Receives the process id. */
     getExtraEnv?: (processId?: string) => Record<string, string> | Promise<Record<string, string>>;
     /** Read a git token by credential id, for private-remote auth at clone time. */
     resolveGitToken?: (credentialId: string) => Promise<string | undefined>;
-    /** Restrict launches to these profiles (cloud → the ACI profiles). The
-     * user still picks among them; anything outside falls back to the default. */
-    allowedProfileNames?: string[];
-    /** Computer-as-sandbox preparer (cloud-only). */
-    hostBridge?: IHostBridgePreparer;
     /** Wait for any in-flight local runtime install/repair to settle. */
     waitForRuntimeInstall?: () => Promise<void>;
-    /** Permit canonical Codex mutations only in local single-user Electron. */
-    durableLocalCodexAccountMutations?: boolean;
-    /** Permit canonical MCP CRUD/auth only in local single-user Electron. */
-    durableLocalMcpMutations?: boolean;
-    /** Verify legacy/canonical parity before the first canonical mutation. */
-    prepareLocalMcpOwnership?: (status: Record<string, unknown>) => void | Promise<void>;
-    /** Run local ownership transfer after the management host is ready. */
-    onManagementReady?: (proc: AgentProcess) => void | Promise<void>;
-    runtimeJournalDir?: string;
-    claimChatRuntime?: (id: string) => void | Promise<void>;
   }) {
     this.sendToWindow = arg.sendToWindow;
-    if (arg.runtimeJournalDir) {
-      this.runtimeJournal = new ChatRuntimeJournal(arg.runtimeJournalDir, (profile) =>
-        this.resolveComputeClient(profile)
-      );
-      this.runtimeRecovery = this.runtimeJournal.recoverAbandoned();
-    }
-    this.claimChatRuntime = arg.claimChatRuntime;
     this.fetchFn = arg.fetchFn ?? globalThis.fetch;
     this.getStoreData =
       arg.getStoreData ??
       (() => ({
-        defaultProfileName: 'host',
         projects: [],
       }));
     this.getExtraEnv = arg.getExtraEnv;
     this.resolveGitToken = arg.resolveGitToken;
-    this.allowedProfileNames = arg.allowedProfileNames;
-    this.hostBridge = arg.hostBridge;
     this.waitForRuntimeInstall = arg.waitForRuntimeInstall;
-    this.durableLocalCodexAccountMutations = arg.durableLocalCodexAccountMutations === true;
-    this.durableLocalMcpMutations = arg.durableLocalMcpMutations === true;
-    this.prepareLocalMcpOwnership = arg.prepareLocalMcpOwnership;
-    this.onManagementReady = arg.onManagementReady;
   }
 
-  private resolveProfileName(projectId: string | undefined, override: string | undefined): string {
-    const { defaultProfileName, projects } = this.getStoreData();
-    const pick =
-      override ??
-      (projectId ? projects.find((p) => p.id === projectId)?.sandboxProfile : undefined) ??
-      defaultProfileName;
-    // An allow-list (cloud → the ACI profiles) constrains the choice: a pick
-    // outside it (e.g. host/devbox) can't escape, falling back to the default.
-    // Local-machine profiles (`local:<machineId>`) are an implicit override —
-    // they're always allowed because the registry verified the principal owns
-    // the machine before they ever appeared in the picker.
-    if (parseLocalProfile(pick)) {
-      return pick;
-    }
-    if (this.allowedProfileNames && !this.allowedProfileNames.includes(pick)) {
-      return defaultProfileName;
-    }
-    return pick;
-  }
-
-  getExecutionProfile(processId: string): string | undefined {
-    const opts = this.lastStartArgs.get(processId);
-    return opts ? this.resolveProfileName(opts.projectId, opts.profileNameOverride) : undefined;
-  }
-
-  validateProfileSelection(profileName: string): void {
-    if (!profileName || this.resolveProfileName(undefined, profileName) !== profileName) {
-      throw new Error('This execution environment is not available in this workspace');
-    }
-  }
-
-  private resolveMode(profileName: string): AgentProcessMode {
-    // `compute` mode = delegate to an `IComputeClient` (the omni-platform
-    // delegation path). Everything else — including `local:<machineId>`
-    // (computer-as-sandbox) — spawns `omni serve` here; `local:` differs only
-    // in that it runs with a `host_bridge` profile pointing the sandbox at the
-    // user's laptop.
-    if (profileName === 'platform') {
-      return 'compute';
-    }
-    return 'serve';
-  }
-
-  /**
-   * The compute client to drive a launch of *profileName*, or `null` to mean
-   * "spawn omni serve locally (serve mode)". Only the `'platform'` profile
-   * (omni-platform delegation) uses a compute client.
-   */
-  resolveComputeClient(profileName: string): IComputeClient | null {
-    if (profileName === 'platform') {
-      return this.platformClient;
-    }
-    return null;
-  }
-
-  /**
-   * Platform mode only: if the project has a git remote, the container can
-   * clone instead of receiving an upload. Returns undefined for serve mode
-   * (omni serve's manifest materialization handles workspace seeding).
-   */
-  private resolvePlatformGitRepo(
-    profileName: string,
-    workspaceDir: string,
-    projectId: string | undefined
-  ): { url: string; branch?: string } | undefined {
-    if (profileName !== 'platform') {
-      return undefined;
-    }
-    const { projects } = this.getStoreData();
-
-    // Explicit git-remote project (single-source platform path; multi-source
-    // not yet supported in platform mode — first git-remote source wins).
-    if (projectId) {
-      const project = projects.find((p) => p.id === projectId);
-      const gitRemote = project?.sources.find((s) => s.kind === 'git-remote');
-      if (gitRemote?.kind === 'git-remote') {
-        return { url: gitRemote.repoUrl, branch: gitRemote.defaultBranch };
-      }
-    }
-
-    // Local project with git — resolve remote URL so the platform container can clone
-    if (workspaceDir) {
-      return this.resolveGitRemote(workspaceDir);
-    }
-    return undefined;
-  }
-
-  /** Try to resolve the git remote URL and current branch from a workspace directory. */
-  private resolveGitRemote(workspaceDir: string): { url: string; branch?: string } | undefined {
-    try {
-      const url = execFileSync('git', ['remote', 'get-url', 'origin'], {
-        cwd: workspaceDir,
-        timeout: 3000,
-        encoding: 'utf-8',
-      }).trim();
-      if (!url) {
-        return undefined;
-      }
-
-      let branch: string | undefined;
-      try {
-        branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
-          cwd: workspaceDir,
-          timeout: 3000,
-          encoding: 'utf-8',
-        }).trim();
-        if (branch === 'HEAD') {
-          branch = undefined;
-        } // detached HEAD
-      } catch {
-        /* ignore */
-      }
-
-      return branch ? { url, branch } : { url };
-    } catch {
-      return undefined;
-    }
-  }
-
-  private getOrCreate(
-    processId: string,
-    compatibilityKey: string,
-    mode: AgentProcessMode,
-    computeClient?: IComputeClient | null
-  ): { proc: AgentProcess; created: boolean } {
+  private getOrCreate(processId: string, compatibilityKey: string): { proc: AgentProcess; created: boolean } {
     let proc!: AgentProcess;
     const attachment = this.agentHosts.attach(processId, compatibilityKey, () => {
       proc = new AgentProcess({
-        mode,
-        recordCompute: this.runtimeJournal
-          ? (profile, sessionId) => this.runtimeJournal!.recordCompute(processId, profile, sessionId)
-          : undefined,
-        recordConsumer: this.runtimeJournal
-          ? async (claim) => {
-              if (isResidentProcessId(claim.consumerId)) {
-                return;
-              }
-              this.runtimeJournal!.record(claim);
-              await this.claimChatRuntime?.(claim.consumerId);
-            }
-          : undefined,
         ipcRawOutput: (data) => {
           for (const consumerId of this.agentHosts.consumersForHost(proc)) {
             this.sendToWindow('agent-process:raw-output', consumerId, data);
@@ -423,13 +124,7 @@ export class ProcessManager {
           }
         },
         fetchFn: this.fetchFn,
-        computeClient: computeClient ?? this.platformClient ?? undefined,
-        // Resident agents have distinct principal credentials and therefore
-        // never share a compatibility key with interactive tabs or each other.
-        getExtraEnv: async () => {
-          const base = (await this.getExtraEnv?.(processId)) ?? {};
-          return isResidentProcessId(processId) ? { ...base, OMNI_PROJECTS_PRINCIPAL: processId } : base;
-        },
+        getExtraEnv: async () => (await this.getExtraEnv?.(processId)) ?? {},
       });
       return proc;
     });
@@ -440,21 +135,9 @@ export class ProcessManager {
     return { proc: attachment.host, created: attachment.created };
   }
 
-  private agentHostCompatibilityKey(processId: string, mode: AgentProcessMode, arg: AgentProcessStartArg): string {
-    // Delegated compute providers have not adopted the multi-environment host
-    // contract yet, so keep those sessions isolated during this first cut.
-    if (mode === 'compute') {
-      return JSON.stringify(['compute', processId, arg.sessionId ?? null]);
-    }
-    const principalScope = isResidentProcessId(processId) ? processId : 'interactive';
-    const credentialScope =
-      (arg.credentials?.length ?? 0) > 0 || Object.keys(arg.gitTokenEnv ?? {}).length > 0 ? processId : 'shared';
-    return JSON.stringify({
-      mode,
-      principalScope,
-      credentialScope,
-      hostBridgeMachine: parseLocalProfile(arg.profileName),
-    });
+  private agentHostCompatibilityKey(processId: string, arg: AgentProcessStartArg): string {
+    const credentialScope = Object.keys(arg.gitTokenEnv ?? {}).length > 0 ? processId : 'shared';
+    return JSON.stringify({ credentialScope });
   }
 
   private statusForConsumer(
@@ -466,20 +149,7 @@ export class ProcessManager {
     }
     const runtime = this.consumerRuntimes.get(consumerId);
     if (!runtime) {
-      // Platform compute already returns one fully materialized, consumer-
-      // scoped AgentHost environment. It does not pass through the local
-      // configureConsumer control plane, so its validated status data is the
-      // authoritative runtime rather than a shared-host readiness leak.
-      const data = status.data;
-      return data.agentHostId &&
-        data.workspaceId &&
-        data.environmentId &&
-        Number.isSafeInteger(data.environmentGeneration) &&
-        data.workspaceRoot &&
-        data.defaultCwd &&
-        data.services
-        ? status
-        : null;
+      return null;
     }
     return {
       ...status,
@@ -491,25 +161,15 @@ export class ProcessManager {
         workspaceRoot: runtime.workspaceRoot,
         ...(runtime.defaultCwd ? { defaultCwd: runtime.defaultCwd } : {}),
         ...(runtime.mounts ? { mounts: runtime.mounts } : {}),
-        ...(runtime.environmentCapabilities ? { environmentCapabilities: runtime.environmentCapabilities } : {}),
-        services: runtime.services,
-        containerId: runtime.containerId,
-        ...(runtime.paused !== undefined ? { paused: runtime.paused } : {}),
       },
     };
   }
 
   private async buildStartArg(opts: AgentProcessStartOptions): Promise<AgentProcessStartArg> {
-    const profileName = this.resolveProfileName(opts.projectId, opts.profileNameOverride);
-    // Multi-project scope mounts the union of declared sources; the
-    // single-project path additionally synthesizes a source from the bare
+    // The project path additionally synthesizes a source from the bare
     // workspaceDir (chat scratch dirs, managed project dirs).
-    const sources = opts.projectIds?.length
-      ? this.resolveMultiProjectSources(opts.projectIds)
-      : this.resolveProjectSources(opts.workspaceDir, opts.projectId, opts.sourceOverrideDir);
-    this.appendExtraSources(sources, opts.extraSources);
+    const sources = this.resolveProjectSources(opts.workspaceDir, opts.projectId);
     const startArg: AgentProcessStartArg = {
-      profileName,
       sources,
       workspaceDir: opts.workspaceDir,
     };
@@ -519,48 +179,22 @@ export class ProcessManager {
     if (opts.sessionId) {
       startArg.sessionId = opts.sessionId;
     }
-    if (opts.snapshotRef) {
-      startArg.snapshotRef = opts.snapshotRef;
-    }
-    const gitRepo = this.resolvePlatformGitRepo(profileName, opts.workspaceDir, opts.projectId);
-    if (gitRepo) {
-      startArg.gitRepo = gitRepo;
-    }
     // Resolve a stored credential for each private git-remote source, attach the
     // auth hint to the descriptor, and collect the token env (value off-disk).
-    const gitAuth = await this.resolveGitAuth(sources);
-    if (gitAuth) {
-      startArg.gitTokenEnv = gitAuth.env;
-      if (gitAuth.credentials.length > 0) {
-        startArg.credentials = gitAuth.credentials;
-      }
+    const gitTokenEnv = await this.resolveGitAuth(sources);
+    if (gitTokenEnv) {
+      startArg.gitTokenEnv = gitTokenEnv;
     }
     return startArg;
   }
 
   /**
-   * Resolve git credentials for the sandbox, scoped to the hosts the project's
-   * sources actually reference. For each source we determine its remote URL —
-   * a ``git-remote`` carries it directly; a ``local-git`` checkout's is read from
-   * its own ``origin`` — match a stored credential by host, and read the token.
-   *
-   * Returns the `{ tokenEnvName: token }` env map (tokens never touch disk/argv;
-   * only the env-var *name* travels) plus a deduped ``credentials`` bundle
-   * (`{ url, username, tokenEnv }`) the launcher forwards as ``--credential`` so
-   * ``omni serve`` configures git + the host's CLI (`gh` / `az devops`) at boot
-   * for every linked host — covering local-git checkouts, not just clones.
-   *
-   * ``git-remote`` sources additionally get the in-place ``auth`` hint they need
-   * for clone-time auth (the boot pass runs after ``create()``, too late to help
-   * the clone itself).
+   * Match a stored credential to each private ``git-remote`` source by host,
+   * attach the clone-time ``auth`` hint to the descriptor, and return the
+   * `{ tokenEnvName: token }` env map (tokens never touch disk/argv; only the
+   * env-var *name* travels). Local checkouts use the host's own git config.
    */
-  private async resolveGitAuth(sources: AgentProcessSource[]): Promise<
-    | {
-        env: Record<string, string>;
-        credentials: Array<{ url: string; username: string; tokenEnv: string }>;
-      }
-    | undefined
-  > {
+  private async resolveGitAuth(sources: AgentProcessSource[]): Promise<Record<string, string> | undefined> {
     const resolve = this.resolveGitToken;
     if (!resolve) {
       return undefined;
@@ -570,19 +204,11 @@ export class ProcessManager {
       return undefined;
     }
     const env: Record<string, string> = {};
-    const credentials: Array<{ url: string; username: string; tokenEnv: string }> = [];
-    const seen = new Set<string>();
     for (const source of sources) {
-      let url: string | undefined;
-      if (source.kind === 'git-remote') {
-        url = source.repoUrl;
-      } else if (source.kind === 'local-git') {
-        url = this.resolveGitRemote(source.workspaceDir)?.url;
-      }
-      if (!url) {
+      if (source.kind !== 'git-remote') {
         continue;
       }
-      const cred = resolveCredentialForUrl(gitCredentials, url);
+      const cred = resolveCredentialForUrl(gitCredentials, source.repoUrl);
       if (!cred) {
         continue;
       }
@@ -599,16 +225,9 @@ export class ProcessManager {
       }
       const tokenEnv = gitTokenEnvName(cred.id);
       env[tokenEnv] = token;
-      if (source.kind === 'git-remote') {
-        source.auth = { tokenEnv, username: cred.username };
-      }
-      const key = `${tokenEnv}|${url}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        credentials.push({ url, username: cred.username, tokenEnv });
-      }
+      source.auth = { tokenEnv, username: cred.username };
     }
-    return Object.keys(env).length > 0 ? { env, credentials } : undefined;
+    return Object.keys(env).length > 0 ? env : undefined;
   }
 
   /**
@@ -618,11 +237,7 @@ export class ProcessManager {
    * ``.git`` entry, since the launcher's stored ``gitDetected`` flag
    * isn't guaranteed to be fresh for every code path that lands here.
    */
-  private resolveProjectSources(
-    workspaceDir: string,
-    projectId: string | undefined,
-    sourceOverrideDir?: string
-  ): AgentProcessSource[] {
+  private resolveProjectSources(workspaceDir: string, projectId: string | undefined): AgentProcessSource[] {
     // Translate each Project.source (which carries id + mountName) into
     // the AgentProcessSource shape ``omni serve`` understands. Per-source
     // git-detection happens here so the wire format already commits to
@@ -634,14 +249,7 @@ export class ProcessManager {
       // project) falls through to the synthesized-source path below so its
       // managed directory still seeds the workspace and mirrors back.
       if (project && project.sources.length > 0) {
-        let overrideApplied = false;
-        return project.sources.map((source) => {
-          if (!overrideApplied && source.kind === 'local' && sourceOverrideDir) {
-            overrideApplied = true;
-            return this.mapDeclaredSource(source, sourceOverrideDir);
-          }
-          return this.mapDeclaredSource(source);
-        });
+        return project.sources.map((source) => this.mapDeclaredSource(project.id, source));
       }
     }
     // No attached sources (chat scratch dir / managed project dir / Personal
@@ -663,19 +271,21 @@ export class ProcessManager {
         workspaceDir,
         writable: true,
         ...(kind === 'local-git' ? this.resolveGitMetadata(workspaceDir) : {}),
-        ...(isLauncherOwnedDir(workspaceDir) ? { launcherOwned: true } : {}),
       },
     ];
   }
 
   /** Translate one declared ``ProjectSource`` into the wire shape. */
-  private mapDeclaredSource(source: Project['sources'][number], localOverride?: string): AgentProcessSource {
+  private mapDeclaredSource(projectId: string, source: Project['sources'][number]): AgentProcessSource {
     if (source.kind === 'git-remote') {
       const result: AgentProcessSource = {
         id: source.id,
         mountName: source.mountName,
         kind: 'git-remote',
         repoUrl: source.repoUrl,
+        // One clone per project source, shared by every chat on the project
+        // the way a local folder is.
+        checkoutPath: projectCheckoutPath(projectId, source.id),
         writable: !source.readOnly,
       };
       if (source.defaultBranch) {
@@ -683,10 +293,8 @@ export class ProcessManager {
       }
       return result;
     }
-    const workspaceDir = localOverride ?? source.workspaceDir;
+    const workspaceDir = source.workspaceDir;
     this.ensureWorkspaceDir(workspaceDir);
-    // User-attached folders are never launcherOwned — applying
-    // container changes to them stays an explicit user action.
     const kind = this.directoryHasGit(workspaceDir) ? 'local-git' : 'local';
     const result: AgentProcessSource = {
       id: source.id,
@@ -721,84 +329,6 @@ export class ProcessManager {
       };
     } catch {
       return {};
-    }
-  }
-
-  /**
-   * Multi-project scope (resident agents): the union of every scoped
-   * project's declared sources. Unknown project ids are skipped;
-   * source-less (context-only) projects contribute no mounts — the agent
-   * reaches them through the project MCP tools instead. Duplicate
-   * directories are mounted once; mount-name collisions across projects
-   * get a numeric suffix (first project wins the bare name).
-   */
-  private resolveMultiProjectSources(projectIds: string[]): AgentProcessSource[] {
-    const { projects } = this.getStoreData();
-    const sources: AgentProcessSource[] = [];
-    const mountNames = new Set<string>();
-    const mountedDirs = new Set<string>();
-    for (const projectId of projectIds) {
-      const project = projects.find((p) => p.id === projectId);
-      if (!project) {
-        continue;
-      }
-      for (const declared of project.sources) {
-        const mapped = this.mapDeclaredSource(declared);
-        if (mapped.kind !== 'git-remote') {
-          const resolved = path.resolve(mapped.workspaceDir);
-          if (mountedDirs.has(resolved)) {
-            continue;
-          }
-          mountedDirs.add(resolved);
-        }
-        let mountName = mapped.mountName;
-        for (let n = 2; mountNames.has(mountName); n++) {
-          mountName = `${mapped.mountName}-${n}`;
-        }
-        mountNames.add(mountName);
-        sources.push({ ...mapped, mountName });
-      }
-    }
-    return sources;
-  }
-
-  /**
-   * Append caller-supplied extra mounts (e.g. a resident agent's `home`
-   * dir next to its assigned project's sources). Deduped by directory —
-   * when the extra dir is already among the resolved sources (a
-   * context-only project synthesized it as the primary mount), it is
-   * skipped rather than mounted twice. Mount-name collisions get a
-   * numeric suffix so both mounts survive.
-   */
-  private appendExtraSources(sources: AgentProcessSource[], extras: AgentProcessStartOptions['extraSources']): void {
-    if (!extras?.length) {
-      return;
-    }
-    const mountedDirs = new Set(
-      sources.flatMap((s) => (s.kind === 'git-remote' ? [] : [path.resolve(s.workspaceDir)]))
-    );
-    const mountNames = new Set(sources.map((s) => s.mountName));
-    for (const extra of extras) {
-      const resolved = path.resolve(extra.workspaceDir);
-      if (mountedDirs.has(resolved)) {
-        continue;
-      }
-      let mountName = extra.mountName;
-      for (let n = 2; mountNames.has(mountName); n++) {
-        mountName = `${extra.mountName}-${n}`;
-      }
-      this.ensureWorkspaceDir(extra.workspaceDir);
-      const kind = this.directoryHasGit(extra.workspaceDir) ? 'local-git' : 'local';
-      sources.push({
-        mountName,
-        kind,
-        workspaceDir: extra.workspaceDir,
-        writable: true,
-        ...(kind === 'local-git' ? this.resolveGitMetadata(extra.workspaceDir) : {}),
-        ...(isLauncherOwnedDir(extra.workspaceDir) ? { launcherOwned: true } : {}),
-      });
-      mountedDirs.add(resolved);
-      mountNames.add(mountName);
     }
   }
 
@@ -838,57 +368,20 @@ export class ProcessManager {
   }
 
   /**
-   * For a `local:<machineId>` profile, ask the laptop (via the host bridge) to
-   * stand up its `omni sandbox-host` and return the path of a per-session
-   * `host_bridge` profile that points this spawn's sandbox at it. The agent
-   * still runs HERE (serve mode); only the sandbox backend is the laptop.
-   * Returns `null` for non-local profiles. The `sandboxKey` is the stable
-   * processId — it keys the laptop's exec server and the relay path.
-   */
-  private async prepareHostBridge(
-    processId: string,
-    profileName: string,
-    workspaceDir: string | undefined
-  ): Promise<string | null> {
-    const machineId = parseLocalProfile(profileName);
-    if (!machineId) {
-      return null;
-    }
-    if (!this.hostBridge) {
-      throw new Error(`local sandbox needs a host bridge (machine ${machineId}) — not available`);
-    }
-    const { profilePath } = await this.hostBridge.prepare(machineId, processId, { workspaceDir });
-    this.localSandboxKeys.set(processId, machineId);
-    return profilePath;
-  }
-
-  /**
-   * The fields that decide whether two `start` calls mean "the same sandbox".
-   * `extraSources` follows the project scope already captured by
-   * `projectId`/`projectIds`.
+   * The fields that decide whether two `start` calls mean "the same launch".
    */
   private static launchIdentity(opts: AgentProcessStartOptions): string {
-    return JSON.stringify([
-      opts.workspaceDir,
-      opts.sourceOverrideDir ?? null,
-      opts.projectId ?? null,
-      opts.projectIds ?? null,
-      opts.sessionId ?? null,
-      opts.snapshotRef ?? null,
-      opts.profileNameOverride ?? null,
-    ]);
+    return JSON.stringify([opts.workspaceDir, opts.projectId ?? null, opts.sessionId ?? null]);
   }
 
   /**
    * Definition fields owned by a framework Workspace registration. A changed
-   * snapshot reference, source set, or materialization directory is a new
-   * Workspace; reusing its id would ask AgentHost to mutate an existing
+   * source set or materialization directory is a new Workspace; reusing its id would ask AgentHost to mutate an existing
    * catalog entry and is correctly rejected by the framework.
    */
   private static workspaceIdentity(arg: AgentProcessStartArg): string {
     return JSON.stringify({
       workspaceDir: arg.workspaceDir ?? null,
-      snapshotRef: arg.snapshotRef ?? null,
       sources: arg.sources,
     });
   }
@@ -958,7 +451,7 @@ export class ProcessManager {
    * renderer credential is returned; the AgentHost control token remains
    * encapsulated by AgentProcess and its main-process control client.
    */
-  ensureManagementConnection = (): Promise<ManagementRuntimeConnection> => {
+  ensureManagementConnection = (): Promise<AgentRuntimeConnection> => {
     if (this.pendingManagementConnection) {
       return this.pendingManagementConnection;
     }
@@ -973,32 +466,20 @@ export class ProcessManager {
     return operation;
   };
 
-  private ensureManagementConnectionImpl = async (): Promise<ManagementRuntimeConnection> => {
+  private ensureManagementConnectionImpl = async (): Promise<AgentRuntimeConnection> => {
     const processId = '__product_management__';
-    // Profile definitions are consumer-environment concerns. Force the local
-    // targetless host path here even when the user's default is delegated
-    // platform compute or a laptop host_bridge; no sandbox is being created.
-    const startArg = await this.buildStartArg({ workspaceDir: '', profileNameOverride: 'host' });
-    const mode = this.resolveMode(startArg.profileName);
-    if (mode !== 'serve') {
-      throw new Error('Product management requires a targetless AgentHost');
-    }
+    // No environment is materialized for the management connection.
+    const startArg = await this.buildStartArg({ workspaceDir: '' });
     await this.waitForRuntimeInstall?.();
-    const compatibilityKey = this.agentHostCompatibilityKey(processId, mode, startArg);
-    const { proc, created } = this.getOrCreate(processId, compatibilityKey, mode, null);
+    const compatibilityKey = this.agentHostCompatibilityKey(processId, startArg);
+    const { proc, created } = this.getOrCreate(processId, compatibilityKey);
     try {
       const statusType = proc.getStatus().type;
       if (created || !['starting', 'connecting', 'running'].includes(statusType)) {
         await proc.start(startArg);
       }
-      const [connection, mutationCapabilities] = await Promise.all([
-        proc.getRuntimeConnection(),
-        proc.getManagementMutationCapabilities(),
-      ]);
-      // Host MCP ownership transfer is a readiness side effect. It must not
-      // make the legacy settings read wait for a cold runtime to boot.
-      await this.onManagementReady?.(proc);
-      return { ...connection, mutationCapabilities };
+      const connection = await proc.getRuntimeConnection();
+      return connection;
     } catch (error) {
       this.processes.delete(processId);
       const detached = this.agentHosts.detach(processId);
@@ -1016,43 +497,22 @@ export class ProcessManager {
     if (!proc) {
       throw new Error('Product management AgentHost is unavailable');
     }
-    if (request.method.startsWith('account_')) {
-      if (!isDurableCodexAccountRequest(request)) {
-        throw new Error('Only durable ChatGPT OAuth account mutations are available through this broker');
-      }
-      if (!this.durableLocalCodexAccountMutations) {
-        throw new Error('Account mutations are unavailable outside local single-user Electron');
-      }
-      const status = await proc.getManagementAccountStatus();
-      if (!hasDurableHostCodexMutation(status)) {
-        throw new Error('AgentHost did not attest durable host-scoped Codex account mutations');
-      }
+    if (request.method.startsWith('account_') && !isCodexAccountRequest(request)) {
+      throw new Error('Only ChatGPT OAuth account mutations are available through this broker');
     }
-    if (isMcpManagementMethod(request.method)) {
-      if (!this.durableLocalMcpMutations) {
-        throw new Error('MCP mutations are unavailable outside local single-user Electron');
-      }
-      if (isProtectedManagedMcpRequest(request as { method: string; params: Record<string, unknown> })) {
-        throw new Error('The omni-projects MCP server is managed by Omni Desktop and cannot be changed');
-      }
-      const status = await proc.getManagementMcpStatus();
-      if (!hasDurableHostMcpMutation(status)) {
-        throw new Error('AgentHost did not attest durable host-scoped MCP configuration and OAuth stores');
-      }
-      await this.prepareLocalMcpOwnership?.(status);
-
+    if (request.method.startsWith('mcp_')) {
       const result = await proc.callManagementAdmin(request.method, request.params as never);
       // mcp_auth_cancel only discards process-local pending state. Every other
       // allowed MCP mutation can change config, credentials, or live instances.
       if (request.method !== 'mcp_auth_cancel') {
-        await this.invalidateLocalMcpAgentHosts(request.method === 'mcp_reload_server' ? proc : undefined);
+        this.reloadMcpInBackground(request.method === 'mcp_reload_server' ? proc : undefined);
       }
       return result;
     }
     return proc.callManagementAdmin(request.method, request.params as never);
   };
 
-  private evictStaleMcpHost = async (proc: AgentProcess): Promise<string[]> => {
+  private evictStaleMcpHost = async (proc: AgentProcess, alreadyStopped = false): Promise<string[]> => {
     const consumers = this.agentHosts.consumersForHost(proc);
     for (const processId of consumers) {
       this.advanceConsumerEpoch(processId);
@@ -1061,14 +521,37 @@ export class ProcessManager {
       this.consumerWorkspaceIds.delete(processId);
       this.consumerWorkspaceIdentities.delete(processId);
       this.lastStartArgs.delete(processId);
-      this.mirrorSources.delete(processId);
       this.agentHosts.detach(processId);
       if (processId === '__product_management__') {
         this.pendingManagementConnection = null;
       }
     }
-    await proc.stop().catch(() => undefined);
+    if (!alreadyStopped) {
+      await proc.stop().catch(() => undefined);
+    }
+    for (const processId of consumers) {
+      this.sendToWindow('agent-process:status', processId, this.getStatus(processId));
+    }
     return consumers;
+  };
+
+  /**
+   * Bring every other live AgentHost onto a committed MCP change without
+   * holding up the mutation. Reloading restarts each host's MCP servers,
+   * which can take minutes with several chats open, so the change is
+   * acknowledged once it is stored. A host that cannot reload is stopped
+   * and the user is told.
+   */
+  private reloadMcpInBackground = (alreadyReloaded?: AgentProcess): void => {
+    this.mcpReload = this.mcpReload
+      .then(() => this.invalidateLocalMcpAgentHosts(alreadyReloaded))
+      .catch((error: unknown) => {
+        this.sendToWindow('toast:show', {
+          level: 'error',
+          title: 'Some chats were stopped to apply the MCP change',
+          description: (error as Error).message,
+        });
+      });
   };
 
   /** Reload every distinct live local AgentHost after the shared file/token
@@ -1077,9 +560,7 @@ export class ProcessManager {
   private invalidateLocalMcpAgentHosts = async (alreadyReloaded?: AgentProcess): Promise<void> => {
     const hosts = this.agentHosts
       .hosts()
-      .filter(
-        (host) => host !== alreadyReloaded && host.usesLocalAgentHostConfig() && host.getStatus().type === 'running'
-      );
+      .filter((host) => host !== alreadyReloaded && host.getStatus().type === 'running');
     const failures: string[] = [];
     await Promise.all(
       hosts.map(async (host) => {
@@ -1092,13 +573,11 @@ export class ProcessManager {
       })
     );
     if (failures.length > 0) {
-      throw new Error(
-        `MCP mutation committed, but stale AgentHost invalidation failed; affected hosts were stopped: ${failures.join('; ')}`
-      );
+      throw new Error(`They could not reload their MCP servers: ${failures.join('; ')}`);
     }
   };
 
-  /** Main-only account migration read. No IPC handler exposes this method. */
+  /** Main-only account status read for the `codex:*` handlers. */
   getManagementAccountStatus = async (): Promise<Record<string, unknown>> => {
     await this.ensureManagementConnection();
     const proc = this.processes.get('__product_management__');
@@ -1108,26 +587,9 @@ export class ProcessManager {
     return proc.getManagementAccountStatus();
   };
 
-  /** Main-only MCP ownership migration read. No generic control RPC is exposed. */
-  getManagementMcpStatus = async (): Promise<Record<string, unknown>> => {
-    await this.ensureManagementConnection();
-    const proc = this.processes.get('__product_management__');
-    if (!proc) {
-      throw new Error('Product management AgentHost is unavailable');
-    }
-    return proc.getManagementMcpStatus();
-  };
-
   private startConsumer = async (processId: string, opts: AgentProcessStartOptions, epoch: number): Promise<void> => {
-    await this.runtimeRecovery;
-    if (!isResidentProcessId(processId)) {
-      await this.claimChatRuntime?.(processId);
-      if (!this.processes.has(processId)) {
-        await this.runtimeJournal?.retire(processId);
-      }
-      if (!this.isCurrentConsumerEpoch(processId, epoch)) {
-        return;
-      }
+    if (!this.isCurrentConsumerEpoch(processId, epoch)) {
+      return;
     }
     // Adopt an already-live process rather than restarting it. A renderer that
     // just (re)connected has an empty status map — its auto-launch guard reads
@@ -1135,7 +597,7 @@ export class ProcessManager {
     // WS reconnect re-issues `start` for a processId that is already serving.
     // Without this check `AgentProcess.start` SIGTERMs the live `omni serve`
     // and the conversation dies mid-flight. Deliberate restarts go through
-    // `stop()` (drops the process) or `rebuild()`, so they never land here.
+    // `stop()` (drops the process), so they never land here.
     const live = this.processes.get(processId);
     if (live) {
       const type = live.getStatus().type;
@@ -1155,23 +617,15 @@ export class ProcessManager {
     const previousWorkspaceId = this.consumerWorkspaceIds.get(processId);
     const previousWorkspaceIdentity = this.consumerWorkspaceIdentities.get(processId);
     const startArg = await this.buildStartArg(opts);
-    const profilePath = await this.prepareHostBridge(processId, startArg.profileName, opts.workspaceDir);
-    if (profilePath) {
-      startArg.explicitProfilePath = profilePath;
-    }
     if (!this.isCurrentConsumerEpoch(processId, epoch)) {
       return;
     }
-    const mode = this.resolveMode(startArg.profileName);
-    const client = this.resolveComputeClient(startArg.profileName);
-    if (mode === 'serve') {
-      await this.waitForRuntimeInstall?.();
-    }
+    await this.waitForRuntimeInstall?.();
     if (!this.isCurrentConsumerEpoch(processId, epoch)) {
       return;
     }
-    const compatibilityKey = this.agentHostCompatibilityKey(processId, mode, startArg);
-    const { proc, created } = this.getOrCreate(processId, compatibilityKey, mode, client);
+    const compatibilityKey = this.agentHostCompatibilityKey(processId, startArg);
+    const { proc, created } = this.getOrCreate(processId, compatibilityKey);
     const preservedAttachment = live === proc;
     try {
       const statusType = proc.getStatus().type;
@@ -1182,36 +636,33 @@ export class ProcessManager {
         await this.retireStaleStart(processId, proc, previousRuntime);
         return;
       }
-      if (mode === 'serve') {
-        const workspaceIdentity = ProcessManager.workspaceIdentity(startArg);
-        const workspaceId =
-          previousWorkspaceId && previousWorkspaceIdentity === workspaceIdentity
-            ? previousWorkspaceId
-            : `workspace_${randomUUID().replaceAll('-', '')}`;
-        const runtime = await proc.configureConsumer(processId, workspaceId, startArg);
-        if (!this.isCurrentConsumerEpoch(processId, epoch)) {
-          const isPriorRuntime =
-            previousRuntime?.environmentId === runtime.environmentId &&
-            previousRuntime.environmentGeneration === runtime.environmentGeneration;
-          if (!isPriorRuntime) {
-            await proc.stopConsumerEnvironment(runtime).catch((error) => {
-              console.warn(`[process-manager] stale environment cleanup failed: ${(error as Error).message}`);
-            });
-          }
-          await this.retireStaleStart(processId, proc, previousRuntime);
-          return;
-        }
-        this.consumerWorkspaceIds.set(processId, workspaceId);
-        this.consumerWorkspaceIdentities.set(processId, workspaceIdentity);
-        this.consumerRuntimes.set(processId, runtime);
-        if (previousRuntime && previousRuntime.environmentId !== runtime.environmentId) {
-          await proc.stopConsumerEnvironment(previousRuntime).catch((error) => {
-            console.warn(`[process-manager] old environment cleanup failed: ${(error as Error).message}`);
+      const workspaceIdentity = ProcessManager.workspaceIdentity(startArg);
+      const workspaceId =
+        previousWorkspaceId && previousWorkspaceIdentity === workspaceIdentity
+          ? previousWorkspaceId
+          : `workspace_${randomUUID().replaceAll('-', '')}`;
+      const runtime = await proc.configureConsumer(processId, workspaceId, startArg);
+      if (!this.isCurrentConsumerEpoch(processId, epoch)) {
+        const isPriorRuntime =
+          previousRuntime?.environmentId === runtime.environmentId &&
+          previousRuntime.environmentGeneration === runtime.environmentGeneration;
+        if (!isPriorRuntime) {
+          await proc.stopConsumerEnvironment(runtime).catch((error) => {
+            console.warn(`[process-manager] stale environment cleanup failed: ${(error as Error).message}`);
           });
         }
+        await this.retireStaleStart(processId, proc, previousRuntime);
+        return;
+      }
+      this.consumerWorkspaceIds.set(processId, workspaceId);
+      this.consumerWorkspaceIdentities.set(processId, workspaceIdentity);
+      this.consumerRuntimes.set(processId, runtime);
+      if (previousRuntime && previousRuntime.environmentId !== runtime.environmentId) {
+        await proc.stopConsumerEnvironment(previousRuntime).catch((error) => {
+          console.warn(`[process-manager] old environment cleanup failed: ${(error as Error).message}`);
+        });
       }
       this.lastStartArgs.set(processId, opts);
-      this.trackMirrorSources(processId, startArg.sources);
     } catch (error) {
       if (preservedAttachment) {
         // Rebinding is transactional from the consumer's perspective. The
@@ -1219,7 +670,6 @@ export class ProcessManager {
         // fails; keep the prior Workspace/runtime and launch identity live.
         throw error;
       }
-      this.mirrorSources.delete(processId);
       this.consumerRuntimes.delete(processId);
       this.consumerWorkspaceIds.delete(processId);
       this.consumerWorkspaceIdentities.delete(processId);
@@ -1228,11 +678,6 @@ export class ProcessManager {
       const detached = this.agentHosts.detach(processId);
       if (detached?.lastConsumer) {
         await proc.stop().catch(() => {});
-      }
-      const machineId = this.localSandboxKeys.get(processId);
-      if (machineId && this.hostBridge) {
-        this.localSandboxKeys.delete(processId);
-        void this.hostBridge.release(machineId, processId).catch(() => {});
       }
       throw error;
     }
@@ -1258,7 +703,7 @@ export class ProcessManager {
     }
   };
 
-  stop = async (processId: string, opts?: AgentProcessStopOptions): Promise<AgentProcessStopResult> => {
+  stop = async (processId: string): Promise<AgentProcessStopResult> => {
     const pending = this.pendingStops.get(processId);
     if (pending) {
       return pending;
@@ -1268,7 +713,7 @@ export class ProcessManager {
     const operation = (async () => {
       await pendingStart?.catch(() => undefined);
       if (this.isCurrentConsumerEpoch(processId, epoch)) {
-        return this.stopConsumer(processId, opts);
+        return this.stopConsumer(processId);
       }
       return this.emptyStopResult();
     })().finally(() => {
@@ -1283,9 +728,7 @@ export class ProcessManager {
   retire = async (processId: string): Promise<AgentProcessStopResult> => {
     this.retiredConsumers.add(processId);
     try {
-      const result = await this.stop(processId, { discardSnapshot: true });
-      await this.runtimeJournal?.retire(processId);
-      return result;
+      return await this.stop(processId);
     } finally {
       this.lastStartArgs.delete(processId);
     }
@@ -1296,7 +739,7 @@ export class ProcessManager {
     shutdown: 'not-applicable',
   });
 
-  private stopConsumer = async (processId: string, opts?: AgentProcessStopOptions): Promise<AgentProcessStopResult> => {
+  private stopConsumer = async (processId: string): Promise<AgentProcessStopResult> => {
     let target = this.detachedStops.get(processId);
     if (!target) {
       const proc = this.processes.get(processId);
@@ -1307,7 +750,6 @@ export class ProcessManager {
       target = { proc, runtime: this.consumerRuntimes.get(processId), lastConsumer: detached?.lastConsumer ?? false };
       this.detachedStops.set(processId, target);
     }
-    this.mirrorSources.delete(processId);
     const { proc, runtime, lastConsumer } = target;
     if (!lastConsumer) {
       // A neighboring consumer may have started closing the entire host while
@@ -1321,9 +763,6 @@ export class ProcessManager {
         await this.stop(hostStop[0]);
       }
     }
-    if (opts?.discardSnapshot && runtime) {
-      await proc.discardConsumerSnapshot(runtime).catch(() => {});
-    }
     const result = lastConsumer
       ? await proc.stop()
       : runtime
@@ -1336,128 +775,7 @@ export class ProcessManager {
     this.consumerWorkspaceIds.delete(processId);
     this.consumerWorkspaceIdentities.delete(processId);
     this.processes.delete(processId);
-    const machineId = this.localSandboxKeys.get(processId);
-    if (machineId && this.hostBridge) {
-      this.localSandboxKeys.delete(processId);
-      void this.hostBridge.release(machineId, processId).catch(() => {});
-    }
     return result;
-  };
-
-  /** All materializing operations share the same per-consumer lane as start.
-   * Stop waits for this lane before retiring its final environment. */
-  private mutateConsumer = <R>(processId: string, mutate: () => Promise<R>): Promise<R> => {
-    if (this.retiredConsumers.has(processId)) {
-      return Promise.reject(new Error('This chat tab has been closed'));
-    }
-    if (this.pendingStops.has(processId) || this.detachedStops.has(processId)) {
-      return Promise.reject(new Error('This chat runtime is still stopping'));
-    }
-    const previous = this.pendingStarts.get(processId)?.promise;
-    const epoch = this.advanceConsumerEpoch(processId);
-    const task = Promise.resolve(previous)
-      .catch(() => undefined)
-      .then(async () => {
-        if (!this.isCurrentConsumerEpoch(processId, epoch)) {
-          throw new Error('Runtime operation was superseded');
-        }
-        if (!isResidentProcessId(processId)) {
-          await this.claimChatRuntime?.(processId);
-        }
-        return mutate();
-      });
-    const promise = task.then(() => undefined);
-    this.pendingStarts.set(processId, { identity: `mutation:${epoch}`, promise });
-    const clear = () => {
-      if (this.pendingStarts.get(processId)?.promise === promise) {
-        this.pendingStarts.delete(processId);
-      }
-    };
-    void promise.then(clear, clear);
-    return task;
-  };
-
-  rebuild = (processId: string, opts: AgentProcessStartOptions): Promise<void> =>
-    this.mutateConsumer(processId, () => this.rebuildConsumer(processId, opts));
-
-  private rebuildConsumer = async (processId: string, opts: AgentProcessStartOptions): Promise<void> => {
-    const epoch = this.consumerEpochs.get(processId)!;
-    if (this.retiredConsumers.has(processId)) {
-      throw new Error('This chat tab has been closed');
-    }
-    if (this.pendingStops.has(processId) || this.detachedStops.has(processId)) {
-      throw new Error('This chat runtime is still stopping; retry stopping it before rebuilding');
-    }
-    const lastOpts = this.lastStartArgs.get(processId);
-    const merged: AgentProcessStartOptions = {
-      workspaceDir: opts.workspaceDir || lastOpts?.workspaceDir || '',
-      ...((opts.projectId ?? lastOpts?.projectId)
-        ? { projectId: (opts.projectId ?? lastOpts?.projectId) as string }
-        : {}),
-      ...((opts.projectIds ?? lastOpts?.projectIds) ? { projectIds: opts.projectIds ?? lastOpts?.projectIds } : {}),
-      ...((opts.profileNameOverride ?? lastOpts?.profileNameOverride)
-        ? { profileNameOverride: (opts.profileNameOverride ?? lastOpts?.profileNameOverride) as string }
-        : {}),
-      ...((opts.sessionId ?? lastOpts?.sessionId)
-        ? { sessionId: (opts.sessionId ?? lastOpts?.sessionId) as string }
-        : {}),
-      ...((opts.snapshotRef ?? lastOpts?.snapshotRef)
-        ? { snapshotRef: (opts.snapshotRef ?? lastOpts?.snapshotRef) as string }
-        : {}),
-      ...((opts.extraSources ?? lastOpts?.extraSources)
-        ? { extraSources: opts.extraSources ?? lastOpts?.extraSources }
-        : {}),
-    };
-    const startArg = await this.buildStartArg(merged);
-    const profilePath = await this.prepareHostBridge(processId, startArg.profileName, merged.workspaceDir);
-    if (profilePath) {
-      startArg.explicitProfilePath = profilePath;
-    }
-    const mode = this.resolveMode(startArg.profileName);
-    if (mode === 'serve') {
-      await this.waitForRuntimeInstall?.();
-    }
-    const previous = this.processes.get(processId);
-    const compatibilityKey = this.agentHostCompatibilityKey(processId, mode, startArg);
-    if (previous && mode === 'serve' && lastOpts) {
-      const previousStartArg = await this.buildStartArg(lastOpts);
-      const previousMode = this.resolveMode(previousStartArg.profileName);
-      const previousKey = this.agentHostCompatibilityKey(processId, previousMode, previousStartArg);
-      const currentWorkspaceId = this.consumerWorkspaceIds.get(processId);
-      if (compatibilityKey === previousKey && currentWorkspaceId) {
-        const workspaceIdentity = ProcessManager.workspaceIdentity(startArg);
-        const workspaceId =
-          this.consumerWorkspaceIdentities.get(processId) === workspaceIdentity
-            ? currentWorkspaceId
-            : `workspace_${randomUUID().replaceAll('-', '')}`;
-        const currentRuntime = this.consumerRuntimes.get(processId);
-        // Automatic environments are intentionally reused for the same
-        // Workspace/Profile pair while they remain ready. Rebuild must first
-        // retire the current environment or materialization is a no-op.
-        // Withdrawing it from the consumer map also prevents stale runtime
-        // metadata from being reported during the replacement window.
-        if (currentRuntime) {
-          await previous.stopConsumerEnvironment(currentRuntime);
-        }
-        this.consumerRuntimes.delete(processId);
-        this.sendToWindow('agent-process:status', processId, this.getStatus(processId));
-        const runtime = await previous.configureConsumer(processId, workspaceId, startArg);
-        this.consumerRuntimes.set(processId, runtime);
-        this.consumerWorkspaceIds.set(processId, workspaceId);
-        this.consumerWorkspaceIdentities.set(processId, workspaceIdentity);
-        this.lastStartArgs.set(processId, merged);
-        this.trackMirrorSources(processId, startArg.sources);
-        this.sendToWindow('agent-process:status', processId, this.getStatus(processId));
-        return;
-      }
-    }
-    // A replacement host is targetless until the consumer is configured. Use
-    // the full awaited start transaction, not a fire-and-forget host spawn.
-    await this.stopConsumer(processId);
-    if (!this.isCurrentConsumerEpoch(processId, epoch)) {
-      return;
-    }
-    await this.startConsumer(processId, merged, epoch);
   };
 
   getStatus = (processId: string): WithTimestamp<AgentProcessStatus> => {
@@ -1467,357 +785,10 @@ export class ProcessManager {
     // A compatible consumer is attached to the shared host before its own
     // environment finishes materializing. Never expose the shared host's
     // running metadata during that window: the consumer is still starting.
-    const status = tailored ?? { type: 'starting' as const, timestamp: Date.now() };
-    return this.withHostOfflineOverlay(processId, status);
-  };
-
-  /**
-   * Computer-as-sandbox sticky host-offline overlay. For a `running` session
-   * whose laptop (`local:<machineId>`) WS has dropped, flag `data.hostOffline`
-   * so the renderer shows a non-destructive banner over the still-running cloud
-   * session (the agent + chat are in the cloud and unaffected; only its sandbox
-   * tools are unreachable). Poll-driven, so the banner persists across polls and
-   * clears automatically once the machine reconnects (and `resumeOnReconnect`
-   * re-establishes the sandbox). No-op for non-local sessions or when online.
-   */
-  private withHostOfflineOverlay(
-    processId: string,
-    status: WithTimestamp<AgentProcessStatus>
-  ): WithTimestamp<AgentProcessStatus> {
-    const machineId = this.localSandboxKeys.get(processId);
-    if (!machineId || !this.hostBridge || status.type !== 'running') {
-      return status;
-    }
-    const st = this.hostBridge.machineState(machineId);
-    if (st.online) {
-      return status;
-    }
-    return {
-      ...status,
-      data: {
-        ...status.data,
-        hostOffline: true,
-        ...(st.label ? { hostOfflineMachineLabel: st.label } : {}),
-      },
-    };
-  }
-
-  /**
-   * Called when a machine goes offline. Broadcasts a `host-offline` overlay
-   * (`agent-process:status` event) for every running local session on it, so
-   * renderers flip to the banner immediately. The renderer poll early-returns
-   * once a session is `running`, so without this push the overlay would never
-   * surface for a live session (going offline produces no status-change event —
-   * omni-serve keeps running in the cloud).
-   */
-  broadcastHostOffline = (machineId: string): void => {
-    for (const [processId, mid] of this.localSandboxKeys.entries()) {
-      if (mid !== machineId) {
-        continue;
-      }
-      const proc = this.processes.get(processId);
-      if (!proc) {
-        continue;
-      }
-      const overlaid = this.getStatus(processId);
-      if (overlaid.type === 'running' && overlaid.data.hostOffline) {
-        this.sendToWindow('agent-process:status', processId, overlaid);
-      }
-    }
-  };
-
-  /**
-   * Called when a machine reconnects. Rebuilds every local session anchored to
-   * it so the sandbox exec channel is re-established (a fresh `omni sandbox-host`
-   * + `omni serve` with a new host_bridge profile). Chat history survives via
-   * PgSessionStorage and the workspace lives on the laptop's disk, so this is a
-   * clean resume — only an in-flight agent turn (if any) is lost. The cloud's
-   * `localSandboxKeys` is the source of truth (the registry's per-machine anchors
-   * are dropped while the machine is offline; these survive).
-   */
-  resumeOnReconnect = async (machineId: string): Promise<void> => {
-    const toResume = [...this.localSandboxKeys.entries()]
-      .filter(([, mid]) => mid === machineId)
-      .map(([processId]) => processId);
-    for (const processId of toResume) {
-      // Skip if a (re)start is already in flight — guards against WS-reconnect
-      // flapping triggering overlapping rebuilds.
-      const st = this.getStatus(processId).type;
-      if (st === 'starting' || st === 'connecting') {
-        continue;
-      }
-      const opts = this.lastStartArgs.get(processId);
-      if (!opts) {
-        continue;
-      }
-      try {
-        await this.rebuild(processId, opts);
-      } catch (err) {
-        console.error(`[host-bridge] resume rebuild failed for ${processId}:`, (err as Error).message);
-      }
-    }
-  };
-
-  resizePty = (processId: string, cols: number, rows: number): void => {
-    this.processes.get(processId)?.resizePty(cols, rows);
-  };
-
-  pause = async (processId: string): Promise<SandboxPauseResult> => {
-    const proc = this.processes.get(processId);
-    if (!proc) {
-      return { ok: false, supported: false, reason: 'process not found' };
-    }
-    const runtime = this.consumerRuntimes.get(processId);
-    const result = await proc.pause(runtime);
-    if (runtime && result.ok && result.supported) {
-      this.consumerRuntimes.set(processId, { ...runtime, paused: result.paused ?? true });
-      this.sendToWindow('agent-process:status', processId, this.getStatus(processId));
-    }
-    return result;
-  };
-
-  unpause = async (processId: string): Promise<SandboxPauseResult> => {
-    const proc = this.processes.get(processId);
-    if (!proc) {
-      return { ok: false, supported: false, reason: 'process not found' };
-    }
-    const runtime = this.consumerRuntimes.get(processId);
-    const result = await proc.unpause(runtime);
-    if (runtime && result.ok && result.supported) {
-      this.consumerRuntimes.set(processId, { ...runtime, paused: result.paused ?? false });
-      this.sendToWindow('agent-process:status', processId, this.getStatus(processId));
-    }
-    return result;
-  };
-
-  /** Bind a conversation in the lifecycle lane so stop/rebuild cannot retire
-   * its environment between selecting the target and issuing the bind. */
-  bindSession = (processId: string, sessionId: string): Promise<void> =>
-    this.mutateConsumer(processId, async () => {
-      const proc = this.processes.get(processId);
-      const runtime = this.consumerRuntimes.get(processId);
-      if (!proc || proc.getStatus().type !== 'running' || (!runtime && proc.mode !== 'compute')) {
-        throw new Error('Resident execution environment is not ready');
-      }
-      await proc.bindSession(processId, sessionId, runtime);
-    });
-
-  switchSandbox = async (processId: string, profileName: string): Promise<SandboxSwitchResult> => {
-    try {
-      return await this.mutateConsumer(processId, () => this.switchSandboxConsumer(processId, profileName));
-    } catch (error) {
-      return { ok: false, reason: (error as Error).message };
-    }
-  };
-
-  private switchSandboxConsumer = async (processId: string, profileName: string): Promise<SandboxSwitchResult> => {
-    if (this.retiredConsumers.has(processId) || this.pendingStops.has(processId) || this.detachedStops.has(processId)) {
-      return { ok: false, reason: 'This chat runtime is closed or still stopping' };
-    }
-    const proc = this.processes.get(processId);
-    if (!proc) {
-      return { ok: false, reason: 'process not found' };
-    }
-    const previousOpts = this.lastStartArgs.get(processId);
-    if (!previousOpts) {
-      return { ok: false, fallback: true, reason: 'launch binding not found' };
-    }
-    const nextOpts = { ...previousOpts, profileNameOverride: profileName };
-    const previousArg = await this.buildStartArg(previousOpts);
-    const nextArg = await this.buildStartArg(nextOpts);
-    const nextMode = this.resolveMode(nextArg.profileName);
-    const previousMode = this.resolveMode(previousArg.profileName);
-    const previousKey = this.agentHostCompatibilityKey(processId, previousMode, previousArg);
-    const nextKey = this.agentHostCompatibilityKey(processId, nextMode, nextArg);
-    if (nextMode !== 'serve' || nextKey !== previousKey) {
-      return {
-        ok: false,
-        fallback: true,
-        reason: 'profile change crosses an AgentHost security boundary',
-      };
-    }
-    const workspaceId = this.consumerWorkspaceIds.get(processId);
-    if (!workspaceId) {
-      return { ok: false, fallback: true, reason: 'workspace binding not found' };
-    }
-    try {
-      const currentRuntime = this.consumerRuntimes.get(processId);
-      const runtime = await proc.configureConsumer(processId, workspaceId, nextArg);
-      this.consumerRuntimes.set(processId, runtime);
-      if (currentRuntime && currentRuntime.environmentId !== runtime.environmentId) {
-        await proc.stopConsumerEnvironment(currentRuntime).catch((error) => {
-          console.warn(`[process-manager] old environment cleanup failed: ${(error as Error).message}`);
-        });
-      }
-      this.lastStartArgs.set(processId, nextOpts);
-      this.sendToWindow('agent-process:status', processId, this.getStatus(processId));
-      return {
-        ok: true,
-        profile: profileName,
-        containerId: runtime.containerId,
-        services: runtime.services,
-      };
-    } catch (error) {
-      return { ok: false, reason: (error as Error).message };
-    }
-  };
-
-  /**
-   * Look up a running process's WebSocket URL for a code tab linked to the given ticketId.
-   * Used by ProjectManager to reuse an existing sandbox instead of creating a duplicate.
-   */
-  getRunningWsUrlForTicket(ticketId: string, codeTabs: Array<{ id: string; ticketId?: string }>): string | null {
-    for (const tab of codeTabs) {
-      if (tab.ticketId !== ticketId) {
-        continue;
-      }
-      const status = this.getStatus(tab.id);
-      if (status.type === 'running' && status.data.wsUrl) {
-        return status.data.wsUrl;
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Find a running docker container id for the given project. Used by
-   * ProjectManager to ``docker exec`` against the agent's workspace for
-   * PR-diff and merge operations.
-   *
-   * Returns the first running process's container id (any process for
-   * the project is fine — they all share the per-project snapshot).
-   *
-   * Matches on the single `projectId` only, NEVER `projectIds`: a
-   * multi-project resident's container has collision-suffixed mount
-   * names, so the PR machinery's `/workspace/<mountName>` paths are not
-   * guaranteed to hold there.
-   */
-  getProjectContainerId(projectId: string): string | null {
-    for (const [processId, opts] of this.lastStartArgs.entries()) {
-      if (opts.projectId !== projectId) {
-        continue;
-      }
-      const status = this.getStatus(processId);
-      // ``running`` is the post-connect state; ``connecting`` already has
-      // ``data.containerId`` because the readiness payload arrives before
-      // the WS handshake completes. Accept both so PR queries don't have
-      // to wait for the agent's WS to be fully open.
-      if ((status.type === 'running' || status.type === 'connecting') && status.data.containerId) {
-        return status.data.containerId;
-      }
-    }
-    return null;
-  }
-
-  getProcessContainerId(processId: string): string | null {
-    const status = this.getStatus(processId);
-    if ((status.type === 'running' || status.type === 'connecting') && status.data.containerId) {
-      return status.data.containerId;
-    }
-    return null;
-  }
-
-  /**
-   * Container ids of every live agent process (``connecting`` or
-   * ``running``). Feeds the startup orphan sweep's protected set so it
-   * never removes a container a session of this launcher instance is
-   * already attached to.
-   */
-  getAllContainerIds(): string[] {
-    return this.getContainerOwners().map((o) => o.containerId);
-  }
-
-  /**
-   * Same live-container set as {@link getAllContainerIds}, but keyed by the
-   * owning process id — the Sandboxes inventory joins these to tab/session
-   * titles for the "who owns this container" column.
-   */
-  getContainerOwners(): Array<{ processId: string; containerId: string }> {
-    const owners: Array<{ processId: string; containerId: string }> = [];
-    for (const processId of this.processes.keys()) {
-      const status = this.getStatus(processId);
-      if ((status.type === 'running' || status.type === 'connecting') && status.data.containerId) {
-        owners.push({ processId, containerId: status.data.containerId });
-      }
-    }
-    return owners;
-  }
-
-  /**
-   * The host workspace dir the given process was last started against (e.g.
-   * the chat session's per-conversation scratch dir). Authoritative for
-   * mount-name derivation — the store's `workspaceDir` is the workspace
-   * *root*, not the live session's mount source.
-   */
-  getProcessWorkspaceDir(processId: string): string | null {
-    return this.lastStartArgs.get(processId)?.workspaceDir || null;
-  }
-
-  /**
-   * Remember which of a launch's mounts auto-mirror, and make sure the sweep
-   * timer is running when at least one process has any. Only docker-backed
-   * sessions ever mirror — the sweep keys off `getProcessContainerId`, which
-   * is null for host/ACI/host_bridge backends.
-   */
-  private trackMirrorSources(processId: string, sources: AgentProcessSource[]): void {
-    const owned = sources
-      .filter(
-        (s): s is Extract<AgentProcessSource, { workspaceDir: string }> =>
-          (s.kind === 'local' || s.kind === 'local-git') && s.launcherOwned === true
-      )
-      .map((s) => ({ mountName: s.mountName, workspaceDir: s.workspaceDir }));
-    if (owned.length === 0) {
-      this.mirrorSources.delete(processId);
-      return;
-    }
-    this.mirrorSources.set(processId, owned);
-    if (!this.mirrorTimer) {
-      this.mirrorTimer = setInterval(() => {
-        void this.sweepMirrors();
-      }, AUTO_MIRROR_INTERVAL_MS);
-      // Mirroring must never keep the process alive on its own.
-      this.mirrorTimer.unref?.();
-    }
-  }
-
-  /**
-   * One auto-mirror pass: for every running launcher-owned mount, mirror the
-   * container's changed-vs-seed set onto the host dir. The mirror is
-   * idempotent (it copies current files, not patches), so a no-change sweep
-   * is a cheap git-diff inside the container. Re-entrancy guarded — slow
-   * docker execs must not stack sweeps.
-   */
-  private sweepMirrors = async (): Promise<void> => {
-    if (this.mirrorSweepRunning) {
-      return;
-    }
-    this.mirrorSweepRunning = true;
-    try {
-      for (const [processId, mounts] of this.mirrorSources.entries()) {
-        const containerId = this.getProcessContainerId(processId);
-        if (!containerId) {
-          continue;
-        }
-        for (const mount of mounts) {
-          try {
-            await mirrorContainerChangesToHost(containerId, mount.mountName, mount.workspaceDir);
-          } catch {
-            // Transient (container mid-restart, docker hiccup) — next sweep retries.
-          }
-        }
-      }
-    } finally {
-      this.mirrorSweepRunning = false;
-    }
+    return tailored ?? { type: 'starting' as const, timestamp: Date.now() };
   };
 
   cleanup = async (): Promise<void> => {
-    await this.runtimeRecovery.catch(() => undefined);
-    if (this.mirrorTimer) {
-      clearInterval(this.mirrorTimer);
-      this.mirrorTimer = null;
-    }
-    this.mirrorSources.clear();
     // Invalidate every materialization before awaiting it. Late results see a
     // stale epoch, retire their environment, and cannot repopulate the maps.
     for (const processId of this.pendingStarts.keys()) {
@@ -1843,9 +814,8 @@ export class ProcessManager {
 
 /**
  * Register the `agent-process:*` IPC handlers. `resolve(event)` picks the
- * ProcessManager to act on — `() => mgr` for the single-manager Electron app,
- * or `event => registry.get(event.tenantId).processManager` for the per-tenant
- * server. Returns the channel names for cleanup.
+ * ProcessManager to act on (`() => mgr` in both shells). Returns the channel
+ * names for cleanup.
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export function registerProcessHandlers(ipc: IIpcListener, resolve: (event: unknown) => ProcessManager): string[] {
@@ -1856,15 +826,10 @@ export function registerProcessHandlers(ipc: IIpcListener, resolve: (event: unkn
   };
 
   h('agent-process:start', (pm, processId, startArg) => pm.start(processId, startArg));
-  h('agent-process:stop', (pm, processId, opts) => pm.stop(processId, opts));
-  h('agent-process:rebuild', (pm, processId, rebuildArg) => pm.rebuild(processId, rebuildArg));
-  h('agent-process:resize', (pm, processId, cols, rows) => pm.resizePty(processId, cols, rows));
+  h('agent-process:stop', (pm, processId) => pm.stop(processId));
   h('agent-process:get-status', (pm, processId) => pm.getStatus(processId));
   h('management-runtime:ensure', (pm) => pm.ensureManagementConnection());
   h('management-runtime:mutate', (pm, request) => pm.mutateManagement(request));
-  h('agent-process:pause', (pm, processId) => pm.pause(processId));
-  h('agent-process:unpause', (pm, processId) => pm.unpause(processId));
-  h('agent-process:switch-sandbox', (pm, processId, profileName) => pm.switchSandbox(processId, profileName));
 
   return channels;
 }
@@ -1878,40 +843,16 @@ export const createProcessManager = (arg: {
   resolveGitToken?: (credentialId: string) => Promise<string | undefined>;
   getExtraEnv?: (processId?: string) => Record<string, string> | Promise<Record<string, string>>;
   waitForRuntimeInstall?: () => Promise<void>;
-  durableLocalCodexAccountMutations?: boolean;
-  durableLocalMcpMutations?: boolean;
-  prepareLocalMcpOwnership?: (status: Record<string, unknown>) => void | Promise<void>;
-  onManagementReady?: (proc: AgentProcess) => void | Promise<void>;
-  runtimeJournalDir?: string;
-  claimChatRuntime?: (id: string) => void | Promise<void>;
 }) => {
-  const {
-    ipc,
-    sendToWindow,
-    fetchFn,
-    getStoreData,
-    resolveGitToken,
-    getExtraEnv,
-    waitForRuntimeInstall,
-    durableLocalCodexAccountMutations,
-    durableLocalMcpMutations,
-    prepareLocalMcpOwnership,
-    onManagementReady,
-  } = arg;
+  const { ipc, sendToWindow, fetchFn, getStoreData, resolveGitToken, getExtraEnv, waitForRuntimeInstall } = arg;
 
   const processManager = new ProcessManager({
-    runtimeJournalDir: arg.runtimeJournalDir,
-    claimChatRuntime: arg.claimChatRuntime,
     sendToWindow,
     fetchFn,
     getStoreData,
     resolveGitToken,
     getExtraEnv,
     waitForRuntimeInstall,
-    durableLocalCodexAccountMutations,
-    durableLocalMcpMutations,
-    prepareLocalMcpOwnership,
-    onManagementReady,
   });
   const channels = registerProcessHandlers(ipc, () => processManager);
 

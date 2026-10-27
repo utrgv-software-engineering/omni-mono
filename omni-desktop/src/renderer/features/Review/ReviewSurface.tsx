@@ -1,18 +1,29 @@
 import { useStore } from '@nanostores/react';
+import { useRPCClient, useRPCConnected } from '@omniagents/chat-ui/rpc-context';
+import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
+import {
+  GitClient,
+  type GitDiffResult,
+  type GitListRepositoriesResult,
+  type GitStatusResult,
+  type WorkspaceRepo,
+} from '@omniagents/client/rpc/git';
+import type { RunDiffFile, RunDiffItem } from '@omniagents/client/transcript/chat-types';
+import { $runDiffBySession } from '@omniagents/client/transcript/run-diff-store';
+import { Alert, AlertDescription } from '@omniagents/ui/alert';
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@omniagents/ui/empty';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@omniagents/ui/resizable';
+import { ScrollArea } from '@omniagents/ui/scroll-area';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@omniagents/ui/select';
+import { Spinner } from '@omniagents/ui/spinner';
+import { Toggle } from '@omniagents/ui/toggle';
 import { Folder, FolderOpen, PanelLeftIcon, RefreshCwIcon } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-import { cn } from '@/renderer/ds/cn';
 import { Tree, TreeItem, TreeItemLayout, type TreeItemOpenChangeData } from '@/renderer/ds/Tree';
-import { Alert, AlertDescription } from '@/renderer/ds/ui/alert';
-import { Button } from '@/renderer/ds/ui/button';
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/renderer/ds/ui/empty';
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/renderer/ds/ui/resizable';
-import { ScrollArea } from '@/renderer/ds/ui/scroll-area';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/renderer/ds/ui/select';
-import { Spinner } from '@/renderer/ds/ui/spinner';
-import { Toggle } from '@/renderer/ds/ui/toggle';
 import {
   buildFileTree,
   type ChangeBadge,
@@ -28,17 +39,6 @@ import {
   treeDirPaths,
 } from '@/renderer/features/Git/diff-model';
 import { DiffLines, DiffSection, useDiffTokens } from '@/renderer/features/Git/DiffView';
-import {
-  GitClient,
-  type GitDiffResult,
-  type GitListRepositoriesResult,
-  type GitStatusResult,
-  type WorkspaceRepo,
-} from '@/renderer/omniagents-ui/rpc/git';
-import { useRPCClient, useRPCConnected } from '@/renderer/omniagents-ui/rpc-context';
-import { $runDiffBySession } from '@/renderer/omniagents-ui/run-diff-store';
-import type { RunDiffFile, RunDiffItem } from '@/shared/chat-types';
-import type { ExecutionTarget } from '@/shared/types';
 
 /**
  * The Review sidecar app: a read-only, review-oriented pass over what

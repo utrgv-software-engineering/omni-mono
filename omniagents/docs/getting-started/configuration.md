@@ -116,7 +116,7 @@ agents:
 #     agent: init_agent
 
 tracing:
-  provider: studio        # Options: default, studio, none
+  provider: studio        # Options: none (default), studio, openai
   project: myproject
   name: trace_name
   settings:
@@ -324,7 +324,7 @@ In web mode, use the session management UI to browse and resume sessions.
 
 ## Tracing Configuration
 
-OmniAgents supports multiple tracing providers for monitoring and debugging agent execution. **By default, OmniAgents uses Studio tracing** which stores traces locally and never sends data to external servers.
+OmniAgents supports multiple tracing providers for monitoring and debugging agent execution. **Tracing is off by default.** Turn on local recording with the `studio` provider; nothing is sent to external servers unless you choose `openai`. Evaluation runs record locally unless `project.yml` names a provider, because Studio's review screens read those traces.
 
 ### Tracing Providers
 
@@ -332,7 +332,7 @@ Optionally configure tracing in your `project.yml`:
 
 ```yaml
 tracing:
-  provider: studio        # Options: studio, openai, none
+  provider: studio        # Options: none (default), studio, openai
   project: myproject      # Project name for trace organization
   name: trace_name        # Optional trace name
   settings:
@@ -341,11 +341,11 @@ tracing:
 
 **Provider Options:**
 
-- **studio** (default): Uses OmniAgents Studio for local trace storage and visualization
-  - Requires: `pip install omniagents[studio]`
-  - If not installed, tracing is disabled (no data sent externally)
+- **none** (default): Disables all tracing
+- **studio**: Records traces into local SQLite databases, the store
+  OmniAgents Studio reads. Built into `omniagents`; viewing them needs the
+  separate `omniagents-studio` package.
 - **openai**: Opt-in to OpenAI SDK's default tracing (sends traces to OpenAI)
-- **none**: Disables all tracing
 
 ### Trace Storage
 
@@ -364,13 +364,15 @@ export OMNIAGENTS_HOME="/path/to/custom/omniagents"
 
 ### Viewing Traces
 
-To view traces collected with the Studio provider:
+To view traces collected with the `studio` provider, install
+`omniagents-studio` (in the omni-mono repository) and run:
 
 ```bash
-omniagents studio
+omniagents-studio serve --project myproject
 ```
 
-This launches the OmniAgents Studio web interface for trace visualization and analysis.
+Run it from a project directory and it picks up `./project.yml`, which also
+enables the Playground and evaluation views.
 
 ## Tool Discovery
 

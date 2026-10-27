@@ -1,23 +1,6 @@
 import { useStore } from '@nanostores/react';
-import {
-  ArrowLeft,
-  Box,
-  GitBranch,
-  Globe,
-  Keyboard,
-  Palette,
-  Puzzle,
-  Rocket,
-  Settings,
-  ShieldCheck,
-  SlidersHorizontal,
-  SquareTerminal,
-  User,
-} from 'lucide-react';
-import { memo, useCallback, useEffect, useState } from 'react';
-
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
 import {
   SidebarContent,
   SidebarGroup,
@@ -27,38 +10,22 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarTrigger,
-} from '@/renderer/ds/ui/sidebar';
+} from '@omniagents/ui/sidebar';
+import { ArrowLeft, Box, GitBranch, Palette, Puzzle, Settings, SlidersHorizontal, SquareTerminal } from 'lucide-react';
+import { memo, useCallback, useEffect, useState } from 'react';
+
 import { openPlugins } from '@/renderer/features/Plugins/plugins-nav';
 import { $settingsInitialTab } from '@/renderer/features/SettingsModal/settings-nav';
-import { SettingsModalAccountTab } from '@/renderer/features/SettingsModal/SettingsModalAccountTab';
 import { SettingsModalAiTab } from '@/renderer/features/SettingsModal/SettingsModalAiTab';
 import { SettingsModalAppearanceTab } from '@/renderer/features/SettingsModal/SettingsModalAppearanceTab';
 import { SettingsModalAudioTab } from '@/renderer/features/SettingsModal/SettingsModalAudioTab';
 import { SettingsModalEnvironmentTab } from '@/renderer/features/SettingsModal/SettingsModalEnvironmentTab';
 import { SettingsModalGeneralTab } from '@/renderer/features/SettingsModal/SettingsModalGeneralTab';
 import { SettingsModalGitTab } from '@/renderer/features/SettingsModal/SettingsModalGitTab';
-import { SettingsModalHotkeysTab } from '@/renderer/features/SettingsModal/SettingsModalHotkeysTab';
-import { SettingsModalNetworkTab } from '@/renderer/features/SettingsModal/SettingsModalNetworkTab';
-import { SettingsModalProjectsTab } from '@/renderer/features/SettingsModal/SettingsModalProjectsTab';
 import { SettingsModalResetButton } from '@/renderer/features/SettingsModal/SettingsModalResetButton';
-import { SettingsModalRuntimePolicyTab } from '@/renderer/features/SettingsModal/SettingsModalRuntimePolicyTab';
-import { SettingsModalTeamsTab } from '@/renderer/features/SettingsModal/SettingsModalTeamsTab';
 import { SettingsModalWorkspaceTab } from '@/renderer/features/SettingsModal/SettingsModalWorkspaceTab';
 
-type SettingsTab =
-  | 'General'
-  | 'AI'
-  | 'Appearance'
-  | 'Projects'
-  | 'Audio'
-  | 'Hotkeys'
-  | 'Account'
-  | 'Teams'
-  | 'Workspace'
-  | 'Environment'
-  | 'Git'
-  | 'Network'
-  | 'Runtime Policy';
+type SettingsTab = 'General' | 'AI' | 'Appearance' | 'Audio' | 'Workspace' | 'Environment' | 'Git';
 
 type TabDef = { value: SettingsTab; label: string; icon: React.JSX.Element };
 
@@ -74,21 +41,15 @@ const TAB_GROUPS: ReadonlyArray<{ label: string | null; tabs: ReadonlyArray<TabD
       { value: 'General', label: 'General', icon: <Settings /> },
       { value: 'AI', label: 'AI', icon: <Box /> },
       { value: 'Appearance', label: 'Appearance', icon: <Palette /> },
-      { value: 'Projects', label: 'Projects', icon: <Rocket /> },
       { value: 'Audio', label: 'Voice & Audio', icon: <SlidersHorizontal /> },
-      { value: 'Hotkeys', label: 'Hotkeys', icon: <Keyboard /> },
-      { value: 'Account', label: 'Account', icon: <User /> },
-      { value: 'Teams', label: 'Teams', icon: <User /> },
     ],
   },
   {
     label: 'Developer',
     tabs: [
-      { value: 'Workspace', label: 'Workspace & Sandbox', icon: <Box /> },
+      { value: 'Workspace', label: 'Workspace', icon: <Box /> },
       { value: 'Environment', label: 'Environment', icon: <SquareTerminal /> },
       { value: 'Git', label: 'Git', icon: <GitBranch /> },
-      { value: 'Network', label: 'Network', icon: <Globe /> },
-      { value: 'Runtime Policy', label: 'Runtime Policy', icon: <ShieldCheck /> },
     ],
   },
 ];
@@ -206,16 +167,10 @@ export const SettingsPage = memo(() => {
           {shownTab === 'General' && <SettingsModalGeneralTab />}
           {shownTab === 'AI' && <SettingsModalAiTab />}
           {shownTab === 'Appearance' && <SettingsModalAppearanceTab />}
-          {shownTab === 'Projects' && <SettingsModalProjectsTab />}
           {shownTab === 'Audio' && <SettingsModalAudioTab />}
-          {shownTab === 'Hotkeys' && <SettingsModalHotkeysTab />}
-          {shownTab === 'Account' && <SettingsModalAccountTab />}
-          {shownTab === 'Teams' && <SettingsModalTeamsTab />}
           {shownTab === 'Workspace' && <SettingsModalWorkspaceTab />}
           {shownTab === 'Environment' && <SettingsModalEnvironmentTab />}
           {shownTab === 'Git' && <SettingsModalGitTab />}
-          {shownTab === 'Network' && <SettingsModalNetworkTab />}
-          {shownTab === 'Runtime Policy' && <SettingsModalRuntimePolicyTab />}
           {shownTab === 'General' && (
             <div className="pt-4 border-t border-border">
               <SettingsModalResetButton />

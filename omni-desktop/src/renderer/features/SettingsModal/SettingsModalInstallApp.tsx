@@ -1,9 +1,9 @@
 import { useStore } from '@nanostores/react';
+import { Button } from '@omniagents/ui/button';
+import { Separator } from '@omniagents/ui/separator';
 import { Download } from 'lucide-react';
 import { memo, useCallback } from 'react';
 
-import { Button } from '@/renderer/ds/ui/button';
-import { Separator } from '@/renderer/ds/ui/separator';
 import { $installPrompt, promptInstall } from '@/renderer/services/pwa-install';
 
 /**

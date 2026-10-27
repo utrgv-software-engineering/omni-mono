@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch, MagicMock
 
 from omniagents.core.agents.specs import AgentSpec, RealtimeSettings, HandoffConfig
-from omniagents.core.session.audio_storage import AudioStorage
+from omniagents.core.session.audio_storage import LocalAudioStorage
 from omniagents.rpc.realtime_session import RealtimeSession, _resolve_realtime_url
 from omniagents.rpc.realtime_events import (
     RealtimeAudioEvent,
@@ -50,8 +50,8 @@ def settings_with_key():
 
 @pytest.fixture
 def mock_audio_storage(tmp_path):
-    """Create a mock AudioStorage instance."""
-    storage = AudioStorage(base_path=tmp_path / "audio")
+    """Create a mock LocalAudioStorage instance."""
+    storage = LocalAudioStorage(base_path=tmp_path / "audio")
     return storage
 
 
@@ -77,7 +77,7 @@ def test_realtime_session_with_custom_session_id(realtime_spec):
 
 
 def test_realtime_session_with_custom_audio_storage(realtime_spec, mock_audio_storage):
-    """Test creating session with custom AudioStorage."""
+    """Test creating session with custom LocalAudioStorage."""
     session = RealtimeSession(realtime_spec, audio_storage=mock_audio_storage)
 
     assert session.audio_storage == mock_audio_storage
@@ -698,7 +698,7 @@ async def test_stream_events_with_audio(realtime_spec, settings_with_key, tmp_pa
         mock_runner.run = AsyncMock(return_value=mock_session)
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
 
-        storage = AudioStorage(base_path=tmp_path / "audio")
+        storage = LocalAudioStorage(base_path=tmp_path / "audio")
         session = RealtimeSession(
             realtime_spec, settings=settings_with_key, audio_storage=storage
         )

@@ -10,16 +10,16 @@
  */
 
 import { useStore } from '@nanostores/react';
+import { Button } from '@omniagents/ui/button';
+import { Field, FieldLabel } from '@omniagents/ui/field';
+import { Input } from '@omniagents/ui/input';
+import { NativeSelect as Select } from '@omniagents/ui/native-select';
+import { RadioGroup, RadioGroupItem } from '@omniagents/ui/radio-group';
+import { Textarea } from '@omniagents/ui/textarea';
 import { Trash2 } from 'lucide-react';
 import { nanoid } from 'nanoid';
 import { type ChangeEvent, useCallback, useMemo, useRef, useState } from 'react';
 
-import { Button } from '@/renderer/ds/ui/button';
-import { Field, FieldLabel } from '@/renderer/ds/ui/field';
-import { Input } from '@/renderer/ds/ui/input';
-import { NativeSelect as Select } from '@/renderer/ds/ui/native-select';
-import { RadioGroup, RadioGroupItem } from '@/renderer/ds/ui/radio-group';
-import { Textarea } from '@/renderer/ds/ui/textarea';
 import { persistedStoreApi } from '@/renderer/services/store';
 import { getVoiceClient } from '@/renderer/services/voice-client';
 import {

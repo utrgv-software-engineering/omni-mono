@@ -33,7 +33,13 @@ def fake_product(tmp_path):
     (tmp_path / "prompts").mkdir()
     info = replace(
         product_info_from_mapping(
-            {"name": "acme", "prog": "acme", "config_dir": "acme_cfg"}
+            # Pin the Windows name too; it defaults to the label ("Acme").
+            {
+                "name": "acme",
+                "prog": "acme",
+                "config_dir": "acme_cfg",
+                "windows_config_dir": "acme_cfg",
+            }
         ),
         manifest_path=manifest,
     )

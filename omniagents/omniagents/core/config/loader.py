@@ -1,13 +1,14 @@
 import yaml
+import logging
 import os
 import re
-import importlib
 import fnmatch
-import sys
 import warnings
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
-from typing import Dict, Any, List, Callable, Optional, Set
+from typing import Dict, Any, Iterator, List, Callable, Optional, Set
 
 _SAFE_AGENT_DEPRECATION_WARNED: Set[str] = set()
 
@@ -50,7 +51,6 @@ def _emit_safe_agent_deprecations(safe_options_config: Any, *, source: str) -> N
 # Core imports
 from omniagents.core.agents.specs import (
     AgentSpec,
-    AgentLike,
     SafeAgentOptions,
     HandoffConfig,
     AgentToolConfig,
@@ -80,6 +80,38 @@ from omniagents.core.predicates.discovery import (
     resolve_predicate,
 )
 
+logger = logging.getLogger(__name__)
+
+_collected_problems: ContextVar[Optional[List[str]]] = ContextVar(
+    "agent_config_problems", default=None
+)
+
+
+def _report(message: str) -> None:
+    """A problem in an agent's configuration that loading worked around
+    (a missing tool, an invalid setting replaced by its default)."""
+    logger.warning(message)
+    collected = _collected_problems.get()
+    if collected is not None:
+        collected.append(message)
+
+
+@contextmanager
+def collect_config_problems() -> Iterator[List[str]]:
+    """Collect the problems loading reports, in order, while in this block.
+
+    Loading tolerates a misconfigured agent (it skips what it cannot find),
+    so a caller that must not accept one, such as an editor saving
+    ``agent.yml``, loads inside this block and refuses on any problem.
+    """
+    problems: List[str] = []
+    token = _collected_problems.set(problems)
+    try:
+        yield problems
+    finally:
+        _collected_problems.reset(token)
+
+
 DEFAULT_SETTINGS_FIELDS = [
     SettingField(
         key="openai_base_url",
@@ -108,8 +140,8 @@ def _parse_mcp_servers_config(
         return []
 
     if not isinstance(raw_servers, list):
-        print(
-            f"Warning: 'mcp_servers' in {config_path} should be a list of mappings. Ignoring."
+        _report(
+            f"'mcp_servers' in {config_path} should be a list of mappings. Ignoring."
         )
         return []
 
@@ -118,27 +150,27 @@ def _parse_mcp_servers_config(
 
     for idx, entry in enumerate(raw_servers):
         if not isinstance(entry, dict):
-            print(
-                f"Warning: Entry {idx} of 'mcp_servers' in {config_path} is not a mapping. Skipping."
+            _report(
+                f"Entry {idx} of 'mcp_servers' in {config_path} is not a mapping. Skipping."
             )
             continue
 
         name = entry.get("name")
         if not isinstance(name, str) or not name.strip():
-            print(
-                f"Warning: MCP server entry {idx} in {config_path} is missing a valid 'name'. Skipping."
+            _report(
+                f"MCP server entry {idx} in {config_path} is missing a valid 'name'. Skipping."
             )
             continue
         if name in seen_names:
-            print(
-                f"Warning: Duplicate MCP server name '{name}' in {config_path}. Skipping duplicate."
+            _report(
+                f"Duplicate MCP server name '{name}' in {config_path}. Skipping duplicate."
             )
             continue
 
         server_type = entry.get("type")
         if not isinstance(server_type, str) or not server_type.strip():
-            print(
-                f"Warning: MCP server '{name}' in {config_path} is missing a valid 'type'. Skipping."
+            _report(
+                f"MCP server '{name}' in {config_path} is missing a valid 'type'. Skipping."
             )
             continue
 
@@ -146,17 +178,27 @@ def _parse_mcp_servers_config(
         if params is None:
             params = {}
         if not isinstance(params, dict):
-            print(
-                f"Warning: MCP server '{name}' in {config_path} has non-dict 'params'. Skipping."
+            _report(
+                f"MCP server '{name}' in {config_path} has non-dict 'params'. Skipping."
             )
             continue
 
         options = entry.get("options")
         if options is not None and not isinstance(options, dict):
-            print(
-                f"Warning: MCP server '{name}' in {config_path} has non-dict 'options'. Ignoring options."
+            _report(
+                f"MCP server '{name}' in {config_path} has non-dict 'options'. Ignoring options."
             )
             options = None
+
+        # ${VAR} / ${VAR:-default} in params and options, so one definition
+        # points at different endpoints and credentials per deployment.
+        try:
+            params = _substitute_env_vars(params)
+            if options is not None:
+                options = _substitute_env_vars(options)
+        except ValueError as exc:
+            _report(f"MCP server '{name}' in {config_path}: {exc}. Skipping.")
+            continue
 
         servers.append(
             MCPServerConfig(
@@ -169,6 +211,28 @@ def _parse_mcp_servers_config(
         seen_names.add(name)
 
     return servers
+
+
+_SUBSTITUTIONS: "ContextVar[Dict[str, str]]" = ContextVar(
+    "omniagents_substitutions", default={}
+)
+
+
+@contextmanager
+def substitution_environment(values: Dict[str, str]):
+    """Variables ``${VAR}`` resolves to, ahead of the process environment,
+    for what is loaded in this context (this task and the ones it starts).
+
+    An evaluation scenario points its agents at its own services this way,
+    beside scenarios running at the same time.
+    """
+    token = _SUBSTITUTIONS.set(
+        {**_SUBSTITUTIONS.get(), **{k: str(v) for k, v in values.items()}}
+    )
+    try:
+        yield
+    finally:
+        _SUBSTITUTIONS.reset(token)
 
 
 def _substitute_env_vars(value: Any) -> Any:
@@ -190,7 +254,10 @@ def _substitute_env_vars(value: Any) -> Any:
             operator = match.group(2)
             default_or_error = match.group(3) or ""
 
-            env_value = os.getenv(var_name)
+            overlay = _SUBSTITUTIONS.get()
+            env_value = (
+                overlay[var_name] if var_name in overlay else os.getenv(var_name)
+            )
 
             if env_value is not None:
                 return env_value
@@ -247,18 +314,18 @@ def _load_instructions(config: Dict[str, Any], base_dir: Path) -> Callable[[], s
                         display_path = file_path.relative_to(Path.cwd())
                     except ValueError:
                         display_path = file_path  # Show absolute if not relative to CWD
-                    print(f"Warning: Instructions file not found: {file_path}")
+                    _report(f"Instructions file not found: {file_path}")
                     return f"Error: Instructions file '{display_path}' not found."
                 return file_path.read_text(encoding="utf-8")
             except Exception as e:
-                print(f"Error reading instructions file {file_path}: {e}")
+                _report(f"Error reading instructions file {file_path}: {e}")
                 return f"Error reading instructions file: {e}"
 
         return read_instructions_file
     else:
         # Default instructions if neither is specified
-        print(
-            "Warning: No instructions or instructions_file specified in config. Using default."
+        _report(
+            "No instructions or instructions_file specified in config. Using default."
         )
         return lambda: "You are a helpful assistant."
 
@@ -284,11 +351,203 @@ def _instruction_search_paths(
         anchor_dir = (base_dir / str(instructions_file_relative)).resolve().parent
 
     extra_dirs: List[Path] = []
+    # An agent that extends a base renders the base's instructions with its
+    # own role in them: includes resolve from both agents' folders (and their
+    # `_shared/` conventions), role first.
+    for d in config.get("_extends_dirs") or []:
+        extra_dirs.extend([Path(d), Path(d) / "_shared", Path(d).parent / "_shared"])
     if project_defaults:
         for d in project_defaults.get("instruction_fragments") or []:
             extra_dirs.append(Path(d))
 
     return instruction_search_paths(anchor_dir, extra_dirs)
+
+
+_ROLE_SLOT = re.compile(r"\{\{\s*role\s*\}\}")
+
+
+def _find_project_file(start: Path) -> Optional[Path]:
+    """The nearest ``project.yml`` at or above ``start``, or ``None``."""
+    current = start
+    while True:
+        candidate = current / "project.yml"
+        if candidate.is_file():
+            return candidate
+        if current == current.parent:
+            return None
+        current = current.parent
+
+
+def _project_root(
+    config_file: Path, project_defaults: Optional[Dict[str, Any]]
+) -> Optional[Path]:
+    root = (project_defaults or {}).get("project_root")
+    if root:
+        return Path(root)
+    found = _find_project_file(config_file.parent)
+    return found.parent if found else None
+
+
+def _project_context_dirs(
+    config_file: Path, project_defaults: Optional[Dict[str, Any]]
+) -> List[Path]:
+    """``paths.context`` folders, from the project loader or the nearest project.yml."""
+    if project_defaults and "context_dirs" in project_defaults:
+        return [Path(d) for d in project_defaults.get("context_dirs") or []]
+    found = _find_project_file(config_file.parent)
+    if found is None:
+        return []
+    try:
+        data = yaml.safe_load(found.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return []
+    paths_cfg = data.get("paths") if isinstance(data, dict) else None
+    raw = paths_cfg.get("context") if isinstance(paths_cfg, dict) else None
+    entries = raw if isinstance(raw, list) else ([raw] if raw else [])
+    return [(found.parent / str(e)).resolve() for e in entries]
+
+
+def _project_skill_dirs(
+    config_file: Path, project_defaults: Optional[Dict[str, Any]]
+) -> List[Path]:
+    """``paths.skills`` folders (default ``skills/``), from the project loader or project.yml."""
+    if project_defaults and "skills_dirs" in project_defaults:
+        return [Path(d) for d in project_defaults.get("skills_dirs") or []]
+    found = _find_project_file(config_file.parent)
+    if found is None:
+        return []
+    try:
+        data = yaml.safe_load(found.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return []
+    paths_cfg = data.get("paths") if isinstance(data, dict) else None
+    raw = paths_cfg.get("skills", "skills") if isinstance(paths_cfg, dict) else "skills"
+    entries = raw if isinstance(raw, list) else ([raw] if raw else [])
+    return [(found.parent / str(e)).resolve() for e in entries]
+
+
+def _agent_skill_roots(
+    config: Dict[str, Any],
+    config_file: Path,
+    project_defaults: Optional[Dict[str, Any]],
+) -> List[str]:
+    """The skill folders an agent definition brings: its own, its bases', the project's."""
+    candidates: List[Path] = [config_file.parent / "skills"]
+    candidates.extend(Path(d) / "skills" for d in config.get("_extends_dirs") or [])
+    candidates.extend(_project_skill_dirs(config_file, project_defaults))
+    out: List[str] = []
+    for c in candidates:
+        resolved = str(c.resolve())
+        if c.is_dir() and resolved not in out:
+            out.append(resolved)
+    return out
+
+
+def _instructions_text(config: Dict[str, Any], base_dir: Path, source: Path) -> str:
+    """An agent definition's own instructions, read now (for ``extends:`` merging)."""
+    if config.get("instructions"):
+        return str(config["instructions"])
+    rel = config.get("instructions_file")
+    if not rel:
+        return ""
+    path = (base_dir / str(rel)).resolve()
+    if not path.is_file():
+        raise ValueError(f"{source}: instructions file not found: {path}")
+    return path.read_text(encoding="utf-8")
+
+
+def _apply_extends(
+    config: Dict[str, Any],
+    config_file: Path,
+    project_defaults: Optional[Dict[str, Any]],
+    loading_stack: Set[Path],
+) -> Dict[str, Any]:
+    """Merge the agent definition ``config`` names with ``extends:`` into it.
+
+    ``extends: <folder>`` names a folder, relative to the project root,
+    holding an ``agent.yml``. The extending agent's own keys override the
+    base's; its ``capabilities`` add to the base's list; and its
+    instructions are rendered into the base instructions' ``{{ role }}``
+    slot (appended when the base has no slot). The base may extend another
+    definition in turn. The folders whose instructions were combined are
+    recorded under ``_extends_dirs`` so includes and context factories
+    resolve from them too.
+    """
+    target = config.get("extends")
+    if not target:
+        return config
+    if not isinstance(target, str) or not target.strip():
+        raise ValueError(
+            f"{config_file}: 'extends' must name a folder holding an agent.yml"
+        )
+    root = _project_root(config_file, project_defaults) or config_file.parent
+    base_file = (root / target.strip() / "agent.yml").resolve()
+    if not base_file.is_file():
+        raise ValueError(
+            f"{config_file}: 'extends: {target}' has no agent.yml at {base_file} "
+            "(the folder is relative to the project root)"
+        )
+    if base_file in loading_stack:
+        raise ValueError(
+            f"Circular 'extends' detected: {base_file} is already being loaded"
+        )
+    try:
+        base = yaml.safe_load(base_file.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as e:
+        raise ValueError(f"Error parsing YAML file {base_file}: {e}")
+    if not isinstance(base, dict):
+        raise ValueError(f"Invalid YAML format in {base_file}. Expected a dictionary.")
+    base = _apply_extends(
+        base, base_file, project_defaults, loading_stack | {base_file}
+    )
+
+    base_dir = base_file.parent
+    base_instructions = _instructions_text(base, base_dir, base_file)
+    role_instructions = _instructions_text(config, config_file.parent, config_file)
+
+    merged: Dict[str, Any] = {
+        k: v for k, v in base.items() if k not in ("instructions", "instructions_file")
+    }
+    for key, value in config.items():
+        if key in ("extends", "instructions", "instructions_file"):
+            continue
+        if key == "capabilities":
+
+            def _cap_name(entry: Any) -> Any:
+                return entry.get("name") if isinstance(entry, dict) else entry
+
+            combined = list(base.get("capabilities") or [])
+            names = {_cap_name(c) for c in combined}
+            combined.extend(c for c in (value or []) if _cap_name(c) not in names)
+            merged["capabilities"] = combined
+        else:
+            merged[key] = value
+
+    if _ROLE_SLOT.search(base_instructions):
+        merged["instructions"] = _ROLE_SLOT.sub(
+            lambda _m: role_instructions, base_instructions
+        )
+    elif role_instructions:
+        merged["instructions"] = base_instructions.rstrip() + "\n\n" + role_instructions
+    elif base_instructions:
+        merged["instructions"] = base_instructions
+
+    dirs: List[str] = []
+    if config.get("instructions_file"):
+        dirs.append(
+            str(
+                (config_file.parent / str(config["instructions_file"])).resolve().parent
+            )
+        )
+    dirs.append(str(config_file.parent))
+    base_rel = base.get("instructions_file")
+    dirs.append(
+        str((base_dir / str(base_rel)).resolve().parent) if base_rel else str(base_dir)
+    )
+    dirs.append(str(base_dir))
+    dirs.extend(base.get("_extends_dirs") or [])
+    merged["_extends_dirs"] = list(dict.fromkeys(dirs))
+    return merged
 
 
 def _parse_inline_agent_spec(
@@ -308,7 +567,7 @@ def _parse_inline_agent_spec(
     # Parse tools (inline agents reference tools by name only)
     tool_names = config.get("tools", [])
     if not isinstance(tool_names, list):
-        print(f"Warning: 'tools' in inline agent should be a list. Using empty list.")
+        _report("'tools' in inline agent should be a list. Using empty list.")
         tool_names = []
 
     # Discover tools from parent's directory
@@ -327,8 +586,8 @@ def _parse_inline_agent_spec(
             try:
                 selected_tool_functions.append(build_hosted_tool(tool_entry))
             except Exception as e:
-                print(
-                    f"Warning: Failed to build hosted tool {tool_entry!r} for inline agent '{agent_name}': {e}"
+                _report(
+                    f"Failed to build hosted tool {tool_entry!r} for inline agent '{agent_name}': {e}"
                 )
             continue
         # Function tool reference (string name, or dict without 'hosted')
@@ -336,9 +595,7 @@ def _parse_inline_agent_spec(
         if tool_name and tool_name in all_discovered_functions:
             selected_tool_functions.append(all_discovered_functions[tool_name])
         else:
-            print(
-                f"Warning: Tool {tool_entry!r} not found for inline agent '{agent_name}'"
-            )
+            _report(f"Tool {tool_entry!r} not found for inline agent '{agent_name}'")
 
     # Parse model settings if provided
     model_settings_config = config.get("model_settings", {})
@@ -363,21 +620,21 @@ def _parse_inline_agent_spec(
     handoffs_config = config.get("handoffs", [])
     if handoffs_config:
         if not isinstance(handoffs_config, list):
-            print(
-                f"Warning: 'handoffs' in inline agent '{agent_name}' should be a list. Skipping."
+            _report(
+                f"'handoffs' in inline agent '{agent_name}' should be a list. Skipping."
             )
             handoffs_config = []
         for handoff_item in handoffs_config:
             if not isinstance(handoff_item, dict):
-                print(
-                    f"Warning: Invalid handoff item in inline agent '{agent_name}'. Expected dict. Skipping."
+                _report(
+                    f"Invalid handoff item in inline agent '{agent_name}'. Expected dict. Skipping."
                 )
                 continue
             if "yaml" in handoff_item:
                 yaml_path = handoff_item.get("yaml")
                 if not isinstance(yaml_path, str) or not yaml_path.strip():
-                    print(
-                        f"Warning: Inline handoff for '{agent_name}' is missing a valid 'yaml' path. Skipping."
+                    _report(
+                        f"Inline handoff for '{agent_name}' is missing a valid 'yaml' path. Skipping."
                     )
                     continue
                 resolved_yaml = (base_dir / yaml_path).resolve()
@@ -386,8 +643,8 @@ def _parse_inline_agent_spec(
                         display_path = resolved_yaml.relative_to(Path.cwd())
                     except ValueError:
                         display_path = resolved_yaml
-                    print(
-                        f"Warning: Handoff agent YAML file not found for inline agent '{agent_name}': {display_path}. Skipping."
+                    _report(
+                        f"Handoff agent YAML file not found for inline agent '{agent_name}': {display_path}. Skipping."
                     )
                     continue
                 handoff_configs_list.append(
@@ -402,8 +659,8 @@ def _parse_inline_agent_spec(
             elif "inline" in handoff_item:
                 inline_config = handoff_item.get("inline")
                 if not isinstance(inline_config, dict):
-                    print(
-                        f"Warning: 'inline' value in handoff for '{agent_name}' should be a dictionary. Skipping."
+                    _report(
+                        f"'inline' value in handoff for '{agent_name}' should be a dictionary. Skipping."
                     )
                     continue
                 try:
@@ -411,8 +668,8 @@ def _parse_inline_agent_spec(
                         inline_config, base_dir, parent_loading_stack
                     )
                 except Exception as e:
-                    print(
-                        f"Warning: Failed to parse nested inline agent for '{agent_name}': {e}. Skipping."
+                    _report(
+                        f"Failed to parse nested inline agent for '{agent_name}': {e}. Skipping."
                     )
                     continue
                 handoff_configs_list.append(
@@ -425,8 +682,8 @@ def _parse_inline_agent_spec(
                     )
                 )
             else:
-                print(
-                    f"Warning: Inline handoff item for '{agent_name}' must include 'yaml' or 'inline'. Skipping."
+                _report(
+                    f"Inline handoff item for '{agent_name}' must include 'yaml' or 'inline'. Skipping."
                 )
 
     # Create minimal AgentSpec for inline agent
@@ -560,6 +817,9 @@ def load_agent_spec_from_yaml(
             f"Invalid YAML format in {config_file.resolve()}. Expected a dictionary (key-value pairs)."
         )
 
+    # --- extends: build on another agent definition ---
+    config = _apply_extends(config, config_file, project_defaults, _loading_stack)
+
     # --- Remote Agent preliminary ---
     remote_ws_url: str | None = None
     remote_token_env: str | None = None
@@ -592,8 +852,8 @@ def load_agent_spec_from_yaml(
             try:
                 max_turns_cfg = int(_raw_max_turns)
             except (TypeError, ValueError):
-                print(
-                    f"Warning: 'max_turns' must be an integer or null. Got {_raw_max_turns!r}. Using 20."
+                _report(
+                    f"'max_turns' must be an integer or null. Got {_raw_max_turns!r}. Using 20."
                 )
                 max_turns_cfg = 20
     else:
@@ -632,8 +892,8 @@ def load_agent_spec_from_yaml(
         # Validate string behaviors
         valid_behaviors = ["run_llm_again", "stop_on_first_tool"]
         if tool_use_behavior_config not in valid_behaviors:
-            print(
-                f"Warning: Invalid tool_use_behavior '{tool_use_behavior_config}'. Using default 'run_llm_again'."
+            _report(
+                f"Invalid tool_use_behavior '{tool_use_behavior_config}'. Using default 'run_llm_again'."
             )
             tool_use_behavior = "run_llm_again"
     elif isinstance(tool_use_behavior_config, dict):
@@ -641,21 +901,21 @@ def load_agent_spec_from_yaml(
         if "stop_at_tool_names" in tool_use_behavior_config:
             stop_at_tools = tool_use_behavior_config.get("stop_at_tool_names", [])
             if not isinstance(stop_at_tools, list):
-                print(
-                    f"Warning: 'stop_at_tool_names' should be a list. Using default 'run_llm_again'."
+                _report(
+                    "'stop_at_tool_names' should be a list. Using default 'run_llm_again'."
                 )
                 tool_use_behavior = "run_llm_again"
             else:
                 # Keep the dict format for StopAtTools
                 tool_use_behavior = {"stop_at_tool_names": stop_at_tools}
         else:
-            print(
-                f"Warning: tool_use_behavior dict must have 'stop_at_tool_names' field. Using default 'run_llm_again'."
+            _report(
+                "tool_use_behavior dict must have 'stop_at_tool_names' field. Using default 'run_llm_again'."
             )
             tool_use_behavior = "run_llm_again"
     else:
-        print(
-            f"Warning: tool_use_behavior must be a string or dict. Got {type(tool_use_behavior_config).__name__}. Using default 'run_llm_again'."
+        _report(
+            f"tool_use_behavior must be a string or dict. Got {type(tool_use_behavior_config).__name__}. Using default 'run_llm_again'."
         )
         tool_use_behavior = "run_llm_again"
 
@@ -689,8 +949,8 @@ def load_agent_spec_from_yaml(
             td_name = (agent_name or "Agent").title().replace(" ", "") + "Output"
             output_type = TypedDict(td_name, ann)  # type: ignore
         except Exception as e:
-            print(
-                f"Warning: Failed to build output_schema TypedDict: {e}. Falling back to output_type"
+            _report(
+                f"Failed to build output_schema TypedDict: {e}. Falling back to output_type"
             )
             output_schema_config = None
     if output_type is None and output_type_config:
@@ -713,12 +973,12 @@ def load_agent_spec_from_yaml(
         if isinstance(output_type_config, str):
             output_type = type_mapping.get(output_type_config.lower())
             if output_type_config.lower() not in type_mapping:
-                print(
-                    f"Warning: Unknown output_type '{output_type_config}'. Supported types: {', '.join(type_mapping.keys())}. Ignoring."
+                _report(
+                    f"Unknown output_type '{output_type_config}'. Supported types: {', '.join(type_mapping.keys())}. Ignoring."
                 )
         else:
-            print(
-                f"Warning: 'output_type' should be a string. Got {type(output_type_config).__name__}. Ignoring."
+            _report(
+                f"'output_type' should be a string. Got {type(output_type_config).__name__}. Ignoring."
             )
 
     # --- Output Type Strict Mode ---
@@ -726,8 +986,8 @@ def load_agent_spec_from_yaml(
         "output_type_strict", True
     )  # Default to True for strict JSON schema
     if not isinstance(output_type_strict, bool):
-        print(
-            f"Warning: 'output_type_strict' should be a boolean. Got {type(output_type_strict).__name__}. Using default True."
+        _report(
+            f"'output_type_strict' should be a boolean. Got {type(output_type_strict).__name__}. Using default True."
         )
         output_type_strict = True
 
@@ -738,9 +998,7 @@ def load_agent_spec_from_yaml(
         if isinstance(prompt_config, dict):
             # Validate required 'id' field
             if "id" not in prompt_config:
-                print(
-                    f"Warning: 'prompt' configuration must have an 'id' field. Ignoring."
-                )
+                _report("'prompt' configuration must have an 'id' field. Ignoring.")
             else:
                 # Create a Prompt TypedDict-compatible dictionary
                 prompt = {
@@ -753,18 +1011,18 @@ def load_agent_spec_from_yaml(
                     if isinstance(prompt_config["variables"], dict):
                         prompt["variables"] = prompt_config["variables"]
                     else:
-                        print(
-                            f"Warning: 'prompt.variables' should be a dictionary. Ignoring variables field."
+                        _report(
+                            "'prompt.variables' should be a dictionary. Ignoring variables field."
                         )
         else:
-            print(
-                f"Warning: 'prompt' should be a dictionary with 'id', 'version' (optional), and 'variables' (optional). Got {type(prompt_config).__name__}. Ignoring."
+            _report(
+                f"'prompt' should be a dictionary with 'id', 'version' (optional), and 'variables' (optional). Got {type(prompt_config).__name__}. Ignoring."
             )
 
     # --- Model Settings ---
     model_settings_config = config.get("model_settings", {})
     if not isinstance(model_settings_config, dict):
-        print(f"Warning: 'model_settings' should be a dictionary. Ignoring.")
+        _report("'model_settings' should be a dictionary. Ignoring.")
         model_settings_config = {}
 
     # Validate known ModelSettings parameters
@@ -807,8 +1065,8 @@ def load_agent_spec_from_yaml(
                 expected_types = (expected_types,)
             if not isinstance(value, expected_types):
                 type_names = "/".join(t.__name__ for t in expected_types)
-                print(
-                    f"Warning: 'model_settings.{key}' should be {type_names}, got {type(value).__name__}. Ignoring."
+                _report(
+                    f"'model_settings.{key}' should be {type_names}, got {type(value).__name__}. Ignoring."
                 )
                 keys_to_remove.append(key)
         else:
@@ -823,16 +1081,16 @@ def load_agent_spec_from_yaml(
     if "truncation" in model_settings_config and model_settings_config[
         "truncation"
     ] not in ["auto", "disabled"]:
-        print(
-            f"Warning: 'model_settings.truncation' should be 'auto' or 'disabled', got '{model_settings_config['truncation']}'. Ignoring."
+        _report(
+            f"'model_settings.truncation' should be 'auto' or 'disabled', got '{model_settings_config['truncation']}'. Ignoring."
         )
         del model_settings_config["truncation"]
 
     if "verbosity" in model_settings_config and model_settings_config[
         "verbosity"
     ] not in ["low", "medium", "high"]:
-        print(
-            f"Warning: 'model_settings.verbosity' should be 'low', 'medium', or 'high', got '{model_settings_config['verbosity']}'. Ignoring."
+        _report(
+            f"'model_settings.verbosity' should be 'low', 'medium', or 'high', got '{model_settings_config['verbosity']}'. Ignoring."
         )
         del model_settings_config["verbosity"]
 
@@ -844,29 +1102,27 @@ def load_agent_spec_from_yaml(
     # --- Realtime Agent Configuration ---
     realtime_mode = config.get("realtime_mode", False)
     if not isinstance(realtime_mode, bool):
-        print(
-            f"Warning: 'realtime_mode' should be a boolean. Got {type(realtime_mode).__name__}. Using False."
+        _report(
+            f"'realtime_mode' should be a boolean. Got {type(realtime_mode).__name__}. Using False."
         )
         realtime_mode = False
 
     voice_backend = config.get("voice_backend", "realtime")
     if not isinstance(voice_backend, str):
-        print(
-            f"Warning: 'voice_backend' should be a string. Got {type(voice_backend).__name__}. Using 'realtime'."
+        _report(
+            f"'voice_backend' should be a string. Got {type(voice_backend).__name__}. Using 'realtime'."
         )
         voice_backend = "realtime"
     voice_backend = voice_backend.strip().lower() or "realtime"
-    if voice_backend not in {"realtime", "pipeline"}:
-        print(f"Warning: Invalid voice_backend '{voice_backend}'. Using 'realtime'.")
+    if voice_backend not in {"realtime", "pipeline", "codex-live"}:
+        _report(f"Invalid voice_backend '{voice_backend}'. Using 'realtime'.")
         voice_backend = "realtime"
 
     realtime_settings = None
     if realtime_mode or voice_backend == "pipeline":
         realtime_config = config.get("realtime_settings", {})
         if not isinstance(realtime_config, dict):
-            print(
-                f"Warning: 'realtime_settings' should be a dictionary. Using defaults."
-            )
+            _report("'realtime_settings' should be a dictionary. Using defaults.")
             realtime_config = {}
 
         # Apply environment variable substitution to realtime config
@@ -899,13 +1155,13 @@ def load_agent_spec_from_yaml(
             # Validate audio formats
             valid_audio_formats = ["pcm16", "g711_ulaw", "g711_alaw"]
             if realtime_settings.input_audio_format not in valid_audio_formats:
-                print(
-                    f"Warning: Invalid input_audio_format '{realtime_settings.input_audio_format}'. Using 'pcm16'."
+                _report(
+                    f"Invalid input_audio_format '{realtime_settings.input_audio_format}'. Using 'pcm16'."
                 )
                 realtime_settings.input_audio_format = "pcm16"
             if realtime_settings.output_audio_format not in valid_audio_formats:
-                print(
-                    f"Warning: Invalid output_audio_format '{realtime_settings.output_audio_format}'. Using 'pcm16'."
+                _report(
+                    f"Invalid output_audio_format '{realtime_settings.output_audio_format}'. Using 'pcm16'."
                 )
                 realtime_settings.output_audio_format = "pcm16"
 
@@ -913,13 +1169,13 @@ def load_agent_spec_from_yaml(
             if not isinstance(realtime_settings.modalities, list) or not all(
                 m in ["text", "audio"] for m in realtime_settings.modalities
             ):
-                print(
-                    f"Warning: Invalid modalities. Must be a list containing 'text' and/or 'audio'. Using ['audio']."
+                _report(
+                    "Invalid modalities. Must be a list containing 'text' and/or 'audio'. Using ['audio']."
                 )
                 realtime_settings.modalities = ["audio"]
 
         except Exception as e:
-            print(f"Warning: Error parsing realtime settings: {e}. Using defaults.")
+            _report(f"Error parsing realtime settings: {e}. Using defaults.")
             realtime_settings = RealtimeSettings()
 
     # --- Agent Instructions ---
@@ -957,8 +1213,8 @@ def load_agent_spec_from_yaml(
             Debug.log(f"Discovered tools from 'tools' subdirectory: {tools_dir_path}")
         additional_tools_dirs = config.get("additional_tools_dirs", [])
         if not isinstance(additional_tools_dirs, list):
-            print(
-                f"Warning: 'additional_tools_dirs' in {config_path} should be a list. Ignoring."
+            _report(
+                f"'additional_tools_dirs' in {config_path} should be a list. Ignoring."
             )
             additional_tools_dirs = []
         for tools_dir in additional_tools_dirs:
@@ -972,8 +1228,8 @@ def load_agent_spec_from_yaml(
                     display_path = additional_dir_path.relative_to(Path.cwd())
                 except ValueError:
                     display_path = additional_dir_path
-                print(
-                    f"Warning: Additional tools directory '{display_path}' not found. Skipping."
+                _report(
+                    f"Additional tools directory '{display_path}' not found. Skipping."
                 )
         if not all_discovered_functions:
             pass
@@ -982,8 +1238,8 @@ def load_agent_spec_from_yaml(
     selected_tool_functions = []
     missing_tools = []
     if not isinstance(activated_tool_names, list):
-        print(
-            f"Warning: 'tools' key in {config_path} should be a list of tool names. Ignoring."
+        _report(
+            f"'tools' key in {config_path} should be a list of tool names. Ignoring."
         )
         activated_tool_names = []
 
@@ -994,8 +1250,8 @@ def load_agent_spec_from_yaml(
                 try:
                     selected_tool_functions.append(build_hosted_tool(tool_entry))
                 except Exception as e:
-                    print(
-                        f"Warning: Failed to build hosted tool {tool_entry!r} in '{config_path}': {e}"
+                    _report(
+                        f"Failed to build hosted tool {tool_entry!r} in '{config_path}': {e}"
                     )
                 continue
             # Function tool reference: bare string ("bash_kill") OR dict
@@ -1019,8 +1275,8 @@ def load_agent_spec_from_yaml(
             display_path = tools_dir_path.relative_to(Path.cwd())
         except ValueError:
             display_path = tools_dir_path
-        print(
-            f"Warning: The following tools listed in '{config_path}' were not found in the agent's tools directory '{display_path}' or are not valid marked functions: {', '.join(str(t) for t in missing_tools)}"
+        _report(
+            f"The following tools listed in '{config_path}' were not found in the agent's tools directory '{display_path}' or are not valid marked functions: {', '.join(str(t) for t in missing_tools)}"
         )
         # Continue without missing tools
 
@@ -1030,17 +1286,16 @@ def load_agent_spec_from_yaml(
         blocked_names = set(sec.get("blocked_tools") or [])
         blocked_patterns = sec.get("blocked_tool_patterns") or []
         if blocked_names or blocked_patterns:
-            before_count = len(selected_tool_functions)
             filtered = []
             for tool_func in selected_tool_functions:
                 tool_name = getattr(tool_func, "name", "")
                 if tool_name in blocked_names:
-                    print(
+                    logger.warning(
                         f"Security: tool '{tool_name}' blocked by project security policy"
                     )
                     continue
                 if any(fnmatch.fnmatch(tool_name, p) for p in blocked_patterns):
-                    print(
+                    logger.warning(
                         f"Security: tool '{tool_name}' blocked by pattern in project security policy"
                     )
                     continue
@@ -1080,8 +1335,8 @@ def load_agent_spec_from_yaml(
                 )
             additional_sf_dirs = config.get("additional_server_functions_dirs", [])
             if not isinstance(additional_sf_dirs, list):
-                print(
-                    f"Warning: 'additional_server_functions_dirs' in {config_path} should be a list. Ignoring."
+                _report(
+                    f"'additional_server_functions_dirs' in {config_path} should be a list. Ignoring."
                 )
                 additional_sf_dirs = []
             for sf_dir in additional_sf_dirs:
@@ -1097,8 +1352,8 @@ def load_agent_spec_from_yaml(
                         display_path = add_dir_path.relative_to(Path.cwd())
                     except ValueError:
                         display_path = add_dir_path
-                    print(
-                        f"Warning: Additional server functions directory '{display_path}' not found. Skipping."
+                    _report(
+                        f"Additional server functions directory '{display_path}' not found. Skipping."
                     )
 
         sf_cfg = config.get("server_functions", [])
@@ -1116,8 +1371,8 @@ def load_agent_spec_from_yaml(
         else:
             sf_names = sf_cfg
             if sf_names and not isinstance(sf_names, list):
-                print(
-                    f"Warning: 'server_functions' in {config_path} should be a list of names. Ignoring."
+                _report(
+                    f"'server_functions' in {config_path} should be a list of names. Ignoring."
                 )
                 sf_names = []
             selected_funcs = []
@@ -1129,8 +1384,8 @@ def load_agent_spec_from_yaml(
                 else:
                     missing_sf.append(n)
             if missing_sf:
-                print(
-                    f"Warning: The following server functions listed in '{config_path}' were not found: {', '.join(missing_sf)}"
+                _report(
+                    f"The following server functions listed in '{config_path}' were not found: {', '.join(missing_sf)}"
                 )
             if selected_funcs:
                 server_functions_registrar = build_server_functions_registrar(
@@ -1167,8 +1422,8 @@ def load_agent_spec_from_yaml(
             else:
                 hook_names = rh_cfg
                 if hook_names and not isinstance(hook_names, list):
-                    print(
-                        f"Warning: 'runtime_hooks' in {config_path} should be a list of event names. Ignoring."
+                    _report(
+                        f"'runtime_hooks' in {config_path} should be a list of event names. Ignoring."
                     )
                     hook_names = []
                 if hook_names:
@@ -1232,8 +1487,8 @@ def load_agent_spec_from_yaml(
         # Process input guardrails from config
         input_guardrail_names = config.get("input_guardrails", [])
         if not isinstance(input_guardrail_names, list):
-            print(
-                f"Warning: 'input_guardrails' key in {config_path} should be a list of guardrail names. Ignoring."
+            _report(
+                f"'input_guardrails' key in {config_path} should be a list of guardrail names. Ignoring."
             )
             input_guardrail_names = []
 
@@ -1245,15 +1500,15 @@ def load_agent_spec_from_yaml(
                 missing_input_guardrails.append(guardrail_name)
 
         if missing_input_guardrails:
-            print(
-                f"Warning: The following input guardrails listed in '{config_path}' were not found: {', '.join(missing_input_guardrails)}"
+            _report(
+                f"The following input guardrails listed in '{config_path}' were not found: {', '.join(missing_input_guardrails)}"
             )
 
         # Process output guardrails from config
         output_guardrail_names = config.get("output_guardrails", [])
         if not isinstance(output_guardrail_names, list):
-            print(
-                f"Warning: 'output_guardrails' key in {config_path} should be a list of guardrail names. Ignoring."
+            _report(
+                f"'output_guardrails' key in {config_path} should be a list of guardrail names. Ignoring."
             )
             output_guardrail_names = []
 
@@ -1265,15 +1520,15 @@ def load_agent_spec_from_yaml(
                 missing_output_guardrails.append(guardrail_name)
 
         if missing_output_guardrails:
-            print(
-                f"Warning: The following output guardrails listed in '{config_path}' were not found: {', '.join(missing_output_guardrails)}"
+            _report(
+                f"The following output guardrails listed in '{config_path}' were not found: {', '.join(missing_output_guardrails)}"
             )
 
         # Process tool-level input guardrails from config (SDK 0.7+)
         tool_input_guardrail_names = config.get("tool_input_guardrails", [])
         if not isinstance(tool_input_guardrail_names, list):
-            print(
-                f"Warning: 'tool_input_guardrails' key in {config_path} should be a list of guardrail names. Ignoring."
+            _report(
+                f"'tool_input_guardrails' key in {config_path} should be a list of guardrail names. Ignoring."
             )
             tool_input_guardrail_names = []
 
@@ -1284,15 +1539,15 @@ def load_agent_spec_from_yaml(
             else:
                 missing_tool_input.append(guardrail_name)
         if missing_tool_input:
-            print(
-                f"Warning: The following tool input guardrails listed in '{config_path}' were not found: {', '.join(missing_tool_input)}"
+            _report(
+                f"The following tool input guardrails listed in '{config_path}' were not found: {', '.join(missing_tool_input)}"
             )
 
         # Process tool-level output guardrails from config (SDK 0.7+)
         tool_output_guardrail_names = config.get("tool_output_guardrails", [])
         if not isinstance(tool_output_guardrail_names, list):
-            print(
-                f"Warning: 'tool_output_guardrails' key in {config_path} should be a list of guardrail names. Ignoring."
+            _report(
+                f"'tool_output_guardrails' key in {config_path} should be a list of guardrail names. Ignoring."
             )
             tool_output_guardrail_names = []
 
@@ -1305,8 +1560,8 @@ def load_agent_spec_from_yaml(
             else:
                 missing_tool_output.append(guardrail_name)
         if missing_tool_output:
-            print(
-                f"Warning: The following tool output guardrails listed in '{config_path}' were not found: {', '.join(missing_tool_output)}"
+            _report(
+                f"The following tool output guardrails listed in '{config_path}' were not found: {', '.join(missing_tool_output)}"
             )
 
     # --- Content Scanner Guardrails (auto-injected from security providers) ---
@@ -1326,7 +1581,7 @@ def load_agent_spec_from_yaml(
                 input_guardrails_list.insert(0, make_scanner_input_guardrail(scanner))
                 output_guardrails_list.insert(0, make_scanner_output_guardrail(scanner))
             except Exception as e:
-                print(f"Warning: Failed to set up content scanner guardrails: {e}")
+                _report(f"Failed to set up content scanner guardrails: {e}")
 
     # --- Predicate Discovery (for is_enabled callables) ---
     # Discovered once per YAML; used to resolve `is_enabled:` references on
@@ -1340,7 +1595,7 @@ def load_agent_spec_from_yaml(
                     f"Discovered {len(predicate_registry)} is_enabled predicates from {base_dir}"
                 )
         except Exception as e:
-            print(f"Warning: predicate discovery failed: {e}")
+            _report(f"predicate discovery failed: {e}")
 
     # --- Apply is_enabled to function tools ---
     # The `tools:` block supports either a bare tool name (str) OR a dict like
@@ -1370,8 +1625,8 @@ def load_agent_spec_from_yaml(
                     continue
                 resolved = resolve_predicate(is_enabled_raw, predicate_registry)
                 if resolved is None:
-                    print(
-                        f"Warning: tool '{tool_name}' is_enabled='{is_enabled_raw}' "
+                    _report(
+                        f"tool '{tool_name}' is_enabled='{is_enabled_raw}' "
                         f"could not be resolved. Leaving default."
                     )
                     continue
@@ -1381,18 +1636,14 @@ def load_agent_spec_from_yaml(
                         tool_obj.is_enabled = resolved
                         Debug.log(f"Applied is_enabled predicate to tool '{tool_name}'")
                     except Exception as e:
-                        print(
-                            f"Warning: failed to set is_enabled on tool '{tool_name}': {e}"
-                        )
+                        _report(f"failed to set is_enabled on tool '{tool_name}': {e}")
 
     # --- Handoffs Configuration ---
     handoff_configs_list = []
     if not remote_ws_url:  # Only process handoffs for local agents
         handoffs_config = config.get("handoffs", [])
         if not isinstance(handoffs_config, list):
-            print(
-                f"Warning: 'handoffs' key in {config_path} should be a list. Ignoring."
-            )
+            _report(f"'handoffs' key in {config_path} should be a list. Ignoring.")
             handoffs_config = []
 
         for handoff_item in handoffs_config:
@@ -1407,22 +1658,22 @@ def load_agent_spec_from_yaml(
                 # to the same yaml_path the `yaml:` branch produces, so downstream
                 # HandoffConfig handling is unchanged.
                 if "agent" in handoff_item:
-                    agent_name = handoff_item.get("agent")
-                    if not isinstance(agent_name, str) or not agent_name.strip():
-                        print(
-                            f"Warning: handoff 'agent' value must be a non-empty string in {config_path}. Skipping."
+                    handoff_agent = handoff_item.get("agent")
+                    if not isinstance(handoff_agent, str) or not handoff_agent.strip():
+                        _report(
+                            f"handoff 'agent' value must be a non-empty string in {config_path}. Skipping."
                         )
                         continue
                     if agents_map is None:
-                        print(
-                            f"Warning: handoff entry uses 'agent: {agent_name}' but no project agent registry is available "
+                        _report(
+                            f"handoff entry uses 'agent: {handoff_agent}' but no project agent registry is available "
                             f"(loader was called without agents_map). Skipping. Use 'yaml:' or load via project."
                         )
                         continue
-                    handoff_yaml_path = agents_map.get(agent_name)
+                    handoff_yaml_path = agents_map.get(handoff_agent)
                     if handoff_yaml_path is None:
-                        print(
-                            f"Warning: handoff 'agent: {agent_name}' not found in project. "
+                        _report(
+                            f"handoff 'agent: {handoff_agent}' not found in project. "
                             f"Available: {sorted(agents_map.keys())}. Skipping."
                         )
                         continue
@@ -1448,8 +1699,8 @@ def load_agent_spec_from_yaml(
                             display_path = handoff_yaml_path.relative_to(Path.cwd())
                         except ValueError:
                             display_path = handoff_yaml_path
-                        print(
-                            f"Warning: Handoff agent YAML file not found: {display_path}. Skipping."
+                        _report(
+                            f"Handoff agent YAML file not found: {display_path}. Skipping."
                         )
                         continue
 
@@ -1471,8 +1722,8 @@ def load_agent_spec_from_yaml(
                 elif "inline" in handoff_item:
                     inline_config = handoff_item.get("inline")
                     if not isinstance(inline_config, dict):
-                        print(
-                            f"Warning: 'inline' value in handoff should be a dictionary. Skipping."
+                        _report(
+                            "'inline' value in handoff should be a dictionary. Skipping."
                         )
                         continue
 
@@ -1495,16 +1746,16 @@ def load_agent_spec_from_yaml(
                         )
                         handoff_configs_list.append(handoff_config)
                     except Exception as e:
-                        print(f"Warning: Failed to parse inline agent: {e}. Skipping.")
+                        _report(f"Failed to parse inline agent: {e}. Skipping.")
                         continue
 
                 else:
-                    print(
-                        f"Warning: Handoff item must have 'agent', 'yaml', or 'inline' field in {config_path}. Skipping."
+                    _report(
+                        f"Handoff item must have 'agent', 'yaml', or 'inline' field in {config_path}. Skipping."
                     )
             else:
-                print(
-                    f"Warning: Invalid handoff item in {config_path}. Expected dict or string. Skipping."
+                _report(
+                    f"Invalid handoff item in {config_path}. Expected dict or string. Skipping."
                 )
 
     # --- Agent-as-Tool Configuration ---
@@ -1514,9 +1765,7 @@ def load_agent_spec_from_yaml(
     if not remote_ws_url:
         agent_tools_config = config.get("agent_tools", [])
         if agent_tools_config and not isinstance(agent_tools_config, list):
-            print(
-                f"Warning: 'agent_tools' key in {config_path} should be a list. Ignoring."
-            )
+            _report(f"'agent_tools' key in {config_path} should be a list. Ignoring.")
             agent_tools_config = []
 
         for at_item in agent_tools_config:
@@ -1527,8 +1776,8 @@ def load_agent_spec_from_yaml(
                 at_item = {"agent": at_item}
 
             if not isinstance(at_item, dict):
-                print(
-                    f"Warning: Invalid agent_tool item in {config_path}. Expected dict or string. Skipping."
+                _report(
+                    f"Invalid agent_tool item in {config_path}. Expected dict or string. Skipping."
                 )
                 continue
 
@@ -1550,22 +1799,22 @@ def load_agent_spec_from_yaml(
             # to the same yaml_path the `yaml:` branch produces, so downstream
             # AgentToolConfig handling is unchanged.
             if "agent" in at_item:
-                agent_name = at_item.get("agent")
-                if not isinstance(agent_name, str) or not agent_name.strip():
-                    print(
-                        f"Warning: agent_tool 'agent' value must be a non-empty string in {config_path}. Skipping."
+                tool_agent = at_item.get("agent")
+                if not isinstance(tool_agent, str) or not tool_agent.strip():
+                    _report(
+                        f"agent_tool 'agent' value must be a non-empty string in {config_path}. Skipping."
                     )
                     continue
                 if agents_map is None:
-                    print(
-                        f"Warning: agent_tool entry uses 'agent: {agent_name}' but no project agent registry is available "
+                    _report(
+                        f"agent_tool entry uses 'agent: {tool_agent}' but no project agent registry is available "
                         f"(loader was called without agents_map). Skipping. Use 'yaml:' or load via project."
                     )
                     continue
-                resolved_yp = agents_map.get(agent_name)
+                resolved_yp = agents_map.get(tool_agent)
                 if resolved_yp is None:
-                    print(
-                        f"Warning: agent_tool 'agent: {agent_name}' not found in project. "
+                    _report(
+                        f"agent_tool 'agent: {tool_agent}' not found in project. "
                         f"Available: {sorted(agents_map.keys())}. Skipping."
                     )
                     continue
@@ -1583,15 +1832,13 @@ def load_agent_spec_from_yaml(
             elif "yaml" in at_item:
                 yp = at_item.get("yaml")
                 if not isinstance(yp, str) or not yp.strip():
-                    print(
-                        f"Warning: agent_tool entry missing valid 'yaml' path in {config_path}. Skipping."
+                    _report(
+                        f"agent_tool entry missing valid 'yaml' path in {config_path}. Skipping."
                     )
                     continue
                 resolved_yp = (base_dir / yp).resolve()
                 if not resolved_yp.is_file():
-                    print(
-                        f"Warning: agent_tool YAML not found: {resolved_yp}. Skipping."
-                    )
+                    _report(f"agent_tool YAML not found: {resolved_yp}. Skipping.")
                     continue
                 agent_tool_configs_list.append(
                     AgentToolConfig(
@@ -1607,8 +1854,8 @@ def load_agent_spec_from_yaml(
             elif "inline" in at_item:
                 inline_cfg = at_item.get("inline")
                 if not isinstance(inline_cfg, dict):
-                    print(
-                        f"Warning: agent_tool 'inline' value must be a dict in {config_path}. Skipping."
+                    _report(
+                        f"agent_tool 'inline' value must be a dict in {config_path}. Skipping."
                     )
                     continue
                 try:
@@ -1616,7 +1863,7 @@ def load_agent_spec_from_yaml(
                         inline_cfg, base_dir, _loading_stack
                     )
                 except Exception as e:
-                    print(f"Warning: Failed to parse inline agent_tool: {e}. Skipping.")
+                    _report(f"Failed to parse inline agent_tool: {e}. Skipping.")
                     continue
                 agent_tool_configs_list.append(
                     AgentToolConfig(
@@ -1630,8 +1877,8 @@ def load_agent_spec_from_yaml(
                     )
                 )
             else:
-                print(
-                    f"Warning: agent_tool item must have 'agent', 'yaml', or 'inline' in {config_path}. Skipping."
+                _report(
+                    f"agent_tool item must have 'agent', 'yaml', or 'inline' in {config_path}. Skipping."
                 )
 
     # --- Capabilities (Phase 0) ---
@@ -1644,7 +1891,7 @@ def load_agent_spec_from_yaml(
     resolved_capabilities_list: List[Any] = []
     capabilities_config = config.get("capabilities", [])
     if capabilities_config and not isinstance(capabilities_config, list):
-        print(f"Warning: 'capabilities' key in {config_path} must be a list. Ignoring.")
+        _report(f"'capabilities' key in {config_path} must be a list. Ignoring.")
         capabilities_config = []
 
     for cap_entry in capabilities_config:
@@ -1657,32 +1904,32 @@ def load_agent_spec_from_yaml(
             cap_name = cap_entry.get("name")
             overrides_block = cap_entry.get("overrides")
             if not isinstance(cap_name, str) or not cap_name.strip():
-                print(
-                    f"Warning: capability entry in {config_path} requires a string 'name'. Skipping."
+                _report(
+                    f"capability entry in {config_path} requires a string 'name'. Skipping."
                 )
                 continue
             if overrides_block is not None and not isinstance(overrides_block, dict):
-                print(
-                    f"Warning: capability {cap_name!r} 'overrides' must be a dict in {config_path}. Skipping overrides."
+                _report(
+                    f"capability {cap_name!r} 'overrides' must be a dict in {config_path}. Skipping overrides."
                 )
                 overrides_block = None
         else:
-            print(
-                f"Warning: capability entry in {config_path} must be a string or dict. Skipping."
+            _report(
+                f"capability entry in {config_path} must be a string or dict. Skipping."
             )
             continue
 
         if capability_registry is None:
-            print(
-                f"Warning: agent {config_path} references capability {cap_name!r} but no project "
+            _report(
+                f"agent {config_path} references capability {cap_name!r} but no project "
                 "capability_registry is available (loader was called without one). Skipping. "
                 "Capabilities require loading via project."
             )
             continue
         cap = capability_registry.get(cap_name)
         if cap is None:
-            print(
-                f"Warning: capability {cap_name!r} not found in project. "
+            _report(
+                f"capability {cap_name!r} not found in project. "
                 f"Available: {sorted(capability_registry.keys())}. Skipping."
             )
             continue
@@ -1695,8 +1942,8 @@ def load_agent_spec_from_yaml(
                 cap = cap.model_copy(deep=False)  # Pydantic copy
             except Exception:
                 # Capability isn't a Pydantic model — skip override and warn.
-                print(
-                    f"Warning: capability {cap_name!r} does not support overrides "
+                _report(
+                    f"capability {cap_name!r} does not support overrides "
                     f"(not a Pydantic model). Ignoring overrides in {config_path}."
                 )
             else:
@@ -1748,16 +1995,14 @@ def load_agent_spec_from_yaml(
     if model_provider_config is not None and not isinstance(
         model_provider_config, dict
     ):
-        print(f"Warning: 'model_provider' in {config_path} should be a dict. Ignoring.")
+        _report(f"'model_provider' in {config_path} should be a dict. Ignoring.")
         model_provider_config = None
     if isinstance(model_provider_config, dict):
         # Apply env var substitution so users can keep ${OPENAI_API_KEY} etc.
         try:
             model_provider_config = _substitute_env_vars(model_provider_config)
         except ValueError as e:
-            print(
-                f"Warning: env substitution failed for model_provider: {e}. Ignoring."
-            )
+            _report(f"env substitution failed for model_provider: {e}. Ignoring.")
             model_provider_config = None
 
     # If reasoning_content_replay was set under model_settings, fold it into the
@@ -1784,12 +2029,12 @@ def load_agent_spec_from_yaml(
         _safety_mode = project_defaults["security"].get("safety_mode")
     if _safety_mode == "enforced":
         if safe_options.skip_approvals:
-            print(
+            logger.warning(
                 "Security: safety_mode is 'enforced' — overriding skip_approvals=True to False"
             )
             safe_options.skip_approvals = False
         if not use_safe:
-            print(
+            logger.warning(
                 "Security: safety_mode is 'enforced' — overriding use_safe_agent=False to True"
             )
             use_safe = True
@@ -1815,14 +2060,14 @@ def load_agent_spec_from_yaml(
                     if srv.name in allowed:
                         filtered.append(srv)
                     else:
-                        print(
+                        logger.warning(
                             f"Security: MCP server '{srv.name}' not in allowlist — blocked"
                         )
                 mcp_servers = filtered
             else:
                 # Allowlist required but empty = block all MCP servers
                 if mcp_servers:
-                    print(
+                    logger.warning(
                         "Security: mcp_require_allowlist is enabled but mcp_allowed_servers is empty — blocking all MCP servers"
                     )
                     mcp_servers = []
@@ -1830,7 +2075,7 @@ def load_agent_spec_from_yaml(
     # Extended MCP config
     mcp_config_from_yaml = config.get("mcp_config", {})
     if not isinstance(mcp_config_from_yaml, dict):
-        print(f"Warning: 'mcp_config' should be a dictionary. Using empty dict.")
+        _report("'mcp_config' should be a dictionary. Using empty dict.")
         mcp_config_from_yaml = {}
 
     # --- Settings ---
@@ -1876,12 +2121,12 @@ def load_agent_spec_from_yaml(
                 )
                 combined_settings_fields_dict[field.key] = field
             else:
-                print(
-                    f"Warning: Invalid item in 'settings' list in {config_path}. Skipping: {setting_dict}"
+                _report(
+                    f"Invalid item in 'settings' list in {config_path}. Skipping: {setting_dict}"
                 )
     else:
-        print(
-            f"Warning: 'settings' key in {config_path} should be a list of setting definitions. Ignoring."
+        _report(
+            f"'settings' key in {config_path} should be a list of setting definitions. Ignoring."
         )
 
     final_settings_fields = list(combined_settings_fields_dict.values())
@@ -1889,7 +2134,7 @@ def load_agent_spec_from_yaml(
     # --- Tracing Configuration ---
     tracing_config = config.get("tracing")
     if tracing_config and not isinstance(tracing_config, dict):
-        print(f"Warning: 'tracing' in {config_path} should be a dictionary. Ignoring.")
+        _report(f"'tracing' in {config_path} should be a dictionary. Ignoring.")
         tracing_config = None
     if (
         tracing_config is None
@@ -1904,18 +2149,30 @@ def load_agent_spec_from_yaml(
     variables_config = config.get("variables")
     context_factory_name = config.get("context")
 
-    # Discover context factories from agent directory (decorated with @context_factory)
+    # Context factories (decorated with @context_factory) are discovered in
+    # the agent's own folder, then the folders of any definition it extends,
+    # then the project's `paths.context` folders. First match wins.
     build_context_func: Optional[Callable] = None
     if context_factory_name:
-        context_factories = discover_context_factories(base_dir)
-        if context_factory_name in context_factories:
-            build_context_func = context_factories[context_factory_name]
-            Debug.log(f"Using context factory: {context_factory_name}")
-        else:
-            available = list(context_factories.keys()) if context_factories else []
-            print(
-                f"Warning: Context factory '{context_factory_name}' not found in {base_dir}. "
-                f"Available: {available}"
+        searched: List[Path] = [base_dir]
+        for d in config.get("_extends_dirs") or []:
+            searched.append(Path(d))
+        searched.extend(_project_context_dirs(config_file, project_defaults))
+        searched = list(dict.fromkeys(searched))
+        available: List[str] = []
+        for search_dir in searched:
+            context_factories = discover_context_factories(search_dir)
+            if context_factory_name in context_factories:
+                build_context_func = context_factories[context_factory_name]
+                Debug.log(
+                    f"Using context factory: {context_factory_name} from {search_dir}"
+                )
+                break
+            available.extend(context_factories.keys())
+        if build_context_func is None:
+            _report(
+                f"Context factory '{context_factory_name}' not found in "
+                f"{', '.join(str(d) for d in searched)}. Available: {sorted(set(available))}"
             )
 
     # --- Model Config Resolver Discovery ---
@@ -1933,8 +2190,8 @@ def load_agent_spec_from_yaml(
             available = (
                 list(model_config_resolvers.keys()) if model_config_resolvers else []
             )
-            print(
-                f"Warning: Model config resolver '{model_config_resolver_name}' not found in {base_dir}. "
+            _report(
+                f"Model config resolver '{model_config_resolver_name}' not found in {base_dir}. "
                 f"Available: {available}"
             )
 
@@ -1955,8 +2212,8 @@ def load_agent_spec_from_yaml(
                 if realtime_settings_resolvers
                 else []
             )
-            print(
-                f"Warning: Realtime settings resolver '{realtime_settings_resolver_name}' not found in {base_dir}. "
+            _report(
+                f"Realtime settings resolver '{realtime_settings_resolver_name}' not found in {base_dir}. "
                 f"Available: {available}"
             )
 
@@ -1982,7 +2239,7 @@ def load_agent_spec_from_yaml(
                 context_config = substituted_vars
 
         except ValueError as e:
-            print(f"Error substituting environment variables: {e}")
+            _report(f"Error substituting environment variables: {e}")
             raise
 
     # --- Build Agent (Placeholder/Default) ---
@@ -1994,14 +2251,14 @@ def load_agent_spec_from_yaml(
     nest_handoff_history_cfg = bool(config.get("nest_handoff_history", False))
     tool_execution_cfg = config.get("tool_execution") or None
     if tool_execution_cfg is not None and not isinstance(tool_execution_cfg, dict):
-        print("Warning: 'tool_execution' must be a dict. Ignoring.")
+        _report("'tool_execution' must be a dict. Ignoring.")
         tool_execution_cfg = None
 
     # error_handlers: resolve names via discovery (similar to guardrails),
     # falling back to dotted-path import.
     error_handlers_raw = config.get("error_handlers") or None
     if error_handlers_raw is not None and not isinstance(error_handlers_raw, dict):
-        print("Warning: 'error_handlers' must be a dict. Ignoring.")
+        _report("'error_handlers' must be a dict. Ignoring.")
         error_handlers_raw = None
     error_handlers_cfg = None
     if error_handlers_raw:
@@ -2023,7 +2280,7 @@ def load_agent_spec_from_yaml(
                 error_handlers_raw, registry=_eh_registry
             )
         except Exception as e:
-            print(f"Warning: Failed to resolve error_handlers: {e}. Ignoring.")
+            _report(f"Failed to resolve error_handlers: {e}. Ignoring.")
             error_handlers_cfg = None
 
     # SDK lifecycle hooks (RunHooks / AgentHooks). Discover from
@@ -2048,22 +2305,22 @@ def load_agent_spec_from_yaml(
             if isinstance(requested_agent_hook, str):
                 agent_hooks_obj = agent_hooks_map.get(requested_agent_hook)
                 if agent_hooks_obj is None:
-                    print(
-                        f"Warning: agent_hooks '{requested_agent_hook}' not found in lifecycle_hooks/. Ignoring."
+                    _report(
+                        f"agent_hooks '{requested_agent_hook}' not found in lifecycle_hooks/. Ignoring."
                     )
             if isinstance(requested_run_hook, str):
                 run_hooks_obj = run_hooks_map.get(requested_run_hook)
                 if run_hooks_obj is None:
-                    print(
-                        f"Warning: run_hooks '{requested_run_hook}' not found in lifecycle_hooks/. Ignoring."
+                    _report(
+                        f"run_hooks '{requested_run_hook}' not found in lifecycle_hooks/. Ignoring."
                     )
         except Exception as e:
-            print(f"Warning: lifecycle hook discovery failed: {e}. Ignoring.")
+            _report(f"lifecycle hook discovery failed: {e}. Ignoring.")
 
     # retry_policy: coerce to ModelRetrySettings stored on spec.retry_settings.
     retry_policy_raw = config.get("retry_policy") or None
     if retry_policy_raw is not None and not isinstance(retry_policy_raw, dict):
-        print("Warning: 'retry_policy' must be a dict. Ignoring.")
+        _report("'retry_policy' must be a dict. Ignoring.")
         retry_policy_raw = None
     retry_settings_cfg: Any = None
     if retry_policy_raw:
@@ -2072,7 +2329,7 @@ def load_agent_spec_from_yaml(
         try:
             retry_settings_cfg = resolve_retry_settings(retry_policy_raw)
         except Exception as e:
-            print(f"Warning: Failed to resolve retry_policy: {e}. Ignoring.")
+            _report(f"Failed to resolve retry_policy: {e}. Ignoring.")
             retry_settings_cfg = None
 
     # --- Session-related YAML block (backend + compaction) ---
@@ -2089,12 +2346,12 @@ def load_agent_spec_from_yaml(
     session_compaction_cfg: Optional[Dict[str, Any]] = None
     session_block = config.get("session")
     if session_block is not None and not isinstance(session_block, dict):
-        print("Warning: 'session' must be a dict. Ignoring.")
+        _report("'session' must be a dict. Ignoring.")
         session_block = None
     if isinstance(session_block, dict):
         backend_block = session_block.get("backend")
         if backend_block is not None and not isinstance(backend_block, dict):
-            print("Warning: 'session.backend' must be a dict. Ignoring.")
+            _report("'session.backend' must be a dict. Ignoring.")
             backend_block = None
         if isinstance(backend_block, dict):
             try:
@@ -2102,18 +2359,18 @@ def load_agent_spec_from_yaml(
 
                 session_backend_obj = build_session_backend(backend_block)
             except ImportError as e:
-                print(f"Warning: {e}. Falling back to default SQLite storage.")
+                _report(f"{e}. Falling back to default SQLite storage.")
                 session_backend_obj = None
             except Exception as e:
-                print(
-                    f"Warning: Failed to resolve session.backend: {e}. "
+                _report(
+                    f"Failed to resolve session.backend: {e}. "
                     f"Falling back to default SQLite storage."
                 )
                 session_backend_obj = None
 
         compaction_raw = session_block.get("compaction")
         if compaction_raw is not None and not isinstance(compaction_raw, dict):
-            print("Warning: 'session.compaction' must be a dict. Ignoring.")
+            _report("'session.compaction' must be a dict. Ignoring.")
             compaction_raw = None
         if compaction_raw:
             session_compaction_cfg = dict(compaction_raw)
@@ -2140,7 +2397,7 @@ def load_agent_spec_from_yaml(
     #       - skills: { ... }
     sandbox_block = config.get("sandbox")
     if sandbox_block is not None and not isinstance(sandbox_block, dict):
-        print("Warning: 'sandbox' must be a dict. Ignoring.")
+        _report("'sandbox' must be a dict. Ignoring.")
         sandbox_block = None
     sandbox_run_config_obj: Any = None
     sandbox_capabilities_list: Optional[List[Any]] = None
@@ -2160,16 +2417,25 @@ def load_agent_spec_from_yaml(
             sandbox_run_config_obj = build_sandbox_run_config(sandbox_block)
             sandbox_capabilities_list = build_sandbox_capabilities(sandbox_block)
         except ImportError as e:
-            print(f"Warning: {e}. Sandbox configuration disabled.")
+            _report(f"{e}. Sandbox configuration disabled.")
             sandbox_run_config_obj = None
             sandbox_capabilities_list = None
         except Exception as e:
-            print(
-                f"Warning: Failed to resolve sandbox configuration: {e}. "
+            _report(
+                f"Failed to resolve sandbox configuration: {e}. "
                 "Sandbox configuration disabled."
             )
             sandbox_run_config_obj = None
             sandbox_capabilities_list = None
+
+    from omniagents.core.memory.client import configuration as memory_configuration
+
+    memory_config = memory_configuration(
+        config.get("memory", (project_defaults or {}).get("memory"))
+    )
+
+    if memory_config is not None:
+        memory_config["agent"] = agent_name
 
     # --- Construct AgentSpec ---
     spec = AgentSpec(
@@ -2178,6 +2444,7 @@ def load_agent_spec_from_yaml(
         welcome_text=welcome_text,
         # Agent Config
         get_agent_instructions=get_instructions_func,
+        memory_config=memory_config,
         build_agent=build_agent_func,  # Defer to internal builder
         available_tools=selected_tool_functions if not remote_ws_url else [],
         model_name=model_name_from_config if not remote_ws_url else None,
@@ -2190,6 +2457,7 @@ def load_agent_spec_from_yaml(
         realtime_mode=realtime_mode,
         realtime_settings=realtime_settings,
         voice_backend=voice_backend,
+        voice_instructions=config.get("voice_instructions"),
         mcp_config=mcp_config_from_yaml if mcp_config_from_yaml else None,
         mcp_servers=mcp_servers,
         output_type=output_type,
@@ -2248,6 +2516,8 @@ def load_agent_spec_from_yaml(
         # Storage Metadata
         project_slug=None,
         agent_slug=agent_slug,
+        # Skill folders the agent definition brings (own, bases', project's)
+        skill_roots=_agent_skill_roots(config, config_file, project_defaults),
         # Include search paths for {% include %} fragments in instructions
         instructions_search_paths=_instruction_search_paths(
             config, base_dir, project_defaults
@@ -2282,7 +2552,10 @@ def load_agent_spec_from_yaml(
     if project_defaults and isinstance(project_defaults.get("security"), dict):
         spec.security_config = project_defaults["security"]
 
-    # Store registries in spec for passing to handoff agents
+    # Store registries in spec for passing to handoff agents, and the
+    # project's defaults (fragment and context directories, the root that
+    # `extends:` resolves against), so they load as project agents too.
+    spec._project_defaults = project_defaults
     spec._tool_registry = tool_registry
     spec._guardrails_registry = guardrails_registry
     spec._server_functions_registry = server_functions_registry

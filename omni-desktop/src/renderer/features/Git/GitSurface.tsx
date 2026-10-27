@@ -1,11 +1,13 @@
-import { useStore } from '@nanostores/react';
-import { PanelLeftIcon, RefreshCwIcon, TriangleAlert } from 'lucide-react';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-
-import { profileRunsOnHost } from '@/lib/artifacts';
-import { cn } from '@/renderer/ds/cn';
-import { Alert, AlertDescription, AlertTitle } from '@/renderer/ds/ui/alert';
+import { useRPCClient, useRPCConnected } from '@omniagents/chat-ui/rpc-context';
+import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
+import {
+  GitClient,
+  type GitDiffResult,
+  type GitListRepositoriesResult,
+  type GitStatusResult,
+  type WorkspaceRepo,
+} from '@omniagents/client/rpc/git';
+import { Alert, AlertDescription, AlertTitle } from '@omniagents/ui/alert';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,26 +17,18 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/renderer/ds/ui/alert-dialog';
-import { Button } from '@/renderer/ds/ui/button';
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/renderer/ds/ui/empty';
-import { NativeSelect } from '@/renderer/ds/ui/native-select';
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/renderer/ds/ui/resizable';
-import { Spinner } from '@/renderer/ds/ui/spinner';
-import { Toggle } from '@/renderer/ds/ui/toggle';
-import { ToggleGroup, ToggleGroupItem } from '@/renderer/ds/ui/toggle-group';
-import {
-  GitClient,
-  type GitDiffResult,
-  type GitListRepositoriesResult,
-  type GitRepository,
-  type GitStatusResult,
-  type WorkspaceRepo,
-} from '@/renderer/omniagents-ui/rpc/git';
-import { useRPCClient, useRPCConnected } from '@/renderer/omniagents-ui/rpc-context';
-import { emitter } from '@/renderer/services/ipc';
-import { persistedStoreApi } from '@/renderer/services/store';
-import type { CodeTabId, ExecutionTarget, ProjectSource } from '@/shared/types';
+} from '@omniagents/ui/alert-dialog';
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@omniagents/ui/empty';
+import { NativeSelect } from '@omniagents/ui/native-select';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@omniagents/ui/resizable';
+import { Spinner } from '@omniagents/ui/spinner';
+import { Toggle } from '@omniagents/ui/toggle';
+import { ToggleGroup, ToggleGroupItem } from '@omniagents/ui/toggle-group';
+import { PanelLeftIcon, RefreshCwIcon, TriangleAlert } from 'lucide-react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { mergeUntracked, repositoryLabel } from './diff-model';
 import { GitDiffStream, type GitStreamMode } from './GitDiffStream';
@@ -43,7 +37,6 @@ import { type GitRepositoryCapabilities, type GitSyncOptions, GitToolsPanel } fr
 import { describeConfirmation, useGitMutations } from './use-git-mutations';
 
 export type GitSurfaceProps = {
-  tabId?: CodeTabId;
   executionTarget: ExecutionTarget;
   sessionId?: string;
   workspaceRoot?: string;
@@ -60,10 +53,8 @@ type RepositoryData = {
   status: GitStatusResult;
   diff: GitDiffResult;
 };
-type ApplyTarget = { source: Extract<ProjectSource, { kind: 'local' }>; localPath: string };
 
 const GIT_READ_OPERATIONS = ['git_list_repositories', 'git_status', 'git_diff'] as const;
-const SESSION_BASE_REF = 'refs/tags/omni/seed';
 
 /** Below this surface width the sidebar defaults to hidden (the toggle
  *  still overrides) — sidecar columns are usually this narrow. */
@@ -77,35 +68,8 @@ function dataKey(identityKey: string, repo: WorkspaceRepo, mode: GitStreamMode):
   return JSON.stringify([identityKey, repo, mode]);
 }
 
-function normalizeFsPath(value: string): string {
-  return value.replaceAll('\\', '/').replace(/\/+$/, '');
-}
-
-/** Match a typed Git repository to the project source that materialized it. */
-export function sourceForRepository(sources: ProjectSource[], repository: GitRepository): ProjectSource | null {
-  const absoluteRoot = normalizeFsPath(repository.absolute_root);
-  const repo = repository.repo;
-  const exact = sources.find((source) => {
-    const containerRoot = source.mountName === '.' ? '/workspace' : `/workspace/${source.mountName}`;
-    const hostRoot = source.kind === 'local' ? normalizeFsPath(source.workspaceDir) : null;
-    return (
-      absoluteRoot === containerRoot ||
-      absoluteRoot.startsWith(`${containerRoot}/`) ||
-      absoluteRoot === hostRoot ||
-      (hostRoot !== null && absoluteRoot.startsWith(`${hostRoot}/`)) ||
-      repo === source.mountName ||
-      repo.startsWith(`${source.mountName}/`)
-    );
-  });
-  if (exact) {
-    return exact;
-  }
-  return repo === '.' && sources.length === 1 ? sources[0]! : null;
-}
-
 export const GitSurface = memo((props: GitSurfaceProps) => {
-  const { tabId, executionTarget, sessionId, workspaceRoot, rootPrefix, active = true, onOpenFile } = props;
-  const store = useStore(persistedStoreApi.$atom);
+  const { executionTarget, sessionId, workspaceRoot, rootPrefix, active = true, onOpenFile } = props;
   const rpc = useRPCClient();
   const connected = useRPCConnected();
   const identityKey = sessionId && workspaceRoot ? JSON.stringify([sessionId, executionTarget, workspaceRoot]) : null;
@@ -121,10 +85,6 @@ export const GitSurface = memo((props: GitSurfaceProps) => {
   const [collapsedPaths, setCollapsedPaths] = useState<ReadonlySet<string>>(new Set());
   const [toolsOpen, setToolsOpen] = useState(false);
   const [syncOptionsState, setSyncOptionsState] = useState<GitSyncOptions | null>(null);
-  const [pendingApply, setPendingApply] = useState<ApplyTarget | null>(null);
-  const [applyPending, setApplyPending] = useState(false);
-  const [applyStatus, setApplyStatus] = useState<string | null>(null);
-  const [applyError, setApplyError] = useState<string | null>(null);
   const [discoveryRevision, setDiscoveryRevision] = useState(0);
   const [refreshRevision, setRefreshRevision] = useState(0);
   const [detailsRevision, setDetailsRevision] = useState(0);
@@ -150,20 +110,6 @@ export const GitSurface = memo((props: GitSurfaceProps) => {
   const currentRepositories = repositories?.identityKey === identityKey ? repositories.value : null;
   const currentRepo = selectedRepository?.identityKey === identityKey ? selectedRepository.value : null;
   const currentMode = diffMode?.identityKey === identityKey ? diffMode.value : 'worktree';
-  const currentRepository =
-    currentRepositories?.repositories.find((repository) => repository.repo === currentRepo) ?? null;
-  const currentTab = tabId ? store.codeTabs.find((tab) => tab.id === tabId) : undefined;
-  const currentProject = currentTab?.projectId
-    ? store.projects.find((project) => project.id === currentTab.projectId)
-    : undefined;
-  const activeSource =
-    currentRepository && currentProject ? sourceForRepository(currentProject.sources, currentRepository) : null;
-  const profileName = currentTab?.profileName ?? currentProject?.sandboxProfile ?? store.defaultProfileName ?? 'host';
-  const currentApplyTarget: ApplyTarget | null =
-    activeSource?.kind === 'local' && !activeSource.readOnly && !profileRunsOnHost(profileName)
-      ? { source: activeSource, localPath: activeSource.workspaceDir }
-      : null;
-  const hasApplyTarget = currentApplyTarget !== null;
   const expectedDataKey = identityKey && currentRepo ? dataKey(identityKey, currentRepo, currentMode) : null;
   const currentData = repositoryData?.key === expectedDataKey ? repositoryData : null;
 
@@ -199,12 +145,6 @@ export const GitSurface = memo((props: GitSurfaceProps) => {
     return () => observer.disconnect();
   }, []);
   const sidebarVisible = sidebarPref ?? wide;
-
-  useEffect(() => {
-    if (currentMode === 'session' && !hasApplyTarget) {
-      setDiffMode(identityKey ? { identityKey, value: 'worktree' } : null);
-    }
-  }, [currentMode, hasApplyTarget, identityKey]);
 
   useEffect(() => {
     let alive = true;
@@ -289,11 +229,7 @@ export const GitSurface = memo((props: GitSurfaceProps) => {
       gitClient.status(currentRepo),
       gitClient.diff(
         currentRepo,
-        currentMode === 'session'
-          ? { mode: 'range', fromRev: SESSION_BASE_REF }
-          : currentMode === 'staged'
-            ? { mode: 'staged' }
-            : { mode: 'worktree', includeUntracked: true }
+        currentMode === 'staged' ? { mode: 'staged' } : { mode: 'worktree', includeUntracked: true }
       ),
     ])
       .then(([status, diff]) => {
@@ -382,9 +318,6 @@ export const GitSurface = memo((props: GitSurfaceProps) => {
       if (!identityKey) {
         return;
       }
-      setPendingApply(null);
-      setApplyStatus(null);
-      setApplyError(null);
       setCollapsedPaths(new Set());
       setSyncOptionsState(null);
       setSelectedRepository({ identityKey, value: repo });
@@ -427,30 +360,6 @@ export const GitSurface = memo((props: GitSurfaceProps) => {
     bodyRef.current?.querySelector(`[data-diff-file="${CSS.escape(path)}"]`)?.scrollIntoView?.({ block: 'start' });
   }, []);
 
-  const confirmApply = useCallback(async () => {
-    const target = pendingApply;
-    if (!tabId || !target) {
-      return;
-    }
-    setApplyPending(true);
-    setApplyError(null);
-    setApplyStatus(null);
-    try {
-      const result = await emitter.invoke('project:apply-code-tab-source-changes', tabId, target.source.id);
-      if (!result.ok) {
-        setApplyError(result.error ?? 'Could not apply sandbox changes to the local folder.');
-        return;
-      }
-      setPendingApply(null);
-      setApplyStatus(`Applied sandbox changes to ${target.localPath}.`);
-      refresh();
-    } catch (error: unknown) {
-      setApplyError(errorMessage(error, 'Could not apply sandbox changes to the local folder.'));
-    } finally {
-      setApplyPending(false);
-    }
-  }, [pendingApply, refresh, tabId]);
-
   const mergedEntries = useMemo(() => (currentData ? mergeUntracked(currentData.status) : []), [currentData]);
   const entriesByPath = useMemo(() => new Map(mergedEntries.map((entry) => [entry.path, entry])), [mergedEntries]);
   const actionsDisabled = mutations.busy !== null || !connected;
@@ -481,8 +390,8 @@ export const GitSurface = memo((props: GitSurfaceProps) => {
 
   const pendingDescription = mutations.pending ? describeConfirmation(mutations.pending) : null;
   const conflictStatus = currentData?.status;
-  const errorText = mutations.error ?? applyError ?? (currentData ? loadError : null);
-  const noticeText = mutations.notice ?? applyStatus ?? mutations.progress;
+  const errorText = mutations.error ?? (currentData ? loadError : null);
+  const noticeText = mutations.notice ?? mutations.progress;
 
   let body;
   if (!identityKey) {
@@ -650,11 +559,6 @@ export const GitSurface = memo((props: GitSurfaceProps) => {
           <ToggleGroupItem value="staged" className="h-7 px-2 text-xs">
             Staged
           </ToggleGroupItem>
-          {hasApplyTarget && (
-            <ToggleGroupItem value="session" className="h-7 px-2 text-xs">
-              Session changes
-            </ToggleGroupItem>
-          )}
         </ToggleGroup>
         <span className="flex-auto" />
         {mutations.busy ? <span className="text-xs text-muted-foreground">{mutations.busy}…</span> : null}
@@ -720,16 +624,6 @@ export const GitSurface = memo((props: GitSurfaceProps) => {
             Tools
           </Toggle>
         ) : null}
-        {currentApplyTarget && (
-          <Button
-            disabled={!connected || applyPending}
-            onClick={() => setPendingApply(currentApplyTarget)}
-            size="sm"
-            className="h-7"
-          >
-            {applyPending ? 'Applying…' : 'Apply to local folder'}
-          </Button>
-        )}
         <Button
           variant="ghost"
           size="icon-sm"
@@ -824,23 +718,6 @@ export const GitSurface = memo((props: GitSurfaceProps) => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      <AlertDialog open={pendingApply !== null} onOpenChange={(open) => !open && setPendingApply(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Apply sandbox changes to the local folder?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {pendingApply
-                ? `Copy every changed and untracked file from the sandbox source “${pendingApply.source.mountName}” to ${pendingApply.localPath}. Local files deleted in the sandbox will be removed; unrelated local files are left untouched.`
-                : ''}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void confirmApply()}>Apply changes</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </section>
   );
 });
@@ -850,7 +727,6 @@ GitSurface.displayName = 'GitSurface';
 export function WorkspaceGitPortal({
   host,
   active,
-  tabId,
   executionTarget,
   sessionId,
   workspaceRoot,
@@ -860,7 +736,6 @@ export function WorkspaceGitPortal({
   return createPortal(
     <GitSurface
       active={active}
-      tabId={tabId}
       executionTarget={executionTarget}
       sessionId={sessionId}
       workspaceRoot={workspaceRoot}

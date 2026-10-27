@@ -1,10 +1,10 @@
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
 import { useSelector } from '@xstate/react';
 import { XIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { memo } from 'react';
 
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
 import type { FileEditorLease } from '@/shared/machines/file-editor-registry';
 
 /**

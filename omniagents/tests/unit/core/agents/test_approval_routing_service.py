@@ -2,9 +2,11 @@
 
 These prove ``request_tool_approval`` / ``request_mcp_approval`` resolve
 without ever broadcasting a prompt when the route allows it, broadcast the
-``tool_approval_reviewed`` record instead, and still fall through to the
-ordinary prompt when the guardian is unsure or the breaker tripped.
+``tool_approval_reviewed`` record instead, and reject (fail closed) when
+the guardian's review fails or times out.
 """
+
+import asyncio
 
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -230,13 +232,18 @@ async def test_guardian_denial_rejects_with_rationale(monkeypatch):
     broadcasts = capture_broadcasts(service)
     session = session_for(service)
     session.approvals_reviewer = "auto"
+    assessment = guardian.GuardianAssessment(
+        risk_level="high",
+        user_authorization="unknown",
+        outcome="deny",
+        rationale="Sends workspace contents to an untrusted host.",
+    )
 
-    async def deny(service_, session_, request):
-        return guardian.GuardianAssessment(
-            risk_level="high",
-            user_authorization="unknown",
-            outcome="deny",
-            rationale="Sends workspace contents to an untrusted host.",
+    async def deny(service_, session_, request, *, run_id=None):
+        return guardian.GuardianDecision(
+            status="denied",
+            message=guardian.render_rejection(assessment.rationale),
+            assessment=assessment,
         )
 
     monkeypatch.setattr(guardian, "review_approval", deny)
@@ -251,6 +258,7 @@ async def test_guardian_denial_rejects_with_rationale(monkeypatch):
 
     assert response["decision"] == "reject"
     assert "untrusted host" in response["rejection_message"]
+    assert guardian.REJECTION_INSTRUCTIONS in response["rejection_message"]
     methods = [method for method, _ in broadcasts]
     assert methods == ["tool_approval_reviewed"]
     payload = broadcasts[0][1]
@@ -260,27 +268,18 @@ async def test_guardian_denial_rejects_with_rationale(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_guardian_unsure_falls_through_to_the_human(monkeypatch):
+@pytest.mark.parametrize("status", ["failed", "timed_out"])
+async def test_a_failed_review_rejects_and_never_asks_a_person(monkeypatch, status):
     service = make_service()
     await bind_environment(service, "thread-1", network=True)
+    broadcasts = capture_broadcasts(service)
     session = session_for(service)
     session.approvals_reviewer = "auto"
 
-    async def unsure(service_, session_, request):
-        return None
+    async def failed(service_, session_, request, *, run_id=None):
+        return guardian.GuardianDecision(status=status, message="review could not run")
 
-    monkeypatch.setattr(guardian, "review_approval", unsure)
-
-    prompted = []
-    original = service._broadcast_session
-
-    async def record_and_respond(sess, method, payload, **kwargs):
-        prompted.append(method)
-        if method == "tool_approval_requested":
-            future, _ = service._pending_tool_approvals[payload["call_id"]]
-            future.set_result({"decision": "approve", "always_approve": False})
-
-    service._broadcast_session = record_and_respond
+    monkeypatch.setattr(guardian, "review_approval", failed)
 
     response = await service.request_tool_approval(
         session=session,
@@ -290,33 +289,35 @@ async def test_guardian_unsure_falls_through_to_the_human(monkeypatch):
         run_id="run-1",
     )
 
-    assert response["decision"] == "approve"
-    assert "tool_approval_requested" in prompted
+    assert response == {
+        "decision": "reject",
+        "always_approve": False,
+        "rejection_message": "review could not run",
+    }
+    methods = [method for method, _ in broadcasts]
+    assert "tool_approval_requested" not in methods
+    assert broadcasts[0][1]["outcome"] == "deny"
+    assert broadcasts[0][1]["rationale"] == "review could not run"
 
 
 @pytest.mark.asyncio
-async def test_tripped_breaker_routes_to_the_human(monkeypatch):
+async def test_too_many_denials_stop_the_run(monkeypatch):
     service = make_service()
     await bind_environment(service, "thread-1", network=True)
     session = session_for(service)
     session.approvals_reviewer = "auto"
-    for _ in range(guardian.MAX_CONSECUTIVE_DENIALS):
-        guardian.record_denial(session, "run-1")
+    stopped = []
 
-    async def unexpected(service_, session_, request):  # pragma: no cover
-        raise AssertionError("guardian must not run after the breaker trips")
+    async def stop_run(run_id):
+        stopped.append(run_id)
+        return True
 
-    monkeypatch.setattr(guardian, "review_approval", unexpected)
+    service.stop_run = stop_run
 
-    prompted = []
+    async def deny(service_, session_, request, *, run_id=None):
+        return guardian.GuardianDecision(status="denied", message="no", interrupt=True)
 
-    async def record_and_respond(sess, method, payload, **kwargs):
-        prompted.append(method)
-        if method == "tool_approval_requested":
-            future, _ = service._pending_tool_approvals[payload["call_id"]]
-            future.set_result({"decision": "approve", "always_approve": False})
-
-    service._broadcast_session = record_and_respond
+    monkeypatch.setattr(guardian, "review_approval", deny)
 
     response = await service.request_tool_approval(
         session=session,
@@ -325,9 +326,10 @@ async def test_tripped_breaker_routes_to_the_human(monkeypatch):
         arguments="{}",
         run_id="run-1",
     )
+    await asyncio.sleep(0)
 
-    assert response["decision"] == "approve"
-    assert "tool_approval_requested" in prompted
+    assert response["decision"] == "reject"
+    assert stopped == ["run-1"]
 
 
 @pytest.mark.asyncio

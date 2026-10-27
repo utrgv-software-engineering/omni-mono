@@ -14,13 +14,25 @@ python -m omniagents.cli eval suite run -P omni_code/project.yml \
   --select 'name:<scenario_name>' --reporter pretty
 ```
 
-**Do not pass `-o`.** It writes raw JSON wherever you point and bypasses
-the structured results storage. Without `-o`, results land at:
+Every run is saved in this directory's `runs/` (`-o` only copies the
+`results.json` somewhere else as well):
 
 ```
-artifacts/eval/results/<timestamp>/{results.json,metadata.json}
-artifacts/eval/results/runs.json    # index of all runs
+evaluations/runs/<run id>/results.json    # every run record, summary, metrics, manifest
+evaluations/runs/<run id>/metadata.json   # which scenarios, agent, source
+evaluations/runs/<run id>/agent/          # agent.yml and instructions as they were
+evaluations/runs/index.json               # every run, newest first
 ```
+
+`runs/` is local (gitignored); keep a run that backs a number you report
+with `omniagents eval baseline <run id> --name <name>` (committed, in
+`baselines/`). Reviews made in Studio's Logs (`reviews/`), generated sets,
+the holdout and judge datasets are committed too. Where everything in this
+directory goes is `omniagents/core/eval/layout.py`.
+
+**Scenarios must be synthetic.** Reviews and generated sets hold the agent's
+answers and are committed, so never put real patient or personal data in a
+scenario, fixture or prompt.
 
 For multi-run scenarios (see "Multiple runs" below), all N runs land in
 the same `results.json` under `runs[]`.
@@ -46,7 +58,7 @@ message in order.
 ls -t target/eval_transcripts/*<scenario_name>*.json | head -1
 
 # Or look up directly from the run JSON:
-jq -r '.runs[0].transcript_path' artifacts/eval/results/<timestamp>/results.json
+jq -r '.runs[0].transcript_path' evaluations/runs/<run id>/results.json
 ```
 
 For deeper inspection (full session export with stable schema):
@@ -73,28 +85,6 @@ This works in both the basic and extended (environment-backed) eval
 pipelines. `runs_per_prompt:` on a scenario overrides the global default
 in `evaluation.yml::defaults`.
 
-For `db_fixture` scenarios the env serializes itself with a class-level
-lock (because `XDG_CONFIG_HOME` is process-global), so multi-run is
-safe but sequential. Other scenarios stay parallelizable.
-
----
-
-## DB fixtures (omni-projects MCP)
-
-Scenarios with `db_fixture: <name>` get an isolated `XDG_CONFIG_HOME` and
-a fresh sqlite seeded from `evaluations/fixtures/dbs/<name>.db`. The
-launcher's `omni-projects-mcp` cli is auto-resolved (or override with
-`OMNI_PROJECTS_MCP_CLI=/path/to/cli.js`).
-
-To rebuild a seed db:
-
-```bash
-python evaluations/fixtures/dbs/build_<name>.py
-```
-
-The seeders use the real cli over stdio so the fixture stays in sync
-with whatever schema the cli expects.
-
 ---
 
 ## Keeping a tempdir for post-mortem inspection
@@ -114,22 +104,24 @@ the workspace filesystem).
 Two omniagents-framework-specific rules about *operating* the eval
 pipeline (not designing within it).
 
-## Don't narrow-scope omniagents framework changes
+## One engine runs every scenario
 
-If you're modifying behavior in the eval pipeline (e.g. adding a field
-to result dicts, changing how something is loaded), there are **four
-scenario runners** that all do similar work and almost always need the
-same change:
+Every evaluation - `eval suite run`, `eval scenarios run`, Studio jobs and
+the notebook API (`omniagents.notebook.EvalSuite`) - runs through
+`omniagents/core/eval/engine.py`: `run_scenario` (single prompt, scripted
+`prompts`/continuations, synthetic) and `run_suite` (repeats, metrics,
+manifest). Only the agent target differs (`core/eval/targets.py`: the
+project agent, or an `agents.Agent` from a notebook). A change to what a
+run records or how it is scored goes there, once.
 
-1. `omniagents/core/eval/pipeline.py::_run_scenario` — basic single-turn
-2. `omniagents/core/eval/multi_turn.py::_run_scripted_single_turn`
-3. `omniagents/core/eval/multi_turn.py::_run_scripted_multi_turn`
-4. `omniagents/core/eval/multi_turn.py::_run_synthetic_scenario`
+The notebook can run this folder as-is:
 
-Before changing one, grep the eval module for the affected primitive
-(`load_history`, `consume_stream_events`, `final_assistant_text`,
-`run_measures`, etc.) and treat the change as "factor a helper or apply
-to all four," not "edit the runner I happen to be looking at."
+```python
+from omniagents.notebook import EvalSuite
+
+suite = EvalSuite.from_project("omni_code/project.yml", select="name:<scenario_name>")
+results = await suite.run()          # the project agent, same as `eval suite run`
+```
 
 ## Don't reinvent — read omniagents source first
 
@@ -138,7 +130,7 @@ The framework records a lot more than its CLI surfaces:
 - Session history (full message log including tool calls + outputs):
   `~/.omniagents/sessions/<project>/<agent>/sessions.db`
 - Traces / spans: `~/.omniagents/traces/`
-- Structured run results: `<project>/artifacts/eval/results/<ts>/`
+- Structured run results: `evaluations/runs/<run id>/`
 
 There's already a `omniagents sessions {db-path,list,search,export}`
 CLI. Before adding new recording or inspection plumbing,
@@ -151,15 +143,9 @@ already exists. The gap is usually *discoverability*, not data.
 
 Project-specific measures registered in `evaluations/measures.py`.
 
-Outcome measures (success criteria for the autopilot scenario):
-- `db_row_exists` — generic SQL row check against the env-staged db
+Outcome measures:
 - `command_in_workspace_succeeds` — runs a shell command in the
   workspace, passes on exit 0
-- `bug_caught_by_tests` — reverts a target file to the pristine fixture
-  version, re-runs tests, expects failure (proves the agent's regression
-  test actually catches the bug)
 
 Process / workflow measures (cross-tab variables, not gates):
-- `mcp_used_to_discover_ticket`, `ticket_moved_through_pipeline`
-- `no_remote_operations`, `no_test_disabling`, `scope_respected`
 - `<skill_name>_skill_activated` — one per tracked skill

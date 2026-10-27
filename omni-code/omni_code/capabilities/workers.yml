@@ -10,10 +10,10 @@ instructions_append: |
     concurrent workers overlapping files.
   - Prefer `isolation="worktree"`: each worker gets a git worktree on its
     own `worker/...` branch. Workers commit their changes; after the
-    completion notification, merge each worker branch back and call
+    explicit worker message, merge each worker branch back and call
     `cleanup_worker_worktree` in that same turn.
-  - Spawn all workers for the phase in one turn — their completion
-    notifications batch into a single wakeup.
+  - Spawn all workers for the phase in one turn — their explicit
+    messages can batch into a parent wakeup.
 
   ## Worker Agents
   You can spawn autonomous worker agents to execute independent coding subtasks in parallel. Workers have full read/write access and run concurrently with you and each other.
@@ -24,7 +24,7 @@ instructions_append: |
 
   **When NOT to use workers:**
   - Single, quick changes — spawning overhead isn't worth it for a one-file edit.
-  - Tasks with tight dependencies on each other — if task B needs task A's output, do them sequentially yourself.
+  - Tasks that cannot progress independently — sequence them yourself. For concurrent assignments that need to exchange findings, opt those workers into peer communication.
   - Exploratory work where the approach isn't clear yet — use `explore` first, then spawn workers once you have a concrete plan.
   - Tasks requiring conversation context that's hard to summarize (e.g., nuanced user preferences expressed across multiple messages).
 
@@ -39,7 +39,7 @@ instructions_append: |
 
   **Lifecycle:**
   1. Start workers only after you can give a self-contained task description.
-  2. Let worker completion notifications drive follow-up turns; do not poll just to wait.
+  2. Let explicit worker messages drive follow-up turns; do not poll just to wait.
   3. Course-correct or cancel workers only when their current assignment is wrong or no longer needed.
   4. For isolated worker worktrees, merge and clean them up only after reviewing the worker's output.
 
@@ -49,8 +49,27 @@ instructions_append: |
   - Shared config files (`package.json`, `pyproject.toml`, etc.) should only be edited by the orchestrator after all workers finish.
   - Keep the number of concurrent workers small (2-4). More workers means more potential conflicts and harder verification.
 
-  **After workers complete (in the turn that wakes from the completion notification):**
+  **After a worker reports back:**
   - Read the key files each worker modified to verify correctness — don't trust the summary alone.
-  - If a worker reports a blocker, assess whether to fix it yourself or resume the worker with additional context.
+  - If a worker reports a blocker, assess whether to fix it yourself or send_worker_message with additional context. Idle workers start automatically.
   - Run tests or linters covering the modified files before reporting success to the user.
   - If two workers' outputs conflict or don't integrate cleanly, resolve it yourself rather than spawning more workers.
+
+  **After a runtime restart:**
+  - Inspect recovered workers and their existing transcripts before assigning new work.
+  - Resume the original worker to preserve its conversation, branch and prior edits.
+  - Check git status and recorded tool outcomes before repeating an interrupted command.
+  - If a workspace or agent recipe is unavailable, report that blocker; do not silently
+    continue in the parent workspace or reconstruct an empty replacement worktree.
+
+  **Optional peer communication:**
+  - Use name and role to make assignments clear. Set peer_communication=true
+    only when workers need to coordinate findings or an interface contract.
+  - Peers can exchange messages; isolated worktrees still have separate files.
+    Keep file ownership explicit and review/integrate changes yourself.
+  - Inspect all workers and messages with get_worker_status() after recovery.
+
+  Workers report through worker_message(recipient="owner", message=...).
+  Ordinary worker text and normal turn endings do not enqueue parent messages.
+  Brief workers to use that tool for findings, questions, blockers and handoffs.
+  Failure notifications remain automatic; inspect the error before resuming.

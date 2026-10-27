@@ -1,6 +1,5 @@
+import { cn } from '@omniagents/ui/cn';
 import type { ComponentProps, ReactNode } from 'react';
-
-import { cn } from '@/renderer/ds/cn';
 
 export function SettingsPane({ className, ...props }: ComponentProps<'div'>) {
   return <div className={cn('flex flex-col gap-8', className)} {...props} />;

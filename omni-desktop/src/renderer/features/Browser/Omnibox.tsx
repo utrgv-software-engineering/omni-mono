@@ -1,10 +1,10 @@
+import { Command, CommandItem, CommandList } from '@omniagents/ui/command';
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@omniagents/ui/input-group';
+import { Popover, PopoverAnchor, PopoverContent } from '@omniagents/ui/popover';
 import { Bookmark, Globe, History, Lock, Search, Unlock } from 'lucide-react';
 import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useRef, useState } from 'react';
 
 import { normalizeAddress, parseOrigin } from '@/lib/url';
-import { Command, CommandItem, CommandList } from '@/renderer/ds/ui/command';
-import { InputGroup, InputGroupAddon, InputGroupInput } from '@/renderer/ds/ui/input-group';
-import { Popover, PopoverAnchor, PopoverContent } from '@/renderer/ds/ui/popover';
 import { browserApi } from '@/renderer/features/Browser/state';
 import type { BrowserSuggestion } from '@/shared/types';
 
@@ -171,15 +171,13 @@ export const Omnibox = forwardRef<
             onOpenAutoFocus={(event) => event.preventDefault()}
             onCloseAutoFocus={(event) => event.preventDefault()}
           >
+            {/* Selection is driven only by our arrow keys and hover. cmdk
+                auto-selects its first item and reports it via onValueChange;
+                feeding that back would make Enter commit a suggestion instead
+                of the typed address. */}
             <Command
               shouldFilter={false}
               value={highlight >= 0 ? `${suggestions[highlight]?.kind}:${suggestions[highlight]?.url}` : ''}
-              onValueChange={(nextValue) => {
-                const index = suggestions.findIndex(
-                  (suggestion) => `${suggestion.kind}:${suggestion.url}` === nextValue
-                );
-                setHighlight(index);
-              }}
             >
               <CommandList id={suggestionListId} className="max-h-90">
                 {suggestions.map((suggestion, index) => {

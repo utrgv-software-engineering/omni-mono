@@ -1,3 +1,4 @@
+import { cn } from '@omniagents/ui/cn';
 import {
   Activity,
   Bot,
@@ -18,8 +19,6 @@ import {
   Video,
 } from 'lucide-react';
 import { memo, useMemo } from 'react';
-
-import { cn } from '@/renderer/ds/cn';
 
 type LucideIcon = typeof Globe;
 type AppIconSize = 16 | 20 | 32;

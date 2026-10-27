@@ -58,6 +58,7 @@ if "bs4" not in sys.modules:
     sys.modules["bs4"] = fake_bs4
 
 import omniagents.builtin.tools.bash_tool as bash_tool
+from omniagents.core.tools.output_budget import bound_output
 from omniagents.workspace import ExecResult
 
 
@@ -198,16 +199,17 @@ async def test_execute_bash_truncates_large_output(monkeypatch, tmp_path):
         ctx, "big output", max_output_chars=500
     )
 
-    assert "characters truncated" in result.llm_output
+    result = await bound_output(result, ctx)
+    assert "Output shortened" in result.llm_output
     assert "AAA" in result.llm_output
     assert "CCC" in result.llm_output
-    assert result.ui_metadata["metadata"]["was_truncated"] is True
-    assert result.ui_metadata["metadata"]["chars_truncated"] > 0
+    assert result.ui_metadata["output_retention"]["status"] == "unavailable"
+    assert len(result.llm_output.encode()) <= 512
 
 
 @pytest.mark.asyncio
-async def test_execute_bash_truncates_long_lines(monkeypatch, tmp_path):
-    """Test that individual long lines are truncated."""
+async def test_execute_bash_preserves_long_lines(monkeypatch, tmp_path):
+    """Long lines that fit the total budget remain intact."""
     ctx = make_ctx(tmp_path)
 
     long_line = "x" * 600
@@ -218,9 +220,8 @@ async def test_execute_bash_truncates_long_lines(monkeypatch, tmp_path):
 
     result = await unwrap(bash_tool.execute_bash)(ctx, "long line")
 
-    assert "lines exceeded 500 chars" in result.llm_output
-    assert result.ui_metadata["metadata"]["lines_truncated"] == 1
-    assert "..." in result.llm_output
+    assert long_line in result.llm_output
+    assert result.ui_metadata["metadata"]["lines_truncated"] == 0
 
 
 @pytest.mark.asyncio
@@ -271,9 +272,9 @@ async def test_execute_bash_truncation_notice_with_stats(monkeypatch, tmp_path):
         ctx, "many lines", max_output_chars=200
     )
 
-    assert "Total output:" in result.llm_output
-    assert "chars" in result.llm_output
-    assert "lines" in result.llm_output
+    result = await bound_output(result, ctx)
+    assert "Output shortened" in result.llm_output
+    assert result.ui_metadata["output_retention"]["original_bytes"] > 512
     assert result.ui_metadata["metadata"]["total_lines"] == 100
 
 
@@ -361,3 +362,88 @@ async def test_execute_bash_relative_cwd_anchored_to_workspace_root(
     await unwrap(bash_tool.execute_bash)(ctx, "ls", cwd="subdir")
 
     assert captured["cwd"] == _os.path.abspath(str(sub))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("background", [False, True])
+@pytest.mark.parametrize("bad_cwd", ["null", '"/workspace/project"', "missing", "file"])
+async def test_invalid_cwd_is_actionable_without_launch(
+    tmp_path, monkeypatch, background, bad_cwd
+):
+    from unittest.mock import AsyncMock
+
+    (tmp_path / "file").write_text("not a directory")
+    execute = AsyncMock()
+    spawn = AsyncMock()
+    monkeypatch.setattr("omniagents.workspace.exec", execute)
+    monkeypatch.setattr("omniagents.workspace.spawn", spawn)
+    result = await unwrap(bash_tool.execute_bash)(
+        make_ctx(tmp_path), "echo hello", cwd=bad_cwd, background=background
+    )
+    metadata = result.ui_metadata
+    assert metadata["metadata"]["error_type"] == "invalid_working_directory"
+    assert str(tmp_path) in metadata["value"]
+    assert "JSON null" in metadata["value"]
+    if bad_cwd.startswith('"'):
+        assert "remove the surrounding quote characters" in metadata["value"]
+    execute.assert_not_awaited()
+    spawn.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cwd",
+    [
+        None,
+        "null",
+        "with spaces",
+        pytest.param(
+            '"quoted"',
+            marks=pytest.mark.skipif(
+                sys.platform == "win32", reason='Windows file names cannot contain "'
+            ),
+        ),
+    ],
+)
+async def test_valid_cwd_is_preserved(tmp_path, monkeypatch, cwd):
+    if cwd is not None:
+        (tmp_path / cwd).mkdir()
+    captured = {}
+    monkeypatch.setattr("omniagents.workspace.exec", make_fake_exec(captured=captured))
+    await unwrap(bash_tool.execute_bash)(make_ctx(tmp_path), "echo hello", cwd=cwd)
+    assert captured["cwd"] == str(tmp_path if cwd is None else tmp_path / cwd)
+
+
+@pytest.mark.asyncio
+async def test_cwd_validation_uses_active_backend(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    remote_path = "/remote/only/project"
+    check = AsyncMock(return_value=True)
+    from omniagents import workspace
+
+    monkeypatch.setattr(workspace.current_workspace(), "is_exec_dir", check)
+    captured = {}
+    monkeypatch.setattr("omniagents.workspace.exec", make_fake_exec(captured=captured))
+    await unwrap(bash_tool.execute_bash)(
+        make_ctx(tmp_path), "echo hello", cwd=remote_path
+    )
+    check.assert_awaited_once_with(remote_path)
+    assert captured["cwd"] == remote_path
+
+
+@pytest.mark.asyncio
+async def test_sandbox_exec_directory_check_allows_outside_file_root():
+    from unittest.mock import AsyncMock
+    from omniagents.workspace.sandbox import SandboxWorkspace
+
+    session = types.SimpleNamespace(
+        exec=AsyncMock(return_value=types.SimpleNamespace(exit_code=0))
+    )
+    workspace = SandboxWorkspace(session, root="/workspace", default_user="agent")
+    assert await workspace.is_exec_dir("/tmp/build with spaces")
+    session.exec.assert_awaited_once_with(
+        "sh", "-lc", "test -d '/tmp/build with spaces'", shell=False, user="agent"
+    )
+    session.exec.return_value.exit_code = 1
+    assert not await workspace.is_exec_dir("/tmp/missing")

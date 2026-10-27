@@ -7,13 +7,13 @@
  * credential list shows it and private clone/push work — no manual PAT needed.
  */
 import { useStore } from '@nanostores/react';
+import { Avatar, AvatarFallback, AvatarImage } from '@omniagents/ui/avatar';
+import { Button } from '@omniagents/ui/button';
+import { Card, CardContent } from '@omniagents/ui/card';
+import { cn } from '@omniagents/ui/cn';
+import { Spinner } from '@omniagents/ui/spinner';
 import { memo, useCallback, useEffect, useState } from 'react';
 
-import { cn } from '@/renderer/ds/cn';
-import { Avatar, AvatarFallback, AvatarImage } from '@/renderer/ds/ui/avatar';
-import { Button } from '@/renderer/ds/ui/button';
-import { Card, CardContent } from '@/renderer/ds/ui/card';
-import { Spinner } from '@/renderer/ds/ui/spinner';
 import { emitter, ipc } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { GithubDeviceCode } from '@/shared/types';

@@ -48,12 +48,39 @@ def is_context_length_exceeded(err: Exception) -> bool:
     return False
 
 
+def _redact_inline_data(value: Any) -> Any:
+    """*value* with inline image/file payloads replaced by short placeholders.
+
+    The summarizer reads the transcript as text: a base64 photo is millions
+    of meaningless characters that can overflow its request.
+    """
+    if isinstance(value, str):
+        if value.startswith("data:"):
+            mime = value[5:].split(",", 1)[0].split(";", 1)[0] or "data"
+            return f"[inline {mime} omitted]"
+        return value
+    if isinstance(value, dict):
+        return {
+            key: (
+                "[file data omitted]"
+                if key == "file_data" and isinstance(inner, str)
+                else _redact_inline_data(inner)
+            )
+            for key, inner in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_inline_data(inner) for inner in value]
+    return value
+
+
 def extract_transcript(history: list[dict]) -> str:
     parts: list[str] = []
     for item in history or []:
         if not isinstance(item, dict):
             continue
-        parts.append(json.dumps(item, ensure_ascii=False, default=str))
+        parts.append(
+            json.dumps(_redact_inline_data(item), ensure_ascii=False, default=str)
+        )
     return "\n".join(parts)
 
 
@@ -180,7 +207,7 @@ def _trim_exec_bash_fields(value: Any, *, stdout_chars: int, stderr_chars: int) 
 def sanitize_tool_event(event: dict) -> dict:
     tool_name = _extract_tool_name_from_event(event)
     try:
-        event_copy = copy.deepcopy(event)
+        event_copy = _redact_inline_data(copy.deepcopy(event))
     except Exception:
         event_copy = {"event": str(event)}
 
@@ -521,6 +548,18 @@ async def run_checkpoint_compaction(
     recorder = _conversation_recorder(session)
     session.append_message(summary_item)
     _record_checkpoint_item(session, recorder, summary_item)
+    memory_config = getattr(session, "_memory_config", None)
+    if memory_config and "compaction" in (memory_config.get("extraction") or {}).get(
+        "triggers", []
+    ):
+        from omniagents.core.memory.extract import schedule
+
+        schedule(
+            memory_config,
+            window,
+            {"session_id": getattr(session, "id", None)},
+            "compaction",
+        )
     return summary_item
 
 

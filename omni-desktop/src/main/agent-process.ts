@@ -4,34 +4,26 @@ import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
+import type { RpcMethodMap } from '@omniagents/client/protocol/gui-v2';
+import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
 import c from 'ansi-colors';
 import { shellEnvSync } from 'shell-env';
 import { assert } from 'tsafe';
 import { WebSocket as WsWebSocket } from 'ws';
 
-import type { RpcMethodMap } from '@/generated/omniagents-gui-v2/gui-v2';
-import { getProductSlug } from '@/lib/product';
 import { DEFAULT_ENV } from '@/lib/pty-utils';
 import { SimpleLogger } from '@/lib/simple-logger';
 import { wsAuthOptions } from '@/lib/ws-auth';
 import { AgentHostControlClient } from '@/main/agent-host-control-client';
 import { getGitBashEnv } from '@/main/git-bash';
-import { initializeMainRpcConnection } from '@/main/omniagents-rpc-handshake';
-import type { IComputeClient } from '@/main/platform-client';
 import { assertServeProtocolSupported } from '@/main/product-runtime';
-import { resolveProfile } from '@/main/profile-resolver';
 import { getOmniCliPath, getOmniConfigDir, isDirectory, pathExists } from '@/main/util';
-import { downloadWorkspace } from '@/main/workspace-sync';
 import type { ManagementAdminMethod } from '@/shared/management-admin';
 import type {
   AgentProcessData,
   AgentProcessStatus,
   AgentProcessStopResult,
   AgentRuntimeConnection,
-  ExecutionTarget,
-  LogEntry,
-  ManagementMutationCapabilities,
-  SandboxPauseResult,
   WithTimestamp,
   WorkspaceMountDescriptor,
 } from '@/shared/types';
@@ -41,21 +33,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 /**
- * Two paths exist after the v22 cut:
- *
- *   - ``serve``   — spawn one targetless ``omni serve`` AgentHost; consumer
- *                   Workspaces and profiles materialize independent execution
- *                   environments through its control plane.
- *   - ``compute`` — delegate the sandbox lifecycle to an {@link IComputeClient}
- *                   instead of spawning ``omni serve`` here. Platform mode
- *                   connects to a remote AgentHost. Computer-as-sandbox uses
- *                   the separate local ``host_bridge`` serve path so it keeps
- *                   the locally validated readiness contract.
- */
-export type AgentProcessMode = 'serve' | 'compute';
-
-/**
- * How one source for the sandbox workspace should be seeded. Mirrors
+ * How one source for the agent workspace should be seeded. Mirrors
  * the three project source kinds the launcher exposes:
  *
  *   - ``local-git`` — host directory under git control. The seed entry
@@ -63,34 +41,29 @@ export type AgentProcessMode = 'serve' | 'compute';
  *   - ``local`` — host directory without git. The seed entry is the
  *     SDK's ``LocalDir`` (rejects symlinks; correct default for
  *     non-developer workspaces).
- *   - ``git-remote`` — repo URL the container clones at boot (SDK's
- *     ``GitRepo`` entry). No host directory is read.
+ *   - ``git-remote`` — repo URL cloned during materialization. On the host
+ *     it is cloned once into ``checkoutPath`` (one per project source,
+ *     shared by every chat on the project); sandboxes use the SDK's
+ *     ``GitRepo`` entry.
  *
- * ``mountName`` is the subdirectory under ``/workspace/`` inside the
- * container. A multi-source project gets N entries that materialize at
- * ``/workspace/<mountName>/`` each.
- */
-/**
- * ``launcherOwned`` marks a host directory the launcher itself manages (a
- * per-conversation ``Sessions/<id>`` scratch dir or a managed project dir):
- * container changes auto-mirror back to it without confirmation, since there
- * is no foreign user data to clobber. User-attached folders never carry it —
- * they keep the explicit "Apply to my folder" gate. Launcher-side only; the
- * ``--source`` descriptor sent to omni serve does not include it.
+ * ``mountName`` is the subdirectory under the workspace root. A
+ * multi-source project gets N entries that materialize at
+ * ``<root>/<mountName>/`` each.
  */
 export type AgentProcessSource = { id?: string; mountName: string; writable?: boolean } & (
   | {
       kind: 'local-git';
       workspaceDir: string;
       ref?: string;
-      launcherOwned?: boolean;
       gitDir?: string;
       gitCommonDir?: string;
     }
-  | { kind: 'local'; workspaceDir: string; launcherOwned?: boolean }
+  | { kind: 'local'; workspaceDir: string }
   | {
       kind: 'git-remote';
       repoUrl: string;
+      /** Launcher-owned clone directory for this project source. */
+      checkoutPath: string;
       ref?: string;
       /**
        * Authentication hint for a private remote. Carries the *name* of the env
@@ -105,8 +78,6 @@ export type AgentProcessSource = { id?: string; mountName: string; writable?: bo
 );
 
 export type AgentProcessStartArg = {
-  /** Profile name to resolve (``host``, ``devbox``, custom user profile, …). */
-  profileName: string;
   /**
    * Sources registered on the consumer Workspace. The selected environment
    * materializes them at ``/workspace/<mountName>``. Empty array = no seeding.
@@ -117,40 +88,14 @@ export type AgentProcessStartArg = {
    * registered.
    */
   projectId?: string;
-  /**
-   * Delegated-compute session identity. Local AgentHost Workspace identity is
-   * deliberately independent.
-   */
+  /** Conversation Session identity — the AgentHost Thread id. */
   sessionId?: string;
-  /** Stable snapshot reference registered with the consumer Workspace. */
-  snapshotRef?: string;
   /**
    * Used in serve mode as the spawn ``cwd`` for resolving relative
    * paths in source-path. For git-remote sources, the launcher passes
    * its own state dir since there's no project workspace on disk.
    */
   workspaceDir?: string;
-  /** Compute mode: agent slug for the platform's policy resolution. */
-  agentSlug?: string;
-  /** Compute mode: domain slug override. */
-  domain?: string;
-  /** Compute mode: pre-synced share name (skips the one-shot upload). */
-  preSyncedShareName?: string;
-  /** Compute mode: git-remote URL the remote container clones. */
-  gitRepo?: { url: string; branch?: string };
-  /**
-   * Local-compute (computer-as-sandbox) extras forwarded to the
-   * `IComputeClient.startSession` extras param so the laptop's local
-   * `ProcessManager` knows what profile / env / workspace to spawn against.
-   * Ignored by `PlatformClient`.
-   */
-  localComputeExtras?: {
-    sessionId?: string;
-    profileName?: string;
-    workspaceDir?: string;
-    projectId?: string;
-    env?: Record<string, string>;
-  };
   /**
    * `{ envVarName: token }` for private git remotes, merged into the spawned
    * `omni serve` process env. The matching env var *name* is referenced by each
@@ -159,23 +104,6 @@ export type AgentProcessStartArg = {
    * model/MCP secrets are injected.
    */
   gitTokenEnv?: Record<string, string>;
-  /**
-   * Boot-time credential descriptors for the sandbox: one per linked host the
-   * project's sources reference (git-remote URL *and* each local-git checkout's
-   * own remote). Forwarded as `--credential <json>` to `omni serve`, which
-   * configures git + the host's CLI (`gh` / `az devops`) inside the container so
-   * the agent authenticates for *every* source kind, not just cloned remotes.
-   * Token values ride in `gitTokenEnv` (process env), referenced here by name.
-   */
-  credentials?: Array<{ url: string; username: string; tokenEnv: string }>;
-  /**
-   * Explicit profile file path, bypassing name-based resolution. Set by the
-   * cloud for `local:<machineId>` (computer-as-sandbox) sessions: the launcher
-   * writes a per-session `host_bridge` profile (pointing `omni serve`'s sandbox
-   * at the user's laptop via the relay) and passes its path here. When set,
-   * `profileName` is only used for labelling.
-   */
-  explicitProfilePath?: string;
 };
 
 export type AgentHostConsumerRuntime = ExecutionTarget & {
@@ -183,11 +111,6 @@ export type AgentHostConsumerRuntime = ExecutionTarget & {
   defaultCwd?: string;
   /** Authoritative mount table from materialization (see AgentProcessData). */
   mounts?: WorkspaceMountDescriptor[];
-  /** Capability names from the environment descriptor (see AgentProcessData). */
-  environmentCapabilities?: string[];
-  services: Record<string, string>;
-  containerId?: string;
-  paused?: boolean;
 };
 
 /** Defensive parse of the materialization payload's ``mounts`` array. */
@@ -228,7 +151,6 @@ type AgentHostResourceSnapshot = {
   workspaces: Array<{
     workspaceId: string;
     ownerUserId?: string;
-    snapshotRef?: string;
     sources: unknown[];
   }>;
   profiles: Record<string, Record<string, unknown>>;
@@ -239,7 +161,6 @@ type ConsumerRegistration = {
   consumerId: string;
   threadId: string;
   workspaceId: string;
-  snapshotRef: string;
   sources: Record<string, unknown>[];
   profileId: string;
   profileDefinition: Record<string, unknown>;
@@ -258,7 +179,6 @@ type HostTermination = 'graceful' | 'forced' | 'not-applicable';
  * keep aligned with omniagents ``docs/serve-protocol.md``.
  */
 type ServeReadyPayload = {
-  sandbox_url: string;
   ws_url: string;
   ui_url: string;
   /** Stable identity of the agent host that owns runtime registries. */
@@ -273,11 +193,7 @@ type ServeReadyPayload = {
    * is token-free — never parse credentials out of it.
    */
   auth_token?: string | null;
-  services?: Record<string, string>;
   ports: { ui: number };
-  container_id?: string | null;
-  container_name?: string | null;
-  _debug?: Record<string, unknown>;
 };
 
 const servePayloadToData = (payload: ServeReadyPayload): AgentProcessData => {
@@ -298,10 +214,6 @@ const servePayloadToData = (payload: ServeReadyPayload): AgentProcessData => {
       ? { environmentId: payload.environment_id }
       : {}),
     ...(payload.auth_token ? { authToken: payload.auth_token } : {}),
-    sandboxUrl: payload.sandbox_url,
-    services: payload.services ?? {},
-    containerId: payload.container_id ?? undefined,
-    containerName: payload.container_name ?? undefined,
     port: payload.ports.ui,
   };
 };
@@ -336,6 +248,7 @@ const sourceDescriptor = (source: AgentProcessSource): Record<string, unknown> =
   }
   if (source.kind === 'git-remote') {
     descriptor.repoUrl = source.repoUrl;
+    descriptor.checkoutPath = source.checkoutPath;
     if (source.auth) {
       descriptor.auth = source.auth;
     }
@@ -409,7 +322,6 @@ export const decodeAgentHostResources = (value: unknown): AgentHostResourceSnaps
       return {
         workspaceId: resourceString(workspace, 'workspace_id', `workspaces[${index}]`),
         ...(typeof workspace.owner_user_id === 'string' ? { ownerUserId: workspace.owner_user_id } : {}),
-        ...(typeof workspace.snapshot_ref === 'string' ? { snapshotRef: workspace.snapshot_ref } : {}),
         sources: workspace.sources,
       };
     }),
@@ -434,157 +346,11 @@ export const decodeAgentHostResources = (value: unknown): AgentHostResourceSnaps
   };
 };
 
-const SERVER_CALL_TIMEOUT_MS = 8_000;
-
-/**
- * Open a one-shot JSON-RPC WebSocket to omni serve, send one
- * ``server_call`` for *fn*, await the result, then close. Used by
- * lifecycle calls (pause/unpause) that don't need a long-lived control
- * channel. When the server is authenticated, *authToken* rides as an
- * ``Authorization: Bearer`` upgrade header — never in the URL.
- */
-async function oneShotServerCall(
-  wsUrl: string,
-  target: ExecutionTarget,
-  fn: string,
-  args: Record<string, unknown> = {},
-  timeoutMs: number = SERVER_CALL_TIMEOUT_MS,
-  authToken?: string
-): Promise<SandboxPauseResult> {
-  return new Promise<SandboxPauseResult>((resolve) => {
-    let settled = false;
-    let nextId = 1;
-    const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
-    const finish = (result: SandboxPauseResult) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timer);
-      for (const call of pending.values()) {
-        call.reject(new Error(`${fn} connection closed`));
-      }
-      pending.clear();
-      try {
-        socket.close();
-      } catch {
-        // ignore
-      }
-      resolve(result);
-    };
-
-    const socket = new WsWebSocket(wsUrl, wsAuthOptions(authToken));
-    const timer = setTimeout(() => finish({ ok: false, supported: false, reason: `${fn} timed out` }), timeoutMs);
-
-    const request = (method: string, params: object): Promise<unknown> => {
-      const id = nextId++;
-      return new Promise((resolveRequest, rejectRequest) => {
-        pending.set(id, { resolve: resolveRequest, reject: rejectRequest });
-        socket.send(JSON.stringify({ jsonrpc: '2.0', id, method, params }), (error) => {
-          if (!error) {
-            return;
-          }
-          pending.delete(id);
-          rejectRequest(error);
-        });
-      });
-    };
-
-    socket.once('open', async () => {
-      try {
-        await initializeMainRpcConnection({
-          name: 'omni-desktop-lifecycle',
-          request: (method, params) => request(method, params),
-          notify: (method, params) =>
-            new Promise<void>((resolveSend, rejectSend) => {
-              socket.send(JSON.stringify({ jsonrpc: '2.0', method, params }), (error) => {
-                if (error) {
-                  rejectSend(error);
-                } else {
-                  resolveSend();
-                }
-              });
-            }),
-        });
-        const result = await request('server_call', {
-          function: fn,
-          args,
-          workspace_id: target.workspaceId,
-          environment_id: target.environmentId,
-          environment_generation: target.environmentGeneration,
-        });
-        if (typeof result !== 'object' || result === null) {
-          finish({ ok: false, supported: false, reason: `${fn} returned no result` });
-          return;
-        }
-        const r = result as Record<string, unknown>;
-        finish({
-          ok: r.ok === true,
-          supported: r.supported !== false,
-          data: r,
-          ...(typeof r.paused === 'boolean' ? { paused: r.paused } : {}),
-          ...(typeof r.reason === 'string' ? { reason: r.reason } : {}),
-        });
-      } catch (err) {
-        finish({
-          ok: false,
-          supported: false,
-          reason: `${fn} send failed: ${(err as Error).message ?? err}`,
-        });
-      }
-    });
-
-    socket.on('message', (raw) => {
-      let msg: unknown;
-      try {
-        msg = JSON.parse(String(raw));
-      } catch {
-        return;
-      }
-      if (typeof msg !== 'object' || msg === null) {
-        return;
-      }
-      const obj = msg as Record<string, unknown>;
-      const id = obj.id;
-      if (typeof id !== 'number') {
-        return;
-      }
-      const call = pending.get(id);
-      if (!call) {
-        return;
-      }
-      pending.delete(id);
-      if ('error' in obj && obj.error && typeof obj.error === 'object') {
-        const errMsg = String((obj.error as Record<string, unknown>).message ?? `${fn} rpc error`);
-        call.reject(new Error(errMsg));
-        return;
-      }
-      call.resolve(obj.result);
-    });
-
-    socket.on('error', (err) => {
-      finish({
-        ok: false,
-        supported: false,
-        reason: `${fn} ws error: ${(err as Error).message ?? err}`,
-      });
-    });
-
-    socket.on('close', () => {
-      // If the socket closes before we got a result, treat as failure.
-      // The settled guard makes this a no-op in the normal path.
-      finish({ ok: false, supported: false, reason: `${fn} ws closed unexpectedly` });
-    });
-  });
-}
-
 // ---------------------------------------------------------------------------
 // AgentProcess
 // ---------------------------------------------------------------------------
 
 export class AgentProcess {
-  readonly mode: AgentProcessMode;
-
   private status: WithTimestamp<AgentProcessStatus>;
   private ipcRawOutput: (data: string) => void;
   private onStatusChange: (status: WithTimestamp<AgentProcessStatus>) => void;
@@ -593,11 +359,7 @@ export class AgentProcess {
   private stdoutBuffer = '';
   private stderrBuffer = '';
   private jsonEmitted = false;
-  private lastStartArg: AgentProcessStartArg | null = null;
   private fetchFn: FetchFn;
-  private computeClient: IComputeClient | null = null;
-  private computeSessionId: string | null = null;
-  private recordCompute?: (profile: string, sessionId: string) => void;
   private getExtraEnv?: () => Record<string, string> | Promise<Record<string, string>>;
   private readonly processStopTimeoutMs: number;
   private readonly stopReconcilePollMs: number;
@@ -606,9 +368,6 @@ export class AgentProcess {
   private agentHostControlClient: AgentHostControlClient | null = null;
   /** Desired consumer bindings retained across renderer/control reconnects. */
   private consumerRegistrations = new Map<string, ConsumerRegistration>();
-  private recordConsumer?: (
-    claim: Omit<import('./chat-runtime-journal').ChatRuntimeClaim, 'machine'>
-  ) => void | Promise<void>;
   /**
    * Children we deliberately killed via {@link killProcess} (SIGTERM → SIGKILL).
    * Their late `close` events should NOT flip status to `error("signal SIGKILL")`
@@ -620,37 +379,20 @@ export class AgentProcess {
   private intentionallyKilled: WeakSet<ChildProcess> = new WeakSet();
 
   constructor(opts: {
-    mode: AgentProcessMode;
-    ipcLogger?: (entry: WithTimestamp<LogEntry>) => void;
     ipcRawOutput: (data: string) => void;
     onStatusChange: (status: WithTimestamp<AgentProcessStatus>) => void;
     fetchFn?: FetchFn;
-    computeClient?: IComputeClient;
-    recordCompute?: (profile: string, sessionId: string) => void;
-    /**
-     * Extra env merged into the spawned `omni serve` (serve mode), evaluated
-     * per start. Cloud uses this to inject a fresh per-tenant
-     * `OMNI_RUNTIME_TOKEN` for the agent's HTTP MCP calls, AND for the
-     * codex-token materialization side effect (writing the per-principal
-     * codex.json to the spawn's config dir before omni-serve starts).
-     */
+    /** Extra env merged into the spawned `omni serve`, evaluated per start. */
     getExtraEnv?: () => Record<string, string> | Promise<Record<string, string>>;
     /** Test/embedding override for the SIGTERM grace period. */
     processStopTimeoutMs?: number;
     /** Test/embedding overrides for observing an already-committed stop. */
     stopReconcilePollMs?: number;
     stopReconcileTimeoutMs?: number;
-    recordConsumer?: (
-      claim: Omit<import('./chat-runtime-journal').ChatRuntimeClaim, 'machine'>
-    ) => void | Promise<void>;
   }) {
-    this.mode = opts.mode;
-    this.recordCompute = opts.recordCompute;
-    this.recordConsumer = opts.recordConsumer;
     this.ipcRawOutput = opts.ipcRawOutput;
     this.onStatusChange = opts.onStatusChange;
     this.fetchFn = opts.fetchFn ?? globalThis.fetch;
-    this.computeClient = opts.computeClient ?? null;
     this.getExtraEnv = opts.getExtraEnv;
     this.processStopTimeoutMs = opts.processStopTimeoutMs ?? 30_000;
     this.stopReconcilePollMs = opts.stopReconcilePollMs ?? 250;
@@ -666,10 +408,6 @@ export class AgentProcess {
 
   getStatus = (): WithTimestamp<AgentProcessStatus> => this.status;
 
-  /** Whether this AgentProcess owns an in-process AgentHost reading the
-   * launcher's host mcp.json. Delegated compute has a different config store. */
-  usesLocalAgentHostConfig = (): boolean => this.mode === 'serve';
-
   /**
    * Wait for the targetless AgentHost and return only its ordinary consumer
    * connection. The privileged control credential deliberately has no path
@@ -684,63 +422,24 @@ export class AgentProcess {
     };
   };
 
-  /** Report only the operations negotiated by main's privileged control
-   * client. No control credential or generic RPC surface leaves this class. */
-  getManagementMutationCapabilities = async (): Promise<ManagementMutationCapabilities> => {
-    const data = await this.waitForRunningData();
-    if (!data.wsUrl || !this.agentHostControlToken) {
-      return { validateConfig: false, writeConfig: false };
-    }
-    const control =
-      this.agentHostControlClient ??
-      (this.agentHostControlClient = new AgentHostControlClient(data.wsUrl, this.agentHostControlToken));
-    const operations = new Set(await control.getExperimentalOperations());
-    return {
-      validateConfig: operations.has('validate_config'),
-      writeConfig: operations.has('write_config'),
-    };
-  };
-
   /** Privileged process-wide management mutation. Only ProcessManager's
    * closed broker calls this method; neither the token nor this client crosses
    * into renderer code. */
   callManagementAdmin = async <Method extends ManagementAdminMethod>(
     method: Method,
     params: RpcMethodMap[Method]['params']
-  ): Promise<RpcMethodMap[Method]['result']> => {
-    const data = await this.waitForRunningData();
-    if (!data.wsUrl || !this.agentHostControlToken) {
-      throw new Error('AgentHost admin channel is unavailable');
-    }
-    const control =
-      this.agentHostControlClient ??
-      (this.agentHostControlClient = new AgentHostControlClient(data.wsUrl, this.agentHostControlToken));
-    return control.call(method, params);
-  };
+  ): Promise<RpcMethodMap[Method]['result']> => (await this.control()).call(method, params);
 
-  /** Narrow main-process read used to verify durable local account ownership.
-   * It is deliberately not exposed through IPC as a generic control call. */
-  getManagementAccountStatus = async (): Promise<RpcMethodMap['account_status']['result']> => {
-    const data = await this.waitForRunningData();
-    if (!data.wsUrl || !this.agentHostControlToken) {
-      throw new Error('AgentHost admin channel is unavailable');
-    }
-    const control =
-      this.agentHostControlClient ??
-      (this.agentHostControlClient = new AgentHostControlClient(data.wsUrl, this.agentHostControlToken));
-    return control.call('account_status', {});
-  };
+  /** Main-process account status read. Not exposed through IPC as a generic control call. */
+  getManagementAccountStatus = async (): Promise<RpcMethodMap['account_status']['result']> =>
+    (await this.control()).call('account_status', {});
 
-  /** Narrow main-process read used by the local MCP ownership/durability gate. */
-  getManagementMcpStatus = async (): Promise<RpcMethodMap['mcp_list_servers']['result']> => {
+  private control = async (): Promise<AgentHostControlClient> => {
     const data = await this.waitForRunningData();
     if (!data.wsUrl || !this.agentHostControlToken) {
-      throw new Error('AgentHost admin channel is unavailable');
+      throw new Error('AgentHost control channel is unavailable');
     }
-    const control =
-      this.agentHostControlClient ??
-      (this.agentHostControlClient = new AgentHostControlClient(data.wsUrl, this.agentHostControlToken));
-    return control.call('mcp_list_servers', {});
+    return (this.agentHostControlClient ??= new AgentHostControlClient(data.wsUrl, this.agentHostControlToken));
   };
 
   /** Register and bind one launcher consumer inside this long-lived AgentHost. */
@@ -749,38 +448,21 @@ export class AgentProcess {
     workspaceId: string,
     arg: AgentProcessStartArg
   ): Promise<AgentHostConsumerRuntime> => {
-    if (this.mode !== 'serve') {
-      throw new Error('Delegated compute does not support AgentHost consumer configuration');
-    }
     await this.ensureConsumerSources(arg);
+    const control = await this.control();
     const data = await this.waitForRunningData();
-    if (!data.wsUrl || !this.agentHostControlToken) {
-      throw new Error('AgentHost control channel is unavailable');
-    }
-    const control =
-      this.agentHostControlClient ??
-      (this.agentHostControlClient = new AgentHostControlClient(data.wsUrl, this.agentHostControlToken));
-    const snapshotRef = arg.snapshotRef ?? workspaceId;
     let materializedEnvironmentId: string | undefined;
-    const resolved = arg.explicitProfilePath
-      ? ({ kind: 'file', path: arg.explicitProfilePath } as const)
-      : resolveProfile(arg.profileName);
-    if (resolved.kind === 'missing') {
-      throw new Error(`Profile "${arg.profileName}" is no longer available`);
-    }
-    const definition: Record<string, unknown> =
-      resolved.kind === 'file'
-        ? { kind: 'path', path: resolved.path }
-        : {
-            kind: 'default',
-            ...(arg.projectId ? { project_id: arg.projectId } : {}),
-          };
+    // The desktop always runs omni-code's default (host) profile.
+    const definition: Record<string, unknown> = {
+      kind: 'default',
+      ...(arg.projectId ? { project_id: arg.projectId } : {}),
+    };
     const profileId = `profile_${createHash('sha256').update(JSON.stringify(definition)).digest('hex').slice(0, 24)}`;
     // AgentHost's Thread identity is the conversation Session identity. The
     // launcher consumer is a UI/process attachment and may outlive or switch
     // conversations, so it must never become the RPC resource identifier.
     const threadId = arg.sessionId ?? consumerId;
-    const controlContext = { consumerId, profileName: arg.profileName };
+    const controlContext = { consumerId };
     const sources = arg.sources.map(sourceDescriptor);
 
     // Every provisioning transaction begins with an authoritative inventory.
@@ -795,25 +477,9 @@ export class AgentProcess {
     const registeredWorkspace = resources.workspaces.find((item) => item.workspaceId === workspaceId);
     if (
       registeredWorkspace &&
-      (registeredWorkspace.ownerUserId !== 'token_user' ||
-        registeredWorkspace.snapshotRef !== snapshotRef ||
-        !isDeepStrictEqual(registeredWorkspace.sources, sources))
+      (registeredWorkspace.ownerUserId !== 'token_user' || !isDeepStrictEqual(registeredWorkspace.sources, sources))
     ) {
       throw new Error(`AgentHost workspace ${workspaceId} is registered with a different definition`);
-    }
-    if (this.recordConsumer) {
-      if (!this.childProcess?.pid) {
-        throw new Error('Runtime process identity unavailable');
-      }
-      await this.recordConsumer({
-        consumerId,
-        workspaceId,
-        snapshotRef,
-        hostId: resources.agentHostId,
-        wsUrl: data.wsUrl,
-        controlToken: this.agentHostControlToken,
-        pid: this.childProcess.pid,
-      });
     }
     const registeredProfile = resources.profiles[profileId];
     if (registeredProfile && !isDeepStrictEqual(registeredProfile, definition)) {
@@ -824,7 +490,6 @@ export class AgentProcess {
     const sameDesiredBinding =
       previous?.workspaceId === workspaceId &&
       previous.threadId === threadId &&
-      previous.snapshotRef === snapshotRef &&
       previous.profileId === profileId &&
       isDeepStrictEqual(previous.sources, sources) &&
       isDeepStrictEqual(previous.profileDefinition, definition);
@@ -847,7 +512,6 @@ export class AgentProcess {
         {
           workspace_id: workspaceId,
           materialization_path: serveWorkspaceDirectory(workspaceId, arg),
-          snapshot_ref: snapshotRef,
           sources,
           owner_user_id: 'token_user',
         },
@@ -887,9 +551,6 @@ export class AgentProcess {
       throw new Error('AgentHost materialization returned no workspace_root');
     }
     const parsedMounts = parseWorkspaceMounts(materialized['mounts']);
-    const environmentCapabilities = Array.isArray(materialized['capabilities'])
-      ? (materialized['capabilities'] as unknown[]).filter((c): c is string => typeof c === 'string' && c.length > 0)
-      : undefined;
     const runtime: AgentHostConsumerRuntime = {
       workspaceId,
       environmentId,
@@ -899,14 +560,6 @@ export class AgentProcess {
         ? { defaultCwd: materialized['default_cwd'].trim() }
         : {}),
       ...(parsedMounts ? { mounts: parsedMounts } : {}),
-      ...(environmentCapabilities ? { environmentCapabilities } : {}),
-      services:
-        materialized['services'] && typeof materialized['services'] === 'object'
-          ? (materialized['services'] as Record<string, string>)
-          : {},
-      ...(typeof materialized['container_id'] === 'string' && materialized['container_id']
-        ? { containerId: materialized['container_id'] }
-        : {}),
     };
 
     try {
@@ -927,7 +580,6 @@ export class AgentProcess {
       consumerId,
       threadId,
       workspaceId,
-      snapshotRef,
       sources,
       profileId,
       profileDefinition: definition,
@@ -936,61 +588,11 @@ export class AgentProcess {
     return runtime;
   };
 
-  /** Bind an additional conversation to this consumer's current environment.
-   * Daily resident threads share the workspace; they do not provision new sandboxes. */
-  bindSession = async (consumerId: string, sessionId: string, runtime?: AgentHostConsumerRuntime): Promise<void> => {
-    if (this.mode === 'compute') {
-      const status = this.getStatus();
-      if (status.type !== 'running') {
-        throw new Error('Resident execution environment is not ready');
-      }
-      const data = status.data;
-      if (
-        !data.wsUrl ||
-        !data.workspaceId ||
-        !data.environmentId ||
-        !Number.isSafeInteger(data.environmentGeneration) ||
-        !data.authToken
-      ) {
-        throw new Error('Remote resident execution environment is unavailable');
-      }
-      // Binding is owner-scoped. Remote consumers use their ordinary credential;
-      // workspace registration and other admin operations remain unavailable.
-      const control =
-        this.agentHostControlClient ??
-        (this.agentHostControlClient = new AgentHostControlClient(data.wsUrl, data.authToken));
-      await this.bindConsumer(
-        control,
-        sessionId,
-        {
-          workspaceId: data.workspaceId,
-          environmentId: data.environmentId,
-          environmentGeneration: data.environmentGeneration!,
-        },
-        { consumerId }
-      );
-      return;
-    }
-    const registration = this.consumerRegistrations.get(consumerId);
-    const control = this.agentHostControlClient;
-    if (!control || !registration || !runtime) {
-      throw new Error('AgentHost consumer binding is unavailable');
-    }
-    if (
-      registration.runtime.environmentId !== runtime.environmentId ||
-      registration.runtime.environmentGeneration !== runtime.environmentGeneration ||
-      registration.workspaceId !== runtime.workspaceId
-    ) {
-      throw new Error('AgentHost consumer environment changed before session binding');
-    }
-    await this.bindConsumer(control, sessionId, runtime, { consumerId });
-  };
-
   private bindConsumer = async (
     control: AgentHostControlClient,
     threadId: string,
     runtime: ExecutionTarget,
-    context: { consumerId: string; profileName?: string }
+    context: { consumerId: string }
   ): Promise<void> => {
     await control.call(
       'agent_host_bind_thread',
@@ -1094,81 +696,23 @@ export class AgentProcess {
     return this.stopResult('environment', 'not-applicable');
   };
 
-  /**
-   * Flag the environment's shutdown as terminal. On close, omni serve
-   * destroys the durable state instead of preserving it — for docker that
-   * means stopping and removing the container (the workspace lives in its
-   * writable layer) and deleting the session-state record.
-   */
-  discardConsumerSnapshot = async (target: ExecutionTarget): Promise<void> => {
-    const data = await this.waitForRunningData();
-    if (!data.wsUrl) {
-      return;
-    }
-    await oneShotServerCall(data.wsUrl, target, 'sandbox.discard_snapshot', {}, SERVER_CALL_TIMEOUT_MS, data.authToken);
-  };
-
   start = async (arg: AgentProcessStartArg): Promise<void> => {
     if (this.status.type === 'starting' || this.status.type === 'connecting' || this.status.type === 'running') {
       return;
     }
 
-    this.lastStartArg = arg;
     this.updateStatus({ type: 'starting' });
-
-    if (this.mode === 'compute') {
-      await this.startComputeSession(arg);
-      return;
-    }
 
     await this.startServeSession(arg);
   };
 
   stop = async (): Promise<AgentProcessStopResult> => {
-    if (this.mode === 'compute') {
-      this.updateStatus({ type: 'stopping' });
-      if (this.computeSessionId && this.computeClient) {
-        const sessionId = this.computeSessionId;
-        // Do not drop the only remote session identity on an uncertain stop.
-        // The caller retains its cleanup job and can retry this same session.
-        await this.computeClient.stopSession(sessionId);
-
-        // Download workspace files back from Azure Files share unless the
-        // sync manager handles it or the source is a git-remote (container
-        // pushes to git).
-        if (
-          this.lastStartArg &&
-          this.lastStartArg.workspaceDir &&
-          !this.lastStartArg.preSyncedShareName &&
-          !this.lastStartArg.gitRepo
-        ) {
-          try {
-            this.ipcRawOutput('Finalizing workspace download...\r\n');
-            const { downloadSasUrl } = await this.computeClient.finalizeWorkspace(sessionId);
-            await downloadWorkspace(this.lastStartArg.workspaceDir, downloadSasUrl, this.fetchFn, (msg) =>
-              this.ipcRawOutput(`${msg}\r\n`)
-            );
-            this.ipcRawOutput('Workspace downloaded successfully\r\n');
-          } catch (error) {
-            this.ipcRawOutput(`Workspace download failed: ${(error as Error).message}\r\n`);
-          }
-        }
-
-        this.computeSessionId = null;
-      }
-      this.updateStatus({ type: 'exited' });
-      return this.stopResult('compute', 'graceful');
-    }
-
-    // Serve mode — omni serve detaches from durable container sessions on
-    // SIGTERM (docker containers keep running for reattach), so we just kill
-    // the child and let it run its own teardown in its finally block.
+    // omni serve runs its own teardown on SIGTERM.
     if (!this.childProcess) {
       this.closeAgentHostControl();
       this.consumerRegistrations.clear();
       return this.stopResult('host', 'not-applicable');
     }
-    // Capture the WS URL + auth before flipping status — `stopping` carries no data.
     this.updateStatus({ type: 'stopping' });
     this.closeAgentHostControl();
     const shutdown = await this.killProcess(this.processStopTimeoutMs);
@@ -1177,65 +721,10 @@ export class AgentProcess {
     return this.stopResult('host', shutdown);
   };
 
-  rebuild = async (fallbackArg: AgentProcessStartArg): Promise<void> => {
-    const arg = this.lastStartArg ?? fallbackArg;
-    await this.stop();
-    await this.start(arg);
-  };
-
   exit = async (): Promise<AgentProcessStopResult> => {
     this.updateStatus({ type: 'exiting' });
     return this.stop();
   };
-
-  /**
-   * Freeze every process in the sandbox container without releasing it.
-   * Returns the result the omni-code server function emitted: ``ok``,
-   * ``supported``, ``paused``, optional ``reason``. Callers should treat
-   * ``supported: false`` as "this backend doesn't pause — fall back to
-   * stop/shutdown if you want to free resources." The ProcessManager records
-   * the returned paused state on the selected consumer runtime.
-   */
-  pause = async (target?: ExecutionTarget): Promise<SandboxPauseResult> => {
-    return this.callSandboxLifecycle(target, 'sandbox.pause');
-  };
-
-  /**
-   * Thaw a paused sandbox container. Idempotent — calling on an
-   * already-running container is a no-op as far as the user is concerned
-   * (the server function returns supported=true, paused=false).
-   */
-  unpause = async (target?: ExecutionTarget): Promise<SandboxPauseResult> => {
-    return this.callSandboxLifecycle(target, 'sandbox.unpause');
-  };
-
-  private callSandboxLifecycle = async (
-    target: ExecutionTarget | undefined,
-    fn: 'sandbox.pause' | 'sandbox.unpause'
-  ): Promise<SandboxPauseResult> => {
-    if (this.mode === 'compute') {
-      return { ok: false, supported: false, reason: 'compute mode does not implement pause yet' };
-    }
-    if (this.status.type !== 'running' && this.status.type !== 'connecting') {
-      return { ok: false, supported: false, reason: 'sandbox is not running' };
-    }
-    const data = (this.status as Extract<AgentProcessStatus, { type: 'running' | 'connecting' }>).data;
-    const wsUrl = data.wsUrl;
-    if (!wsUrl) {
-      return { ok: false, supported: false, reason: 'no ws_url available' };
-    }
-    if (!target) {
-      return { ok: false, supported: false, reason: 'no execution environment is available' };
-    }
-    try {
-      return await oneShotServerCall(wsUrl, target, fn, {}, SERVER_CALL_TIMEOUT_MS, data.authToken);
-    } catch (err) {
-      const message = (err as Error).message ?? String(err);
-      return { ok: false, supported: true, reason: message };
-    }
-  };
-
-  resizePty = (_cols: number, _rows: number): void => {};
 
   // --- Serve mode ---
 
@@ -1311,17 +800,10 @@ export class AgentProcess {
       clientAuthToken,
       '--agent-host-control-token',
       this.agentHostControlToken,
+      // The stdin pipe stays open for the child's lifetime and is never
+      // written. If this process dies, EOF tells omni serve to shut down.
+      '--exit-on-stdin-close',
     ];
-    // One ``--credential <json>`` per linked host the project uses. Token values
-    // are not here — they ride in ``gitTokenEnv`` (merged into env above) and are
-    // referenced by ``tokenEnv`` name.
-    for (const cred of arg.credentials ?? []) {
-      args.push('--credential', JSON.stringify(cred));
-    }
-    // The provisioner stores each Workspace snapshot beneath this shared root;
-    // the consumer's snapshot_ref is registered later through the control plane.
-    const snapshotDir = path.join(getOmniConfigDir(), 'snapshots');
-    args.push('--snapshot-dir', snapshotDir);
     // AgentHost startup is targetless. Workspace, source, profile, session,
     // and container placement data enters only through consumer materialization.
     const spawnCwd = getOmniConfigDir();
@@ -1336,7 +818,7 @@ export class AgentProcess {
       const child = spawn(omniCli, args, {
         cwd: spawnCwd,
         env,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ['pipe', 'pipe', 'pipe'],
       });
       this.childProcess = child;
       child.stdout.on('data', this.handleStdout);
@@ -1379,8 +861,7 @@ export class AgentProcess {
         }
         this.closeAgentHostControl();
         this.childProcess = null;
-        // An unexpected host exit orphans this process's registrations; the
-        // durable container sessions stay reattachable on the next start.
+        // An unexpected host exit drops every consumer registration.
         this.consumerRegistrations.clear();
         if (this.status.type === 'exiting' || this.status.type === 'stopping') {
           this.updateStatus({ type: 'exited' });
@@ -1406,115 +887,6 @@ export class AgentProcess {
     } catch (error) {
       this.childProcess = null;
       this.updateStatus({ type: 'error', error: { message: (error as Error).message } });
-    }
-  };
-
-  // --- Compute mode (IComputeClient-backed PlatformClient) ---
-
-  private startComputeSession = async (arg: AgentProcessStartArg): Promise<void> => {
-    if (!this.computeClient) {
-      this.updateStatus({ type: 'error', error: { message: 'Compute client not configured' } });
-      return;
-    }
-
-    const agentSlug = arg.agentSlug ?? getProductSlug();
-
-    try {
-      this.log.info(c.cyan(`Requesting sandbox from compute backend (agent: ${agentSlug})...\r\n`));
-
-      const session = await this.computeClient.startSession(agentSlug, arg.domain, arg.gitRepo, arg.localComputeExtras);
-      this.computeSessionId = session.sessionId;
-      this.recordCompute?.(arg.profileName, session.sessionId);
-
-      if (arg.gitRepo) {
-        this.log.info(
-          c.cyan(
-            `Container will clone ${arg.gitRepo.url}` + `${arg.gitRepo.branch ? ` (${arg.gitRepo.branch})` : ''}\r\n`
-          )
-        );
-      } else if (arg.preSyncedShareName) {
-        this.log.info(c.cyan(`Using pre-synced share: ${arg.preSyncedShareName}\r\n`));
-      } else {
-        this.log.info(c.yellow('Workspace upload disabled — container starts with an empty workspace\r\n'));
-      }
-
-      this.log.info(c.cyan(`Session ${session.sessionId} created, waiting for container...\r\n`));
-      this.updateStatus({ type: 'connecting', data: { uiUrl: '' } });
-
-      const ready = await this.computeClient.waitForSession(session.sessionId);
-      if (this.isStopping()) {
-        return;
-      }
-
-      const wsUrl = ready.websocketUrl;
-      if (!wsUrl) {
-        throw new Error('Platform compute session became active without websocketUrl');
-      }
-      // The consumer credential stays in structured process data and is sent
-      // through Authorization headers / one-time ticket exchange. It is never
-      // embedded in either renderer-facing URL.
-      const uiUrl = wsUrl.replace(/^wss:/i, 'https:').replace(/^ws:/i, 'http:').replace(/\/ws$/, '');
-      const data: AgentProcessData = {
-        uiUrl,
-        wsUrl,
-        agentHostId: ready.agentHostId,
-        workspaceId: ready.workspaceId,
-        environmentId: ready.environmentId,
-        environmentGeneration: ready.environmentGeneration,
-        workspaceRoot: ready.workspaceRoot,
-        defaultCwd: ready.defaultCwd,
-        services: ready.services,
-        authToken: ready.consumerCredential.token,
-        ...(ready.containerId ? { containerId: ready.containerId } : {}),
-      };
-
-      // When the compute backend's ``waitForSession`` already guarantees the
-      // sandbox is serving, skip our own HTTP/WS readiness probe.
-      // Alternate trusted adapters may confirm readiness themselves; ordinary
-      // platform sessions retain the independent HTTP/WS probe below.
-      if (this.computeClient.confirmsReadiness) {
-        this.updateStatus({ type: 'running', data });
-        this.log.info(c.green.bold('Compute sandbox started\r\n'));
-        return;
-      }
-
-      this.updateStatus({ type: 'connecting', data });
-      this.log.info(c.cyan('Waiting for compute backend services to accept connections...\r\n'));
-      await this.waitForReady(data);
-    } catch (error) {
-      if (this.isStopping()) {
-        return;
-      }
-      // Surface structured ComputeError envelopes (host-offline, machine-at-
-      // capacity) so the renderer can show the right banner. ComputeError is
-      // shaped { kind, machineId, machineLabel, extras } — `errorEnvelope`
-      // splats those onto the AgentProcessStatus error field.
-      type ErrorVariant = Extract<AgentProcessStatus, { type: 'error' }>;
-      const errorEnvelope: ErrorVariant['error'] = {
-        message: (error as Error).message,
-      };
-      const ce = error as {
-        kind?: 'host-offline' | 'machine-at-capacity' | 'machine-removed';
-        machineId?: string;
-        machineLabel?: string;
-        extras?: Record<string, unknown>;
-      };
-      if (ce.kind === 'host-offline' || ce.kind === 'machine-at-capacity') {
-        errorEnvelope.kind = ce.kind;
-        if (ce.machineId) {
-          errorEnvelope.machineId = ce.machineId;
-        }
-        if (ce.machineLabel) {
-          errorEnvelope.machineLabel = ce.machineLabel;
-        }
-        if (typeof ce.extras?.['maxSessions'] === 'number') {
-          errorEnvelope.maxSessions = ce.extras['maxSessions'] as number;
-        }
-        if (typeof ce.extras?.['currentSessions'] === 'number') {
-          errorEnvelope.currentSessions = ce.extras['currentSessions'] as number;
-        }
-      }
-      this.updateStatus({ type: 'error', error: errorEnvelope });
     }
   };
 
@@ -1563,23 +935,6 @@ export class AgentProcess {
     shutdown,
   });
 
-  /** Patch fields on the embedded ``AgentProcessData`` without changing the
-   *  status state. No-op unless we're in a state that carries data
-   *  (``running`` or ``connecting``). Used by pause/unpause to flip the
-   *  ``paused`` indicator without redoing the readiness payload. */
-  private updateAgentProcessData = (patch: Partial<AgentProcessData>): void => {
-    if (this.status.type !== 'running' && this.status.type !== 'connecting') {
-      return;
-    }
-    const current = this.status as Extract<WithTimestamp<AgentProcessStatus>, { type: 'running' | 'connecting' }>;
-    this.status = {
-      ...current,
-      data: { ...current.data, ...patch },
-      timestamp: Date.now(),
-    };
-    this.onStatusChange(this.status);
-  };
-
   // -- Stdout/stderr handling --
 
   private handleStdout = (data: Buffer): void => {
@@ -1619,7 +974,7 @@ export class AgentProcess {
     } catch {
       return;
     }
-    if (!('sandbox_url' in parsed) || !('ui_url' in parsed)) {
+    if (!('ui_url' in parsed)) {
       return;
     }
     const data = servePayloadToData(parsed as unknown as ServeReadyPayload);
@@ -1682,8 +1037,7 @@ export class AgentProcess {
           return;
         }
         this.updateStatus({ type: 'running', data });
-        const label = this.mode === 'compute' ? 'Compute sandbox' : 'Sandbox';
-        this.log.info(c.green.bold(`${label} started\r\n`));
+        this.log.info(c.green.bold('Agent host started\r\n'));
         return;
       }
       await new Promise<void>((r) => {

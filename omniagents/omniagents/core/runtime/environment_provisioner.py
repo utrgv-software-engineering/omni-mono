@@ -11,6 +11,8 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from filelock import FileLock
+
 from omniagents.core.sandbox.profiles import ResolvedProfile
 from omniagents.execution import (
     EnvironmentCapability,
@@ -74,17 +76,17 @@ def _run_git(args: Sequence[str], *, cwd: Path | None = None) -> str:
     return result.stdout.strip()
 
 
-def _materialize_host_remote_checkout(
-    workspace_dir: Path, source: Mapping[str, Any]
-) -> dict[str, Any]:
+def _materialize_host_remote_checkout(source: Mapping[str, Any]) -> dict[str, Any]:
     """Ensure a host checkout of one ``git-remote`` source and localize it.
 
-    Host environments get the same remote-source semantics as sandboxes: the
-    repo is cloned blobless into ``<workspace_dir>/<mountName>`` — entirely
-    launcher-managed space — on first materialization and reused verbatim
-    afterwards (the checkout is durable working state, so no implicit fetch or
-    re-checkout ever rewrites it). A directory that exists but is not a
-    checkout of the same remote fails closed.
+    The repo is cloned blobless into the source's ``checkoutPath`` — a
+    directory the caller owns, one per project source, so every Workspace of
+    that project shares one checkout the way local folders are shared — on
+    first materialization and reused verbatim afterwards (the checkout is
+    durable working state, so no implicit fetch or re-checkout ever rewrites
+    it). A directory that exists but is not a checkout of the same remote
+    fails closed. A lock beside the checkout serializes concurrent first
+    clones from Workspaces opening at once.
 
     Private remotes authenticate exactly like the container path's
     ``AuthenticatedGitRepo``: the token is read from the environment variable
@@ -100,8 +102,25 @@ def _materialize_host_remote_checkout(
     if not isinstance(url, str) or not url.strip():
         raise ValueError(f"git-remote source {mount_name!r} has no repoUrl")
     url = url.strip()
-    dest = workspace_dir / mount_name
+    checkout_path = source.get("checkoutPath")
+    if not isinstance(checkout_path, str) or not checkout_path.strip():
+        raise ValueError(f"git-remote source {mount_name!r} has no checkoutPath")
+    dest = Path(checkout_path).expanduser().resolve()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with FileLock(str(dest.parent / f".{dest.name}.lock")):
+        _ensure_checkout(dest, url, source, mount_name)
 
+    localized = {
+        key: source[key] for key in ("id", "mountName", "writable") if key in source
+    }
+    localized["kind"] = "local-git"
+    localized["path"] = str(dest)
+    return localized
+
+
+def _ensure_checkout(
+    dest: Path, url: str, source: Mapping[str, Any], mount_name: str
+) -> None:
     if (dest / ".git").exists():
         origin = _run_git(["-C", str(dest), "remote", "get-url", "origin"])
         if _normalized_git_url(origin) != _normalized_git_url(url):
@@ -137,7 +156,6 @@ def _materialize_host_remote_checkout(
                     token_env,
                     mount_name,
                 )
-        workspace_dir.mkdir(parents=True, exist_ok=True)
         _run_git([*credential_config, "clone", "--filter=blob:none", url, str(dest)])
         ref = source.get("ref")
         if isinstance(ref, str) and ref.strip():
@@ -146,13 +164,6 @@ def _materialize_host_remote_checkout(
             username, helper = persisted_helper
             _run_git(["-C", str(dest), "config", "credential.username", username])
             _run_git(["-C", str(dest), "config", "credential.helper", helper])
-
-    localized = {
-        key: source[key] for key in ("id", "mountName", "writable") if key in source
-    }
-    localized["kind"] = "local-git"
-    localized["path"] = str(dest)
-    return localized
 
 
 _FULL_CAPABILITIES = frozenset(
@@ -170,14 +181,13 @@ _FULL_CAPABILITIES = frozenset(
 
 
 #: Backend client types that are genuine containment boundaries — the
-#: agent's tools cannot reach the hosting machine. ``unix_local`` and
-#: ``host_bridge`` are deliberately absent: they carry sandbox sessions
-#: but execute raw host processes. Unknown client types fail closed to
+#: agent's tools cannot reach the hosting machine. ``unix_local`` is
+#: deliberately absent: it carries sandbox sessions but executes raw
+#: host processes. Unknown client types fail closed to
 #: not-contained.
 _CONTAINED_CLIENT_TYPES = frozenset(
     {
         "docker",  # container
-        "process",  # omni-sandbox: bwrap / seatbelt / AppContainer
         "wasm",  # bashkit + pyodide: no syscalls, workspace-only FS reach
         "e2b",  # remote micro-VM / container providers
         "modal",
@@ -191,18 +201,15 @@ _CONTAINED_CLIENT_TYPES = frozenset(
 
 
 #: Truthful placement family per backend client type. Kind records WHERE
-#: the runtime lives — never trust: ``unix_local`` and ``process`` are
-#: host-placed even though they carry sandbox sessions, and ``host_bridge``
-#: executes on another machine entirely. Trust (containment) is the
+#: the runtime lives — never trust: ``unix_local`` is
+#: host-placed even though it carries sandbox sessions. Trust (containment) is the
 #: ``contained`` capability above; terminal routing keys on the lease's
 #: sandbox runtime. Unknown session-backed client types default to CONTAINER.
 _ENVIRONMENT_KINDS = {
     "host": EnvironmentKind.HOST,
     "unix_local": EnvironmentKind.HOST,
-    "process": EnvironmentKind.HOST,
     "wasm": EnvironmentKind.HOST,
     "docker": EnvironmentKind.CONTAINER,
-    "host_bridge": EnvironmentKind.REMOTE,
     "e2b": EnvironmentKind.REMOTE,
     "modal": EnvironmentKind.REMOTE,
     "runloop": EnvironmentKind.REMOTE,
@@ -234,7 +241,7 @@ def _wasm_is_offline(network: Any) -> bool:
     return _wasm_network_boots_blocked(network)
 
 
-def _sandbox_capabilities(profile_raw: dict[str, Any], brought: Any) -> frozenset:
+def sandbox_capabilities(profile_raw: dict[str, Any], brought: Any = None) -> frozenset:
     """Capability truth for a sandbox environment at registration time.
 
     CONTAINED is granted only for client types that are real containment
@@ -261,10 +268,6 @@ def _sandbox_capabilities(profile_raw: dict[str, Any], brought: Any) -> frozense
     offline = (
         # docker: no network stack at all.
         client.get("network_mode") == "none"
-        # process (omni-sandbox): all-or-nothing, blocked unless the
-        # profile explicitly opts into "unrestricted" (blocked is the
-        # binary's default).
-        or (client_type == "process" and client.get("network") != "unrestricted")
         # wasm: both runtimes obey one policy derived from the profile's
         # ``network`` block (bashkit curl/git builtins + pyodide js.fetch),
         # OFF by default. Uses the same boot-state resolver the session
@@ -516,18 +519,16 @@ class ServeEnvironmentProvisioner:
             sources = [dict(source) for source in request.workspace.sources]
             materialization_root = workspace_dir.expanduser().resolve()
             # Host parity with the sandbox path: git-remote sources are cloned
-            # into the launcher-managed materialization root and then behave
-            # like any local-git source (idempotent — an existing checkout of
-            # the same remote is reused, anything else fails closed).
+            # into their caller-owned checkoutPath and then behave like any
+            # local-git source (idempotent — an existing checkout of the same
+            # remote is reused, anything else fails closed).
             local_sources: list[dict[str, Any]] = []
             for source in sources:
                 kind = source.get("kind")
                 if kind == "git-remote":
                     local_sources.append(
                         await asyncio.to_thread(
-                            _materialize_host_remote_checkout,
-                            materialization_root,
-                            source,
+                            _materialize_host_remote_checkout, source
                         )
                     )
                 elif kind in {"local", "local-git"}:
@@ -611,7 +612,7 @@ class ServeEnvironmentProvisioner:
                     default_user=run_as,
                 ),
                 kind=_environment_kind(profile.raw),
-                capabilities=_sandbox_capabilities(profile.raw, brought),
+                capabilities=sandbox_capabilities(profile.raw, brought),
                 lifecycle_controller=controller,
                 sandbox_runtime=SandboxExecutionRuntime(
                     session=brought.session,

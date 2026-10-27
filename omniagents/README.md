@@ -67,7 +67,7 @@ Terminal UI using React Ink:
 omniagents run -P path/to/project.yml --mode ink
 ```
 
-Official wheels include a prebuilt bundle; from source, the backend can auto-build if Node/npm are available.
+Requires Node.js 22+. Official wheels include the prebuilt bundle; from a source checkout, build it at the monorepo root with `npm ci && npm run build -w omni-ink-tui`.
 
 ### Server mode
 
@@ -79,18 +79,18 @@ omniagents run -P path/to/project.yml --mode server --host 0.0.0.0 --port 8000
 
 Use `--session-id <id>` to resume a previous conversation stored in `sessions.db`.
 
-### Studio
+### Traces
 
-Serve the Studio web UI for viewing and managing traces:
+Tracing is off by default. Set `tracing: {provider: studio}` in `project.yml`
+to record runs into `~/.omniagents/traces/<project>.db`; evaluations record
+there unless the manifest names a provider. OmniAgents Studio, a separate package in
+this monorepo (`omniagents-studio/`), is the web UI for browsing them:
 
 ```bash
-omniagents studio serve --project <name>
+omniagents-studio serve --project <name>
 ```
 
-Production builds serve packaged static assets; use `--dev` to run the web dev
-server (requires Node/npm).
-
-This launches a FastAPI app exposing a WebSocket endpoint at `/ws`.  The protocol is described in [`docs/remote_agent_protocol.md`](docs/remote_agent_protocol.md).  A client can connect using `RemoteAgentProxy` from this package or any JSON‑RPC library.
+The `server` mode above launches a FastAPI app exposing a WebSocket endpoint at `/ws`.  The protocol is described in [`docs/remote_agent_protocol.md`](docs/remote_agent_protocol.md).  A client can connect using `RemoteAgentProxy` from this package or any JSON‑RPC library.
 
 ## Examples
 
@@ -110,10 +110,5 @@ pytest -q
 Run coverage locally with:
 
 ```bash
-make coverage-all
+make coverage-python
 ```
-
-Individual coverage targets:
-
-- `make coverage-python` – Python agents, FastAPI server, and backends
-- `make coverage-web` – React Studio UI via Vitest

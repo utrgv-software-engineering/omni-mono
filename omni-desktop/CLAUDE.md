@@ -4,13 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Omni Code Launcher — an Electron + React desktop app for installing the Omni Code runtime and launching Docker-based sandboxes. Also ships a browser/server build (Fastify + WebSocket) that runs the same renderer without Electron.
+Omni Code Launcher — an Electron + React desktop app for installing the Omni Code runtime and running agent chats on the host (omni-code's default profile; the desktop has no sandbox/profile support of its own). Also ships a browser/server build (Fastify + WebSocket) that runs the same renderer without Electron.
 
 ## Commands
 
 ```bash
-npm i                      # Install deps; postinstall runs electron-rebuild (node-pty),
-                           # downloads uv, and downloads/builds the omni-sandbox binary
+npm i                      # Install the monorepo's npm workspace (root lockfile);
+                           # postinstall runs electron-rebuild (node-pty)
+                           # and downloads uv
 npm run dev                # Electron dev with hot reload (electron-vite)
 npm run build              # Build main + preload + renderer into out/
 npm run package            # Clean + download assets + build + electron-builder (→ dist/)
@@ -28,7 +29,6 @@ npm run dev:server         # Concurrent: server watch build + browser Vite dev o
 npm run build:server       # Build server + browser SPA
 npm run start:server       # Run built server from out/server/index.mjs (default :3001)
 
-npm run build:sandbox      # Rebuild the Rust omni-sandbox binary (requires rustup)
 npm run build:wsl-payload  # Assemble the WSL daemon tarball (Linux/WSL only; run
                            # build:server first). Required before `wsl:link` works
                            # in dev — the Windows shell provisions this tarball
@@ -57,7 +57,7 @@ IPC goes through `TransportEmitter` / `TransportListener` interfaces (`src/share
 
 `src/renderer/services/ipc.ts` picks the transport at startup. All channel signatures live in `src/shared/types.ts` (`IpcEvents` renderer→main, `IpcRendererEvents` main→renderer).
 
-Server-side, `WsHandler` keeps a `persistentSessions` map keyed by `sessionId` from the client so managers and sandbox containers **survive WS reconnections and React remounts** — if you're adding a manager that holds long-lived state, wire it into `wireGlobalHandlers` (shared across clients) or `wireClientManagers` (per-session) in `src/server/managers.ts`.
+Server-side, `WsHandler` keeps a `persistentSessions` map keyed by `sessionId` from the client so managers and agent runtimes **survive WS reconnections and React remounts** — if you're adding a manager that holds long-lived state, wire it into `wireGlobalHandlers` (shared across clients) or `wireClientManagers` (per-session) in `src/server/managers.ts`.
 
 ### Shared IPC handlers
 
@@ -68,51 +68,35 @@ Server-side, `WsHandler` keeps a `persistentSessions` map keyed by `sessionId` f
 Lifecycle pattern: each manager is a factory returning `[instance, cleanup]`. Registered from `src/main/index.ts` (Electron) and `src/server/managers.ts` (server). Key ones:
 
 - `MainProcessManager` (`main-process-manager.ts`) — Electron window + store IPC
-- `ProcessManager` (`process-manager.ts`) — all agent processes (chat + code tabs) keyed by string ID, driven by `AgentProcess` (`agent-process.ts`); optionally delegates to a `PlatformClient` in enterprise mode
-- `ProjectManager` (`project-manager.ts`) — projects / tickets / pages / inbox / milestones; composes `InboxManager`, `MilestoneManager`, `PageManager`, `SupervisorOrchestrator`, and the `ticket-machine`. Runs schema migrations on boot.
+- `ProcessManager` (`process-manager.ts`) — all agent processes (chat + code tabs) keyed by string ID, driven by `AgentProcess` (`agent-process.ts`)
+- `ProjectManager` (`project-manager.ts`) — projects (named sets of sources plus their chats), persisted as `StoreData.projects`; seeds the Personal project. `projects-import.ts` is the one-time import from the retired `projects.db`.
 - `OmniInstallManager` — Python + venv via bundled `uv` binary
-- `ConsoleManager` — proxies `terminal:*` IPC into `omni serve`'s WebSocket so terminals run inside the sandbox via `omniagents.rpc.terminal_backends.SessionPtyBackend`. The shell lives in the agent process (one PTY per `terminal_id`); main is a thin transport. See `src/main/terminal-proxy.ts` for the WS plumbing and `omni-code/server_functions/terminal.py` for the server-side entry points (`terminal.create`, `terminal.close`).
-- `WorkspaceSyncManager`, `ExtensionManager`, `AppControlManager`
+- `ConsoleManager` — proxies `terminal:*` IPC into `omni serve`'s WebSocket so terminals run in the agent's environment via `omniagents.rpc.terminal_backends.SessionPtyBackend`. The shell lives in the agent process (one PTY per `terminal_id`); main is a thin transport. See `src/main/terminal-proxy.ts` for the WS plumbing and `omniagents/builtin/server_functions/terminal.py` (in the omniagents package) for the server-side entry points (`terminal.create`, `terminal.close`).
+- `AppControlManager`
 
 Managers expose a timestamped `getStatus()` and broadcast updates via `sendToWindow` (Electron) / `sendToAll` (server). Store changes fan out on the `store:changed` channel.
 
 ### XState machines (shared)
 
-`src/shared/machines/` holds pure XState v5 definitions used by the renderer — `chat-session`, `chat-boot`, `rpc-client`, `page-editor`, `terminal-tab`, `auto-launch`. They have no React, IPC, or DOM imports, and reuse pure helpers from `src/lib/` (e.g. `session-filter`). When adding chat/session state, extend the machine rather than adding side-channel React state.
+`src/shared/machines/` holds pure XState v5 definitions used by the renderer — `chat-session`, `chat-boot`, `rpc-client`, `file-editor`, `terminal-tab`, `voice-session`, `auto-launch`. They have no React, IPC, or DOM imports, and reuse pure helpers from `src/lib/` (e.g. `session-filter`). When adding chat/session state, extend the machine rather than adding side-channel React state.
 
 ### Renderer structure
 
-- `src/renderer/features/` — feature modules; each owns its components + a `state.ts` (nanostores atom bundle). Current features: `AppControl`, `Auth`, `Banner`, `Chat`, `Code`, `Console`, `Dashboards`, `Inbox`, `Initiatives`, `Notebooks`, `Omni`, `Onboarding`, `Pages`, `Projects`, `SettingsModal`, `Tickets`, `Toast`, `WorkspaceSync`, `XTermLogViewer`.
-- `src/renderer/ds/` — design system primitives (Fluent + Radix + custom)
-- `src/renderer/services/` — cross-cutting: `ipc`, `store` (mirrors main-process store into an atom), `status` (polls `main-process:get-status`), `navigation`, `agent-process`, `config`, `dev`
+- `src/renderer/features/` — feature modules; each owns its components + a `state.ts` (nanostores atom bundle). Current features: `Agents`, `AppControl`, `Banner`, `Browser`, `Code`, `CommandPalette`, `Console`, `Files`, `Gallery`, `Git`, `Jobs`, `Omni`, `Onboarding`, `Plugins`, `Projects`, `Review`, `ScheduledTasks`, `SettingsModal`, `Toast`, `Voice`, `XTermLogViewer`.
+- `src/renderer/ds/` — desktop-only compositions (page headers, tabs, tree); the shadcn primitives and theme tokens live in `packages/ui` (`@omniagents/ui`)
+- `src/renderer/services/` — cross-cutting: `ipc`, `store` (mirrors main-process store into an atom), `status` (polls `main-process:get-status`), `agent-process`, `session-control`, `config`, `dev`
 - `src/renderer/common/` — shared UI (webview, layouts)
 - `src/renderer/transport/` — Electron and WS transport adapters
-
-### Extensions
-
-`src/main/extensions/` ships built-in extension manifests (currently Marimo). The registry (`registry.ts`) is built-in only today but the manifest contract is the same one that will load user-installed extensions from `~/.omni/extensions/` later.
-
-### Sandbox binary
-
-`omni-sandbox` is a Rust binary built from a sibling `sandbox-cli/` repo by `scripts/download-sandbox.mjs` during `postinstall`. If Rust is missing, the download is skipped with a warning — run `npm run build:sandbox` later. On Linux, `bubblewrap` is also required at runtime.
 
 ### WSL backend mode (Windows)
 
 On Windows the Electron shell can run the backend as a daemon inside a WSL2
 distro (`docs/windows-wsl-backend-plan.md`): `StoreData.remoteBackend` holds a
-`CloudBackend | WslBackend` union, `WslBackendManager` (`src/main/wsl-backend.ts`)
+`WslBackend | ServerBackend` union, `WslBackendManager` (`src/main/wsl-backend.ts`)
 provisions/spawns/health-checks the daemon via `wsl.exe --exec` (never the plain
 `--` form — it destroys argv quoting), and auth is a per-boot shared secret with
 tokens minted in main. Native file dialogs translate paths at the single
 `toBackendPath` boundary in `src/main/index.ts` via `@/lib/wsl-path`.
-
-### Enterprise / platform mode
-
-`OMNI_PLATFORM_URL` is read at build time (`electron.vite.config.ts`, `vite.browser.config.ts`, `vite.server.config.ts`) and inlined as `__PLATFORM_URL__`. When set, `ProcessManager.platformClient` is populated and sandbox operations can be delegated to a remote management plane. Open-source builds leave it empty and everything runs locally.
-
-### Artifacts protocol
-
-Electron registers a privileged `artifact:` scheme before `app.ready` (`src/main/index.ts`). The handler serves agent-generated files with a strict CSP that blocks script execution — `bypassCSP` is intentionally **not** set. If you extend the artifact pipeline, don't loosen the response headers.
 
 ## Conventions
 
@@ -122,6 +106,10 @@ Electron registers a privileged `artifact:` scheme before `app.ready` (`src/main
 - **Types**: strict TS, `noUncheckedIndexedAccess`, `noImplicitAny`, `isolatedModules`
 - **Imports**: sorted by `eslint-plugin-simple-import-sort`; `react/jsx-curly-brace-presence` forbids unnecessary braces; `react/jsx-no-bind` allows `.bind` but not arrows in JSX attributes (check the rule — `allowBind: true`)
 - **Circular deps**: `dpdm` runs on `main/index.ts`, `renderer/index.ts`, `preload/index.ts` with `--exit-code circular:1` — circular imports will fail lint
+
+## Branches and releases
+
+See the repository root `CLAUDE.md`: work happens on `dev`, `main` holds released code, and a desktop release is cut by pushing an `omni-desktop-v<version>` tag.
 
 ## Build / packaging notes
 
@@ -133,4 +121,4 @@ Electron registers a privileged `artifact:` scheme before `app.ready` (`src/main
 
 - Vitest with jsdom. Tests colocated as `*.test.ts(x)`. Coverage via `@vitest/coverage-v8`.
 - `vitest.config.ts` aliases `electron` → `src/server/electron-shim.ts` so main-process modules import cleanly without an Electron runtime.
-- There is no separate integration test suite — unit tests exercise managers directly through the shim.
+- Unit tests exercise managers directly through the shim. User-story coverage lives in the Playwright suite under `tests/e2e/` (see `tests/e2e/README.md` and `AGENTS.md`).

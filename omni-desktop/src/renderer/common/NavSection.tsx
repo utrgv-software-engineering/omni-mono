@@ -1,13 +1,12 @@
 import './NavSection.css';
 
 import { useStore } from '@nanostores/react';
+import { Badge } from '@omniagents/ui/badge';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@omniagents/ui/collapsible';
+import { SidebarGroup, SidebarGroupContent } from '@omniagents/ui/sidebar';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { atom } from 'nanostores';
 import { memo, type ReactNode, useCallback } from 'react';
-
-import { Badge } from '@/renderer/ds/ui/badge';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/renderer/ds/ui/collapsible';
-import { SidebarGroup, SidebarGroupContent } from '@/renderer/ds/ui/sidebar';
 
 /**
  * Collapsible nav-section shell for the sidebar's container sections

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Dict, Any
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from omniagents.core.providers.auth.base import UserIdentity
-    from omniagents.execution import AgentHostResources
+    from omniagents.execution import AgentHostResources, ExecutionEnvironmentDescriptor
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -298,13 +298,9 @@ def _resolve_upstream_credential(
 
 
 async def _connect_remote(url: str, headers: Dict[str, str]):
-    """``websockets.connect`` across library versions (header kwarg renamed)."""
     import websockets
 
-    try:
-        return await websockets.connect(url, additional_headers=headers or None)
-    except TypeError:
-        return await websockets.connect(url, extra_headers=headers or None)
+    return await websockets.connect(url, additional_headers=headers or None)
 
 
 def _upstream_handshake_close_code(exc: BaseException) -> int:
@@ -418,6 +414,8 @@ def build_app(
     agent_host_resources: "AgentHostResources | None" = None,
     agent_host_control_token: str | None = None,
     default_host_workspace_root: str | None = None,
+    default_environment: "ExecutionEnvironmentDescriptor | None" = None,
+    integrations: bool = True,
 ) -> FastAPI:  # noqa: D401
     """Return a fully configured FastAPI app exposing the agent via RPC.
 
@@ -436,7 +434,21 @@ def build_app(
             trusted host controller. It resolves to an admin-role principal and
             is never returned in protocol initialization or readiness payloads.
         default_host_workspace_root: Optional explicit host environment composed at
-            startup and advertised as the AgentHost's default binding.
+            startup and installed as the AgentHost's default Thread binding.
+        default_environment: An environment the caller already composed into
+            ``agent_host_resources`` (``register_initial``), installed as the
+            default Thread binding in place of a host one — e.g. a sandbox
+            session opened before the server starts.
+        integrations: Mount the project's integrations (its event sources
+            and automations). Off for a runtime another server mounts to
+            read its agents' sessions: one server receives the events.
+
+    A default environment is data, not a code path: every Thread first seen
+    by this AgentHost is bound to it — the same binding a targetless host's
+    controller makes explicitly with ``agent_host_bind_thread`` — and every
+    operation routes through the Thread's binding alone. The handshake also
+    advertises it so clients can address the workspace outside any session
+    (file and git panels).
     """
 
     # ------------------------------------------------------------------
@@ -549,6 +561,10 @@ def build_app(
             default_host_workspace_root,
             owner_user_id="token_user" if auth_token else None,
         )
+    app.state.default_workspace_id = None
+    app.state.default_environment_id = None
+    if default_environment is not None:
+        agent_host_resources.thread_bindings.set_initial_default(default_environment)
         app.state.default_workspace_id = default_environment.workspace_id
         app.state.default_environment_id = default_environment.environment_id
     service = AgentService(spec, agent_host_resources)
@@ -588,7 +604,7 @@ def build_app(
     realtime_spec = getattr(spec, "voice_spec", None)
     spec_voice_backend = getattr(spec, "voice_backend", "realtime")
     if realtime_spec is None and (
-        spec.realtime_mode or spec_voice_backend == "pipeline"
+        spec.realtime_mode or spec_voice_backend in {"pipeline", "codex-live"}
     ):
         realtime_spec = spec
 
@@ -596,8 +612,8 @@ def build_app(
         service,
         allowed_methods=GUI_RPC_METHODS,
         gui_handshake=True,
-        default_workspace_id=getattr(app.state, "default_workspace_id", None),
-        default_environment_id=getattr(app.state, "default_environment_id", None),
+        default_workspace_id=app.state.default_workspace_id,
+        default_environment_id=app.state.default_environment_id,
         server_capabilities={
             "realtime": realtime_spec is not None,
             "mcp_apps": True,
@@ -636,7 +652,13 @@ def build_app(
         settings_resolver = getattr(realtime_spec, "resolve_realtime_settings", None)
         voice_backend = getattr(realtime_spec, "voice_backend", "realtime")
         realtime_service: Any
-        if voice_backend == "pipeline":
+        if voice_backend == "codex-live":
+            from omniagents.rpc.codex_live_service import CodexLiveService
+
+            realtime_service = CodexLiveService(
+                realtime_spec, realtime_settings, agent_service=service
+            )
+        elif voice_backend == "pipeline":
             from omniagents.rpc.voice_pipeline_service import VoicePipelineService
 
             realtime_service = VoicePipelineService(
@@ -656,14 +678,6 @@ def build_app(
                 ),
                 agent_service=service,
             )
-        # Same server default the GUI handshake advertises — lets a voice
-        # session started before any text run fall back to it for its
-        # execution environment. Both backends need it: the pipeline path
-        # runs `inherit` through start_run, which resolves to nothing on a
-        # session whose thread binding is still targetless.
-        realtime_service.default_environment_id = getattr(
-            app.state, "default_environment_id", None
-        )
         realtime_service.authorization_policy = authenticator.authorization_policy
         app.state.realtime_service = realtime_service
         try:
@@ -671,13 +685,28 @@ def build_app(
             service.realtime_service = realtime_service  # type: ignore[attr-defined]
         except Exception:
             pass
-        realtime_endpoint = JsonRpcEndpoint(realtime_service)
+        realtime_endpoint = JsonRpcEndpoint(
+            realtime_service,
+            allowed_methods=(
+                {
+                    "capabilities",
+                    "start_session",
+                    "stop_session",
+                    "delegate",
+                    "sync_context",
+                }
+                if voice_backend == "codex-live"
+                else None
+            ),
+        )
         realtime_endpoint.register_route(app, "/ws/realtime", dependencies=[auth_dep])
     else:
-        # Add a fallback route that gracefully rejects connections when realtime is disabled
-        # This prevents StaticFiles from catching the WebSocket request and crashing
+        # Realtime is off: say so with a close code. Closing before accepting
+        # would reach the browser as an HTTP 403 (close code 1006), which
+        # clients treat as transient and retry; 4404 is permanent.
         async def _realtime_disabled(websocket: WebSocket):
-            await websocket.close(code=4404)  # Custom code: feature not available
+            await websocket.accept()
+            await websocket.close(code=4404)
 
         app.add_api_websocket_route(
             "/ws/realtime", _realtime_disabled, dependencies=[auth_dep]
@@ -686,6 +715,8 @@ def build_app(
     async def _terminal_route(websocket: WebSocket):
         terminal_manager = getattr(service, "terminal_manager", None)
         if terminal_manager is None:
+            # Accept first, so the client receives the permanent 4404.
+            await websocket.accept()
             await websocket.close(code=4404)
             return
 
@@ -806,4 +837,11 @@ def build_app(
     app.add_api_websocket_route(
         "/ws/terminal", _terminal_route, dependencies=[auth_dep]
     )
+
+    # Events from the project's integrations (Slack...) start its automations
+    # (not in a runtime another server mounts to read its agents' sessions).
+    if integrations:
+        from omniagents.integrations.server import mount_integrations
+
+        mount_integrations(app, spec, agent_host_resources, auth_token=auth_token)
     return app

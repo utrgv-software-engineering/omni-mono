@@ -26,39 +26,13 @@
 
 import React from "react";
 import stripAnsi from "strip-ansi";
-import { PassThrough } from "node:stream";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { cleanup, render } from "ink-testing-library";
 
-class TestStdout extends PassThrough {
-  frames: string[] = [];
-  isTTY = true;
-  columns = 80;
-  rows = 40;
+const plain = (frame?: string) => stripAnsi(frame ?? "");
 
-  constructor() {
-    super();
-    this.setEncoding("utf8");
-    this.on("data", (chunk) => {
-      if (typeof chunk === "string") this.frames.push(chunk);
-    });
-  }
-
-  /** Last frame carrying rendered content — ink emits bare cursor escapes
-   *  after the paint, so the literal last chunk is usually `[?25l`. */
-  lastFrame(): string {
-    for (let index = this.frames.length - 1; index >= 0; index -= 1) {
-      const frame = stripAnsi(this.frames[index] ?? "");
-      if (frame.trim()) return frame;
-    }
-    return "";
-  }
-}
-
-type InkRender = (typeof import("ink"))["render"];
 type VList = (typeof import("../shared/VirtualizedList.js"))["VirtualizedList"];
 
-const instances: Array<ReturnType<InkRender>> = [];
-let inkRender: InkRender;
 let VirtualizedList: VList;
 let Box: (typeof import("ink"))["Box"];
 let Text: (typeof import("ink"))["Text"];
@@ -69,7 +43,6 @@ let MouseProvider: (typeof import("../../contexts/MouseContext.js"))["MouseProvi
 
 beforeAll(async () => {
   const ink = await import("ink");
-  inkRender = ink.render;
   Box = ink.Box;
   Text = ink.Text;
   ({ VirtualizedList } = await import("../shared/VirtualizedList.js"));
@@ -79,11 +52,7 @@ beforeAll(async () => {
 });
 
 afterEach(() => {
-  while (instances.length) {
-    const instance = instances.pop();
-    instance?.unmount();
-    instance?.cleanup();
-  }
+  cleanup();
 });
 
 /** Long enough for ResizeObserver to fire and the measure flush to land.
@@ -113,16 +82,9 @@ const renderRow = (row: Row) => (
 );
 
 const mount = async (node: React.ReactElement) => {
-  const stdout = new TestStdout();
-  const instance = inkRender(node, {
-    stdout: stdout as unknown as NodeJS.WriteStream,
-    debug: true,
-    exitOnCtrlC: false,
-    patchConsole: false,
-  });
-  instances.push(instance);
+  const instance = render(node);
   await settle();
-  return stdout.lastFrame();
+  return plain(instance.lastFrame());
 };
 
 // ---------------------------------------------------------------------

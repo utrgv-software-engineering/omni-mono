@@ -15,7 +15,6 @@ Job state lives in the process-wide registry in ``_bash_jobs``.
 
 from __future__ import annotations
 
-import os
 import shlex
 import time
 from typing import Any, Dict, Optional
@@ -52,7 +51,6 @@ from ._workspace import (
 
 _BASH_DEFAULT_TIMEOUT = 30
 _BASH_DEFAULT_MAX_OUTPUT_CHARS = 40000  # ~40KB
-_BASH_MAX_LINE_LENGTH = 500
 
 _LOGS_DEFAULT_LINES = 200
 _LOGS_DEFAULT_MAX_CHARS = 40000
@@ -135,21 +133,6 @@ def _truncate_output_head_tail(text: str, max_chars: int) -> tuple[str, int, boo
     return truncated, chars_removed, True
 
 
-def _truncate_long_lines(
-    text: str, max_line_length: int = _BASH_MAX_LINE_LENGTH
-) -> tuple[str, int]:
-    lines = text.split("\n")
-    result_lines = []
-    truncated_count = 0
-    for line in lines:
-        if len(line) > max_line_length:
-            result_lines.append(line[:max_line_length] + "...")
-            truncated_count += 1
-        else:
-            result_lines.append(line)
-    return "\n".join(result_lines), truncated_count
-
-
 def _resolve_cwd(ctx: RunContextWrapper[Any], cwd: Optional[str], where: str) -> str:
     """Resolve cwd against workspace_root: absolute paths are honored
     as-is; relative or empty values are anchored to the workspace."""
@@ -205,9 +188,9 @@ async def execute_bash(
             ``background=True``.
         cwd: Working directory for the command. Absolute paths are honored as-is;
             relative or empty values are anchored to ``workspace_root``.
-        max_output_chars: Maximum characters to return (default: 40000). If the
-            output exceeds this, the middle is truncated while preserving the
-            beginning and end. Ignored when ``background=True``.
+        max_output_chars: Preview budget in UTF-8 bytes (default: 40000, minimum
+            512 to include retrieval instructions). Oversized full text is saved
+            before a head/tail preview is returned. Ignored when ``background=True``.
         background: If ``True``, spawn the command detached, stream stdout and
             stderr to a per-job log file under
             ``workspace_root/.omniagents/jobs/<job_id>.log``, and return
@@ -244,15 +227,54 @@ async def execute_bash(
         )
         return RichToolOutput(llm_output, ui_metadata)
 
+    resolved_cwd = _resolve_cwd(ctx, cwd, where="execute_bash")
+    directory_error: str | None
+    try:
+        valid_directory = await _ws.current_workspace().is_exec_dir(resolved_cwd)
+    except Exception as exc:
+        directory_error = f"Could not check working directory '{resolved_cwd}': {exc}"
+    else:
+        directory_error = (
+            None
+            if valid_directory
+            else f"Working directory does not exist, is not a directory, or is inaccessible: '{resolved_cwd}'."
+        )
+    if directory_error is not None:
+        hint = " Omit cwd or pass JSON null to use the workspace directory; otherwise supply an existing directory."
+        if (
+            isinstance(cwd, str)
+            and len(cwd) >= 2
+            and cwd[0] == cwd[-1]
+            and cwd[0] in ("'", '"')
+        ):
+            hint += " cwd is a plain path, not shell syntax: remove the surrounding quote characters."
+        message = directory_error + hint
+        return RichToolOutput(
+            message,
+            {
+                "value": message,
+                "display_type": "error",
+                "summary": "Invalid working directory",
+                "preview": message,
+                "truncated": False,
+                "metadata": {
+                    "error_type": "invalid_working_directory",
+                    "cwd": resolved_cwd,
+                    "command": command,
+                    "error": message,
+                },
+            },
+        )
+
     if background:
-        return await _execute_bash_background(ctx, command=command, cwd=cwd)
+        return await _execute_bash_background(ctx, command=command, cwd=resolved_cwd)
 
     if timeout is None:
         timeout = _BASH_DEFAULT_TIMEOUT
     if max_output_chars is None:
         max_output_chars = _BASH_DEFAULT_MAX_OUTPUT_CHARS
 
-    cwd = _resolve_cwd(ctx, cwd, where="execute_bash")
+    cwd = resolved_cwd
     start_time = time.monotonic()
 
     try:
@@ -293,12 +315,8 @@ async def execute_bash(
         original_length = len(combined_output)
         total_lines = combined_output.count("\n") + 1 if combined_output else 0
 
-        combined_output, lines_truncated = _truncate_long_lines(
-            combined_output, _BASH_MAX_LINE_LENGTH
-        )
-        combined_output, chars_removed, was_truncated = _truncate_output_head_tail(
-            combined_output, max_output_chars
-        )
+        # The shared output boundary retains full text before shortening it.
+        lines_truncated, chars_removed, was_truncated = 0, 0, False
 
         header_lines = []
         if return_code == 0:
@@ -307,19 +325,6 @@ async def execute_bash(
             header_lines.append(
                 f"Exit code: {return_code} (failed) | Wall time: {wall_time_ms}ms"
             )
-
-        if was_truncated or lines_truncated > 0:
-            header_lines.append(
-                f"Total output: {original_length:,} chars, {total_lines:,} lines"
-            )
-            if lines_truncated > 0:
-                header_lines.append(
-                    f"[{lines_truncated} lines exceeded {_BASH_MAX_LINE_LENGTH} chars and were truncated]"
-                )
-            if was_truncated:
-                header_lines.append(
-                    f"[Output truncated: {chars_removed:,} characters removed from middle]"
-                )
 
         header = "\n".join(header_lines) + "\n\n" if header_lines else ""
         llm_output = header + (combined_output if combined_output else "(no output)")
@@ -354,7 +359,9 @@ async def execute_bash(
                 "background": False,
             },
         }
-        return RichToolOutput(llm_output, ui_metadata)
+        return RichToolOutput(
+            llm_output, ui_metadata, max_output_chars=max_output_chars
+        )
 
     except _BashTimeoutMarker as marker:
         wall_time_ms = marker.wall_time_ms
@@ -679,8 +686,8 @@ async def bash_logs(
             unless ``from_start=True``.
         from_start: If ``True``, read the first ``lines`` lines instead of
             the tail.
-        max_output_chars: Cap on returned characters (default: 40000). When
-            exceeded, the middle is truncated head/tail.
+        max_output_chars: Preview budget in UTF-8 bytes (default: 40000, minimum
+            512). Oversized selected log text is saved before shortening.
 
     Returns:
         RichToolOutput. Metadata includes ``job_id``, ``running``,
@@ -734,10 +741,7 @@ async def bash_logs(
 
     selected = body.split("\n") if body else []
 
-    body, lines_truncated = _truncate_long_lines(body, _BASH_MAX_LINE_LENGTH)
-    body, chars_removed, was_truncated = _truncate_output_head_tail(
-        body, max_output_chars
-    )
+    lines_truncated, chars_removed, was_truncated = 0, 0, False
 
     state = "running" if rc is None else f"exited({rc})"
     header_lines = [
@@ -745,15 +749,6 @@ async def bash_logs(
         f"Showing {len(selected)} of {total_lines} log lines"
         + (" (from start)" if from_start else " (tail)"),
     ]
-    if lines_truncated:
-        header_lines.append(
-            f"[{lines_truncated} lines exceeded {_BASH_MAX_LINE_LENGTH} chars and were truncated]"
-        )
-    if was_truncated:
-        header_lines.append(
-            f"[Output truncated: {chars_removed:,} characters removed from middle]"
-        )
-
     header = "\n".join(header_lines) + "\n\n"
     llm_output = header + (body if body else "(no log output)")
 
@@ -779,7 +774,7 @@ async def bash_logs(
             "from_start": from_start,
         },
     }
-    return RichToolOutput(llm_output, ui_metadata)
+    return RichToolOutput(llm_output, ui_metadata, max_output_chars=max_output_chars)
 
 
 # ---------------------------------------------------------------------------

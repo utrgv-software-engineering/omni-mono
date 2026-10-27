@@ -37,9 +37,6 @@ If you only need certain features, you can install just what you need:
 # Server mode only
 pip install --index-url https://pypi.fury.io/ericmichael/ --extra-index-url https://pypi.org/simple "omniagents[server]"
 
-# Studio only
-pip install --index-url https://pypi.fury.io/ericmichael/ --extra-index-url https://pypi.org/simple "omniagents[studio]"
-
 # Web mode only
 pip install --index-url https://pypi.fury.io/ericmichael/ --extra-index-url https://pypi.org/simple "omniagents[web]"
 ```
@@ -49,8 +46,8 @@ pip install --index-url https://pypi.fury.io/ericmichael/ --extra-index-url http
 For development or if you want the latest unreleased features:
 
 ```bash
-git clone https://github.com/utrgv-software-engineering/omniagents.git
-cd omniagents
+git clone https://github.com/utrgv-software-engineering/omni-mono.git
+cd omni-mono/omniagents
 pip install -e ".[all]"
 ```
 
@@ -70,11 +67,10 @@ pip install -e ".[dev]"
 
 ### Available Feature Groups
 
-- `[all]` - All features (web, server, ink, studio)
+- `[all]` - All features (web, server, ink, voice, sandboxes, sessions)
 - `[web]` - Web interface (includes optional realtime voice controls)
 - `[server]` - Server mode with FastAPI
 - `[ink]` - Ink TUI mode
-- `[studio]` - Studio web UI
 - `[docs]` - Documentation tools (MkDocs)
 - `[dev]` - Development dependencies (tests, linting, etc.)
 

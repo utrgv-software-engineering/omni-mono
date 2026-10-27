@@ -1,0 +1,8 @@
+# Development workspace for the Python packages in omni-mono. Each member
+# still builds and publishes on its own; this only makes `uv sync` install
+# omni-code and omniagents-studio against the omniagents in this repository.
+[tool.uv.workspace]
+members = ["omniagents", "omni-code", "omniagents-studio", "omniagents-workplace"]
+
+[tool.uv.sources]
+omniagents = { workspace = true }

@@ -1,12 +1,4 @@
 import { useStore } from '@nanostores/react';
-import { ActivityIcon, RefreshCwIcon } from 'lucide-react';
-import { Fragment, memo, useCallback, useEffect, useMemo, useState } from 'react';
-
-import { formatTimestamp } from '@/lib/format-time';
-import { Alert, AlertDescription, AlertTitle } from '@/renderer/ds/ui/alert';
-import { Button } from '@/renderer/ds/ui/button';
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/renderer/ds/ui/empty';
-import { ScrollArea } from '@/renderer/ds/ui/scroll-area';
 import {
   ActivityBackButton,
   ActivityDetailLabel,
@@ -24,14 +16,21 @@ import {
   useActivityDetail,
   useStickToBottom,
   useStopController,
-} from '@/renderer/omniagents-ui/activity-presentation';
+} from '@omniagents/chat-ui/activity-presentation';
+import { formatTimestamp } from '@omniagents/chat-ui/lib/format-time';
 import {
   $activityActionsBySession,
   $activityBySession,
   type ActivityActions,
   type BashJobSummary,
   jobItemId,
-} from '@/renderer/omniagents-ui/activity-store';
+} from '@omniagents/client/transcript/activity-store';
+import { Alert, AlertDescription, AlertTitle } from '@omniagents/ui/alert';
+import { Button } from '@omniagents/ui/button';
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@omniagents/ui/empty';
+import { ScrollArea } from '@omniagents/ui/scroll-area';
+import { ActivityIcon, RefreshCwIcon } from 'lucide-react';
+import { Fragment, memo, useCallback, useEffect, useMemo, useState } from 'react';
 
 /**
  * The Jobs sidecar app: the session's background bash jobs as a master

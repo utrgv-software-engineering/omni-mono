@@ -361,7 +361,7 @@ def test_tracing_defaults_derive_from_product_slug(tmp_path: Path):
     _write_agent(root, "acme_agent")
     context = load_project(str(root))
     assert context.tracing_defaults == {
-        "provider": "studio",
+        "provider": "none",
         "project": "acme_agent",
         "name": "acme_agent",
     }
@@ -384,7 +384,7 @@ tracing:
     context = load_project(str(root))
     assert context.tracing_defaults["project"] == "custom_traces"
     assert context.tracing_defaults["name"] == "acme_agent"
-    assert context.tracing_defaults["provider"] == "studio"
+    assert context.tracing_defaults["provider"] == "none"
     assert context.tracing_defaults["settings"] == {"resume": "allow"}
 
 

@@ -1,12 +1,10 @@
+import type { GitDiffResult, GitStatusResult, WorkspaceRepo } from '@omniagents/client/rpc/git';
+import { GitClient, workspaceRepo } from '@omniagents/client/rpc/git';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { GitDiffResult, GitRepository, GitStatusResult, WorkspaceRepo } from '@/renderer/omniagents-ui/rpc/git';
-import { GitClient, workspaceRepo } from '@/renderer/omniagents-ui/rpc/git';
-import type { ProjectSource } from '@/shared/types';
-
-import { GitSurface, sourceForRepository } from './GitSurface';
+import { GitSurface } from './GitSurface';
 
 const mocks = vi.hoisted(() => ({
   connected: true,
@@ -45,19 +43,19 @@ vi.mock('@/renderer/services/ipc', () => ({ emitter: { invoke: mocks.invoke } })
 
 vi.mock('@/renderer/services/store', () => ({ persistedStoreApi: { $atom: {} } }));
 
-vi.mock('@/renderer/omniagents-ui/rpc-context', () => ({
+vi.mock('@omniagents/chat-ui/rpc-context', () => ({
   useRPCClient: () => mocks.rpc,
   useRPCConnected: () => mocks.connected,
 }));
 
-vi.mock('@/renderer/omniagents-ui/rpc/git', async (importOriginal) => {
-  const original = await importOriginal<typeof import('@/renderer/omniagents-ui/rpc/git')>();
+vi.mock('@omniagents/client/rpc/git', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@omniagents/client/rpc/git')>();
   return { ...original, GitClient: vi.fn(() => mocks.git) };
 });
 
 // Shiki loads WASM grammars; the surface tests only care that raw diff text
 // renders while tokens are pending.
-vi.mock('@/renderer/omniagents-ui/components/ai/code-block', () => ({
+vi.mock('@omniagents/chat-ui/components/ai/code-block', () => ({
   highlightCode: () => null,
   TokenSpan: () => null,
 }));
@@ -478,8 +476,7 @@ describe('GitSurface', () => {
 
   it('watches repository status server-side and refreshes quietly on change events', async () => {
     let pushChange:
-      | ((event: { environment_id: string; repo: WorkspaceRepo; watch_id: string; digest: string }) => void)
-      | undefined;
+      ((event: { environment_id: string; repo: WorkspaceRepo; watch_id: string; digest: string }) => void) | undefined;
     mocks.git.onStatusChanged.mockImplementation(
       (handler: (event: { environment_id: string; repo: WorkspaceRepo; watch_id: string; digest: string }) => void) => {
         pushChange = handler;
@@ -530,74 +527,5 @@ describe('GitSurface', () => {
     expect(container.querySelector('[role="status"]')?.textContent).toContain(
       'Configured Git sources were not materialized in this environment'
     );
-  });
-
-  it('reviews all tracked session changes and confirms before applying them to a local folder', async () => {
-    mocks.store = {
-      defaultProfileName: 'docker',
-      codeTabs: [{ id: 'tab-1', projectId: 'project-1', profileName: 'docker' }],
-      projects: [
-        {
-          id: 'project-1',
-          sources: [{ id: 'source-1', kind: 'local', mountName: 'work', workspaceDir: '/home/user/work' }],
-        },
-      ],
-    };
-    await act(async () =>
-      root.render(
-        <GitSurface
-          executionTarget={executionTarget}
-          tabId="tab-1"
-          sessionId="session-1"
-          workspaceRoot="/workspace/work"
-        />
-      )
-    );
-    await settle();
-    await settle();
-
-    await act(async () => button('Session changes').click());
-    await settle();
-    expect(mocks.git.diff).toHaveBeenLastCalledWith(repo, {
-      mode: 'range',
-      fromRev: 'refs/tags/omni/seed',
-    });
-
-    act(() => button('Apply to local folder').click());
-    expect(mocks.invoke).not.toHaveBeenCalled();
-    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('/home/user/work');
-
-    await act(async () => button('Apply changes').click());
-    await settle();
-    expect(mocks.invoke).toHaveBeenCalledWith('project:apply-code-tab-source-changes', 'tab-1', 'source-1');
-    expect(container.textContent).toContain('Applied sandbox changes to /home/user/work.');
-  });
-});
-
-describe('sourceForRepository', () => {
-  const sources: ProjectSource[] = [
-    { id: 'launcher', kind: 'local', mountName: 'launcher', workspaceDir: '/home/user/launcher' },
-    { id: 'agents', kind: 'git-remote', mountName: 'omniagents', repoUrl: 'https://example.com/agents.git' },
-  ];
-
-  const repository = (repoPath: string, absoluteRoot: string): GitRepository => ({
-    repo: workspaceRepo(repoPath),
-    root: repoPath,
-    absolute_root: absoluteRoot,
-    branch: 'main',
-    detached: false,
-    bare: false,
-    git_common_dir: `${absoluteRoot}/.git`,
-    is_linked_worktree: false,
-    source: null,
-  });
-
-  it('matches repositories to container mount roots instead of tickets', () => {
-    expect(sourceForRepository(sources, repository('launcher', '/workspace/launcher'))?.id).toBe('launcher');
-    expect(sourceForRepository(sources, repository('omniagents', '/workspace/omniagents'))?.id).toBe('agents');
-  });
-
-  it('uses the only project source for a workspace-root repository', () => {
-    expect(sourceForRepository([sources[0]!], repository('.', '/workspace/launcher'))?.id).toBe('launcher');
   });
 });

@@ -3,7 +3,7 @@
  * filter are unit-testable. Commands close over their actions; the palette
  * just renders and runs them.
  */
-import type { CodeLayoutMode, CodeTab, LayoutMode } from '@/shared/types';
+import type { CodeTab, LayoutMode } from '@/shared/types';
 
 export type PaletteCommand = {
   id: string;
@@ -17,29 +17,22 @@ export type PaletteCommand = {
 
 export type PaletteContext = {
   codeTabs: CodeTab[];
-  codeLayoutMode: CodeLayoutMode;
   /** Resolve a session tab's display label (project name etc.). */
   resolveTabLabel: (tab: CodeTab) => string;
   navigate: (mode: LayoutMode) => void;
-  goToInbox: () => void;
   goToRoutines: () => void;
   activateColumn: (tabId: string) => void;
-  addInboxItem: () => void;
   createProject: () => void;
   newSession: () => void;
-  setDeckLayout: (mode: CodeLayoutMode) => void;
   toggleViewportDebug: () => void;
 };
-
-/** Session columns the palette can jump to (the deck's view of codeTabs). */
-export const paletteColumns = (codeTabs: CodeTab[]): CodeTab[] => codeTabs.filter((t) => !t.customAppId);
 
 export function buildCommands(ctx: PaletteContext): PaletteCommand[] {
   const commands: PaletteCommand[] = [
     {
       id: 'nav-work',
-      label: 'Go to Tasks',
-      keywords: 'work tickets board projects all tasks',
+      label: 'Go to Projects',
+      keywords: 'work projects folders sources',
       run: () => ctx.navigate('work'),
     },
     {
@@ -48,7 +41,6 @@ export function buildCommands(ctx: PaletteContext): PaletteCommand[] {
       keywords: 'conversation talk deck columns sessions',
       run: () => ctx.navigate('chat'),
     },
-    { id: 'nav-inbox', label: 'Go to Inbox', keywords: 'capture ideas todo triage', run: ctx.goToInbox },
     {
       id: 'nav-settings',
       label: 'Go to Settings',
@@ -61,15 +53,8 @@ export function buildCommands(ctx: PaletteContext): PaletteCommand[] {
       keywords: 'scheduled tasks automation recurring agents',
       run: ctx.goToRoutines,
     },
-    { id: 'add-inbox-item', label: 'Add inbox item', keywords: 'capture idea todo quick', run: ctx.addInboxItem },
     { id: 'create-project', label: 'Create project', keywords: 'new workspace initiative', run: ctx.createProject },
     { id: 'new-session', label: 'New chat', keywords: 'create column agent session conversation', run: ctx.newSession },
-    {
-      id: 'toggle-layout',
-      label: ctx.codeLayoutMode === 'tile' ? 'Switch deck to Focus layout' : 'Switch deck to Tile layout',
-      keywords: 'tile focus layout deck view',
-      run: () => ctx.setDeckLayout(ctx.codeLayoutMode === 'tile' ? 'focus' : 'tile'),
-    },
     {
       id: 'toggle-viewport-debug',
       label: 'Toggle viewport debug overlay',
@@ -78,7 +63,7 @@ export function buildCommands(ctx: PaletteContext): PaletteCommand[] {
     },
   ];
 
-  paletteColumns(ctx.codeTabs).forEach((tab, index) => {
+  ctx.codeTabs.forEach((tab, index) => {
     commands.push({
       id: `column-${tab.id}`,
       label: `Go to column ${index + 1}: ${ctx.resolveTabLabel(tab)}`,

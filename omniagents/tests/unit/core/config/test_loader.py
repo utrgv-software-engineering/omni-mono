@@ -5,6 +5,7 @@ import textwrap
 import pytest
 
 from omniagents.core.config.loader import (
+    collect_config_problems,
     load_agent_spec_from_yaml,
     _parse_inline_agent_spec,
 )
@@ -118,11 +119,11 @@ def test_parse_inline_agent_spec_supports_nested_inline_handoffs(tmp_path):
     assert nested.tool_description_override == "Nested inline"
 
 
-def test_parse_inline_agent_spec_handles_invalid_tools_list(tmp_path, capsys):
+def test_parse_inline_agent_spec_handles_invalid_tools_list(tmp_path):
     config = {"instructions": "Inline", "tools": "alpha"}
-    spec = _parse_inline_agent_spec(config, tmp_path, set())
-    captured = capsys.readouterr()
-    assert "should be a list" in captured.out
+    with collect_config_problems() as problems:
+        spec = _parse_inline_agent_spec(config, tmp_path, set())
+    assert "should be a list" in "\n".join(problems)
     assert spec.available_tools == []
 
 
@@ -499,7 +500,7 @@ def test_loader_discovers_assets_and_applies_config(tmp_path):
                 sys.modules.pop(name, None)
 
 
-def test_loader_warns_for_missing_tools(tmp_path, capsys):
+def test_loader_warns_for_missing_tools(tmp_path):
     yaml_path = tmp_path / "agent.yaml"
     write(
         yaml_path,
@@ -510,14 +511,15 @@ def test_loader_warns_for_missing_tools(tmp_path, capsys):
           - not_a_tool
         """,
     )
-    spec = load_agent_spec_from_yaml(str(yaml_path))
-    captured = capsys.readouterr()
-    assert "were not found" in captured.out
-    assert "not_a_tool" in captured.out
+    with collect_config_problems() as problems:
+        spec = load_agent_spec_from_yaml(str(yaml_path))
+    reported = "\n".join(problems)
+    assert "were not found" in reported
+    assert "not_a_tool" in reported
     assert spec.available_tools == []
 
 
-def test_loader_warns_for_missing_guardrails(tmp_path, capsys):
+def test_loader_warns_for_missing_guardrails(tmp_path):
     yaml_path = tmp_path / "agent.yaml"
     write(
         yaml_path,
@@ -530,12 +532,13 @@ def test_loader_warns_for_missing_guardrails(tmp_path, capsys):
           - missing_output
         """,
     )
-    spec = load_agent_spec_from_yaml(str(yaml_path))
-    captured = capsys.readouterr()
-    assert "input guardrails listed" in captured.out
-    assert "missing_input" in captured.out
-    assert "output guardrails listed" in captured.out
-    assert "missing_output" in captured.out
+    with collect_config_problems() as problems:
+        spec = load_agent_spec_from_yaml(str(yaml_path))
+    reported = "\n".join(problems)
+    assert "input guardrails listed" in reported
+    assert "missing_input" in reported
+    assert "output guardrails listed" in reported
+    assert "missing_output" in reported
     assert spec.input_guardrails == []
     assert spec.output_guardrails == []
 
@@ -810,7 +813,7 @@ def test_realtime_config_with_env_vars(tmp_path, monkeypatch):
     assert spec.realtime_settings.temperature == 0.8
 
 
-def test_realtime_invalid_audio_format_uses_default(tmp_path, capsys):
+def test_realtime_invalid_audio_format_uses_default(tmp_path):
     """Test that invalid audio formats fall back to defaults with warning."""
     yaml_path = tmp_path / "agent.yaml"
     write(
@@ -824,15 +827,16 @@ def test_realtime_invalid_audio_format_uses_default(tmp_path, capsys):
           output_audio_format: also_invalid
         """,
     )
-    spec = load_agent_spec_from_yaml(str(yaml_path))
-    captured = capsys.readouterr()
-    assert "Invalid input_audio_format" in captured.out
-    assert "Invalid output_audio_format" in captured.out
+    with collect_config_problems() as problems:
+        spec = load_agent_spec_from_yaml(str(yaml_path))
+    reported = "\n".join(problems)
+    assert "Invalid input_audio_format" in reported
+    assert "Invalid output_audio_format" in reported
     assert spec.realtime_settings.input_audio_format == "pcm16"
     assert spec.realtime_settings.output_audio_format == "pcm16"
 
 
-def test_realtime_invalid_modalities_uses_default(tmp_path, capsys):
+def test_realtime_invalid_modalities_uses_default(tmp_path):
     """Test that invalid modalities fall back to defaults with warning."""
     yaml_path = tmp_path / "agent.yaml"
     write(
@@ -845,13 +849,14 @@ def test_realtime_invalid_modalities_uses_default(tmp_path, capsys):
           modalities: ["invalid", "modality"]
         """,
     )
-    spec = load_agent_spec_from_yaml(str(yaml_path))
-    captured = capsys.readouterr()
-    assert "Invalid modalities" in captured.out
+    with collect_config_problems() as problems:
+        spec = load_agent_spec_from_yaml(str(yaml_path))
+    reported = "\n".join(problems)
+    assert "Invalid modalities" in reported
     assert spec.realtime_settings.modalities == ["audio"]
 
 
-def test_realtime_mode_invalid_type_defaults_to_false(tmp_path, capsys):
+def test_realtime_mode_invalid_type_defaults_to_false(tmp_path):
     """Test that invalid realtime_mode type defaults to False with warning."""
     yaml_path = tmp_path / "agent.yaml"
     write(
@@ -862,13 +867,14 @@ def test_realtime_mode_invalid_type_defaults_to_false(tmp_path, capsys):
         realtime_mode: "yes"
         """,
     )
-    spec = load_agent_spec_from_yaml(str(yaml_path))
-    captured = capsys.readouterr()
-    assert "should be a boolean" in captured.out
+    with collect_config_problems() as problems:
+        spec = load_agent_spec_from_yaml(str(yaml_path))
+    reported = "\n".join(problems)
+    assert "should be a boolean" in reported
     assert spec.realtime_mode is False
 
 
-def test_realtime_settings_invalid_type_uses_defaults(tmp_path, capsys):
+def test_realtime_settings_invalid_type_uses_defaults(tmp_path):
     """Test that invalid realtime_settings type uses defaults with warning."""
     yaml_path = tmp_path / "agent.yaml"
     write(
@@ -880,9 +886,10 @@ def test_realtime_settings_invalid_type_uses_defaults(tmp_path, capsys):
         realtime_settings: "not a dict"
         """,
     )
-    spec = load_agent_spec_from_yaml(str(yaml_path))
-    captured = capsys.readouterr()
-    assert "should be a dictionary" in captured.out
+    with collect_config_problems() as problems:
+        spec = load_agent_spec_from_yaml(str(yaml_path))
+    reported = "\n".join(problems)
+    assert "should be a dictionary" in reported
     assert spec.realtime_settings is not None
     assert spec.realtime_settings.voice == "alloy"  # Default
 
@@ -982,3 +989,84 @@ def test_loader_inline_instructions_search_paths_anchor_at_yaml_dir(tmp_path):
         tmp_path / "_shared",
         tmp_path.parent / "_shared",
     ]
+
+
+def test_mcp_servers_substitute_environment_variables(tmp_path, monkeypatch):
+    # One definition: the workplace simulator in class, real Slack in production.
+    monkeypatch.delenv("SLACK_MCP_URL", raising=False)
+    monkeypatch.setenv("SLACK_MCP_TOKEN", "xoxp-1")
+    monkeypatch.delenv("UNSET_TOKEN", raising=False)
+    yaml_path = tmp_path / "agent.yml"
+    write(
+        yaml_path,
+        """
+        name: Foreman
+        instructions: Hi
+        mcp_servers:
+          - name: slack
+            type: http
+            params:
+              url: ${SLACK_MCP_URL:-https://mcp.slack.com/mcp}
+              headers:
+                Authorization: Bearer ${SLACK_MCP_TOKEN}
+          - name: broken
+            type: http
+            params:
+              url: http://x
+              headers:
+                Authorization: Bearer ${UNSET_TOKEN}
+        """,
+    )
+    spec = load_agent_spec_from_yaml(str(yaml_path))
+    [server] = spec.mcp_servers
+    assert server.params == {
+        "url": "https://mcp.slack.com/mcp",
+        "headers": {"Authorization": "Bearer xoxp-1"},
+    }
+
+
+def test_a_substitution_environment_resolves_ahead_of_the_process(
+    tmp_path, monkeypatch
+):
+    # Two evaluation scenarios load the same agent at once, each pointing it
+    # at its own workplace.
+    import asyncio
+
+    from omniagents.core.config.loader import substitution_environment
+
+    monkeypatch.setenv("SLACK_MCP_URL", "https://process.example/mcp")
+    yaml_path = tmp_path / "agent.yml"
+    write(
+        yaml_path,
+        """
+        name: Foreman
+        instructions: Hi
+        mcp_servers:
+          - name: slack
+            type: http
+            params:
+              url: ${SLACK_MCP_URL}
+        """,
+    )
+
+    async def load(url):
+        with substitution_environment({"SLACK_MCP_URL": url}):
+            await asyncio.sleep(0)
+            return (
+                load_agent_spec_from_yaml(str(yaml_path)).mcp_servers[0].params["url"]
+            )
+
+    async def both():
+        return await asyncio.gather(
+            load("http://127.0.0.1:7301/slack/mcp"),
+            load("http://127.0.0.1:7302/slack/mcp"),
+        )
+
+    assert asyncio.run(both()) == [
+        "http://127.0.0.1:7301/slack/mcp",
+        "http://127.0.0.1:7302/slack/mcp",
+    ]
+    assert (
+        load_agent_spec_from_yaml(str(yaml_path)).mcp_servers[0].params["url"]
+        == "https://process.example/mcp"
+    )

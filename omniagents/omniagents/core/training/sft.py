@@ -30,9 +30,7 @@ from typing import Callable, Dict, List, Literal, Optional, Any, Union, TYPE_CHE
 
 if TYPE_CHECKING:
     from datasets import Dataset
-    from transformers import PreTrainedModel, PreTrainedTokenizer
     from trl import SFTConfig
-    from trl import SFTTrainer as TRLSFTTrainer
 
 try:
     from datasets import Dataset
@@ -181,7 +179,6 @@ class SFTTrainingResult:
             agent.model = f"ollama_chat/{ollama_name}"
         """
         import subprocess
-        import json
 
         path = model_path or self.model_path
         if path is None:
@@ -213,7 +210,7 @@ class SFTTrainingResult:
                 str(gguf_path),
             ]
 
-            result = subprocess.run(
+            subprocess.run(
                 convert_cmd,
                 check=True,
                 capture_output=True,
@@ -237,7 +234,7 @@ class SFTTrainingResult:
             print("  Registering with Ollama...")
             ollama_cmd = ["ollama", "create", model_name, "-f", str(modelfile_path)]
 
-            result = subprocess.run(
+            subprocess.run(
                 ollama_cmd,
                 check=True,
                 capture_output=True,

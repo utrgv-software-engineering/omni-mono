@@ -30,6 +30,9 @@ from typing import Any, Dict, List
 # Exported name -> the module in this package that defines it
 _EXPORTS: Dict[str, str] = {
     "display_artifact": "artifacts",
+    "artifact_create": "library_artifacts",
+    "artifact_list": "library_artifacts",
+    "artifact_show": "library_artifacts",
     "execute_bash": "bash_tool",
     "bash_status": "bash_tool",
     "bash_logs": "bash_tool",
@@ -97,6 +100,9 @@ def __dir__() -> List[str]:
 
 __all__ = [
     "display_artifact",
+    "artifact_create",
+    "artifact_list",
+    "artifact_show",
     "execute_bash",
     "bash_status",
     "bash_logs",

@@ -9,7 +9,8 @@ import React, {
   useEffect,
   useLayoutEffect,
 } from "react";
-import { Box, Text, ResizeObserver, useStdout, type DOMElement } from "ink";
+import { Box, Text, ResizeObserver, type DOMElement } from "ink";
+import { useTerminalSize } from "../hooks/useTerminalSize.js";
 import { layoutInput, columnAtCell } from "./input-layout.js";
 import chalk from "chalk";
 import { useKeypress } from "../hooks/useKeypress.js";
@@ -82,8 +83,8 @@ export interface MultiLineInputProps {
   maxHeight?: number;
   history?: string[];
   disableSubmit?: boolean;
-  /** External one-shot insertion (e.g. the Files screen's @path
-   * mention). Consumed at the cursor; the owner clears it via
+  /** External one-shot insertion (e.g. a command completed from the
+   * palette). Consumed at the cursor; the owner clears it via
    * onInsertConsumed. */
   pendingInsert?: string | null;
   onInsertConsumed?: () => void;
@@ -399,24 +400,18 @@ export const MultiLineInputOptimized = themedMemo<MultiLineInputProps>(
       },
       [draft],
     );
-    const { stdout } = useStdout();
+    const { rows: terminalRows, columns: terminalColumns } = useTerminalSize();
     const element = React.useRef<DOMElement>(null);
     const [measuredWidth, setMeasuredWidth] = useState<number | null>(null);
-    const [terminalRows, setTerminalRows] = useState(stdout.rows ?? 24);
     useLayoutEffect(() => {
       const observer = new ResizeObserver((entries) => {
         for (const entry of entries) setMeasuredWidth(entry.contentRect.width);
       });
       if (element.current) observer.observe(element.current);
-      const resize = () => setTerminalRows(stdout.rows ?? 24);
-      stdout.on("resize", resize);
-      return () => {
-        observer.disconnect();
-        stdout.off("resize", resize);
-      };
-    }, [stdout]);
+      return () => observer.disconnect();
+    }, []);
     // Border (2), padding (2), and the prompt gutter (2).
-    const columns = Math.max(1, (measuredWidth ?? stdout.columns ?? 80) - 6);
+    const columns = Math.max(1, (measuredWidth ?? terminalColumns) - 6);
     const layout = React.useMemo(
       () => layoutInput(state.lines, state.cursorRow, state.cursorCol, columns),
       [state.lines, state.cursorRow, state.cursorCol, columns],
@@ -442,7 +437,7 @@ export const MultiLineInputOptimized = themedMemo<MultiLineInputProps>(
       return true;
     };
 
-    // One-shot external insertion (Files screen mention bridge): text
+    // One-shot external insertion (command palette completion): text
     // arrives via props, lands at the cursor, and is acknowledged so
     // the owner clears it — re-renders can't double-insert.
     useEffect(() => {

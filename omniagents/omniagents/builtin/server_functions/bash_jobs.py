@@ -38,7 +38,6 @@ from omniagents.builtin.tools._bash_jobs import (  # noqa: E402
     job_state_dict,
     jobs_snapshot,
     read_job_log,
-    session_ids_with_jobs,
     terminate_job,
 )
 

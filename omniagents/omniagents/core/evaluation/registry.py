@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from typing import Callable, Dict, Any, List, Optional
 
 
@@ -27,6 +28,7 @@ def evaluation_measure(
     *,
     name: Optional[str] = None,
     overwrite: bool = False,
+    live: Optional[Dict[str, Any]] = None,
 ):
     """Register a function as an evaluation measure.
 
@@ -35,6 +37,9 @@ def evaluation_measure(
         name: Optional name override (defaults to function name)
         overwrite: If True, silently replace existing measure with same name.
                    Useful in notebooks where cells may be re-run.
+        live: For checks that also grade real runs: ``{"sample": <percent>,
+              "agents": [<agent keys>]}``. Recorded on the measure as
+              ``_live``; evaluations ignore it.
 
     Example:
         @evaluation_measure
@@ -62,6 +67,15 @@ def evaluation_measure(
         _MEASURES[key] = f
         setattr(f, "_is_omni_evaluation_measure", True)
         setattr(f, "_measure_name", key)
+        if live is not None:
+            if (
+                not isinstance(live, dict)
+                or not 0 < float(live.get("sample", 0)) <= 100
+            ):
+                raise ValueError(
+                    f"evaluation measure '{key}': live needs a sample between 1 and 100"
+                )
+            setattr(f, "_live", dict(live))
         return f
 
     if func is None:
@@ -75,25 +89,52 @@ def get_measure(name: str) -> Callable[[Any], Dict[str, Any]]:
     return _MEASURES[name]
 
 
+def _select(measures: Optional[List[str]]) -> List[tuple]:
+    if measures is None:
+        return list(_MEASURES.items())
+    missing = [m for m in measures if m not in _MEASURES]
+    if missing:
+        missing_str = ", ".join(sorted(missing))
+        raise UnknownMeasureError(
+            f"unknown evaluation measures requested: {missing_str}"
+        )
+    return [(k, _MEASURES[k]) for k in measures]
+
+
+def _named(key: str, res: Any) -> Dict[str, Any]:
+    if not isinstance(res, dict):
+        raise InvalidMeasureError(f"evaluation measure '{key}' must return a dict")
+    if "name" not in res:
+        res["name"] = key
+    return res
+
+
 def run_measures(
     ctx: Any, measures: Optional[List[str]] = None
 ) -> List[Dict[str, Any]]:
-    if measures is None:
-        selected_items = list(_MEASURES.items())
-    else:
-        missing = [m for m in measures if m not in _MEASURES]
-        if missing:
-            missing_str = ", ".join(sorted(missing))
-            raise UnknownMeasureError(
-                f"unknown evaluation measures requested: {missing_str}"
-            )
-        selected_items = [(k, _MEASURES[k]) for k in measures]
+    """Run synchronous measures. An ``async def`` measure needs :func:`run_measures_async`."""
     results: List[Dict[str, Any]] = []
-    for key, fn in selected_items:
+    for key, fn in _select(measures):
         res = fn(ctx)
-        if not isinstance(res, dict):
-            raise InvalidMeasureError(f"evaluation measure '{key}' must return a dict")
-        if "name" not in res:
-            res["name"] = key
-        results.append(res)
+        if inspect.isawaitable(res):
+            close = getattr(res, "close", None)
+            if callable(close):
+                close()
+            raise InvalidMeasureError(
+                f"evaluation measure '{key}' is async; use run_measures_async"
+            )
+        results.append(_named(key, res))
+    return results
+
+
+async def run_measures_async(
+    ctx: Any, measures: Optional[List[str]] = None
+) -> List[Dict[str, Any]]:
+    """Run measures, awaiting any that are ``async def`` (the eval engine's path)."""
+    results: List[Dict[str, Any]] = []
+    for key, fn in _select(measures):
+        res = fn(ctx)
+        if inspect.isawaitable(res):
+            res = await res
+        results.append(_named(key, res))
     return results

@@ -182,6 +182,13 @@ vi.mock('child_process', async (importOriginal) => {
   };
 });
 
+// Git Bash provisioning (Windows only) has its own tests; here it would try a
+// real download through the mocked fs.
+vi.mock('@/main/git-bash', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/main/git-bash')>()),
+  ensureGitBash: vi.fn(async () => 'ready' as const),
+}));
+
 vi.mock('@/lib/omni-version', () => ({
   OMNI_CODE_VERSION: '1.0.0-test',
 }));
@@ -227,16 +234,14 @@ function makeMgr() {
   hoisted.fsFiles.clear();
 
   const statusChanges: Array<{ type: string }> = [];
-  const logEntries: Array<{ level: string; message: string }> = [];
   const rawOutput: string[] = [];
 
   const mgr = new OmniInstallManager({
-    ipcLogger: (entry) => logEntries.push(entry),
     ipcRawOutput: (data) => rawOutput.push(data),
     onStatusChange: (status) => statusChanges.push(status),
   });
 
-  return { mgr, statusChanges, logEntries, rawOutput };
+  return { mgr, statusChanges, rawOutput };
 }
 
 // ---------------------------------------------------------------------------

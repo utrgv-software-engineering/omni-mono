@@ -9,7 +9,7 @@ import random
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple
 
 import yaml
 
@@ -21,28 +21,6 @@ from omniagents.core.utils.jinja import render_template, read_text_file
 
 def _read_yaml(p: Path) -> Dict[str, Any]:
     return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-
-
-def _choose_value(dimension: Dict[str, Any]) -> Dict[str, Any]:
-    vals = list(dimension.get("values") or [])
-    if not vals:
-        return {"name": "unknown", "description": ""}
-    return random.choice(vals)
-
-
-def _build_persona_tuple(dimensions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
-    for d in dimensions:
-        chosen = _choose_value(d)
-        out.append(
-            {
-                "dimension": d.get("name") or "dimension",
-                "value": chosen.get("name") or "value",
-                "description": chosen.get("description") or "",
-                "examples": chosen.get("examples") or [],
-            }
-        )
-    return out
 
 
 def _summarize_persona(selected: List[Dict[str, Any]]) -> str:
@@ -122,7 +100,6 @@ async def _build_generator_agent(
     raw_dims: List[Dict[str, Any]] | None = None,
 ):
     try:
-        from agents import Runner as AgentsRunner
         from omniagents.core.agents.specs import AgentSpec
         from omniagents.core.agents.builder import _default_build_agent
     except Exception as e:
@@ -282,6 +259,76 @@ def _enumerate_combos(
     return combos
 
 
+def draft_combinations(
+    dimensions: List[Dict[str, Any]],
+    *,
+    count: int,
+    seed: int | None = None,
+    filters: Dict[str, List[str]] | None = None,
+) -> List[Dict[str, str]]:
+    """A sample of ``count`` combinations of dimension values (every one
+    when there are fewer), for a person to review before any scenario is
+    generated from them: they know which combinations real users present
+    and which never occur."""
+    combos = _enumerate_combos(dimensions, filters)
+    rng = random.Random(seed)
+    rng.shuffle(combos)
+    return combos[: max(0, int(count))]
+
+
+REALISM_INSTRUCTIONS = """\
+You judge synthetic test queries for an AI application: would a real user
+of it write this, as the user described by its dimension values?
+
+Score each query 1 to 5:
+5 - indistinguishable from a real user's message;
+4 - realistic, with small tells;
+3 - plausible but generic or stiff;
+2 - awkward, or does not match the user it is meant to come from;
+1 - clearly artificial, or not something anyone would send.
+
+Return JSON: {"ratings": [{"id": "...", "score": 1-5, "reason": "..."}]}
+"""
+
+
+async def rate_realism(
+    scenarios: List[Dict[str, Any]], ask: Any, application: str, *, batch: int = 10
+) -> Dict[str, Dict[str, Any]]:
+    """Each scenario's realism (``{score, reason}``) by its id, from
+    ``ask(instructions, prompt) -> dict``."""
+    ratings: Dict[str, Dict[str, Any]] = {}
+    for start in range(0, len(scenarios), batch):
+        chunk = scenarios[start : start + batch]
+        prompt = json.dumps(
+            {
+                "application": application,
+                "queries": [
+                    {
+                        "id": sc["id"],
+                        "user": sc.get("dimensions") or {},
+                        "query": sc.get("prompt"),
+                    }
+                    for sc in chunk
+                ],
+            },
+            ensure_ascii=False,
+        )
+        output = await ask(REALISM_INSTRUCTIONS, prompt)
+        for rating in output.get("ratings") or []:
+            if isinstance(rating, dict) and rating.get("id") in {
+                sc["id"] for sc in chunk
+            }:
+                try:
+                    score = int(rating.get("score"))
+                except (TypeError, ValueError):
+                    continue
+                ratings[str(rating["id"])] = {
+                    "score": score,
+                    "reason": str(rating.get("reason") or "").strip() or None,
+                }
+    return ratings
+
+
 def _persona_from_mapping(
     dimensions: List[Dict[str, Any]], mapping: Dict[str, str]
 ) -> List[Dict[str, Any]]:
@@ -307,17 +354,70 @@ def _persona_from_mapping(
     return out
 
 
+def _write_set(
+    output: Path,
+    scenarios: List[Dict[str, Any]],
+    set_name: str | None,
+    ts: str,
+    cfg_path: Path,
+    project_root: Path | None,
+    workflow_name: str | None,
+) -> Path:
+    """Write a generated set's ``scenarios.yml`` and, beside it,
+    ``manifest.json`` (paths in it relative to the project, since the set
+    is committed)."""
+    out_path = output.resolve()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    class NoAliasDumper(yaml.SafeDumper):
+        def ignore_aliases(self, data):
+            return True
+
+    out_path.write_text(
+        yaml.dump(
+            {"scenarios": scenarios},
+            sort_keys=False,
+            Dumper=NoAliasDumper,
+            allow_unicode=True,
+        ),
+        encoding="utf-8",
+    )
+    source = Path(cfg_path).resolve()
+    if project_root is not None and Path(project_root).resolve() in source.parents:
+        source = source.relative_to(Path(project_root).resolve())
+    manifest = {
+        "timestamp": ts,
+        "name": str(set_name) if set_name else out_path.parent.name,
+        "counts": {"total": len(scenarios)},
+        "source": str(source),
+    }
+    if workflow_name:
+        manifest["workflow_generate"] = str(workflow_name)
+    (out_path.parent / "manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
+    return out_path
+
+
 async def generate_scenarios(
     compiled_yaml: Path,
+    *,
+    output: Path,
+    combinations: List[Dict[str, str]],
     count: int | None = None,
     seed: int | None = None,
     set_name: str | None = None,
-    output: Path | None = None,
     workflow_name: str | None = None,
     progress_cb: Any | None = None,
-    dimension_filters: Dict[str, List[str]] | None = None,
     eval_config: Any | None = None,
+    realism: Any | None = None,
+    min_realism: int = 3,
 ) -> Tuple[List[Dict[str, Any]], Path, str]:
+    """Generate scenarios from ``combinations`` (reviewed dimension-value
+    combinations), about ``count`` in all, into ``output``. With
+    ``realism`` (an ``ask`` for :func:`rate_realism`), queries rated below
+    ``min_realism`` are left out of the set and written to ``filtered.yml``
+    beside it with their ratings, so a person can see what was dropped."""
     if eval_config is not None:
         cfg_path = eval_config.agent_path
         eval_cfg = eval_config.config
@@ -353,19 +453,9 @@ async def generate_scenarios(
 
     scenarios: List[Dict[str, Any]] = []
     used_names: Dict[str, int] = {}
-    filters_for_combos: Dict[str, List[str]] | None = None
-    if dimension_filters:
-        normalized_filters: Dict[str, List[str]] = {}
-        for key, values in dimension_filters.items():
-            if not values:
-                continue
-            allowed_values = [str(v).strip() for v in values if str(v).strip()]
-            if allowed_values:
-                normalized_filters[str(key)] = allowed_values
-        if normalized_filters:
-            filters_for_combos = normalized_filters
-    combos = _enumerate_combos(dims, filters_for_combos)
-    random.shuffle(combos)
+    combos = [dict(c) for c in combinations]
+    if not combos:
+        raise ValueError("There are no combinations to generate scenarios from")
     import hashlib as _hashlib, json as _json
 
     try:
@@ -379,48 +469,9 @@ async def generate_scenarios(
         except Exception:
             pass
     if target_count <= 0:
-        base = _project_root or cfg_path.parent
-        if output is not None:
-            out_dir = Path(output).resolve().parent
-            out_path = Path(output).resolve()
-        else:
-            if not set_name:
-                raise SystemExit(
-                    "Provide a scenario set name or output path for generation"
-                )
-            out_dir = (base / "artifacts" / "eval" / str(set_name)).resolve()
-            out_path = out_dir / "generated_scenarios.yml"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        data = {"scenarios": []}
-
-        class NoAliasDumper(yaml.SafeDumper):
-            def ignore_aliases(self, data):
-                return True
-
-        out_path.write_text(
-            yaml.dump(data, sort_keys=False, Dumper=NoAliasDumper, allow_unicode=True),
-            encoding="utf-8",
+        out_path = _write_set(
+            Path(output), [], set_name, ts, cfg_path, _project_root, workflow_name
         )
-        try:
-            (out_dir / "manifest.json").write_text(
-                json.dumps(
-                    {
-                        "timestamp": ts,
-                        "name": (str(set_name) if set_name else out_dir.name),
-                        "counts": {"total": 0},
-                        "source": str(cfg_path),
-                        **(
-                            {"workflow_generate": str(workflow_name)}
-                            if workflow_name
-                            else {}
-                        ),
-                    },
-                    indent=2,
-                ),
-                encoding="utf-8",
-            )
-        except Exception:
-            pass
         if progress_cb:
             try:
                 progress_cb({"event": "done", "count": 0})
@@ -444,7 +495,7 @@ async def generate_scenarios(
         rendered = render_template(prompt_str, **ctx)
         if workflow_name:
             try:
-                from omniagents.studio.tracing import trace as studio_trace
+                from omniagents.core.tracing.local import trace as studio_trace
 
                 try:
                     import omniagents as _oa
@@ -528,48 +579,43 @@ async def generate_scenarios(
         if len(scenarios) >= target_count:
             break
 
-    base = _project_root or cfg_path.parent
-    if output is not None:
-        out_dir = Path(output).resolve().parent
-        out_path = Path(output).resolve()
-    else:
-        if not set_name:
-            raise SystemExit(
-                "Provide a scenario set name or output path for generation"
-            )
-        out_dir = (base / "artifacts" / "eval" / str(set_name)).resolve()
-        out_path = out_dir / "generated_scenarios.yml"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    data = {"scenarios": scenarios}
-
-    class NoAliasDumper(yaml.SafeDumper):
-        def ignore_aliases(self, data):
-            return True
-
-    out_path.write_text(
-        yaml.dump(data, sort_keys=False, Dumper=NoAliasDumper, allow_unicode=True),
-        encoding="utf-8",
+    filtered: List[Dict[str, Any]] = []
+    if realism is not None and scenarios:
+        agent_cfg_meta = (eval_config.agent_config if eval_config else {}) or {}
+        application = str(
+            agent_cfg_meta.get("description")
+            or agent_cfg_meta.get("label")
+            or agent_cfg_meta.get("name")
+            or "an AI assistant"
+        )
+        ratings = await rate_realism(scenarios, realism, application)
+        kept = []
+        for sc in scenarios:
+            rating = ratings.get(sc["id"])
+            if rating is not None and rating["score"] < min_realism:
+                filtered.append({**sc, "realism": rating})
+            else:
+                kept.append(sc)
+        scenarios = kept
+    out_path = _write_set(
+        Path(output), scenarios, set_name, ts, cfg_path, _project_root, workflow_name
     )
-    try:
-        (out_dir / "manifest.json").write_text(
-            json.dumps(
-                {
-                    "timestamp": ts,
-                    "name": (str(set_name) if set_name else out_dir.name),
-                    "counts": {"total": len(scenarios)},
-                    "source": str(cfg_path),
-                    **(
-                        {"workflow_generate": str(workflow_name)}
-                        if workflow_name
-                        else {}
-                    ),
-                },
-                indent=2,
+    filtered_path = out_path.parent / "filtered.yml"
+    if filtered:
+        filtered_path.write_text(
+            yaml.safe_dump(
+                {"scenarios": filtered}, sort_keys=False, allow_unicode=True
             ),
             encoding="utf-8",
         )
-    except Exception:
-        pass
+    else:
+        filtered_path.unlink(missing_ok=True)
+    manifest_path = out_path.parent / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["counts"] = {"total": len(scenarios), "filtered": len(filtered)}
+    if realism is not None:
+        manifest["min_realism"] = min_realism
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     if progress_cb:
         try:
             progress_cb({"event": "done", "count": len(scenarios)})

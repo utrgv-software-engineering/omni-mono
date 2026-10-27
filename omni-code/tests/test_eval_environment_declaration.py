@@ -60,15 +60,10 @@ def test_declared_env_vars_match_deleted_workspace_env():
     ctx = EnvironmentContext(
         session_id="smoke", data={"workspace_root": "/tmp/omni_eval_smoke"}
     )
-    # Exactly what WorkspaceEvalEnvironment.get_env_vars produced for a
-    # host-only scenario without db_fixture.
     assert env.get_env_vars(ctx) == {
         "PWD": "/tmp/omni_eval_smoke",
         "OMNI_WORKSPACE_ROOT": "/tmp/omni_eval_smoke",
         "SERPAPI_API_KEY": "",
-        "MISE_TRUSTED_CONFIG_PATHS": str(
-            Path.home() / ".cache" / "omni-code" / "eval-workspaces"
-        ),
     }
 
 
@@ -85,34 +80,6 @@ def test_declared_container_routing_matches_deleted_devbox_env():
     assert env.default_image is None
 
 
-def test_declared_mcp_fixture_matches_deleted_workspace_env():
+def test_declares_no_mcp_fixture():
     _, env = _build_declared_environment()
-    mf = env.mcp_fixture
-    assert mf is not None
-    assert mf.scenario_key == "db_fixture"
-    assert mf.dbs_dir == REPO_ROOT / "evaluations" / "fixtures" / "dbs"
-    assert mf.config_name == "omni_code"
-    assert mf.server_name == "omni-projects"
-    # Launcher cli default with its env-var override, verbatim.
-    assert mf.cli_env_var == "OMNI_PROJECTS_MCP_CLI"
-    assert mf.cli_default == (
-        Path.home()
-        / "Omni"
-        / "Workspace"
-        / "launcher"
-        / "packages"
-        / "projects-mcp"
-        / "dist"
-        / "cli.js"
-    )
-    assert mf.command_env_var == "OMNI_PROJECTS_MCP_NODE"
-    assert mf.command_default == "node"
-    assert mf.db_dest == "projects.db"
-    assert mf.pages_dest == "projects"
-    assert mf.args == [
-        "${cli}",
-        "--db-path",
-        "${db_path}",
-        "--pages-dir",
-        "${pages_dir}",
-    ]
+    assert env.mcp_fixture is None

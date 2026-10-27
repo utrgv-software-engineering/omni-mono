@@ -28,6 +28,7 @@ import base64
 import os
 import secrets
 import shlex
+import signal
 import struct
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Optional, Protocol
@@ -195,32 +196,36 @@ class HostPtyBackend:
 
     async def _stream(self, handle: _HostHandle) -> AsyncIterator[bytes]:
         loop = asyncio.get_running_loop()
-        try:
-            while True:
-                try:
-                    chunk = await loop.run_in_executor(
-                        None, os.read, handle.master_fd, 4096
-                    )
-                except OSError:
-                    break
-                if not chunk:
-                    break
-                yield chunk
-        finally:
+        while True:
             try:
-                handle.exit_code_value = await handle.process.wait()
-            except Exception:
-                pass
-            handle.closed = True
-            if not handle.fd_closed:
-                handle.fd_closed = True
-                with _suppress():
-                    os.close(handle.master_fd)
+                chunk = await loop.run_in_executor(
+                    None, os.read, handle.master_fd, 4096
+                )
+            except OSError:
+                break
+            if not chunk:
+                break
+            yield chunk
+        # EOF: the shell side is gone, so its exit code is coming. A cancelled
+        # read lands in close() instead, which must not wait behind a shell
+        # nobody has told to exit.
+        try:
+            handle.exit_code_value = await handle.process.wait()
+        except Exception:
+            pass
+        handle.closed = True
+        if not handle.fd_closed:
+            handle.fd_closed = True
+            with _suppress():
+                os.close(handle.master_fd)
 
     async def close(self, handle: _HostHandle) -> None:
         handle.closed = True
+        # Hang up, as closing a terminal window does: an interactive shell
+        # ignores SIGTERM, and it passes SIGHUP on to its jobs before exiting
+        # (a SIGKILLed shell cannot).
         try:
-            handle.process.terminate()
+            handle.process.send_signal(signal.SIGHUP)
         except ProcessLookupError:
             pass
         try:
@@ -417,6 +422,10 @@ class _SessionHandle:
     process_id: int
     exit_code_value: Optional[int] = None
     closed: bool = False
+    # Separate from ``closed``: the manager cancels the output stream (which
+    # marks the handle closed) *before* calling close(), and the shell must
+    # still be told to exit then.
+    shutdown_sent: bool = False
 
 
 class SessionPtyBackend:
@@ -540,8 +549,9 @@ class SessionPtyBackend:
             handle.closed = True
 
     async def close(self, handle: _SessionHandle) -> None:
-        if handle.closed:
+        if handle.shutdown_sent:
             return
+        handle.shutdown_sent = True
         handle.closed = True
         # Polite shutdown: Ctrl-C, then Ctrl-D. The shell exits and the
         # SDK's _watch_process_exit + _finalize_pty_update remove the

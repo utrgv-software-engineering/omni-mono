@@ -138,7 +138,7 @@ export async function startDeterministicModelServer(responseText: string): Promi
       const body = JSON.parse(raw) as {
         stream?: boolean;
         model?: string;
-        input?: { role?: string; content?: unknown }[];
+        input?: { role?: string; content?: unknown; type?: string; call_id?: string; output?: string }[];
       };
       const latestUser = Array.isArray(body.input) ? body.input.filter((item) => item.role === 'user').at(-1) : null;
       const marker = JSON.stringify(latestUser?.content ?? '').match(/SOAK_\d+_(?:ACCEPTED|RESTORED|SWITCHED)/)?.[0];
@@ -159,51 +159,209 @@ export async function startDeterministicModelServer(responseText: string): Promi
         : 'e2e_approval_shared';
       const repeatedTool = JSON.stringify(latestUser?.content ?? '').match(/REPEAT_TOOL_[12]/)?.[0];
       const turnInput = latestUser && body.input ? body.input.slice(body.input.lastIndexOf(latestUser)) : [];
-      const tileTool =
-        JSON.stringify(latestUser?.content ?? '').includes('STOP_EXECUTOR_TREE') &&
-        !JSON.stringify(turnInput).includes('e2e_stop_executor')
+      const javascriptOutputs = turnInput.filter(
+        (item) => item.type === 'function_call_output' && (item.call_id ?? '').startsWith('e2e_javascript')
+      );
+      const javascriptOutput = javascriptOutputs.at(-1)?.output;
+      let javascriptPending: string | undefined;
+      let javascriptSucceeded = false;
+      if (javascriptOutput) {
+        try {
+          const result = JSON.parse(javascriptOutput);
+          javascriptPending = result.status === 'running' ? result.cell_id : undefined;
+          javascriptSucceeded =
+            !javascriptPending && JSON.parse(result.output).found === true && result.errors.length === 0;
+        } catch {
+          javascriptSucceeded = false;
+        }
+      }
+      if (
+        JSON.stringify(latestUser?.content ?? '').includes('WORKER_RECOVERY_PROOF') &&
+        raw.includes('[worker message]') &&
+        raw.includes('RECOVERED_WORKER_MAIL')
+      ) {
+        observations.push({ marker: 'WORKER_PARENT_MESSAGE', model: body.model ?? '' });
+      }
+      const workerFollowup = JSON.stringify(latestUser?.content ?? '').includes('WORKER_FOLLOWUP_MESSAGE');
+      const parentWorkerMessage = JSON.stringify(latestUser?.content ?? '').includes('WORKER_RECOVERY_PROOF')
+        ? raw.match(/\[worker message\] ([a-z0-9-]+): RECOVERED_WORKER_MAIL/)?.[1]
+        : undefined;
+      if (parentWorkerMessage && raw.includes('WORKER_FOLLOWUP_ACK')) {
+        observations.push({ marker: 'WORKER_FOLLOWUP_DELIVERED', model: body.model ?? '' });
+      }
+      const conversationTool =
+        workerFollowup && !JSON.stringify(turnInput).includes('e2e_worker_followup_ack')
           ? {
-              callId: 'e2e_stop_executor',
-              name: 'execute_bash',
+              callId: 'e2e_worker_followup_ack',
+              name: 'worker_message',
+              args: { recipient: 'owner', message: 'WORKER_FOLLOWUP_ACK' },
+            }
+          : parentWorkerMessage && !JSON.stringify(turnInput).includes('e2e_parent_worker_message')
+            ? {
+                callId: 'e2e_parent_worker_message',
+                name: 'send_worker_message',
+                args: { worker_id: parentWorkerMessage, message: 'WORKER_FOLLOWUP_MESSAGE' },
+              }
+            : null;
+      const workerChild = JSON.stringify(latestUser?.content ?? '').includes('WORKER_CHILD_HOLD');
+      const workerResume =
+        raw.includes('WORKER_CHILD_HOLD') &&
+        JSON.stringify(latestUser?.content ?? '').includes('Continue the existing assignment');
+      if (workerChild && JSON.stringify(turnInput).includes('e2e_worker_read')) {
+        observations.push({ marker: 'WORKER_CHILD_RECORDED', model: body.model ?? '' });
+        await backgroundReleased;
+        if (response.destroyed) {
+          return;
+        }
+      }
+      if (raw.includes('WORKER_CHILD_HOLD')) {
+        observations.push({
+          marker: `WORKER_REQUEST:${JSON.stringify(latestUser?.content ?? '')}`,
+          model: body.model ?? '',
+        });
+      }
+      const workerPeerTool = workerResume
+        ? !JSON.stringify(turnInput).includes('e2e_worker_context')
+          ? { callId: 'e2e_worker_context', name: 'worker_context', args: {} }
+          : !JSON.stringify(turnInput).includes('e2e_worker_message')
+            ? {
+                callId: 'e2e_worker_message',
+                name: 'worker_message',
+                args: { recipient: 'owner', message: 'RECOVERED_WORKER_MAIL' },
+              }
+            : null
+        : null;
+      const workerTool =
+        workerChild && !JSON.stringify(turnInput).includes('e2e_worker_read')
+          ? { callId: 'e2e_worker_read', name: 'read_file', args: { file_path: 'worker-input.txt' } }
+          : workerResume && !JSON.stringify(turnInput).includes('e2e_worker_resume_read')
+            ? { callId: 'e2e_worker_resume_read', name: 'read_file', args: { file_path: 'worker-input.txt' } }
+            : JSON.stringify(latestUser?.content ?? '').includes('WORKER_RECOVERY_PROOF') &&
+                !JSON.stringify(turnInput).includes('e2e_worker_spawn')
+              ? {
+                  callId: 'e2e_worker_spawn',
+                  name: 'spawn_worker',
+                  args: {
+                    task: 'WORKER_CHILD_HOLD Read worker-input.txt and retain the result.',
+                    isolation: 'none',
+                    allow_dirty: false,
+                    name: 'reader',
+                    role: 'Inspect the input',
+                    peer_communication: true,
+                  },
+                }
+              : null;
+      const tileTool =
+        conversationTool ??
+        workerPeerTool ??
+        workerTool ??
+        (JSON.stringify(latestUser?.content ?? '').includes('SUBAGENT_CHILD_PROOF') &&
+        !JSON.stringify(turnInput).includes('e2e_subagent_read')
+          ? {
+              callId: 'e2e_subagent_read',
+              name: 'read_file',
               args: {
-                command: `python -c 'import subprocess,sys,time; subprocess.Popen([sys.executable,"-c","import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); time.sleep(120)","OMNI_EXECUTOR_CHILD"]); time.sleep(120)' OMNI_EXECUTOR_PARENT`,
-                timeout: 180,
+                file_path:
+                  JSON.stringify(latestUser?.content ?? '').match(/\/tmp\/[^"\\\s]+\/subagent-output\.txt/)?.[0] ??
+                  'subagent-output.txt',
               },
             }
-          : repeatedTool && !JSON.stringify(turnInput).includes('e2e_repeat_shared')
+          : javascriptPending
             ? {
-                callId: 'e2e_repeat_shared',
-                name: 'execute_bash',
-                args: { command: `python -c 'print("${repeatedTool}_RESULT")'` },
+                callId: `e2e_javascript_wait_${javascriptOutputs.length}`,
+                name: 'wait_javascript',
+                args: { cell_id: javascriptPending, timeout_ms: 1000, offset: 0 },
               }
-            : approvalTile && !raw.includes(approvalCall)
+            : JSON.stringify(latestUser?.content ?? '').includes('JAVASCRIPT_SUBAGENT_PROOF') &&
+                !JSON.stringify(turnInput).includes('e2e_javascript_subagent')
               ? {
-                  callId: approvalCall,
-                  name: 'execute_bash',
-                  args: { command: `python -c 'print("TILE_APPROVAL_${approvalTile}")'` },
+                  callId: 'e2e_javascript_subagent',
+                  name: 'exec_javascript',
+                  args: {
+                    yield_time_ms: 0,
+                    code: `await tools.call("explore", {input: "SUBAGENT_CHILD_PROOF " + ${JSON.stringify((raw.match(/\/tmp\/[^"\\\s]+\/oversized-output\.txt/)?.[0] ?? 'oversized-output.txt').replace('oversized-output.txt', 'subagent-output.txt'))}}); const children = await session.subagents.list(); const child = children.threads.find(t => t.source === "agent_tool"); const transcript = await session.subagents.transcript({id: child.thread_id}); text({found: transcript.items.some(i => i.kind === "agent_message") && transcript.items.some(i => i.kind === "tool_call" && i.content.execution_state === "completed")});`,
+                  },
                 }
-              : tile && !raw.includes(artifactCall)
+              : JSON.stringify(latestUser?.content ?? '').includes('JAVASCRIPT_SUBAGENT_RELOAD') &&
+                  !JSON.stringify(turnInput).includes('e2e_javascript_subagent_reload')
                 ? {
-                    callId: artifactCall,
-                    name: 'display_artifact',
+                    callId: 'e2e_javascript_subagent_reload',
+                    name: 'exec_javascript',
                     args: {
-                      title: `${tile} artifact`,
-                      content: `${tile}_ARTIFACT_${stage}`,
-                      mode: 'markdown',
-                      artifact_id: 'shared-report',
+                      code: 'const children = await session.subagents.list(); const transcript = await session.subagents.transcript({id: children.threads[0].thread_id}); text({found: transcript.items.some(i => i.kind === "agent_message")});',
                     },
                   }
-                : tile && !raw.includes(planCall)
+                : JSON.stringify(latestUser?.content ?? '').includes('JAVASCRIPT_RELOAD_PROOF') &&
+                    !JSON.stringify(turnInput).includes('e2e_javascript_reload')
                   ? {
-                      callId: planCall,
-                      name: updated ? 'task_update' : 'task_create',
+                      callId: 'e2e_javascript_reload',
+                      name: 'exec_javascript',
                       args: {
-                        ...(updated ? { task_id: '1' } : {}),
-                        subject: `${tile}_PLAN_${stage}`,
-                        description: `Plan owned by tile ${tile}`,
+                        code: 'const history = await session.results.list(); const r = history.results.find(r => r.tool === "read_file"); const saved = await session.results.get(r.id); const transcript = await session.transcript.list({limit: 50}); text({found: saved.value.includes("RETAINED_MIDDLE_" + "NEEDLE") && transcript.items.length > 0, resultId: r.id});',
                       },
                     }
-                  : null;
+                  : raw.includes('JAVASCRIPT_OUTPUT_PROOF') && !raw.includes('e2e_javascript')
+                    ? {
+                        callId: 'e2e_javascript',
+                        name: 'exec_javascript',
+                        args: {
+                          yield_time_ms: 0,
+                          code: `const r = await tools.call("read_file", {file_path: ${JSON.stringify(raw.match(/\/tmp\/[^"\\\s]+\/oversized-output\.txt/)?.[0] ?? 'oversized-output.txt')}}); const saved = await session.results.get(r.id); text({found: saved.value.includes("RETAINED_MIDDLE_" + "NEEDLE") && r.value === saved.value, resultId: r.id});`,
+                        },
+                      }
+                    : raw.includes('RETAINED_OUTPUT_PROOF') && !raw.includes('e2e_retained_output')
+                      ? {
+                          callId: 'e2e_retained_output',
+                          name: 'read_file',
+                          args: {
+                            file_path:
+                              raw.match(/\/tmp\/[^"\\\s]+\/oversized-output\.txt/)?.[0] ?? 'oversized-output.txt',
+                          },
+                        }
+                      : JSON.stringify(latestUser?.content ?? '').includes('STOP_EXECUTOR_TREE') &&
+                          !JSON.stringify(turnInput).includes('e2e_stop_executor')
+                        ? {
+                            callId: 'e2e_stop_executor',
+                            name: 'execute_bash',
+                            args: {
+                              command: `python -c 'import subprocess,sys,time; subprocess.Popen([sys.executable,"-c","import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); time.sleep(120)","OMNI_EXECUTOR_CHILD"]); time.sleep(120)' OMNI_EXECUTOR_PARENT`,
+                              timeout: 180,
+                            },
+                          }
+                        : repeatedTool && !JSON.stringify(turnInput).includes('e2e_repeat_shared')
+                          ? {
+                              callId: 'e2e_repeat_shared',
+                              name: 'execute_bash',
+                              args: { command: `python -c 'print("${repeatedTool}_RESULT")'` },
+                            }
+                          : approvalTile && !raw.includes(approvalCall)
+                            ? {
+                                callId: approvalCall,
+                                name: 'execute_bash',
+                                args: { command: `python -c 'print("TILE_APPROVAL_${approvalTile}")'` },
+                              }
+                            : tile && !raw.includes(artifactCall)
+                              ? {
+                                  callId: artifactCall,
+                                  name: 'display_artifact',
+                                  args: {
+                                    title: `${tile} artifact`,
+                                    content: `${tile}_ARTIFACT_${stage}`,
+                                    mode: 'markdown',
+                                    artifact_id: 'shared-report',
+                                  },
+                                }
+                              : tile && !raw.includes(planCall)
+                                ? {
+                                    callId: planCall,
+                                    name: updated ? 'task_update' : 'task_create',
+                                    args: {
+                                      ...(updated ? { task_id: '1' } : {}),
+                                      subject: `${tile}_PLAN_${stage}`,
+                                      description: `Plan owned by tile ${tile}`,
+                                    },
+                                  }
+                                : null);
       if (tileTool || (asksForImage && !raw.includes('e2e_escalate'))) {
         const item = {
           id: `fc_${tileTool?.callId ?? 'e2e_escalate'}`,
@@ -248,15 +406,44 @@ export async function startDeterministicModelServer(responseText: string): Promi
         return;
       }
       const sessionA = raw.includes('WAIT_FOR_SESSION_A');
-      const text = queuedImage
-        ? asksForImage
-          ? 'ESCALATION_IMAGE_RECEIVED'
-          : 'QUEUED_IMAGE_RECEIVED'
-        : sessionA
-          ? 'SESSION_A_REPLY'
-          : raw.includes('PROMPT_FOR_SESSION_B')
-            ? 'SESSION_B_REPLY'
-            : responseText;
+      const invalidRetainedPreview =
+        raw.includes('e2e_retained_output') &&
+        (raw.includes('RETAINED_MIDDLE_NEEDLE') || !raw.includes('Full text saved as'));
+      const text = workerFollowup
+        ? 'WORKER_FOLLOWUP_READY'
+        : workerResume
+          ? raw.includes('WORKER_PERSISTED_INPUT') &&
+            turnInput.some(
+              (item) =>
+                item.type === 'function_call_output' &&
+                item.call_id === 'e2e_worker_context' &&
+                (item.output ?? '').includes('"peers"')
+            ) &&
+            turnInput.some(
+              (item) =>
+                item.type === 'function_call_output' &&
+                item.call_id === 'e2e_worker_message' &&
+                (item.output ?? '').includes('RECOVERED_WORKER_MAIL')
+            )
+            ? 'WORKER_RESUMED_READY'
+            : 'WORKER_HISTORY_MISSING'
+          : JSON.stringify(latestUser?.content ?? '').includes('WORKER_RECOVERY_PROOF')
+            ? 'WORKER_PARENT_READY'
+            : javascriptOutput
+              ? javascriptSucceeded
+                ? 'JAVASCRIPT_FILTER_READY'
+                : 'JAVASCRIPT_FILTER_FAILURE'
+              : invalidRetainedPreview
+                ? 'OUTPUT_BUDGET_FAILURE'
+                : queuedImage
+                  ? asksForImage
+                    ? 'ESCALATION_IMAGE_RECEIVED'
+                    : 'QUEUED_IMAGE_RECEIVED'
+                  : sessionA
+                    ? 'SESSION_A_REPLY'
+                    : raw.includes('PROMPT_FOR_SESSION_B')
+                      ? 'SESSION_B_REPLY'
+                      : responseText;
       if (body.stream !== true) {
         response.writeHead(200, { 'content-type': 'application/json' });
         const finish = () => response.end(JSON.stringify(responsePayload('completed', text, responseId)));

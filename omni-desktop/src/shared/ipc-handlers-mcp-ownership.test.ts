@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { registerConfigHandlers, registerSettingsConfigHandlers } from '@/shared/ipc-handlers';
+import { registerConfigHandlers } from '@/shared/ipc-handlers';
 import type { IIpcListener } from '@/shared/ipc-listener';
 
 const fakeIpc = () => {
@@ -23,48 +23,23 @@ afterEach(() => {
 });
 
 describe('config ownership hooks', () => {
-  it('can reject both generic JSON and text writes before mcp.json changes', async () => {
+  it('rejects both generic JSON and text writes to mcp.json', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ipc-config-'));
     dirs.push(dir);
-    const beforeWrite = vi.fn(async (filePath: string) => {
-      if (filePath.endsWith('mcp.json')) {
-        throw new Error('canonical owner');
-      }
-    });
     const { ipc, handlers } = fakeIpc();
-    registerConfigHandlers(ipc, dir, { beforeWrite });
+    registerConfigHandlers(ipc, dir);
     const mcpPath = join(dir, 'mcp.json');
 
     await expect(
       handlers.get('config:write-json-file')!(undefined as never, mcpPath as never, {} as never)
-    ).rejects.toThrow('canonical owner');
+    ).rejects.toThrow('Omniagents owns mcp.json');
     await expect(
       handlers.get('config:write-text-file')!(undefined as never, mcpPath as never, '{}' as never)
-    ).rejects.toThrow('canonical owner');
+    ).rejects.toThrow('Omniagents owns mcp.json');
     expect(existsSync(mcpPath)).toBe(false);
 
-    const modelsPath = join(dir, 'models.json');
+    const modelsPath = join(dir, 'network.json');
     await handlers.get('config:write-json-file')!(undefined as never, modelsPath as never, { version: 3 } as never);
     expect(JSON.parse(readFileSync(modelsPath, 'utf8'))).toEqual({ version: 3 });
-  });
-
-  it('rejects the legacy full-document MCP setter before mutating the store', async () => {
-    const { ipc, handlers } = fakeIpc();
-    const set = vi.fn();
-    registerSettingsConfigHandlers(
-      ipc,
-      () => ({ get: vi.fn(), set }) as never,
-      vi.fn(),
-      {},
-      { beforeSetMcp: () => Promise.reject(new Error('canonical owner')) }
-    );
-
-    await expect(
-      handlers.get('settings:set-mcp-config')!(
-        undefined as never,
-        { mcpServers: { github: { type: 'http', url: 'https://mcp' } } } as never
-      )
-    ).rejects.toThrow('canonical owner');
-    expect(set).not.toHaveBeenCalled();
   });
 });

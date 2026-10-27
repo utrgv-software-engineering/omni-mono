@@ -59,7 +59,9 @@ async def test_registered_host_environment_is_unconfined(tmp_path):
     workspace = lease.workspace
 
     assert workspace.enforces_confinement is False
-    assert workspace.resolve("/etc/hostname") == "/etc/hostname"
+    # A path outside the workspace, spelled for this host ("C:\\etc\\..." on Windows).
+    outside = str(Path(tmp_path.anchor) / "etc" / "hostname")
+    assert workspace.resolve(outside) == outside
     # The root still anchors relative paths; it just is not a fence.
     assert workspace.resolve("sub/f.txt") == str(tmp_path / "sub" / "f.txt")
 

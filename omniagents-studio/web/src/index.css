@@ -1,0 +1,128 @@
+@import 'highlight.js/styles/github.css' layer(base);
+@import 'tailwindcss';
+/* The shared design system: the same tokens, themes and components as the
+ * desktop app and the omniagents web UI. */
+@import '@omniagents/ui/theme.css';
+@import '@omniagents/chat-ui/styles.css';
+@plugin '@tailwindcss/typography';
+
+/* streamdown (the chat UI's markdown) ships Tailwind class strings in its
+ * build; npm hoists it to the monorepo root. */
+@source "../../../node_modules/streamdown/dist";
+
+/* Studio's own: trace span kinds and the loading bar. */
+@theme {
+  --color-agent: #3b82f6;
+  --color-function: #8b5cf6;
+  --color-generation: #f97316;
+  --color-error: #ef4444;
+  --color-success: #10b981;
+
+  --animate-loading-bar: loading-bar 1.2s ease-in-out infinite;
+
+  @keyframes loading-bar {
+    0% {
+      transform: translateX(-100%);
+      width: 40%;
+    }
+    50% {
+      width: 60%;
+    }
+    100% {
+      transform: translateX(250%);
+      width: 40%;
+    }
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/* Override KaTeX's default Computer Modern font with system fonts */
+.katex {
+  font: inherit !important;
+  font-size: 1.1em !important;
+}
+
+.katex .mathnormal {
+  font-family: system-ui, -apple-system, sans-serif !important;
+  font-style: normal !important;
+}
+
+.katex .mathit {
+  font-family: system-ui, -apple-system, sans-serif !important;
+  font-style: italic !important;
+}
+
+.hljs {
+  background: transparent;
+}
+
+code.hljs,
+pre code.hljs {
+  padding: 0;
+  background: transparent;
+}
+
+.dark .hljs {
+  color: var(--foreground);
+}
+
+.dark .hljs-comment,
+.dark .hljs-quote {
+  color: var(--muted-foreground);
+}
+
+.dark .hljs-keyword,
+.dark .hljs-meta .hljs-keyword,
+.dark .hljs-selector-tag,
+.dark .hljs-subst {
+  color: #93c5fd;
+}
+
+.dark .hljs-title,
+.dark .hljs-name,
+.dark .hljs-section {
+  color: #c084fc;
+}
+
+.dark .hljs-attr,
+.dark .hljs-attribute,
+.dark .hljs-literal,
+.dark .hljs-meta,
+.dark .hljs-number,
+.dark .hljs-operator,
+.dark .hljs-variable,
+.dark .hljs-selector-attr,
+.dark .hljs-selector-class,
+.dark .hljs-selector-id {
+  color: #38bdf8;
+}
+
+.dark .hljs-string,
+.dark .hljs-regexp,
+.dark .hljs-meta .hljs-string {
+  color: #4ade80;
+}
+
+.dark .hljs-built_in,
+.dark .hljs-symbol {
+  color: #f97316;
+}
+
+.dark .hljs-bullet {
+  color: #facc15;
+}
+
+.dark .hljs-addition {
+  color: #4ade80;
+  background-color: rgba(34, 197, 94, 0.15);
+}
+
+.dark .hljs-deletion {
+  color: #fca5a5;
+  background-color: rgba(220, 38, 38, 0.2);
+}

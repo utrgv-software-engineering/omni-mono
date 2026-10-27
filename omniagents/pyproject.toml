@@ -5,6 +5,8 @@ description = "OmniAgents"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    # Intel macOS wheels bundle the pinned native engine through setup.py.
+    "quickjs-ng==0.17.0.1; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "openai-agents[realtime]>=0.16.0,<0.17",
     # openai 2.45.0 made InputTokensDetails.cache_write_tokens a REQUIRED
     # field; openai-agents 0.16.x constructs InputTokensDetails(cached_tokens=0)
@@ -12,9 +14,14 @@ dependencies = [
     # with the openai-agents 0.17+ bump that handles the new field.
     "openai<2.45",
     "python-dotenv",
-    "pydantic-core==2.41.4",
+    # Serializes first clones of a project's shared git-remote checkout.
+    "filelock>=3.12",
+    # Transcript thumbnails for attached images.
+    "pillow>=11",
     "pydantic==2.12.3",
     "PyYAML",
+    # Round-trip YAML: editing an agent.yml keeps its comments and layout.
+    "ruamel.yaml>=0.18",
     "Jinja2",
     "requests",
     "beautifulsoup4",
@@ -33,20 +40,16 @@ voice = [
 litellm = [
     "openai-agents[litellm]>=0.16.0,<0.17",
 ]
-studio = [
-    "httpx>=0.27.0",
-]
 server = [
     "fastapi[all]>=0.115.12",
     "uvicorn>=0.34.1",
+    # Event intake: Slack Socket Mode (apps.connections.open + its WebSocket).
+    "httpx>=0.27",
+    "websockets>=13",
     # Host terminals on Windows (ConPTY); POSIX hosts use the stdlib pty.
     "pywinpty>=2.0.14; sys_platform == 'win32'",
 ]
 web = [
-    "fastapi[all]>=0.115.12",
-    "uvicorn>=0.34.1",
-]
-studio-server = [
     "fastapi[all]>=0.115.12",
     "uvicorn>=0.34.1",
 ]
@@ -79,9 +82,6 @@ session-postgres = [
     "psycopg[binary]>=3.2",
     "psycopg_pool>=3.2",
 ]
-audio-blob = [
-    "azure-storage-blob>=12.20",
-]
 sandbox-docker = [
     "openai-agents[docker]>=0.16.0,<0.17",
 ]
@@ -113,12 +113,8 @@ presidio = [
     "presidio-analyzer>=2.2.0",
     "presidio-anonymizer>=2.2.0",
 ]
-platform = [
-    "PyJWT[crypto]>=2.8.0",
-]
-enterprise = ["omniagents[oidc,presidio,platform]"]
 all = [
-    "omniagents[server,web,studio,studio-server,voice,litellm,markdown,oidc,presidio,platform,session-sqlalchemy,session-redis,session-mongodb,session-encrypted,session-postgres,audio-blob,sandbox-docker,sandbox-e2b,sandbox-modal,sandbox-runloop,sandbox-daytona,sandbox-blaxel,sandbox-vercel,sandbox-cloudflare,sandbox-bashkit]",
+    "omniagents[server,web,voice,litellm,markdown,oidc,presidio,session-sqlalchemy,session-redis,session-mongodb,session-encrypted,session-postgres,sandbox-docker,sandbox-e2b,sandbox-modal,sandbox-runloop,sandbox-daytona,sandbox-blaxel,sandbox-vercel,sandbox-cloudflare,sandbox-bashkit]",
 ]
 training = [
     # GRPO/SFT agent fine-tuning (omniagents.training).
@@ -147,9 +143,12 @@ dev = [
     "pytest-asyncio",
     "pytest-xdist",
     "pytest-timeout",
+    # Distribution tests build wheels in-process; bdist_wheel is built into
+    # setuptools from 70.1 (older interpreters ship an older setuptools).
+    "setuptools>=70.1",
     "bump2version",
     "black==26.5.1",
-    "mypy==1.19.0",
+    "mypy==2.4.0",
     "types-PyYAML>=6.0",
     "coverage[toml]",
     "pytest-cov",
@@ -202,7 +201,6 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = [
     "omniagents.cli",                          # 52 errors
-    "omniagents.studio.server.api",            # 53 errors
     "omniagents.core.runtime.bridge",          # 40 errors
     "omniagents.core.agents.service",          # 31 errors
     "omniagents.core.training.grpo",           # 30 errors
@@ -213,7 +211,6 @@ module = [
     "omniagents.core.sandbox.docker_extended", # 20 errors
     "omniagents.core.runtime.serve_harness",   # 16 errors
     "omniagents.builtin.tools.file_tools",     # 16 errors
-    "omniagents.notebook.evaluation",          # 15 errors
     "omniagents.core.eval.optimize",           # 15 errors
     "omniagents.rpc.agents.remote",            # 13 errors
     "omniagents.core.training.sft",            # 11 errors
@@ -246,9 +243,6 @@ exclude = '''
 )/
 '''
 
-[project.entry-points."omniagents.providers"]
-auth_platform = "omniagents.core.providers.platform.auth:PlatformAuthProvider"
-
 [project.entry-points."omniagents.backends"]
 server = "omniagents.backends.server:ServerBackend"
 ink = "omniagents.backends.ink:InkBackend"
@@ -267,12 +261,13 @@ dev = [
     "fastapi[all]>=0.115.12",
     "hypothesis>=6.142.4",
     "mkdocs-material>=9.5.0",
-    "mypy==1.19.0",
+    "mypy==2.4.0",
     "pytest",
     "pytest-asyncio",
     "pytest-cov",
     "pytest-xdist",
     "pytest-timeout",
+    "setuptools>=70.1",
     "types-PyYAML>=6.0",
     "vcrpy>=5.1.0",
 ]
@@ -281,6 +276,7 @@ dev = [
 include = ["omniagents*"]
 
 [tool.setuptools]
+license-files = ["LICENSE*", "vendor/quickjs-ng/LICENSE", "vendor/quickjs-ng/upstream-quickjs/LICENSE"]
 include-package-data = true
 
 [tool.setuptools.package-data]
@@ -291,32 +287,20 @@ include-package-data = true
 "omniagents.builtin" = [
     "capabilities/*.yml",
 ]
-# Guardian reviewer risk policy and plan-completion review policy —
-# data files read at review time.
+# Guardian reviewer prompts (Codex's, see guardian_prompts/SOURCE.md) and
+# the plan-completion review policy — data files read at review time.
 "omniagents.core.agents" = [
-    "guardian_policy.md",
+    "guardian_prompts/*.md",
     "plan_review_policy.md",
 ]
-# Ensure the Ink TUI TypeScript sources are included in wheels/sdists
+# The built Ink TUI bundle; its sources build in the monorepo workspace.
 "omniagents.backends.ink" = [
-    "tui/package.json",
-    "tui/tsconfig.json",
-    "tui/src/**/*.ts",
-    "tui/src/**/*.tsx",
     "tui/dist/*",
     "tui/dist/**/*",
 ]
 "omniagents.backends.web" = [
     "ui/dist/*",
     "ui/dist/**/*",
-]
-"omniagents.studio.tracing" = [
-    "static/*",
-    "static/assets/*",
-]
-"omniagents.studio.server" = [
-    "static/*",
-    "static/assets/*",
 ]
 "omniagents.core.project" = [
     "templates/*",

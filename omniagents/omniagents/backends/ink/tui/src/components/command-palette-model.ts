@@ -12,7 +12,7 @@ import {
   normalizeSlashCommand,
   takesArgs,
   type SlashCommand,
-} from "../rpc/slash.js";
+} from "@omniagents/client/rpc/slash";
 
 export type CommandRow = SlashCommand;
 
@@ -62,17 +62,6 @@ export const BUILTIN_COMMANDS: readonly CommandRow[] = [
     aliases: [],
     during_run: false,
     order: 22,
-    source: "client",
-  },
-  {
-    name: "diff",
-    function: null,
-    description: "Review this session's changes (the review screen)",
-    usage: "",
-    args: { kind: "none" },
-    aliases: ["review"],
-    during_run: true,
-    order: 23,
     source: "client",
   },
   {

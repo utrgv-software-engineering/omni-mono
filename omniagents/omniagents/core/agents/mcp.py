@@ -6,7 +6,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from copy import deepcopy
-from typing import Any, Dict, List, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from agents.mcp import (
     MCPServer,
@@ -14,7 +14,7 @@ from agents.mcp import (
     MCPServerStdio,
     MCPServerStreamableHttp,
 )
-from mcp import StdioServerParameters, stdio_client
+from mcp import stdio_client
 
 from . import mcp_ui
 from .specs import AgentSpec, MCPServerConfig
@@ -75,6 +75,48 @@ async def _capture_ui_after_call(
         return
     for block in blocks:
         mcp_ui.record(server_name, tool_name, block)
+
+
+# MCP Apps' tool visibility (``_meta.ui.visibility``), per (server, tool) as
+# last listed: who may call it. ``"model"``: the agent; ``"app"``: that
+# server's own app, through mcp_call_tool. Unstated, both.
+_TOOL_VISIBILITY: Dict[Tuple[str, str], Tuple[str, ...]] = {}
+_DEFAULT_VISIBILITY = ("model", "app")
+
+
+def _visibility_of(tool: Any) -> Tuple[str, ...]:
+    meta = getattr(tool, "meta", None)
+    if meta is None and isinstance(tool, dict):
+        meta = tool.get("meta") or tool.get("_meta")
+    ui = (
+        (meta.get("ui") if isinstance(meta, dict) else getattr(meta, "ui", None))
+        if meta
+        else None
+    )
+    raw = (
+        (
+            ui.get("visibility")
+            if isinstance(ui, dict)
+            else getattr(ui, "visibility", None)
+        )
+        if ui
+        else None
+    )
+    if isinstance(raw, (list, tuple)) and raw:
+        return tuple(str(v) for v in raw)
+    return _DEFAULT_VISIBILITY
+
+
+def tool_visibility(server_name: str, tool_name: str) -> Optional[Tuple[str, ...]]:
+    """Who may call the tool, as last listed; None when it hasn't been."""
+    return _TOOL_VISIBILITY.get((server_name, tool_name))
+
+
+def _tool_name_of(tool: Any) -> Optional[str]:
+    name = getattr(tool, "name", None)
+    if not name and isinstance(tool, dict):
+        name = tool.get("name")
+    return str(name) if name else None
 
 
 def _harvest_tool_ui_meta(server_name: str, tools: Any) -> None:
@@ -192,11 +234,36 @@ def _attach_ui_capture(server: MCPServer) -> MCPServer:
     if list_orig is not None and callable(list_orig):
 
         async def list_tools(*args, **kwargs):
-            tools = await list_orig(*args, **kwargs)
+            # One server failing (gone away, a broken connection) costs the
+            # agent that server's tools for this turn, not the whole turn:
+            # listing every server's tools comes before the model is called.
             try:
-                _harvest_tool_ui_meta(getattr(server, "name", "") or "", tools)
+                tools = await list_orig(*args, **kwargs)
+            except Exception:
+                logger.warning(
+                    "MCP server %r couldn't list its tools; leaving them out this turn",
+                    getattr(server, "name", server),
+                    exc_info=True,
+                )
+                return []
+            server_name = getattr(server, "name", "") or ""
+            try:
+                _harvest_tool_ui_meta(server_name, tools)
             except Exception:
                 logger.debug("mcp_ui list_tools harvest failed", exc_info=True)
+            # MCP Apps: each tool's visibility kept (mcp_call_tool checks an
+            # app's calls against it), and the agent offered only the tools
+            # visible to the model; an app-only tool is its app's alone
+            if isinstance(tools, list):
+                offered = []
+                for tool in tools:
+                    name = _tool_name_of(tool)
+                    visible = _visibility_of(tool)
+                    if name:
+                        _TOOL_VISIBILITY[(server_name, name)] = visible
+                    if "model" in visible:
+                        offered.append(tool)
+                return offered
             return tools
 
         try:
@@ -270,6 +337,17 @@ def _instantiate_server(cfg: MCPServerConfig, params: Dict[str, Any]) -> MCPServ
     )
 
 
+def is_absent_optional(cfg: MCPServerConfig, params: Any) -> bool:
+    """An ``optional`` server (``options.optional: true``) the environment does not
+    have: its url (or command) is empty. It is left out, not an error."""
+    if not (cfg.options or {}).get("optional"):
+        return False
+    if not isinstance(params, dict):
+        return True
+    key = "command" if cfg.type.lower() == "stdio" else "url"
+    return not params.get(key)
+
+
 def build_mcp_servers(
     spec: AgentSpec,
     settings: Dict[str, Any],
@@ -288,6 +366,8 @@ def build_mcp_servers(
         resolved_params = _resolve_setting_placeholders(deepcopy(cfg.params), settings)
         if resolved_params is None:
             raise ValueError(f"MCP server '{cfg.name}' has params that resolve to None")
+        if is_absent_optional(cfg, resolved_params):
+            continue
         if (
             auth_resolver is not None
             and isinstance(resolved_params, dict)
@@ -303,6 +383,33 @@ def build_mcp_servers(
         server = _instantiate_server(cfg, resolved_params)
         servers.append(server)
     return servers
+
+
+def subagent_mcp_configs(spec: AgentSpec) -> List[MCPServerConfig]:
+    """The MCP servers ``spec``'s sub-agents declare and ``spec`` does not.
+
+    A sub-agent (an agent tool or a handoff) runs inside its caller's run, on
+    the servers its caller's session connected; these are the ones to
+    connect for it. One per name: the first declaration wins.
+    """
+    cached = getattr(spec, "_subagent_mcp_configs", None)
+    if cached is not None:
+        return cached
+    from omniagents.core.agents.builder import subagent_specs
+
+    names = {getattr(cfg, "name", None) for cfg in (spec.mcp_servers or [])}
+    extra: List[MCPServerConfig] = []
+    for sub in subagent_specs(spec):
+        for cfg in sub.mcp_servers or []:
+            name = getattr(cfg, "name", None)
+            if name not in names:
+                names.add(name)
+                extra.append(cfg)
+    try:
+        spec._subagent_mcp_configs = extra
+    except Exception:
+        pass
+    return extra
 
 
 def mcp_configuration_signature(spec: AgentSpec, settings: Dict[str, Any]) -> str:

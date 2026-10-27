@@ -4,10 +4,6 @@
  * — tokens are write-only and live in the main/server `SecretStore`.
  */
 import { useStore } from '@nanostores/react';
-import { Key, Plus, Trash2 } from 'lucide-react';
-import { memo, useCallback, useState } from 'react';
-
-import { cn } from '@/renderer/ds/cn';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -17,8 +13,12 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/renderer/ds/ui/alert-dialog';
-import { Button } from '@/renderer/ds/ui/button';
+} from '@omniagents/ui/alert-dialog';
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
+import { Key, Plus, Trash2 } from 'lucide-react';
+import { memo, useCallback, useState } from 'react';
+
 import { emitter } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { GitCredential } from '@/shared/types';

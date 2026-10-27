@@ -1,7 +1,6 @@
+import { cn } from '@omniagents/ui/cn';
+import { TabsList, TabsTrigger } from '@omniagents/ui/tabs';
 import type { ComponentProps } from 'react';
-
-import { cn } from '@/renderer/ds/cn';
-import { TabsList, TabsTrigger } from '@/renderer/ds/ui/tabs';
 
 /**
  * Section navigation within one destination or object. Page tabs are always

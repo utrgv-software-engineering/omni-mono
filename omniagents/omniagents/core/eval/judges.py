@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-import re
 from typing import Any, Dict, List, Optional, Callable
 
 import yaml
@@ -20,7 +19,6 @@ async def evaluate_split(
     run_max_turns: int | None = None,
     show: int = 20,
     replay_mode: str = "replay",
-    runs_file: str | None = None,
     progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
     eval_config: Any | None = None,
 ) -> Dict[str, Any]:
@@ -49,6 +47,32 @@ async def evaluate_split(
     if not scenarios:
         raise SystemExit("No scenarios in split")
 
+    from omniagents.core.eval.judge_validation import (
+        TestSplitSpent,
+        check_test_unspent,
+        confusion,
+        is_test_split,
+        judge_version,
+        record_validation,
+    )
+    from omniagents.core.eval.layout import EvalLayout
+
+    # A judge dataset's test split is measured once per version of the judge;
+    # that measurement is the judge's validation.
+    layout = (
+        EvalLayout(eval_config.eval_dir, eval_config.project_root)
+        if eval_config is not None
+        else None
+    )
+    on_test = layout is not None and is_test_split(layout, Path(split_path))
+    if on_test:
+        try:
+            check_test_unspent(
+                layout, str(judge_key), judge_version(jcfg), Path(split_path)
+            )
+        except TestSplitSpent as exc:
+            raise SystemExit(str(exc)) from exc
+
     category_hint: Optional[str] = None
     try:
         category_hint = Path(split_path).parent.name
@@ -64,57 +88,25 @@ async def evaluate_split(
         except Exception:
             category_hint = None
 
-    def _default_runs_path(sp: Path) -> Path:
-        ts_dir = sp.parents[2]
-        return ts_dir / "generated_runs.json"
+    from omniagents.core.eval.reviews import dataset_conversations
 
-    def _resolve_runs_file(sp: Path, rf: str | None) -> Path | None:
-        if not rf:
-            return None
-        p = Path(rf)
-        if p.is_absolute():
-            return p
-        try:
-            return (sp.parents[2] / p).resolve()
-        except Exception:
-            return p.resolve()
-
-    def _load_runs(path: Path) -> Dict[str, Any] | None:
-        try:
-            if path.exists():
-                return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-        return None
-
-    rf_path = _resolve_runs_file(Path(split_path), runs_file)
-    default_path = _default_runs_path(Path(split_path))
-    expected_ids = [sc.get("id") for sc in scenarios]
-
-    picked = _load_runs(rf_path) if rf_path else None
-    if not picked:
-        picked = _load_runs(default_path)
-
-    if not picked:
-        raise SystemExit(
-            f"Missing generated_runs.json. Expected at: {default_path}. "
-            "Generate scenarios, then run: 'omniagents eval scenarios run'."
-        )
-
-    all_runs = list(picked.get("runs") or [])
-    want = set(expected_ids)
-    runs = [r for r in all_runs if r.get("scenario_id") in want]
-    have_ids = {r.get("scenario_id") for r in runs}
-    missing = list(want - have_ids)
+    # What is judged: each example's answer, as the person who labelled it
+    # saw it.
+    conversations = dataset_conversations(scenarios)
+    expected_ids = [str(sc.get("id") or sc.get("name")) for sc in scenarios]
+    missing = [sid for sid in expected_ids if sid not in conversations]
     if missing:
         raise SystemExit(
-            f"Runs fixtures do not cover all scenarios in split. Missing {len(missing)} scenarios."
+            f"{len(missing)} example(s) in the split carry no reviewed answer "
+            f"(e.g. {missing[0]}); build the judge dataset from reviews"
         )
-
-    by_id = {r.get("scenario_id"): r for r in runs}
+    by_id = {sid: conversations[sid] for sid in expected_ids}
 
     from omniagents.core.agents.specs import AgentSpec
     from omniagents.core.agents.builder import _default_build_agent
+
+    # The provider the judge model resolved to (set when the agent is built).
+    judge_model: Dict[str, Any] = {}
 
     async def _build_judge_agent(agent_cfg: Dict[str, Any], base_dir: Path):
         def _map_js_type(t: Optional[str]):
@@ -156,6 +148,11 @@ async def evaluate_split(
                 )
             except Exception:
                 pass
+        from omniagents.core.eval.loader import judge_examples_text
+
+        examples = judge_examples_text(jcfg)
+        if examples:
+            instructions = f"{instructions}\n\n{examples}"
         model = agent_cfg.get("model", "gpt-4.1")
         output_type = agent_cfg.get("output_type", dict)
         output_type_strict = bool(agent_cfg.get("output_type_strict", False))
@@ -205,15 +202,22 @@ async def evaluate_split(
         def _get_instr() -> str:
             return instructions
 
+        from omniagents.core.eval.models import (
+            merged_model_settings,
+            resolve_eval_model,
+        )
+
+        resolved = resolve_eval_model(model)
+        judge_model["provider"] = resolved.provider if resolved else None
         nm = agent_cfg.get("name") or "Judge"
-        lbl = agent_cfg.get("label") or nm
         spec = AgentSpec(
             name=nm,
             welcome_text="",
             get_agent_instructions=_get_instr,
             build_agent=None,
             available_tools=tools_list,
-            model_name=model,
+            model_name=resolved.name if resolved else model,
+            model_settings=merged_model_settings(None, resolved),
             output_type=out_type,
             output_type_strict=output_type_strict,
             project_slug=None,
@@ -223,20 +227,27 @@ async def evaluate_split(
         return agent
 
     async def _run_judge(agent, prompt: str, max_turns: int = 1):
-        from agents import Runner as AgentsRunner
+        from omniagents.core.eval.models import run_to_final_output
 
         # Judges in this split-evaluation flow are post-hoc — there's
         # no live scenario workspace at this point. Anchor to cwd so
         # any builtin tool the judge gains in the future resolves
         # against the eval host's working directory rather than
         # raising WorkspaceRootRequiredError under strict mode.
-        res = await AgentsRunner.run(
-            agent,
-            prompt,
-            context={"workspace_root": os.getcwd()},
-            max_turns=max_turns,
-        )
-        return getattr(res, "final_output", None)
+        from agents.exceptions import ModelBehaviorError
+
+        try:
+            return await run_to_final_output(
+                agent,
+                prompt,
+                provider=judge_model.get("provider"),
+                context={"workspace_root": os.getcwd()},
+                max_turns=max_turns,
+            )
+        except ModelBehaviorError as exc:
+            # A reply that is not the verdict schema is no verdict: counted
+            # as unanswered, not as Pass or Fail, and the check goes on.
+            return {"error": "invalid_judge_output", "detail": str(exc)}
 
     def _predict_label_from_judge_output(val: Any, category: str) -> bool | None:
         try:
@@ -295,11 +306,11 @@ async def evaluate_split(
         except Exception:
             pass
     idx = 0
-    tp = tn = fp = fn = 0
+    pairs: List[tuple] = []
     for sc in scenarios:
-        sid = sc.get("id")
+        sid = str(sc.get("id") or sc.get("name"))
         label = bool(sc.get("label"))
-        run = by_id.get(sid) or {}
+        run = by_id[sid]
         if source == "history":
             text = json.dumps(run.get("history") or [])
         else:
@@ -315,17 +326,15 @@ async def evaluate_split(
             agent_description=agent_meta.get("description"),
             agent_tools=agent_meta.get("tools"),
         )
-        out = await _run_judge(judge_agent, prompt, max_turns=max_turns)
+        from omniagents.core.eval.pipeline import normalize_fail_reason
+
+        out = normalize_fail_reason(
+            await _run_judge(judge_agent, prompt, max_turns=max_turns), jcfg
+        )
         pred = _predict_label_from_judge_output(out, sc.get("target_category") or "")
         agree = None if pred is None else (pred == label)
-        if pred is True and label is True:
-            tp += 1
-        elif pred is False and label is False:
-            tn += 1
-        elif pred is True and label is False:
-            fp += 1
-        elif pred is False and label is True:
-            fn += 1
+        # A label marks the failure present; Pass is the positive class.
+        pairs.append((not label, None if pred is None else not pred))
         results.append(
             {
                 "id": sid,
@@ -357,14 +366,20 @@ async def evaluate_split(
             except Exception:
                 pass
 
-    tpr = (tp / (tp + fn)) if (tp + fn) > 0 else None
-    tnr = (tn / (tn + fp)) if (tn + fp) > 0 else None
-
+    counts = confusion(pairs)
+    validation = (
+        record_validation(
+            layout, str(judge_key), jcfg, Path(split_path), counts, source="judge run"
+        )
+        if on_test
+        else None
+    )
     return {
         "split": str(split_path),
         "judge": str(judge_key),
-        "counts": {"TP": tp, "TN": tn, "FP": fp, "FN": fn},
-        "tpr": tpr,
-        "tnr": tnr,
+        "counts": counts,
+        "tpr": counts["tpr"],
+        "tnr": counts["tnr"],
+        "validation": validation,
         "results": results,
     }

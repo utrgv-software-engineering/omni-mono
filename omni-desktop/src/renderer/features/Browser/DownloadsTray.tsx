@@ -10,17 +10,17 @@
  */
 
 import { useStore } from '@nanostores/react';
+import { Button } from '@omniagents/ui/button';
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@omniagents/ui/context-menu';
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@omniagents/ui/empty';
+import { ItemContent, ItemGroup, ItemMedia } from '@omniagents/ui/item';
+import { PopoverContent } from '@omniagents/ui/popover';
+import { Progress } from '@omniagents/ui/progress';
+import { ScrollArea } from '@omniagents/ui/scroll-area';
 import { CircleCheck, CircleX, Download, FolderOpen, Trash2 } from 'lucide-react';
 import { atom } from 'nanostores';
 import { memo, useCallback } from 'react';
 
-import { Button } from '@/renderer/ds/ui/button';
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/renderer/ds/ui/context-menu';
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/renderer/ds/ui/empty';
-import { ItemContent, ItemGroup, ItemMedia } from '@/renderer/ds/ui/item';
-import { PopoverContent } from '@/renderer/ds/ui/popover';
-import { Progress } from '@/renderer/ds/ui/progress';
-import { ScrollArea } from '@/renderer/ds/ui/scroll-area';
 import { emitter, ipc } from '@/renderer/services/ipc';
 import type { BrowserDownloadEntry } from '@/shared/types';
 

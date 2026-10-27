@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net';
 
 import { expect, test } from 'tests/e2e/fixtures/test';
-import { openCode } from 'tests/e2e/support/app';
+import { openChat } from 'tests/e2e/support/app';
 import { WebSocketServer } from 'ws';
 
 type TestUpstream = {
@@ -99,12 +99,11 @@ async function startTestUpstream(): Promise<TestUpstream> {
   };
 }
 
-async function openStandaloneBrowser(page: import('@playwright/test').Page): Promise<void> {
-  await openCode(page);
-  await page.getByRole('button', { name: 'New' }).first().click();
-  await page.getByRole('menuitem', { name: 'Apps' }).click();
-  await page.getByRole('button', { name: 'Browser' }).click();
-  await expect(page.getByText('Browser').first()).toBeVisible();
+async function openSessionBrowser(page: import('@playwright/test').Page): Promise<void> {
+  await openChat(page);
+  // The browser app needs no running agent: open it in the session's sidecar.
+  await page.getByRole('button', { name: 'Show apps', exact: true }).click();
+  await page.getByRole('button', { name: 'Browser', exact: true }).click();
   await expect(page.getByPlaceholder('Search or enter URL').first()).toBeVisible();
 }
 
@@ -115,7 +114,7 @@ test.describe('browser/server proxy browser', () => {
     const upstream = await startTestUpstream();
     const upstreamHome = `${upstream.origin}/`;
     try {
-      await openStandaloneBrowser(appPage);
+      await openSessionBrowser(appPage);
       const omnibox = appPage.getByPlaceholder('Search or enter URL').first();
       await omnibox.fill(upstream.origin);
       await omnibox.press('Enter');
@@ -142,14 +141,18 @@ test.describe('browser/server proxy browser', () => {
       await omnibox.press('Enter');
       await expect(frame.getByRole('heading', { name: 'Proxy Test Home' })).toBeVisible();
 
-      await frame.locator('#fetch-button').click();
-      await expect(frame.locator('#fetch-result')).toHaveText('api:fetch');
+      // Root-relative fetch/XHR/WebSocket rewriting is off by default for
+      // arbitrary (dynamic) sites; it is the opt-in runtime shim policy.
+      if (/^(1|true|yes|on)$/i.test(process.env.OMNI_PROXY_DYNAMIC_RUNTIME_SHIMS ?? '')) {
+        await frame.locator('#fetch-button').click();
+        await expect(frame.locator('#fetch-result')).toHaveText('api:fetch');
 
-      await frame.locator('#xhr-button').click();
-      await expect(frame.locator('#xhr-result')).toHaveText('api:xhr');
+        await frame.locator('#xhr-button').click();
+        await expect(frame.locator('#xhr-result')).toHaveText('api:xhr');
 
-      await frame.locator('#ws-button').click();
-      await expect(frame.locator('#ws-result')).toHaveText('ws:ok');
+        await frame.locator('#ws-button').click();
+        await expect(frame.locator('#ws-result')).toHaveText('ws:ok');
+      }
 
       await frame.getByRole('button', { name: 'Submit form' }).click();
       await expect(frame.getByRole('heading', { name: 'Proxy Test Submitted' })).toBeVisible();

@@ -1,0 +1,184 @@
+# The Acme workplace: the company of the acme-factory example.
+#
+# Its people are accounts with the passwords below; admin is the admin.
+# The factory is an app
+# (below): an account in Slack, GitHub and Linear, with credentials the
+# workplace makes when the seed is loaded (`omniagents-workplace env` prints
+# them). Slack's MCP server acts
+# with user tokens, so what the factory posts comes from its Slack account,
+# marked "Sent using Acme Factory"; the app receives that account's events
+# (mentions, DMs, reactions in its channels) over Socket Mode.
+workplace:
+  admin: U0ACME0ADM
+  # Fixture passwords, by username: for signing in to an evaluation's workplace.
+  passwords:
+    admin: acme-admin
+    priya: acme-priya
+    marcus: acme-marcus
+    dana: acme-dana
+
+apps:
+  - name: Acme Factory
+    username: acme-factory
+    description: Software factory
+    slack_user: U0ACME0FAC
+    slack: {delivery: socket}
+    # Where the factory's server (`omniagents run --mode server`) listens.
+    github: {webhook: http://127.0.0.1:8765/integrations/github/events}
+    linear: {webhook: http://127.0.0.1:8765/integrations/linear/events}
+
+slack:
+  team: {id: T0ACME0001, name: Acme, domain: acme, tz: America/Chicago}
+
+  users:
+    - id: U0ACME0ADM
+      name: admin
+      real_name: Acme Admin
+      email: admin@acme.test
+      title: Workplace admin
+      is_admin: true
+    - id: U0ACME0PRI
+      name: priya
+      real_name: Priya Shah
+      email: priya@acme.test
+      title: Engineering Manager
+    - id: U0ACME0MAR
+      name: marcus
+      real_name: Marcus Lee
+      email: marcus@acme.test
+      title: Product Manager
+    - id: U0ACME0DEV
+      name: dana
+      real_name: Dana Okafor
+      email: dana@acme.test
+      title: Mobile Engineer
+    - id: U0ACME0FAC
+      name: acme-factory
+      real_name: Acme Factory
+      email: factory@acme.test
+      title: Software factory
+
+  channels:
+    - {id: C0ACME0GEN, name: general, purpose: Company-wide announcements, members: all}
+    - id: C0ACME0ENG
+      name: eng
+      purpose: Engineering discussion and requests for the factory
+      members: all
+    - id: C0ACME0INT
+      name: factory-intake
+      purpose: "React with :ticket: to file a message as a GitHub issue"
+      members: all
+    - id: C0ACME0PRS
+      name: factory-prs
+      purpose: Every pull request the factory opens, with its screenshots and recordings in the thread
+      members: all
+    - id: C0ACME0MOB
+      name: mobile
+      purpose: iOS app
+      members: [U0ACME0DEV, U0ACME0FAC]
+
+  messages:
+    - channel: general
+      user: U0ACME0PRI
+      minutes_ago: 180
+      text: "Welcome to Acme! <@U0ACME0FAC> is our software factory: mention it in <#C0ACME0ENG|eng> with a request, or DM it."
+    - channel: eng
+      user: U0ACME0MAR
+      minutes_ago: 95
+      text: "Customers keep asking for pagination on `GET /tasks` in api-service. It's issue #12."
+      replies:
+        - {user: U0ACME0PRI, minutes_ago: 90, text: "Good candidate for the factory."}
+    - channel: factory-intake
+      user: U0ACME0DEV
+      minutes_ago: 40
+      text: "The iOS app's task list doesn't refresh after pull-to-refresh on iOS 18."
+
+# GitHub: Acme's people and repositories. Each repository's first commit is
+# its directory under acme/repos/ (api-service is the factory example's
+# evaluation fixture, and its open issues are the fixture's). The factory is
+# the acme-factory account (the app's); every change goes to the factory's
+# server as GitHub's webhooks.
+github:
+  users:
+    - {login: admin, name: Acme Admin, slack: U0ACME0ADM}
+    - {login: priya, name: Priya Shah, slack: U0ACME0PRI}
+    - {login: marcus, name: Marcus Lee, slack: U0ACME0MAR}
+    - {login: dana, name: Dana Okafor, slack: U0ACME0DEV}
+    - {login: acme-factory, name: Acme Factory, slack: U0ACME0FAC}
+  repositories:
+    - name: acme/api-service
+      description: "Acme's task tracker: a small JSON API and a web page listing tasks."
+      from: acme/repos/api-service
+      labels: &labels
+        - {name: "factory:Acme", color: "5319e7", description: Work the factory does}
+        - {name: "factory:spec", color: "c5def5", description: A spec pull request}
+        - {name: maintenance, color: "fbca04"}
+        - {name: needs-repro, color: "d93f0b"}
+        - {name: needs-ui-check, color: "0e8a16"}
+        - {name: wip, color: "ededed"}
+        - {name: bug, color: "d73a4a"}
+      issues:
+        - number: 12
+          title: Add pagination to GET /tasks
+          author: priya
+          body: |
+            GET /tasks returns every task, which is getting slow for teams with
+            hundreds of tasks.
+
+            Add `page` and `per_page` query parameters:
+            - Without them, `page` is 1 and `per_page` is 10.
+            - The response adds `page` and `pages` (the total number of pages).
+            - The last page holds whatever is left over (23 tasks at 10 per page
+              is 3 pages, the last with 3 tasks).
+            - A non-numeric, zero or negative value, or a `per_page` over 100,
+              gets a 400 with `{"error": ...}`.
+            Update docs/api.md.
+        - number: 14
+          title: The tasks page is hard to use with lots of tasks
+          author: marcus
+          body: |
+            Once a team has more than a couple of dozen tasks the page is one long
+            list and it's hard to find anything. Can we make this better?
+    - name: acme/webapp
+      description: Acme's web front end.
+      from: acme/repos/webapp
+      labels: *labels
+    - name: acme/ios-app
+      description: Acme's iOS app.
+      from: acme/repos/ios-app
+      labels: *labels
+
+# Linear: Acme's internal tracker. The factory is an agent people delegate
+# issues to (or @-mention in a comment); each starts an agent session that
+# goes to the factory's server as Linear's AgentSessionEvent webhook.
+linear:
+  organization: {name: Acme, url_key: acme}
+  users:
+    - {name: Acme Admin, display_name: admin, email: admin@acme.test, slack: U0ACME0ADM, admin: true}
+    - {name: Priya Shah, display_name: priya, email: priya@acme.test, slack: U0ACME0PRI}
+    - {name: Marcus Lee, display_name: marcus, email: marcus@acme.test, slack: U0ACME0MAR}
+    - {name: Dana Okafor, display_name: dana, email: dana@acme.test, slack: U0ACME0DEV}
+  apps:
+    - {name: Acme Factory, display_name: acme-factory, email: acme-factory@acme.test, slack: U0ACME0FAC}
+  teams:
+    - key: ENG
+      name: Engineering
+      labels:
+        - {name: Bug, color: "#EB5757"}
+        - {name: Feature, color: "#BB87FC"}
+        - {name: Improvement, color: "#4EA7FC"}
+        - {name: "factory:Acme", color: "#5319e7"}
+      issues:
+        - title: Tasks API gets slow for big teams
+          creator: priya
+          priority: 2
+          labels: [Improvement]
+          description: |
+            GET /tasks on acme/api-service returns every task. Teams with hundreds of
+            tasks wait seconds for the list. We need pagination.
+        - title: Due dates on tasks
+          creator: marcus
+          priority: 3
+          labels: [Feature]
+          description: |
+            People want to set a due date on a task and see overdue tasks first.

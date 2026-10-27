@@ -629,7 +629,6 @@ async def start_impl(service, session, args=None):
             session_id=sid,
             content=initial,
             role="user",
-            trigger_run=True,
             source="goal.start",
             safe_tool_overrides=safe_tool_overrides,
         )

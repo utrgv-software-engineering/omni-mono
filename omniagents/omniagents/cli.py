@@ -2,11 +2,11 @@ import sys
 import argparse
 import json
 import os
+import shutil
 from pathlib import Path
 import yaml
-import re
 from dotenv import load_dotenv
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional
 
 # --- Core Framework Imports --- #
 # Note: All OpenAI client configuration (API key, base URL, tracing) should be done by the user script or environment.
@@ -22,8 +22,6 @@ from omniagents.core.eval.optimize import (
     optimize_agent_from_project,
     optimize_judge_from_project,
 )
-from omniagents.core.eval.annotate import annotate_scenarios, write_annotation_output
-from omniagents.core.eval.results import save_evaluation_run
 from omniagents.core.runtime.runner import Runner
 from omniagents.core.debug import Debug
 from omniagents.core.session.cli import add_sessions_subparser, handle_sessions_command
@@ -36,7 +34,6 @@ CODESPACES_ENV = any(
         "GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN",
     )
 )
-DEFAULT_STUDIO_DEV_HOST = "0.0.0.0" if CODESPACES_ENV else "127.0.0.1"
 DEFAULT_BIND_HOST = "0.0.0.0" if CODESPACES_ENV else "127.0.0.1"
 
 
@@ -45,61 +42,6 @@ def _merge_prompt_words(words: Optional[List[str]] | None) -> Optional[str]:
         return None
     text = " ".join(words).strip()
     return text or None
-
-
-def _resolve_studio_project_value(
-    value: Optional[str],
-) -> Tuple[Optional[str], Optional[Path], bool]:
-    manifest_path: Optional[Path] = None
-    project_value = value
-    derived = False
-
-    def load_from_manifest(manifest: Path) -> Optional[str]:
-        try:
-            data = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
-        except Exception:
-            return None
-        tracing_cfg = data.get("tracing") or {}
-        tracing_project = tracing_cfg.get("project")
-        if isinstance(tracing_project, str) and tracing_project.strip():
-            return tracing_project.strip()
-        # Convention: the tracing project is the product slug.
-        product_section = data.get("product")
-        if product_section is not None:
-            try:
-                from omniagents.core.product import product_info_from_mapping
-
-                return product_info_from_mapping(product_section).slug
-            except Exception:
-                return None
-        return None
-
-    if value:
-        lower_val = value.lower()
-        looks_like_path = any(
-            sep in value for sep in ("/", "\\")
-        ) or lower_val.endswith((".yml", ".yaml"))
-        if looks_like_path:
-            candidate = Path(value).expanduser()
-            if candidate.is_dir():
-                candidate = candidate / "project.yml"
-            if candidate.is_file():
-                guess = load_from_manifest(candidate)
-                if guess:
-                    manifest_path = candidate
-                    project_value = guess
-                    derived = True
-                    return project_value, manifest_path, derived
-        return project_value, manifest_path, derived
-
-    candidate = Path.cwd() / "project.yml"
-    if candidate.is_file():
-        guess = load_from_manifest(candidate)
-        if guess:
-            manifest_path = candidate
-            project_value = guess
-            derived = True
-    return project_value, manifest_path, derived
 
 
 def run_codex_auth_command(
@@ -117,7 +59,6 @@ def run_codex_auth_command(
     or by installing product identity via ``bootstrap_product``).
     Returns a process exit status.
     """
-    import sys
 
     from omniagents.core.product import product_info
     from omniagents.core.providers import codex
@@ -149,184 +90,221 @@ def run_codex_auth_command(
     return 0
 
 
-def run_platform_auth_command(
-    argv: Optional[List[str]] = None,
-    *,
-    prog: Optional[str] = None,
-    slug: Optional[str] = None,
-    config_dir: Optional[Any] = None,
-) -> int:
-    """Run a ``<prog> auth {login,logout,status}`` management-plane command.
-
-    Public so products wrapping the framework CLI can reuse the exact same
-    device-code login / logout / status flow under their own program name
-    instead of copying it. ``prog`` defaults from the installed product
-    identity (``omniagents.core.product.product_info().prog``); an
-    explicit argument wins. ``slug`` and ``config_dir`` bind the shared
-    platform client to the product's policy scope and credential store
-    before the flow runs (mirroring ``run_codex_auth_command``'s
-    token-store binding contract); when omitted, the platform client
-    itself already defaults both from the installed product identity.
-    Returns a process exit status.
-
-    ``argv`` is the argument list after ``auth`` — e.g. ``["login"]``,
-    ``["login", "https://platform.example.edu"]``, ``["logout"]``,
-    ``["status"]``.
-    """
-    import sys
-
-    from omniagents.core.product import product_info
-    from omniagents.core.providers.platform import client
-
-    if prog is None:
-        prog = product_info().prog
-
-    if slug:
-        client.set_product_slug(slug)
-    if config_dir is not None:
-        client.set_credential_store_dir(config_dir)
-
-    argv = list(argv or [])
-    if not argv or argv[0] in {"-h", "--help", "help"}:
-        print(
-            f"usage: {prog} auth <command>\n\n"
-            "Commands:\n"
-            "  login [url]    Authenticate with the management plane\n"
-            "  logout         Clear stored credentials\n"
-            "  status         Show current authentication status\n"
-        )
-        return 0
-
-    command = argv[0]
-    if command == "login":
-        return _platform_auth_login(argv[1:])
-    if command == "logout":
-        return _platform_auth_logout()
-    if command == "status":
-        return _platform_auth_status(prog=prog)
-    print(f"Unknown auth command: {command}", file=sys.stderr)
-    return 1
-
-
-def _platform_auth_login(args: List[str]) -> int:
-    import sys
-
-    from omniagents.core.providers.platform import client
-
-    # URL from args, env, or stored credentials
-    url = args[0] if args else client.get_platform_url()
-
-    if not url:
-        url = input("Platform URL: ").strip()
-
-    if not url:
-        print("No platform URL provided.", file=sys.stderr)
-        return 1
-
-    if not url.startswith("http"):
-        url = f"https://{url}"
-
-    try:
-        creds = client.device_code_login(url)
-        client.save_credentials(creds)
-
-        user = creds.get("user") or {}
-        print(
-            f"Authenticated as {user.get('name', 'unknown')} ({user.get('email', '')})"
-        )
-
-        domains = user.get("domains", [])
-        if domains:
-            print(f"Domains: {', '.join(d['name'] for d in domains)}")
-
-        print(f"\nCredentials saved to {client.credential_path()}")
-        return 0
-    except Exception as e:
-        print(f"Login failed: {e}", file=sys.stderr)
-        return 1
-
-
-def _platform_auth_logout() -> int:
-    from omniagents.core.providers.platform import client
-
-    creds = client.load_credentials()
-    if creds:
-        user = creds.get("user") or {}
-        client.clear_credentials()
-        print(f"Logged out ({user.get('email', 'unknown')})")
-    else:
-        print("Not logged in.")
-    return 0
-
-
-def _platform_auth_status(*, prog: str = "omniagents") -> int:
-    from omniagents.core.providers.platform import client
-
-    url = client.get_platform_url()
-    token = client.get_access_token()
-
-    if not url or not token:
-        print("Not authenticated.")
-        print(f"\nRun: {prog} auth login <platform-url>")
-        return 0
-
-    creds = client.load_credentials()
-    user = (creds.get("user") or {}) if creds else {}
-
-    print(f"Platform:  {url}")
-    print(f"User:      {user.get('name', 'unknown')} ({user.get('email', '')})")
-    print(f"Token:     {token[:20]}...")
-
-    domains = user.get("domains", [])
-    if domains:
-        print(f"Domains:   {', '.join(d['name'] for d in domains)}")
-
-    # Test connectivity
-    try:
-        import requests
-
-        resp = requests.get(
-            f"{url}/api/v1/health",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=5,
-        )
-        if resp.ok:
-            print("Status:    connected")
-        elif resp.status_code == 401:
-            print(f"Status:    token expired (run: {prog} auth login)")
-        else:
-            print(f"Status:    error ({resp.status_code})")
-    except Exception as e:
-        print(f"Status:    unreachable ({e})")
-    return 0
-
-
 def _run_auth_command(args) -> None:
-    """Handle ``omniagents auth {login,logout,status,codex ...}``."""
-    import sys
+    """Handle ``omniagents auth codex {login,logout,status}``."""
 
     auth_command = getattr(args, "auth_command", None)
 
     if auth_command == "codex":
         status = run_codex_auth_command(getattr(args, "codex_command", "login"))
-    elif auth_command in {"login", "logout", "status"}:
-        argv = [auth_command]
-        platform_url = getattr(args, "platform_url", None)
-        if platform_url:
-            argv.append(platform_url)
-        status = run_platform_auth_command(argv)
     else:
-        print("usage: omniagents auth {login,logout,status,codex}", file=sys.stderr)
+        print("usage: omniagents auth codex {login,logout,status}", file=sys.stderr)
         sys.exit(1)
 
     if status:
         sys.exit(status)
 
 
+def _run_integrations_command(args) -> None:
+    """``omniagents integrations {replay,compare,run-schedule}``: staging's replays
+    (integrations/replay.py), and firing a schedule now."""
+    import time
+
+    import httpx
+
+    from omniagents.integrations.replay import (
+        REPLAY_PATH,
+        compare,
+        event_json,
+        format_comparison,
+        regressions,
+    )
+    from omniagents.integrations.schedule import parse_duration
+    from omniagents.integrations.store import EventStore
+
+    def store(path: str) -> EventStore:
+        if not Path(path).is_file():
+            print(f"No event store at {path}", file=sys.stderr)
+            sys.exit(1)
+        return EventStore(Path(path))
+
+    def post(url: str, **kwargs) -> "httpx.Response":
+        try:
+            return httpx.post(
+                url,
+                headers={"Authorization": f"Bearer {args.token}"},
+                timeout=60,
+                **kwargs,
+            )
+        except httpx.HTTPError as exc:
+            print(f"Could not reach {args.to}: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+    if args.integrations_command == "wait":
+        candidate = store(args.events)
+        deadline = time.time() + parse_duration(args.timeout)
+        # A moment for events just sent to be recorded as dispatched.
+        time.sleep(2)
+        while candidate.unsettled():
+            if time.time() > deadline:
+                print(
+                    f"Still {candidate.unsettled()} event(s) or run(s) going after {args.timeout}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            time.sleep(5)
+        print("Every event is handled and every run finished")
+        return
+    if args.integrations_command == "run-schedule":
+        from omniagents.integrations.schedule import RUN_SCHEDULE_PATH
+
+        response = post(args.to.rstrip("/") + RUN_SCHEDULE_PATH.format(name=args.name))
+        if response.status_code != 200:
+            print(
+                f"The factory said {response.status_code}: {response.text}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(f"Fired {args.name} on {args.to}")
+        return
+    try:
+        since = time.time() - parse_duration(args.since)
+    except ValueError as exc:
+        print(f"--since: {exc}", file=sys.stderr)
+        sys.exit(1)
+    if args.integrations_command == "replay":
+        events = [
+            event_json(e)
+            for e in store(args.events).events_since(since)
+            if e.control is None
+        ]
+        if args.limit:
+            events = events[-args.limit :]  # the latest
+        if not events:
+            print("No events to replay.")
+            return
+        response = post(args.to.rstrip("/") + REPLAY_PATH, json={"events": events})
+        if response.status_code != 200:
+            print(
+                f"The factory said {response.status_code}: {response.text}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(
+            f"Replayed {response.json()['accepted']} of {len(events)} event(s) into {args.to}"
+        )
+    elif args.integrations_command == "compare":
+        rows = compare(store(args.baseline), store(args.candidate), since)
+        print(format_comparison(rows))
+        worse = regressions(rows)
+        if worse:
+            print("\nWorse than the baseline:\n" + "\n".join(f"- {w}" for w in worse))
+            if args.fail_on_regression:
+                sys.exit(1)
+    else:
+        print(
+            "usage: omniagents integrations {replay,compare,run-schedule}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
+def _run_benchmark(
+    workspace, scenario_set: str, matrix_path: Path, args, include_unmeasured: bool
+) -> None:
+    """``eval scenarios run --set <tasks> --matrix <configs>``: a benchmark (core/eval/benchmark.py)."""
+    import time
+
+    from omniagents.core.eval.benchmark import load_matrix, run_matrix, write
+    from omniagents.core.pricing import project_price_list
+
+    if not scenario_set:
+        print(
+            "--matrix runs a set of tasks: give it with --set (a benchmark suite's file)",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    try:
+        matrix = load_matrix(matrix_path)
+    except (OSError, ValueError) as exc:
+        print(f"--matrix: {exc}", file=sys.stderr)
+        sys.exit(2)
+    prices = project_price_list(workspace.root)
+    chosen = workspace.resolve_set(scenario_set)
+
+    def once():
+        return workspace.run(
+            scenario_set=chosen,
+            include_unmeasured=include_unmeasured,
+            name=f"benchmark-{Path(scenario_set).stem}",
+            source="cli",
+        )
+
+    def report(row):
+        cost = (
+            "no price"
+            if row["cost_per_task"] is None
+            else f"${row['cost_per_task']:.2f} a task"
+        )
+        print(
+            f"{row['name']}: {row['passed']}/{row['runs']} correct ({row['correctness']:.0%}), {cost}, "
+            f"{row['input_tokens']} in ({row['cached_tokens']} cached), {row['output_tokens']} out",
+            flush=True,
+        )
+
+    result = run_matrix(
+        once, matrix, prices=prices, suite=Path(scenario_set).stem, on_config=report
+    )
+    output = str(getattr(args, "output", "") or "").strip()
+    path = (
+        Path(output)
+        if output
+        else (
+            workspace.root
+            / "evaluations"
+            / "runs"
+            / "benchmarks"
+            / f"{time.strftime('%Y%m%d_%H%M%S')}-{result['suite']}.json"
+        )
+    )
+    write(result, path)
+    print(f"Frontier: {', '.join(result['frontier']) or 'none (no prices)'}")
+    print(f"Wrote benchmark: {path}")
+
+
+def _judge_line(judged: dict) -> str:
+    """One line on what a judge's verdicts in a run say."""
+
+    def pct(value):
+        return "NA" if value is None else f"{value:.0%}"
+
+    head = (
+        f"Judge {judged['judge']}: raw pass {pct(judged['raw_pass_rate'])} "
+        f"of {judged['answered']}"
+    )
+    if judged["status"] != "validated":
+        why = (
+            "changed since it was validated"
+            if judged["status"] == "changed"
+            else "not validated against human labels"
+        )
+        return f"{head}; {why}, so this is uncorrected"
+    if judged["corrected_pass_rate"] is None:
+        return (
+            f"{head}; too close to chance to correct "
+            f"(TPR {pct(judged['tpr'])}, TNR {pct(judged['tnr'])})"
+        )
+    low_high = judged.get("corrected_interval")
+    interval = f" [{pct(low_high[0])}, {pct(low_high[1])}]" if low_high else ""
+    return (
+        f"{head}; corrected {pct(judged['corrected_pass_rate'])}{interval} "
+        f"(TPR {pct(judged['tpr'])}, TNR {pct(judged['tnr'])})"
+    )
+
+
 def main():
     """Entry point for the omniagents CLI."""
     # Parse args first to get config path if available
-    import sys
 
     project_path = None
     for i, arg in enumerate(sys.argv):
@@ -337,7 +315,6 @@ def main():
     # Load .env for CLI runs: when a YAML config is provided, ALWAYS search
     # upward from the YAML's directory so the correct .env is used regardless
     # of the shell's current working directory.
-    env_loaded = False
     if project_path:
         base_ref = project_path
         config_dir = Path(base_ref).resolve().parent
@@ -349,7 +326,6 @@ def main():
                     # Do not override explicit env variables that may be set by the user
                     if load_dotenv(env_file, override=False):
                         print(f"Loaded .env file from {env_file}")
-                        env_loaded = True
                 except Exception as e:
                     print(f"Warning: Could not load .env file {env_file}: {e}")
                 break
@@ -375,7 +351,6 @@ def main():
                 try:
                     if load_dotenv(env_file, override=False):
                         print(f"Loaded .env file from {env_file}")
-                        env_loaded = True
                 except Exception as e:
                     print(f"Warning: Could not load .env file {env_file}: {e}")
         except Exception as e:
@@ -628,7 +603,33 @@ def main():
 
     eval_scen = eval_sub.add_parser("scenarios", help="Scenario utilities")
     scen_sub = eval_scen.add_subparsers(dest="scen_cmd")
-    scen_gen = scen_sub.add_parser("generate", help="Generate synthetic scenarios")
+    scen_combos = scen_sub.add_parser(
+        "combinations",
+        help="Draft the combinations of dimension values a new generated set will "
+        "use, for you to review in evaluations/generated/<name>/combinations.yml "
+        "before generating",
+    )
+    scen_combos.add_argument(
+        "--project",
+        "-P",
+        required=False,
+        help="Path to project.yml (defaults to project.yml in CWD)",
+    )
+    scen_combos.add_argument("--name", required=True, help="The set's name")
+    scen_combos.add_argument("--count", type=int, default=20)
+    scen_combos.add_argument("--seed", type=int, default=None)
+    scen_combos.add_argument(
+        "--value",
+        action="append",
+        default=[],
+        metavar="DIMENSION=VALUE",
+        help="Only draw this value of a dimension (repeatable)",
+    )
+    scen_gen = scen_sub.add_parser(
+        "generate",
+        help="Generate a set's scenarios from its reviewed combinations "
+        "(eval scenarios combinations)",
+    )
     scen_gen.add_argument(
         "--project",
         "-P",
@@ -638,18 +639,10 @@ def main():
     scen_gen.add_argument(
         "--agent", "-a", default="", help="Agent key (defaults to entrypoint)"
     )
-    scen_gen.add_argument("--select", default="")
-    scen_gen.add_argument("--exclude", default="")
     scen_gen.add_argument(
         "--name",
-        default=None,
-        help="Scenario set name written under artifacts/eval/<name>/ (required unless --output is provided)",
-    )
-    scen_gen.add_argument(
-        "--output",
-        "-o",
-        default="",
-        help="Explicit output path for generated_scenarios.yml (overrides --name)",
+        required=True,
+        help="The set's name: it is written to evaluations/generated/<name>/",
     )
     scen_gen.add_argument("--count", type=int, default=None)
     scen_gen.add_argument("--seed", type=int, default=None)
@@ -696,56 +689,19 @@ def main():
         default=None,
         help="Optional scenario set name to include in tracing workflow base name",
     )
-    scen_ann = scen_sub.add_parser(
-        "annotate", help="Annotate scenarios with Studio categories"
+    scen_run.add_argument(
+        "--set",
+        dest="scenario_set",
+        default="",
+        help="Run every scenario in this set (a generated set's name, or a "
+        "scenario file's path) instead of the project's suite",
     )
-    scen_ann.add_argument(
-        "--project",
-        "-P",
-        required=False,
-        help="Path to project.yml (defaults to project.yml in CWD)",
+    scen_run.add_argument(
+        "--matrix",
+        default="",
+        help="A benchmark: run the set under each configuration in this file "
+        "(configs: [{name, model, reasoning}], runs: N) and compare cost and correctness",
     )
-    scen_ann.add_argument(
-        "--agent", "-a", default="", help="Agent key (defaults to entrypoint)"
-    )
-    scen_ann.add_argument(
-        "--name",
-        default=None,
-        help="Scenario set name under artifacts/eval/<name>/ (alternative to --input)",
-    )
-    scen_ann.add_argument("--input", "-i", default="")
-    scen_ann.add_argument("--output", "-o", default=None)
-    scen_ann.add_argument("--studio-project", dest="studio_project", default=None)
-    scen_ann.add_argument("--select", default="")
-    scen_ann.add_argument("--exclude", default="")
-    scen_ann.add_argument("-q", "--quiet", action="count", default=0)
-    scen_ann.add_argument("-v", "--verbose", action="count", default=0)
-
-    scen_split = scen_sub.add_parser(
-        "split", help="Create train/dev/test splits from annotated scenarios"
-    )
-    scen_split.add_argument(
-        "--project",
-        "-P",
-        required=False,
-        help="Path to project.yml (defaults to project.yml in CWD)",
-    )
-    scen_split.add_argument(
-        "--name",
-        default=None,
-        help="Scenario set name under artifacts/eval/<name>/ (alternative to --input)",
-    )
-    scen_split.add_argument("--input", "-i", required=False, default="")
-    scen_split.add_argument("--category", "-c", required=True)
-    scen_split.add_argument("--output-dir", "-o", default="")
-    scen_split.add_argument("--train", type=float, default=0.15)
-    scen_split.add_argument("--dev", type=float, default=0.425)
-    scen_split.add_argument("--test", type=float, default=0.425)
-    scen_split.add_argument("--seed", type=int, default=42)
-    scen_split.add_argument("--negatives-ratio", type=float, default=None)
-    scen_split.add_argument("-q", "--quiet", action="count", default=0)
-    scen_split.add_argument("-v", "--verbose", action="count", default=0)
-
     scen_holdout = scen_sub.add_parser(
         "holdout",
         help="Create a seeded, stratified train/dev/test holdout of the scenarios for evaluating an agent",
@@ -774,6 +730,20 @@ def main():
     scen_holdout.add_argument("--seed", type=int, default=42)
     scen_holdout.add_argument("-q", "--quiet", action="count", default=0)
     scen_holdout.add_argument("-v", "--verbose", action="count", default=0)
+
+    eval_baseline = eval_sub.add_parser(
+        "baseline",
+        help="Keep a saved run as a committed baseline (evaluations/baselines/<name>/), "
+        "the evidence for a number you report",
+    )
+    eval_baseline.add_argument(
+        "--project",
+        "-P",
+        required=False,
+        help="Path to project.yml (defaults to project.yml in CWD)",
+    )
+    eval_baseline.add_argument("run", help="The run's id (or its results.json)")
+    eval_baseline.add_argument("--name", required=True, help="The baseline's name")
 
     ls_parser = subparsers.add_parser(
         "ls", help="List compiled resources from target/graph.json"
@@ -837,7 +807,11 @@ def main():
         "name", help="Judge key (snake_case, e.g., out_of_scope_judge)"
     )
     gen_judge.add_argument("--project", "-P", required=False, default=".")
-    gen_judge.add_argument("--model", default="gpt-4.1")
+    gen_judge.add_argument(
+        "--model",
+        default="gpt-4.1-2025-04-14",
+        help="A dated snapshot: a judge validated against an alias can drift",
+    )
     gen_judge.add_argument(
         "--source",
         choices=["final_assistant_text", "history"],
@@ -943,76 +917,6 @@ def main():
         nargs="*",
         default=None,
         help="Exclude specific operationIds",
-    )
-
-    studio_parser = subparsers.add_parser("studio", help="OmniAgents Studio utilities")
-    studio_sub = studio_parser.add_subparsers(dest="studio_cmd")
-
-    studio_serve = studio_sub.add_parser(
-        "serve", help="Run the OmniAgents Studio web UI"
-    )
-    studio_serve.add_argument(
-        "--host",
-        default=None,
-        help="Host interface to bind (default: 127.0.0.1)",
-    )
-    studio_serve.add_argument(
-        "--port", type=int, default=7860, help="Port to bind (default: 7860)"
-    )
-    studio_serve.add_argument(
-        "--db-path",
-        dest="db_path",
-        default=None,
-        help="Path to a specific SQLite database (optional)",
-    )
-    studio_serve.add_argument(
-        "--project",
-        default=None,
-        help="Project name under ~/.omniagents/traces (or OMNIAGENTS_HOME) to serve (optional)",
-    )
-    studio_serve.add_argument(
-        "--token", dest="auth_token", default=None, help="Bearer token for API access"
-    )
-    studio_serve.add_argument(
-        "--dev",
-        action="store_true",
-        help="Run with the Studio web dev server (auto rebuild UI)",
-    )
-    studio_serve.add_argument(
-        "--dev-host",
-        default=None,
-        help="Host for the Studio web dev server (default: match --host)",
-    )
-    studio_serve.add_argument(
-        "--dev-port",
-        type=int,
-        default=5173,
-        help="Port for the Studio web dev server (default: 5173)",
-    )
-
-    studio_export = studio_sub.add_parser(
-        "export", help="Export traces from OmniAgents Studio"
-    )
-    studio_export.add_argument("output", help="Output file path")
-    studio_export.add_argument(
-        "--format",
-        choices=["json", "csv", "parquet"],
-        default="json",
-        help="Export format (default: json)",
-    )
-    studio_export.add_argument(
-        "--project",
-        default=None,
-        help="Project name to export (defaults to active project)",
-    )
-
-    studio_show = studio_sub.add_parser(
-        "show", help="Display Studio project information"
-    )
-    studio_show.add_argument(
-        "--project",
-        default=None,
-        help="Project name to show (defaults to active project)",
     )
 
     add_sessions_subparser(subparsers)
@@ -1138,7 +1042,7 @@ def main():
         "--category",
         "-c",
         required=False,
-        help="Failure category to optimize (required unless --train-file/--dev-file/--test-file provided)",
+        help="Failure category to optimize; its judge dataset (evaluations/judge-datasets/<category>/) is the splits unless files or selectors are given",
     )
     agent_opt.add_argument(
         "--train-file",
@@ -1215,18 +1119,16 @@ def main():
     )
     agent_opt.add_argument("--seed", type=int, default=0)
     agent_opt.add_argument(
-        "--output", "-o", default="", help="Directory to write optimization artifacts"
+        "--output",
+        "-o",
+        default="",
+        help="The optimization's folder (default: a new one in evaluations/optimizations/)",
     )
     agent_opt.add_argument(
         "--resume",
         dest="resume",
         action="store_true",
-        help="Resume from existing output directory (default: use a fresh subdirectory)",
-    )
-    agent_opt.add_argument(
-        "--name",
-        default=None,
-        help="Scenario set name under artifacts/eval/<name>/ for split lookup when files are not provided",
+        help="Continue the optimization in --output",
     )
     _agent_apply_group = agent_opt.add_mutually_exclusive_group()
     _agent_apply_group.add_argument(
@@ -1245,6 +1147,43 @@ def main():
 
     judge_parser = subparsers.add_parser("judge", help="Judge utilities")
     judge_sub = judge_parser.add_subparsers(dest="judge_cmd")
+    judge_dataset = judge_sub.add_parser(
+        "dataset",
+        help="Build (or rebuild) a failure category's judge dataset from every "
+        "reviewed answer: those reviewers saw the category in should be judged "
+        "Fail, the rest Pass. Splits are balanced by label, and rebuilding "
+        "with the same --seed keeps every earlier example where it was",
+    )
+    judge_dataset.add_argument(
+        "--project",
+        "-P",
+        required=False,
+        help="Path to project.yml (defaults to project.yml in CWD)",
+    )
+    judge_dataset.add_argument("--category", "-c", required=True)
+    judge_dataset.add_argument("--train", type=float, default=0.15)
+    judge_dataset.add_argument("--dev", type=float, default=0.425)
+    judge_dataset.add_argument("--test", type=float, default=0.425)
+    judge_dataset.add_argument("--seed", type=int, default=42)
+    judge_examples = judge_sub.add_parser(
+        "examples",
+        help="List a judge's candidate few-shot examples (reviewed answers in the "
+        "train split of its category's judge dataset, critiqued by the reviewer's "
+        "notes), or set them",
+    )
+    judge_examples.add_argument(
+        "--project",
+        "-P",
+        required=False,
+        help="Path to project.yml (defaults to project.yml in CWD)",
+    )
+    judge_examples.add_argument("--judge", "-j", required=True)
+    judge_examples.add_argument(
+        "ids", nargs="*", help="Answer ids to use as its examples (replacing any)"
+    )
+    judge_examples.add_argument(
+        "--clear", action="store_true", help="Use no few-shot examples"
+    )
     judge_run = judge_sub.add_parser(
         "run", help="Evaluate an LLM-as-Judge over a split"
     )
@@ -1261,7 +1200,7 @@ def main():
         "--category",
         "-c",
         required=False,
-        help="Category name for locating splits (required unless --split-file provided)",
+        help="The failure category whose judge dataset to judge (required unless --split-file provided)",
     )
     judge_run.add_argument(
         "--split",
@@ -1278,11 +1217,6 @@ def main():
         help="Explicit path to a split YAML; overrides --category/--split lookup",
     )
     judge_run.add_argument(
-        "--name",
-        default=None,
-        help="Scenario set name under artifacts/eval/<name>/ for split lookup (used with --category)",
-    )
-    judge_run.add_argument(
         "--judge",
         "-j",
         default=None,
@@ -1292,12 +1226,6 @@ def main():
     judge_run.add_argument("--run-max-turns", type=int, default=None)
     judge_run.add_argument(
         "--replay-mode", choices=["replay", "auto", "record", "live"], default="replay"
-    )
-    judge_run.add_argument(
-        "--runs-file",
-        dest="runs_file",
-        default=None,
-        help="Optional explicit runs fixtures JSON to use",
     )
     judge_run.add_argument("--output", "-o", default="")
     judge_run.add_argument(
@@ -1346,7 +1274,7 @@ def main():
         "--category",
         "-c",
         required=False,
-        help="Failure category name to locate splits under artifacts/eval/*/splits/<category>/ (optional if --train-file/--dev-file/--test-file provided)",
+        help="Failure category whose judge dataset (evaluations/judge-datasets/<category>/) is the splits (optional if --train-file/--dev-file/--test-file provided)",
     )
     judge_opt.add_argument(
         "--train-file",
@@ -1367,21 +1295,10 @@ def main():
         help="Explicit path to a test split YAML",
     )
     judge_opt.add_argument(
-        "--name",
-        default=None,
-        help="Scenario set name under artifacts/eval/<name>/ for split lookup when files are not provided",
-    )
-    judge_opt.add_argument(
         "--judge",
         "-j",
         default=None,
         help="Judge key; if omitted and exactly one judge is configured, it will be used",
-    )
-    judge_opt.add_argument(
-        "--runs-file",
-        dest="runs_file",
-        default=None,
-        help="Path to generated_runs.json; defaults alongside split timestamp dir",
     )
     judge_opt.add_argument(
         "--source",
@@ -1416,13 +1333,16 @@ def main():
     )
     judge_opt.add_argument("--seed", type=int, default=0)
     judge_opt.add_argument(
-        "--output", "-o", default="", help="Directory to write optimization artifacts"
+        "--output",
+        "-o",
+        default="",
+        help="The optimization's folder (default: a new one in evaluations/optimizations/)",
     )
     judge_opt.add_argument(
         "--resume",
         dest="resume",
         action="store_true",
-        help="Resume from existing output directory (default: use a fresh subdirectory)",
+        help="Continue the optimization in --output",
     )
     _judge_apply_group2 = judge_opt.add_mutually_exclusive_group()
     _judge_apply_group2.add_argument(
@@ -1439,17 +1359,9 @@ def main():
     )
     judge_opt.set_defaults(apply=False)
 
-    # Auth: management-plane sign-in + ChatGPT (Codex) sign-in.
+    # Auth: ChatGPT (Codex) sign-in.
     auth_parser = subparsers.add_parser("auth", help="Authentication utilities")
     auth_sub = auth_parser.add_subparsers(dest="auth_command")
-    login_parser = auth_sub.add_parser(
-        "login", help="Authenticate with the management plane"
-    )
-    login_parser.add_argument(
-        "platform_url", nargs="?", default=None, help="Platform URL"
-    )
-    auth_sub.add_parser("logout", help="Clear stored platform credentials")
-    auth_sub.add_parser("status", help="Show platform authentication status")
     codex_parser = auth_sub.add_parser("codex", help="ChatGPT (Codex) sign-in")
     codex_parser.add_argument(
         "codex_command",
@@ -1459,7 +1371,83 @@ def main():
         help="login (device flow) | logout | status",
     )
 
+    # Integrations: staging's replays of production's events.
+    integrations_parser = subparsers.add_parser(
+        "integrations",
+        help="Replay a factory's events into another, and compare how each did",
+    )
+    integrations_sub = integrations_parser.add_subparsers(dest="integrations_command")
+    replay_parser = integrations_sub.add_parser(
+        "replay", help="Send a factory's recent events to another factory to run again"
+    )
+    replay_parser.add_argument(
+        "--events",
+        required=True,
+        help="The event store to replay from (~/.omniagents/integrations/<product>.db)",
+    )
+    replay_parser.add_argument(
+        "--to", required=True, help="The factory server to replay into (http://...)"
+    )
+    replay_parser.add_argument(
+        "--token", required=True, help="That server's auth token"
+    )
+    replay_parser.add_argument(
+        "--since",
+        default="24h",
+        help="How far back (24h, 7d, 90m; default: %(default)s)",
+    )
+    replay_parser.add_argument(
+        "--limit", type=int, default=0, help="Only the latest N events (default: all)"
+    )
+    wait_parser = integrations_sub.add_parser(
+        "wait",
+        help="Wait until a factory has handled every event and finished every run",
+    )
+    wait_parser.add_argument("--events", required=True, help="Its event store")
+    wait_parser.add_argument(
+        "--timeout", default="90m", help="How long at most (default: %(default)s)"
+    )
+    run_schedule_parser = integrations_sub.add_parser(
+        "run-schedule",
+        help="Fire one of a factory's schedules now (a nightly review, an audit)",
+    )
+    run_schedule_parser.add_argument(
+        "name", help="The schedule's name (its trigger's schedule.name)"
+    )
+    run_schedule_parser.add_argument(
+        "--to", required=True, help="The factory server (http://...)"
+    )
+    run_schedule_parser.add_argument(
+        "--token", required=True, help="That server's auth token"
+    )
+    compare_parser = integrations_sub.add_parser(
+        "compare",
+        help="The replayed runs beside the originals: how each ended and its grades",
+    )
+    compare_parser.add_argument(
+        "--baseline", required=True, help="The original factory's event store"
+    )
+    compare_parser.add_argument(
+        "--candidate",
+        required=True,
+        help="The event store the events were replayed into",
+    )
+    compare_parser.add_argument(
+        "--since",
+        default="24h",
+        help="The candidate's replays since (default: %(default)s)",
+    )
+    compare_parser.add_argument(
+        "--fail-on-regression",
+        action="store_true",
+        help="Exit 1 when the candidate did worse (a check)",
+    )
+
     args = parser.parse_args()
+
+    if args.command == "integrations":
+        _run_integrations_command(args)
+        return
 
     if args.command == "auth":
         _run_auth_command(args)
@@ -1638,85 +1626,6 @@ def main():
 
             traceback.print_exc()
             sys.exit(1)
-    elif args.command == "studio":
-        if not getattr(args, "studio_cmd", None):
-            studio_parser.print_help()
-            sys.exit(1)
-        try:
-            from omniagents.studio import tracing as studio_mod
-        except ImportError as e:
-            print(f"Error importing Studio module: {e}")
-            print("Install optional dependencies with: pip install omniagents[studio]")
-            sys.exit(1)
-
-        project_hint, _manifest_path, derived_from_manifest = (
-            _resolve_studio_project_value(getattr(args, "project", None))
-        )
-        inferred_project = getattr(args, "project", None)
-        if derived_from_manifest:
-            inferred_project = project_hint
-        elif inferred_project is None and project_hint:
-            inferred_project = project_hint
-
-        if args.studio_cmd == "serve":
-            try:
-                host_value = args.host or DEFAULT_BIND_HOST
-                dev_host_value = getattr(args, "dev_host", None)
-                if dev_host_value is None:
-                    dev_host_value = host_value
-                studio_mod.serve(
-                    host=host_value,
-                    port=args.port,
-                    db_path=getattr(args, "db_path", None),
-                    project=inferred_project,
-                    auth_token=getattr(args, "auth_token", None),
-                    dev=getattr(args, "dev", False),
-                    dev_host=dev_host_value,
-                    dev_port=getattr(args, "dev_port", 5173),
-                    manifest_path=str(_manifest_path) if _manifest_path else None,
-                )
-            except ImportError as e:
-                print(f"Error starting Studio server: {e}")
-                print(
-                    "Install server dependencies with: pip install omniagents[studio-server]"
-                )
-                sys.exit(1)
-            except Exception as e:
-                print(f"Error starting Studio server: {e}")
-                import traceback
-
-                traceback.print_exc()
-                sys.exit(1)
-        elif args.studio_cmd == "export":
-            try:
-                if not inferred_project:
-                    print(
-                        "Error: Provide --project <name> or run from a directory containing project.yml with tracing.project."
-                    )
-                    sys.exit(2)
-                studio_mod.export(
-                    args.output,
-                    format=getattr(args, "format", "json"),
-                    project=inferred_project,
-                )
-            except Exception as e:
-                print(f"Error exporting traces: {e}")
-                import traceback
-
-                traceback.print_exc()
-                sys.exit(1)
-        elif args.studio_cmd == "show":
-            try:
-                studio_mod.show(project=inferred_project)
-            except Exception as e:
-                print(f"Error displaying Studio information: {e}")
-                import traceback
-
-                traceback.print_exc()
-                sys.exit(1)
-        else:
-            studio_parser.print_help()
-            sys.exit(1)
     elif args.command == "sessions":
         sys.exit(handle_sessions_command(args))
     elif args.command == "agent":
@@ -1861,7 +1770,6 @@ def main():
                     train_file=getattr(args, "train_file", None),
                     dev_file=getattr(args, "dev_file", None),
                     test_file=getattr(args, "test_file", None),
-                    name=(str(getattr(args, "name", "") or "") or None),
                     positives_only=bool(getattr(args, "positives_only", False)),
                     max_turns=(
                         int(getattr(args, "max_turns"))
@@ -1953,18 +1861,7 @@ def main():
                             "Error: Provide --project <project.yml> (or run from a directory containing a project.yml)."
                         )
                         sys.exit(2)
-                eval_cfg = load_eval_config(
-                    str(proj_path),
-                    select=str(args.select or ""),
-                    exclude=str(args.exclude or ""),
-                    agent_key=(str(getattr(args, "agent", "") or "") or None),
-                    split=(str(getattr(args, "split", "") or "") or None),
-                )
-                from pathlib import Path as _P
-
-                compiled_cfg_path = eval_cfg.agent_path
-                tracing = eval_cfg.tracing_config
-                from omniagents.core.eval.pipeline import run_evaluation
+                from omniagents.core.eval.workspace import EvalWorkspace
 
                 qlvl_pre = int(getattr(args, "quiet", 0) or 0)
                 vlvl_pre = int(getattr(args, "verbose", 0) or 0)
@@ -2024,17 +1921,6 @@ def main():
                                 pass
                             line_count = 0
 
-                wf_base = None
-                try:
-                    if (getattr(args, "name", None) is not None) and str(
-                        getattr(args, "name")
-                    ).strip():
-                        base_name = tracing.get("name") or _P(compiled_cfg_path).stem
-                        wf_base = (
-                            f"{base_name}_scenarios_{str(getattr(args,'name')).strip()}"
-                        )
-                except Exception:
-                    wf_base = None
                 # eval scenarios run: include unmeasured by default
                 # eval suite run: exclude unmeasured by default
                 if is_scenarios_run:
@@ -2045,76 +1931,46 @@ def main():
                     include_unmeasured = bool(
                         getattr(args, "include_unmeasured", False)
                     )
-                data = run_evaluation(
-                    _P(compiled_cfg_path),
-                    tracing_cfg=tracing,
-                    workflow_base_name=wf_base,
-                    include_unmeasured=include_unmeasured,
-                    progress_cb=_progress_cb,
-                    eval_config=eval_cfg,
+                workspace = EvalWorkspace(
+                    proj_path, agent=(str(getattr(args, "agent", "") or "") or None)
                 )
-                # The manifest says what was run; the CLI knows the selection.
-                run_manifest = data.get("manifest") if isinstance(data, dict) else None
-                if isinstance(run_manifest, dict):
-                    run_manifest["select"] = str(args.select or "") or None
-                    run_manifest["exclude"] = str(args.exclude or "") or None
-                    run_manifest["split"] = (
-                        str(getattr(args, "split", "") or "") or None
+                scenario_set = str(getattr(args, "scenario_set", "") or "").strip()
+                matrix_path = str(getattr(args, "matrix", "") or "").strip()
+                if matrix_path:
+                    _run_benchmark(
+                        workspace,
+                        scenario_set,
+                        Path(matrix_path),
+                        args,
+                        include_unmeasured,
                     )
-                # Determine output location
-                out_arg = str(getattr(args, "output", "") or "").strip()
-                yaml_output = (eval_cfg.config or {}).get("output") or ""
-                explicit_output = out_arg or yaml_output
-
-                base_proj = _P(proj_path).resolve()
-                if base_proj.is_file():
-                    base_proj = base_proj.parent
-                name_arg = str(getattr(args, "name", "") or "").strip()
-
+                    return
+                data = workspace.run(
+                    scenario_set=(
+                        workspace.resolve_set(scenario_set) if scenario_set else None
+                    ),
+                    select=str(args.select or "") or None,
+                    exclude=str(args.exclude or "") or None,
+                    split=(str(getattr(args, "split", "") or "") or None),
+                    include_unmeasured=include_unmeasured,
+                    name=str(getattr(args, "name", "") or "").strip() or None,
+                    source="cli",
+                    progress_cb=_progress_cb,
+                )
+                final_out = Path(data["path"])
+                print(f"Wrote results: {final_out}")
+                # --output (or evaluation.output) also writes the run as one
+                # JSON file, for scripts that read it from a fixed place.
+                explicit_output = str(getattr(args, "output", "") or "").strip() or (
+                    workspace.config().config.get("output") or ""
+                )
                 if explicit_output:
-                    # Explicit --output flag: write raw JSON (backwards compat)
-                    final_out = _P(explicit_output)
-                    if not final_out.is_absolute():
-                        final_out = (eval_cfg.project_root / final_out).resolve()
-                    final_out.parent.mkdir(parents=True, exist_ok=True)
-                    final_out.write_text(json.dumps(data, indent=2), encoding="utf-8")
-                    print(f"Wrote results: {final_out}")
-                else:
-                    # Use structured results storage
-                    if name_arg:
-                        scenario_dir = base_proj / "artifacts" / "eval" / name_arg
-                    else:
-                        scenario_dir = base_proj / "artifacts" / "eval"
-                    # Create a placeholder scenario path for results directory
-                    scenario_path = scenario_dir / "scenarios.yml"
-                    # Resolve "no --agent flag" to the actual entrypoint name
-                    # by reading the compiled agent YAML, so historical runs
-                    # are unambiguous about which agent was scored.
-                    _agent_arg = str(getattr(args, "agent", "") or "").strip()
-                    if not _agent_arg:
-                        try:
-                            import yaml as _yaml_mod
-
-                            _cfg = (
-                                _yaml_mod.safe_load(
-                                    _P(compiled_cfg_path).read_text(encoding="utf-8")
-                                )
-                                or {}
-                            )
-                            _agent_arg = str(_cfg.get("name") or "").strip()
-                        except Exception:
-                            _agent_arg = ""
-                    final_out = save_evaluation_run(
-                        scenario_path=scenario_path,
-                        data=data,
-                        source="cli",
-                        scenario_name=name_arg or "default",
-                        agent=_agent_arg or None,
-                        manifest=(
-                            run_manifest if isinstance(run_manifest, dict) else None
-                        ),
-                    )
-                    print(f"Wrote results: {final_out}")
+                    copy_path = Path(explicit_output)
+                    if not copy_path.is_absolute():
+                        copy_path = (workspace.root / copy_path).resolve()
+                    copy_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(final_out, copy_path)
+                    print(f"Wrote results: {copy_path}")
                 from omniagents.core.eval.measure_tiers import gates_ci, DEFAULT_TIER
 
                 checks = []
@@ -2251,57 +2107,6 @@ def main():
                     }
                     return f"{codes.get(color, '')}{s}{codes['reset']}"
 
-                # Compute scenario line numbers from compiled YAML for location display
-                sc_line_by_id = {}
-                sc_line_by_name = {}
-                try:
-                    comp_lines = (
-                        _P(compiled_cfg_path).read_text(encoding="utf-8").splitlines()
-                    )
-                    import re as _re
-
-                    collecting = False
-                    base_indent = 0
-                    for i, ln in enumerate(comp_lines, start=1):
-                        if not collecting:
-                            m = _re.match(r"^(\s*)scenarios\s*:", ln)
-                            if m:
-                                collecting = True
-                                base_indent = len(m.group(1))
-                            continue
-                        cur_indent = len(ln) - len(ln.lstrip(" "))
-                        if ln.strip() == "" or ln.strip().startswith("#"):
-                            continue
-                        if cur_indent <= base_indent and not ln.lstrip().startswith(
-                            "-"
-                        ):
-                            collecting = False
-                            continue
-                        m_id = _re.match(r"^\s*-\s*id\s*:\s*(.+?)\s*$", ln)
-                        if m_id:
-                            scid = m_id.group(1).strip().strip("\"'")
-                            if scid and scid not in sc_line_by_id:
-                                sc_line_by_id[scid] = i
-                            continue
-                        m_name = _re.match(r"^\s*-\s*name\s*:\s*(.+?)\s*$", ln)
-                        if m_name:
-                            nm = m_name.group(1).strip().strip("\"'")
-                            if nm and nm not in sc_line_by_name:
-                                sc_line_by_name[nm] = i
-                            continue
-                except Exception:
-                    sc_line_by_id = {}
-                    sc_line_by_name = {}
-                for c in checks:
-                    if c.get("type") == "measure":
-                        sid = c.get("scenario_id")
-                        sname = c.get("scenario_name")
-                        ln = (sc_line_by_id.get(sid) if sid else None) or (
-                            sc_line_by_name.get(sname) if sname else None
-                        )
-                        if ln:
-                            c["file"] = str(_P(compiled_cfg_path))
-                            c["line"] = int(ln)
                 reporter = args.reporter
                 if reporter == "auto":
                     reporter = "pretty" if _isatty() else "tap"
@@ -2318,10 +2123,6 @@ def main():
                             if c.get("reason"):
                                 print(f"# {c.get('reason')}")
                             if c.get("type") == "measure":
-                                fp = c.get("file")
-                                fl = c.get("line")
-                                if fp and fl:
-                                    print(f"# Location: {fp}:{fl}")
                                 p = c.get("prompt") or ""
                                 if p:
                                     pt = p if len(p) <= 300 else (p[:300] + "...")
@@ -2337,6 +2138,8 @@ def main():
                         f"# Measures: {measure_total} total, {measure_failed} failing "
                         f"({measure_failed_gating} gating, {measure_failed_diagnostic} diagnostic)"
                     )
+                    for judged in data.get("judges") or []:
+                        print(f"# {_judge_line(judged)}")
                     if scen_total is not None:
                         print(
                             f"# Scenarios: included={scen_included} skipped_unmeasured={scen_skipped} total={scen_total}"
@@ -2355,7 +2158,7 @@ def main():
                                 "#          `eval suite run` only includes scenarios with measures attached."
                             )
                             print(
-                                "#          Add `measures: [<measure_name>]` to each scenario in scenarios.yml,"
+                                "#          Add `measures: [<measure_name>]` to each scenario in evaluations/scenarios/,"
                             )
                             print(
                                 "#          or pass `--include-unmeasured` to run them anyway (no scoring)."
@@ -2412,10 +2215,6 @@ def main():
                             print(_c("FAIL ", "red") + title)
                             rsn = f.get("reason")
                             if f.get("type") == "measure":
-                                fp = f.get("file")
-                                fl = f.get("line")
-                                if fp and fl:
-                                    print(f"  Location: {fp}:{fl}")
                                 prompt = f.get("prompt") or ""
                                 if prompt:
                                     p = (
@@ -2446,6 +2245,8 @@ def main():
                             f"Measures: {measure_total}  Failing: {measure_failed} "
                             f"(gating: {measure_failed_gating}, diagnostic: {measure_failed_diagnostic})"
                         )
+                        for judged in data.get("judges") or []:
+                            print(_judge_line(judged))
                         if scen_total is not None:
                             print(
                                 f"Scenarios: included={scen_included}  Skipped (no measures)={scen_skipped}  Total={scen_total}"
@@ -2492,64 +2293,12 @@ def main():
                             "Error: Provide --project <project.yml> (or run from a directory containing a project.yml)."
                         )
                         sys.exit(2)
-                eval_cfg = load_eval_config(
-                    str(proj_path),
-                    select=str(args.select or ""),
-                    exclude=str(args.exclude or ""),
-                    agent_key=(str(getattr(args, "agent", "") or "") or None),
-                )
-                from omniagents.core.eval.scenarios import generate_scenarios
-                from pathlib import Path as _P
+                from omniagents.core.eval.workspace import EvalWorkspace
                 import asyncio as _asyncio
 
-                compiled_cfg_path = eval_cfg.agent_path
-                tracing = eval_cfg.tracing_config
-                name_arg = str(getattr(args, "name", "") or "").strip()
-                out_arg = str(getattr(args, "output", "") or "").strip()
-                if not name_arg and not out_arg:
-                    print(
-                        "Error: Provide --name <scenario_set> or --output <path> for generated scenarios."
-                    )
-                    sys.exit(2)
-                output_path = None
-                if out_arg:
-                    outp = _P(out_arg)
-                    if not outp.is_absolute():
-                        base_proj = _P(proj_path).resolve()
-                        if base_proj.is_file():
-                            base_proj = base_proj.parent
-                        outp = (base_proj / outp).resolve()
-                    output_path = outp
-                wf_name = None
-                try:
-                    provider = str(tracing.get("provider", "")).lower()
-                    if provider == "studio":
-                        from datetime import datetime
-                        from omniagents.studio import tracing as tracing_module
-
-                        base_name = tracing.get("name") or _P(compiled_cfg_path).stem
-                        if name_arg:
-                            sc_name = name_arg
-                        elif output_path is not None:
-                            try:
-                                sc_name = output_path.parent.name
-                            except Exception:
-                                sc_name = "scenarios"
-                        else:
-                            sc_name = "scenarios"
-                        ts = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-                        wf_name = f"{base_name}_scenarios_{sc_name}_{ts}_generate"
-                        resume = (tracing.get("settings") or {}).get("resume", "never")
-                        tracing_module.init(
-                            project=str(
-                                tracing.get("project") or "scenario_generation"
-                            ),
-                            name=wf_name,
-                            resume=str(resume),
-                            replace_default=True,
-                        )
-                except Exception:
-                    wf_name = None
+                workspace = EvalWorkspace(
+                    proj_path, agent=(str(getattr(args, "agent", "") or "") or None)
+                )
                 qlvl_pre = int(getattr(args, "quiet", 0) or 0)
                 vlvl_pre = int(getattr(args, "verbose", 0) or 0)
                 vlevel_pre = vlvl_pre - qlvl_pre
@@ -2620,135 +2369,19 @@ def main():
                         except Exception:
                             pass
 
-                scenarios, out_path, gen_ts = _asyncio.run(
-                    generate_scenarios(
-                        _P(compiled_cfg_path),
+                generated = _asyncio.run(
+                    workspace.generate_scenarios(
+                        str(args.name),
                         count=args.count,
                         seed=args.seed,
-                        set_name=(name_arg or None),
-                        output=output_path,
-                        workflow_name=wf_name,
                         progress_cb=_progress_cb,
-                        eval_config=eval_cfg,
                     )
                 )
-                print(f"Wrote {len(scenarios)} scenarios to {out_path}")
+                print(
+                    f"Wrote {len(generated['scenarios'])} scenarios to {generated['path']}"
+                )
             except Exception as e:
                 print(f"Error generating scenarios: {e}")
-                import traceback
-
-                traceback.print_exc()
-                sys.exit(1)
-        elif (
-            args.eval_cmd == "scenarios"
-            and getattr(args, "scen_cmd", None) == "annotate"
-        ):
-            try:
-                from omniagents.core.eval.loader import load_eval_config
-                from omniagents.core.project.runtime import load_project, resolve_agent
-
-                proj_path = getattr(args, "project", None)
-                if not proj_path:
-                    p = Path.cwd() / "project.yml"
-                    if p.is_file():
-                        proj_path = str(p)
-                    else:
-                        print(
-                            "Error: Provide --project <project.yml> (or run from a directory containing a project.yml)."
-                        )
-                        sys.exit(2)
-                ctx = load_project(str(proj_path))
-                agent_key_arg = str(getattr(args, "agent", "") or "").strip() or None
-                _, agent_yaml_path = resolve_agent(ctx, agent_key_arg)
-                base = Path(proj_path).resolve()
-                if base.is_file():
-                    base = base.parent
-                name_arg = str(getattr(args, "name", "") or "").strip()
-                input_arg = str(getattr(args, "input", "") or "").strip()
-                scenario_path: Optional[Path] = None
-                if input_arg:
-                    candidate = Path(input_arg)
-                    scenario_path = (
-                        candidate
-                        if candidate.is_absolute()
-                        else (base / candidate).resolve()
-                    )
-                elif name_arg:
-                    candidate_dir = (base / "artifacts" / "eval" / name_arg).resolve()
-                    for option in [
-                        candidate_dir / "generated_scenarios.yml",
-                        candidate_dir / "annotated_scenarios.yml",
-                        candidate_dir / "scenarios.yml",
-                    ]:
-                        if option.is_file():
-                            scenario_path = option
-                            break
-                    if scenario_path is None:
-                        scenario_path = candidate_dir / "generated_scenarios.yml"
-                else:
-                    print(
-                        "Error: Provide --name <scenario_set> or --input <path> for scenarios."
-                    )
-                    sys.exit(2)
-                if not scenario_path.exists():
-                    print(f"Error: Scenarios file not found: {scenario_path}")
-                    sys.exit(2)
-                eval_cfg = load_eval_config(
-                    str(proj_path),
-                    select=str(getattr(args, "select", "") or ""),
-                    exclude=str(getattr(args, "exclude", "") or ""),
-                    agent_key=agent_key_arg,
-                )
-                tracing_cfg = eval_cfg.tracing_config
-                studio_project = str(getattr(args, "studio_project") or "").strip()
-                if not studio_project:
-                    candidate = tracing_cfg.get("project")
-                    if isinstance(candidate, str) and candidate.strip():
-                        studio_project = candidate.strip()
-                if not studio_project:
-                    defaults = ctx.tracing_defaults or {}
-                    if isinstance(defaults, dict):
-                        candidate = defaults.get("project")
-                        if isinstance(candidate, str) and candidate.strip():
-                            studio_project = candidate.strip()
-                if not studio_project:
-                    print(
-                        "Error: Unable to determine Studio project; set tracing.project in project.yml or provide --studio-project."
-                    )
-                    sys.exit(2)
-                annotated, _original, source_path = annotate_scenarios(
-                    Path(agent_yaml_path), scenario_path, studio_project, None
-                )
-                output_arg = str(getattr(args, "output", "") or "").strip()
-                if output_arg:
-                    out_path = Path(output_arg)
-                    if not out_path.is_absolute():
-                        out_path = (base / out_path).resolve()
-                    out_path.parent.mkdir(parents=True, exist_ok=True)
-
-                    class NoAliasDumper(yaml.SafeDumper):
-                        def ignore_aliases(self, data):
-                            return True
-
-                    out_path.write_text(
-                        yaml.dump(
-                            {"scenarios": annotated},
-                            sort_keys=False,
-                            Dumper=NoAliasDumper,
-                            allow_unicode=True,
-                        ),
-                        encoding="utf-8",
-                    )
-                else:
-                    out_path = write_annotation_output(ctx.root, source_path, annotated)
-                print(
-                    f"Updated annotations for {len(annotated)} scenarios in {out_path}"
-                )
-                sys.exit(0)
-            except SystemExit:
-                raise
-            except Exception as e:
-                print(f"Error annotating scenarios: {e}")
                 import traceback
 
                 traceback.print_exc()
@@ -2758,11 +2391,9 @@ def main():
             and getattr(args, "scen_cmd", None) == "holdout"
         ):
             try:
-                from omniagents.core.eval.loader import load_eval_config
-                from omniagents.core.eval.holdout import (
-                    create_holdout,
-                    holdout_manifest,
-                    write_holdout,
+                from omniagents.core.eval.workspace import (
+                    EvalWorkspace,
+                    EvalWorkspaceError,
                 )
 
                 proj_path = getattr(args, "project", None)
@@ -2775,37 +2406,36 @@ def main():
                             "Error: Provide --project <project.yml> (or run from a directory containing a project.yml)."
                         )
                         sys.exit(2)
-                eval_cfg = load_eval_config(
-                    str(proj_path),
-                    select=str(args.select or ""),
-                    exclude=str(args.exclude or ""),
-                    agent_key=(str(getattr(args, "agent", "") or "") or None),
-                )
-                scenarios = list((eval_cfg.config or {}).get("scenarios") or [])
-                if not scenarios:
-                    print("Error: no scenarios to hold out (check --select/--exclude).")
-                    sys.exit(2)
                 strata = [
                     x.strip() for x in str(args.strata or "").split(",") if x.strip()
                 ]
                 try:
-                    fractions = [float(x) for x in str(args.fractions).split(",")]
+                    fractions = tuple(float(x) for x in str(args.fractions).split(","))
                 except ValueError:
+                    fractions = ()
+                if len(fractions) != 3:
                     print(
                         f"Error: --fractions must be three numbers, got {args.fractions!r}"
                     )
                     sys.exit(2)
-                assignment = create_holdout(
-                    scenarios, strata=strata, fractions=fractions, seed=int(args.seed)
+                workspace = EvalWorkspace(
+                    proj_path, agent=(str(getattr(args, "agent", "") or "") or None)
                 )
-                manifest = holdout_manifest(
-                    assignment, scenarios, strata, fractions, int(args.seed)
-                )
-                paths = write_holdout(eval_cfg.eval_dir, assignment, manifest)
+                try:
+                    manifest = workspace.create_holdout(
+                        strata=strata,
+                        fractions=fractions,
+                        seed=int(args.seed),
+                        select=str(args.select or "") or None,
+                        exclude=str(args.exclude or "") or None,
+                    )
+                except EvalWorkspaceError as exc:
+                    print(f"Error: {exc}")
+                    sys.exit(2)
                 counts = manifest["counts"]
                 print(
                     f"Holdout: train={counts['train']} dev={counts['dev']} test={counts['test']} "
-                    f"(seed {args.seed}, strata {strata or 'none'}) -> {paths['manifest'].parent}"
+                    f"(seed {args.seed}, strata {strata or 'none'}) -> {workspace.layout.holdout_dir}"
                 )
                 for stratum, c in manifest["counts_by_stratum"].items():
                     print(
@@ -2817,543 +2447,114 @@ def main():
             except Exception as e:
                 print(f"Error creating holdout: {e}")
                 sys.exit(1)
-        elif args.eval_cmd == "scenarios":
+        elif (
+            args.eval_cmd == "scenarios"
+            and getattr(args, "scen_cmd", None) == "combinations"
+        ):
+            from omniagents.core.eval.workspace import EvalWorkspace, EvalWorkspaceError
+
+            workspace = EvalWorkspace(getattr(args, "project", None) or Path.cwd())
+            values: dict = {}
+            for item in args.value:
+                dimension, _, value = str(item).partition("=")
+                if not value:
+                    print(f"Error: --value takes DIMENSION=VALUE, got {item!r}")
+                    sys.exit(2)
+                values.setdefault(dimension, []).append(value)
+            try:
+                draft = workspace.draft_combinations(
+                    args.name, count=args.count, seed=args.seed, dimension_values=values
+                )
+            except EvalWorkspaceError as exc:
+                print(f"Error: {exc}")
+                sys.exit(2)
+            for combination in draft["combinations"]:
+                print("  " + ", ".join(f"{k}={v}" for k, v in combination.items()))
             print(
-                "Error: Provide a scenarios subcommand: generate | run | annotate | holdout"
+                f"Drafted {len(draft['combinations'])} combinations in {draft['path']}. "
+                "Remove the ones real users never present and add missing ones, then: "
+                f"omniagents eval scenarios generate --name {args.name}"
             )
-            sys.exit(2)
-        elif args.eval_cmd == "judge" and getattr(args, "judge_cmd", None) == "run":
+        elif args.eval_cmd == "baseline":
+            from omniagents.core.eval.workspace import EvalWorkspace, EvalWorkspaceError
+
+            workspace = EvalWorkspace(getattr(args, "project", None) or Path.cwd())
+            run = Path(str(args.run))
+            if run.suffix != ".json":
+                run = workspace.layout.runs_dir / str(args.run) / "results.json"
             try:
-                from omniagents.core.eval.loader import load_eval_config
-
-                proj_path = getattr(args, "project", None)
-                if not proj_path:
-                    p = Path.cwd() / "project.yml"
-                    if p.is_file():
-                        proj_path = str(p)
-                    else:
-                        print(
-                            "Error: Provide --project <project.yml> (or run from a directory containing a project.yml)."
-                        )
-                        sys.exit(2)
-                eval_cfg = load_eval_config(
-                    str(proj_path),
-                    select=None,
-                    exclude=None,
-                    agent_key=(str(getattr(args, "agent", "") or "") or None),
-                )
-                compiled_cfg_path = eval_cfg.agent_path
-                from omniagents.core.eval.judges import evaluate_split
-                import asyncio as _asyncio
-                from pathlib import Path as _P
-
-                base = _P(proj_path).resolve()
-                if base.is_file():
-                    base = base.parent
-                qlvl_pre = int(getattr(args, "quiet", 0) or 0)
-                vlvl_pre = int(getattr(args, "verbose", 0) or 0)
-                vlevel_pre = vlvl_pre - qlvl_pre
-                quiet_pre = vlevel_pre < 0
-                did_stream_line = False
-                line_count = 0
-
-                def _isatty_pre():
-                    try:
-                        return sys.stdout.isatty()
-                    except Exception:
-                        return False
-
-                def _use_color_pre():
-                    if args.color == "always":
-                        return True
-                    if args.color == "never":
-                        return False
-                    return _isatty_pre()
-
-                def _c_pre(s: str, color: str) -> str:
-                    if not _use_color_pre():
-                        return s
-                    codes = {
-                        "red": "\x1b[31m",
-                        "green": "\x1b[32m",
-                        "yellow": "\x1b[33m",
-                        "bold": "\x1b[1m",
-                        "reset": "\x1b[0m",
-                    }
-                    return f"{codes.get(color, '')}{s}{codes['reset']}"
-
-                def _progress_cb(ev: dict):
-                    nonlocal did_stream_line, line_count
-                    if quiet_pre:
-                        return
-                    if ev.get("event") == "progress":
-                        did_stream_line = True
-                        pred = ev.get("pred")
-                        label = ev.get("label")
-                        agree = ev.get("agree")
-                        if pred is None:
-                            ch = _c_pre("s", "yellow")
-                        elif bool(agree):
-                            ch = _c_pre(".", "green")
-                        else:
-                            ch = _c_pre("F", "red")
-                        try:
-                            print(ch, end="", flush=True)
-                        except Exception:
-                            pass
-                        line_count += 1
-                        if line_count >= 80:
-                            try:
-                                print("")
-                            except Exception:
-                                pass
-                            line_count = 0
-
-                split_file_arg = getattr(args, "split_file", None)
-                if split_file_arg:
-                    split_path = _P(split_file_arg)
-                    if not split_path.is_absolute():
-                        split_path = (base / split_path).resolve()
-                    split_name = split_path.stem
-                else:
-                    category = str(getattr(args, "category", "") or "").strip()
-                    if not category:
-                        print(
-                            "Error: Provide either --split-file <path> or --category <name> with --split <dev|test|train>."
-                        )
-                        sys.exit(2)
-                    name_arg = str(getattr(args, "name", "") or "").strip()
-                    if not name_arg:
-                        print(
-                            "Error: Provide --name <scenario_set> to locate splits (or use --split-file)."
-                        )
-                        sys.exit(2)
-                    which = str(getattr(args, "split", "dev") or "dev")
-                    split_path = (
-                        base
-                        / "artifacts"
-                        / "eval"
-                        / name_arg
-                        / "splits"
-                        / category
-                        / f"{which}.yml"
-                    ).resolve()
-                    split_name = which
-                    if not split_path.exists():
-                        print(f"Error: Split file not found: {split_path}")
-                        sys.exit(2)
-                # Auto-detect judge if not provided and only one exists
-                jkey = getattr(args, "judge", None)
-                if not jkey:
-                    cfg = (
-                        yaml.safe_load(
-                            _P(compiled_cfg_path).read_text(encoding="utf-8")
-                        )
-                        or {}
-                    )
-                    js = (cfg.get("evaluation") or {}).get("judges") or {}
-                    if isinstance(js, dict) and len(js) == 1:
-                        jkey = next(iter(js.keys()))
-                    else:
-                        print(
-                            "Error: Provide --judge <key> (multiple or no judges configured)."
-                        )
-                        sys.exit(2)
-                out = _asyncio.run(
-                    evaluate_split(
-                        _P(compiled_cfg_path),
-                        split_path,
-                        str(jkey),
-                        judge_max_turns=int(args.max_turns or 1),
-                        run_max_turns=(
-                            int(args.run_max_turns)
-                            if args.run_max_turns is not None
-                            else None
-                        ),
-                        show=int(args.show),
-                        replay_mode=str(getattr(args, "replay_mode", "auto") or "auto"),
-                        runs_file=(
-                            str(getattr(args, "runs_file"))
-                            if getattr(args, "runs_file", None)
-                            else None
-                        ),
-                        progress_cb=_progress_cb,
-                        eval_config=eval_cfg,
-                    )
-                )
-                cfg = eval_cfg.agent_config
-                yml_out = (
-                    (cfg.get("evaluation") or {}).get("judge_output")
-                    or (cfg.get("evaluation") or {}).get("output")
-                    or ""
-                )
-                out_path = _P(args.output) if args.output else None
-                if not out_path and yml_out:
-                    candidate = _P(yml_out)
-                    if not candidate.is_absolute():
-                        base = _P(compiled_cfg_path).resolve().parent
-                        candidate = (base / candidate).resolve()
-                    out_path = candidate
-                if not out_path:
-                    ts_dir = split_path.parents[2]
-                    out_dir = ts_dir / "judge"
-                    out_dir.mkdir(parents=True, exist_ok=True)
-                    out_path = out_dir / (split_path.stem + f"_{jkey}.json")
-                tp = out.get("counts", {}).get("TP")
-                tn = out.get("counts", {}).get("TN")
-                fp = out.get("counts", {}).get("FP")
-                fn = out.get("counts", {}).get("FN")
-                tpr = out.get("tpr")
-                tnr = out.get("tnr")
-                try:
-                    results = out.get("results") or []
-                    checks = []
-                    try:
-                        thr = 30
-                        pass_cnt = sum(1 for r in results if r.get("label") is False)
-                        fail_cnt = sum(1 for r in results if r.get("label") is True)
-                        cat_for_warn = None
-                        try:
-                            cat_for_warn = split_path.parent.name
-                        except Exception:
-                            cat_for_warn = None
-                        prefix = f"category '{cat_for_warn}' " if cat_for_warn else ""
-                        if pass_cnt < thr:
-                            print(
-                                f"Warning: {prefix}split '{split_name}' has only {pass_cnt} Pass labels (<{thr})."
-                            )
-                        if fail_cnt < thr:
-                            print(
-                                f"Warning: {prefix}split '{split_name}' has only {fail_cnt} Fail labels (<{thr})."
-                            )
-                    except Exception:
-                        pass
-                    for r in results:
-                        pred = r.get("pred")
-                        agree = r.get("agree")
-                        label = r.get("label")
-                        name = r.get("name") or r.get("id")
-                        sid = r.get("id")
-                        exp = (
-                            (r.get("judge_output") or {}).get("explanation")
-                            or (r.get("judge_output") or {}).get("reasoning")
-                            or ""
-                        )
-                        kind = (
-                            "FP"
-                            if (pred is True and label is False)
-                            else (
-                                "FN"
-                                if (pred is False and label is True)
-                                else ("UNK" if pred is None else "OK")
-                            )
-                        )
-                        reason = f"label={label} pred={pred} {kind}"
-                        if exp:
-                            reason = f"{reason} — {exp}"
-                        checks.append(
-                            {
-                                "type": "scenario",
-                                "desc": f"Scenario {name} ({sid})",
-                                "pass": bool(agree) if agree is not None else False,
-                                "skip": pred is None,
-                                "reason": reason,
-                                "prompt": r.get("prompt") or "",
-                                "assistant": r.get("final_assistant_text") or "",
-                                "split_file": r.get("split_file") or out.get("split"),
-                                "split_line": int(r.get("split_line") or 0),
-                                "label": label,
-                                "pred": pred,
-                            }
-                        )
-                    total = len(checks)
-
-                    def _isatty():
-                        try:
-                            return sys.stdout.isatty()
-                        except Exception:
-                            return False
-
-                    def _use_color():
-                        if args.color == "always":
-                            return True
-                        if args.color == "never":
-                            return False
-                        return _isatty()
-
-                    def _c(s: str, color: str) -> str:
-                        if not _use_color():
-                            return s
-                        codes = {
-                            "red": "\x1b[31m",
-                            "green": "\x1b[32m",
-                            "yellow": "\x1b[33m",
-                            "bold": "\x1b[1m",
-                            "reset": "\x1b[0m",
-                        }
-                        return f"{codes.get(color, '')}{s}{codes['reset']}"
-
-                    reporter = args.reporter
-                    if reporter == "auto":
-                        reporter = "pretty" if _isatty() else "tap"
-                    qlvl = int(getattr(args, "quiet", 0) or 0)
-                    vlvl = int(getattr(args, "verbose", 0) or 0)
-                    vlevel = vlvl - qlvl
-                    quiet = vlevel < 0
-                    verbose = vlevel > 0
-                    passed_count = sum(
-                        1 for x in checks if not x.get("skip") and x.get("pass")
-                    )
-                    failed = [
-                        x for x in checks if not x.get("skip") and not x.get("pass")
-                    ]
-                    skipped = [x for x in checks if x.get("skip")]
-                    if reporter == "tap":
-                        print("TAP version 13")
-                        print(f"1..{total}")
-                        for i, c in enumerate(checks, start=1):
-                            if c.get("skip"):
-                                print(
-                                    f"ok {i} - {c.get('desc')} # SKIP {c.get('reason')}"
-                                )
-                            elif c.get("pass"):
-                                print(f"ok {i} - {c.get('desc')}")
-                            else:
-                                print(f"not ok {i} - {c.get('desc')}")
-                                if c.get("reason"):
-                                    print(f"# {c.get('reason')}")
-                                p = c.get("prompt") or ""
-                                if p:
-                                    pt = p if len(p) <= 300 else (p[:300] + "...")
-                                    print(f"# Prompt: {pt}")
-                                a = c.get("assistant") or ""
-                                if a:
-                                    at = a if len(a) <= 300 else (a[:300] + "...")
-                                    print(f"# Assistant: {at}")
-                        print(f"# Counts: TP={tp} TN={tn} FP={fp} FN={fn}")
-                        print(
-                            f"# TPR: {tpr if tpr is not None else 'NA'}  TNR: {tnr if tnr is not None else 'NA'}"
-                        )
-                    else:
-                        if not quiet and not verbose and not did_stream_line:
-                            print(f"Judged {total} scenarios...")
-                            line = []
-                            for x in checks:
-                                if x.get("skip"):
-                                    line.append(_c("s", "yellow"))
-                                elif x.get("pass"):
-                                    line.append(_c(".", "green"))
-                                else:
-                                    line.append(_c("F", "red"))
-                                if len(line) >= 80:
-                                    print("".join(line))
-                                    line = []
-                            if line:
-                                print("".join(line))
-                        if (
-                            not quiet
-                            and failed
-                            and bool(getattr(args, "disagreements", False))
-                        ):
-                            print("")
-                            print(_c("Failures:", "bold"))
-                            for idx, f in enumerate(failed, start=1):
-                                label = f.get("label")
-                                pred = f.get("pred")
-                                sf = f.get("split_file")
-                                ln = int(f.get("split_line") or 0)
-                                kind = (
-                                    "FP"
-                                    if (pred is True and label is False)
-                                    else (
-                                        "FN"
-                                        if (pred is False and label is True)
-                                        else "DISAGREE"
-                                    )
-                                )
-                                loc = f"{sf}:{ln}" if sf else ""
-                                title = f"{idx}) {f.get('desc')} label={label} pred={pred} {kind} {loc}"
-                                print(_c("FAIL ", "red") + title)
-                                prompt = f.get("prompt") or ""
-                                if prompt:
-                                    p = (
-                                        prompt
-                                        if len(prompt) <= 300
-                                        else (prompt[:300] + "...")
-                                    )
-                                    print(f"  Prompt: {p}")
-                                assistant = f.get("assistant") or ""
-                                if assistant:
-                                    a = (
-                                        assistant
-                                        if len(assistant) <= 300
-                                        else (assistant[:300] + "...")
-                                    )
-                                    print(f"  Assistant: {a}")
-                                rsn = f.get("reason")
-                                if rsn and verbose:
-                                    print(f"  Reason: {rsn}")
-                        if not quiet:
-                            print("")
-                            print(
-                                f"Passed: {passed_count}  Failed: {len(failed)}  Skipped: {len(skipped)}  Total: {total}"
-                            )
-                            print(f"Counts: TP={tp} TN={tn} FP={fp} FN={fn}")
-                            print(
-                                f"TPR: {tpr if tpr is not None else 'NA'}  TNR: {tnr if tnr is not None else 'NA'}"
-                            )
-                except Exception as _:
-                    # Fallback to minimal counts output if reporter fails
-                    print(f"Counts: TP={tp} TN={tn} FP={fp} FN={fn}")
-                    print(
-                        f"TPR: {tpr if tpr is not None else 'NA'}  TNR: {tnr if tnr is not None else 'NA'}"
-                    )
-                # Write results after displaying metrics/failures
-                out_path.write_text(json.dumps(out, indent=2), encoding="utf-8")
-                print(f"Wrote results: {out_path}")
-                try:
-                    results_for_exit = out.get("results") or []
-                    any_disagree = any(
-                        (
-                            (r.get("pred") is True and r.get("label") is False)
-                            or (r.get("pred") is False and r.get("label") is True)
-                        )
-                        for r in results_for_exit
-                    )
-                    if (
-                        bool(getattr(args, "fail_on_disagreement", False))
-                        and any_disagree
-                    ):
-                        sys.exit(1)
-                except Exception:
-                    pass
-            except Exception as e:
-                print(f"Error judge-evaluating split: {e}")
-                import traceback
-
-                traceback.print_exc()
-                sys.exit(1)
-        elif (
-            args.eval_cmd == "judge" and getattr(args, "judge_cmd", None) == "optimize"
-        ):
-            try:
-                proj_path = getattr(args, "project", None)
-                if not proj_path:
-                    p = Path.cwd() / "project.yml"
-                    if p.is_file():
-                        proj_path = str(p)
-                    else:
-                        print(
-                            "Error: Provide --project <project.yml> (or run from a directory containing a project.yml)."
-                        )
-                        sys.exit(2)
-                optimize_judge_from_project(
-                    proj_path=str(proj_path),
-                    agent_key=(str(getattr(args, "agent", "") or "") or None),
-                    category=(str(getattr(args, "category") or "") or None),
-                    train_file=getattr(args, "train_file", None),
-                    dev_file=getattr(args, "dev_file", None),
-                    test_file=getattr(args, "test_file", None),
-                    name=(str(getattr(args, "name", "") or "") or None),
-                    judge_key=(str(getattr(args, "judge", "") or "") or None),
-                    runs_file=getattr(args, "runs_file", None),
-                    source=str(
-                        getattr(args, "source", "final_assistant_text")
-                        or "final_assistant_text"
-                    ),
-                    max_turns=int(getattr(args, "max_turns") or 1),
-                    max_metric_calls=int(getattr(args, "max_metric_calls") or 100),
-                    reflection_model=(
-                        str(getattr(args, "reflection_model"))
-                        if getattr(args, "reflection_model", None)
-                        else None
-                    ),
-                    optimize_components=str(
-                        getattr(args, "optimize", "instructions") or "instructions"
-                    ),
-                    optimizer_key=(
-                        str(getattr(args, "optimizer"))
-                        if getattr(args, "optimizer", None)
-                        else None
-                    ),
-                    seed=int(getattr(args, "seed") or 0),
-                    output_dir=(str(getattr(args, "output") or "") or None),
-                    resume=bool(getattr(args, "resume", False)),
-                    apply=bool(getattr(args, "apply", False)),
-                )
-                return
-            except SystemExit:
-                raise
-            except Exception as e:
-                print(f"Error optimizing judge: {e}")
-                import traceback
-
-                traceback.print_exc()
-                sys.exit(1)
-        elif (
-            args.eval_cmd == "agent" and getattr(args, "agent_cmd", None) == "optimize"
-        ):
-            try:
-                proj_path = getattr(args, "project", None)
-                if not proj_path:
-                    p = Path.cwd() / "project.yml"
-                    if p.is_file():
-                        proj_path = str(p)
-                    else:
-                        print(
-                            "Error: Provide --project <project.yml> (or run from a directory containing a project.yml)."
-                        )
-                        sys.exit(2)
-                optimize_agent_from_project(
-                    proj_path=str(proj_path),
-                    agent_key=(str(getattr(args, "agent", "") or "") or None),
-                    category=(str(getattr(args, "category") or "") or None),
-                    train_file=getattr(args, "train_file", None),
-                    dev_file=getattr(args, "dev_file", None),
-                    test_file=getattr(args, "test_file", None),
-                    name=(str(getattr(args, "name", "") or "") or None),
-                    positives_only=bool(getattr(args, "positives_only", False)),
-                    max_turns=(
-                        int(getattr(args, "max_turns"))
-                        if getattr(args, "max_turns", None) is not None
-                        else None
-                    ),
-                    max_metric_calls=int(getattr(args, "max_metric_calls") or 100),
-                    reflection_model=str(
-                        getattr(args, "reflection_model") or "gpt-4.1"
-                    ),
-                    score_mode=str(
-                        getattr(args, "score_mode", "fraction") or "fraction"
-                    ),
-                    optimizer_key=(
-                        str(getattr(args, "optimizer"))
-                        if getattr(args, "optimizer", None)
-                        else None
-                    ),
-                    seed=int(getattr(args, "seed") or 0),
-                    output_dir=(str(getattr(args, "output") or "") or None),
-                    resume=bool(getattr(args, "resume", False)),
-                    apply=bool(getattr(args, "apply", False)),
-                    train_select=(str(getattr(args, "train_select", "") or "") or None),
-                    dev_select=(str(getattr(args, "dev_select", "") or "") or None),
-                    test_select=(str(getattr(args, "test_select", "") or "") or None),
-                )
-                return
-            except SystemExit:
-                raise
-            except Exception as e:
-                print(f"Error optimizing agent instructions: {e}")
-                import traceback
-
-                traceback.print_exc()
-                sys.exit(1)
-        elif args.eval_cmd == "judge":
-            print("Error: Provide a judge subcommand: run | optimize")
+                kept = workspace.keep_run(run, str(args.name))
+            except EvalWorkspaceError as exc:
+                print(f"Error: {exc}")
+                sys.exit(2)
+            print(f"Kept {kept['id']} as baseline {kept['baseline']}: {kept['path']}")
+        elif args.eval_cmd == "scenarios":
+            print("Error: Provide a scenarios subcommand: generate | run | holdout")
             sys.exit(2)
         else:
             eval_parser.print_help()
     elif args.command == "judge":
-        if getattr(args, "judge_cmd", None) == "run":
+        if getattr(args, "judge_cmd", None) == "dataset":
+            from omniagents.core.eval.workspace import EvalWorkspace, EvalWorkspaceError
+
+            workspace = EvalWorkspace(getattr(args, "project", None) or Path.cwd())
+            try:
+                dataset = workspace.create_judge_dataset(
+                    args.category,
+                    fractions=(args.train, args.dev, args.test),
+                    seed=args.seed,
+                )
+            except EvalWorkspaceError as exc:
+                print(f"Error: {exc}")
+                sys.exit(2)
+            for split in dataset["splits"]:
+                print(
+                    f"{split['split']}: {split['scenario_count']} answers "
+                    f"({split['fails']} Fail, {split['passes']} Pass) -> {split['path']}"
+                )
+            for warning in dataset["manifest"].get("warnings") or []:
+                print(f"Warning: {warning}")
+        elif getattr(args, "judge_cmd", None) == "examples":
+            from omniagents.core.eval.workspace import (
+                EvalWorkspace,
+                EvalWorkspaceError,
+                slugify,
+            )
+
+            workspace = EvalWorkspace(getattr(args, "project", None) or Path.cwd())
+            try:
+                if args.ids or args.clear:
+                    judge = workspace.set_judge_examples(
+                        args.judge, [] if args.clear else list(args.ids)
+                    )
+                    print(
+                        f"{args.judge} uses {len(judge['examples'])} few-shot examples"
+                    )
+                    sys.exit(0)
+                judge = workspace.judge(args.judge)
+                category = judge.get("failure_category")
+                if not category:
+                    print(f"Error: {args.judge} decides no failure category")
+                    sys.exit(2)
+                dataset = workspace.judge_dataset(slugify(category))
+                train = next(s for s in dataset["splits"] if s["split"] == "train")
+                answers = workspace.judge_dataset_split(train["path"])["scenarios"]
+            except EvalWorkspaceError as exc:
+                print(f"Error: {exc}")
+                sys.exit(2)
+            chosen = set(judge["examples"])
+            for answer in answers:
+                mark = "*" if answer["id"] in chosen else " "
+                verdict = "Fail" if answer.get("label") else "Pass"
+                notes = (answer.get("notes") or "(no notes: cannot be an example)")[
+                    :100
+                ]
+                print(f"{mark} {answer['id']}  {verdict}  {notes}")
+            print(
+                "* marks its examples. Choose a clear Pass, a clear Fail and a "
+                "borderline case (2-4 in all)."
+            )
+        elif getattr(args, "judge_cmd", None) == "run":
             try:
                 from omniagents.core.eval.loader import load_eval_config
 
@@ -3420,7 +2621,6 @@ def main():
                     if ev.get("event") == "progress":
                         did_stream_line = True
                         pred = ev.get("pred")
-                        label = ev.get("label")
                         agree = ev.get("agree")
                         if pred is None:
                             ch = _c_pre("s", "yellow")
@@ -3453,22 +2653,15 @@ def main():
                             "Error: Provide either --split-file <path> or --category <name> with --split <dev|test|train>."
                         )
                         sys.exit(2)
-                    name_arg = str(getattr(args, "name", "") or "").strip()
-                    if not name_arg:
-                        print(
-                            "Error: Provide --name <scenario_set> to locate splits (or use --split-file)."
-                        )
-                        sys.exit(2)
+                    from omniagents.core.eval.layout import EvalLayout
+
                     which = str(getattr(args, "split", "dev") or "dev")
                     split_path = (
-                        base
-                        / "artifacts"
-                        / "eval"
-                        / name_arg
-                        / "splits"
-                        / category
+                        EvalLayout(
+                            eval_cfg.eval_dir, eval_cfg.project_root
+                        ).judge_dataset_dir(category)
                         / f"{which}.yml"
-                    ).resolve()
+                    )
                     split_name = which
                     if not split_path.exists():
                         print(f"Error: Split file not found: {split_path}")
@@ -3502,37 +2695,27 @@ def main():
                         ),
                         show=int(args.show),
                         replay_mode=str(getattr(args, "replay_mode", "auto") or "auto"),
-                        runs_file=(
-                            str(getattr(args, "runs_file"))
-                            if getattr(args, "runs_file", None)
-                            else None
-                        ),
                         progress_cb=_progress_cb,
                         eval_config=eval_cfg,
                     )
                 )
-                cfg = eval_cfg.agent_config
-                yml_out = (
-                    (cfg.get("evaluation") or {}).get("judge_output")
-                    or (cfg.get("evaluation") or {}).get("output")
-                    or ""
-                )
                 out_path = _P(args.output) if args.output else None
-                if not out_path and yml_out:
-                    candidate = _P(yml_out)
-                    if not candidate.is_absolute():
-                        base = _P(compiled_cfg_path).resolve().parent
-                        candidate = (base / candidate).resolve()
-                    out_path = candidate
                 if not out_path:
-                    ts_dir = split_path.parents[2]
-                    out_dir = ts_dir / "judge"
-                    out_dir.mkdir(parents=True, exist_ok=True)
-                    out_path = out_dir / (split_path.stem + f"_{jkey}.json")
-                tp = out.get("counts", {}).get("TP")
-                tn = out.get("counts", {}).get("TN")
-                fp = out.get("counts", {}).get("FP")
-                fn = out.get("counts", {}).get("FN")
+                    from datetime import datetime as _dt
+
+                    from omniagents.core.eval.layout import EvalLayout
+
+                    out_path = (
+                        EvalLayout(eval_cfg.eval_dir, eval_cfg.project_root).runs_dir
+                        / "judge-checks"
+                        / f"{_dt.now().strftime('%Y%m%d_%H%M%S')}_{jkey}_{split_name}.json"
+                    )
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                # Pass is the positive class: TP = both said Pass.
+                tp = out.get("counts", {}).get("tp")
+                tn = out.get("counts", {}).get("tn")
+                fp = out.get("counts", {}).get("fp")
+                fn = out.get("counts", {}).get("fn")
                 tpr = out.get("tpr")
                 tnr = out.get("tnr")
                 try:
@@ -3569,11 +2752,12 @@ def main():
                             or (r.get("judge_output") or {}).get("reasoning")
                             or ""
                         )
+                        # pred/label True: the failure is present (Fail).
                         kind = (
-                            "FP"
+                            "false Fail"
                             if (pred is True and label is False)
                             else (
-                                "FN"
+                                "false Pass"
                                 if (pred is False and label is True)
                                 else ("UNK" if pred is None else "OK")
                             )
@@ -3660,7 +2844,9 @@ def main():
                                 if a:
                                     at = a if len(a) <= 300 else (a[:300] + "...")
                                     print(f"# Assistant: {at}")
-                        print(f"# Counts: TP={tp} TN={tn} FP={fp} FN={fn}")
+                        print(
+                            f"# Counts (Pass positive): TP={tp} TN={tn} FP={fp} FN={fn}"
+                        )
                         print(
                             f"# TPR: {tpr if tpr is not None else 'NA'}  TNR: {tnr if tnr is not None else 'NA'}"
                         )
@@ -3693,10 +2879,10 @@ def main():
                                 sf = f.get("split_file")
                                 ln = int(f.get("split_line") or 0)
                                 kind = (
-                                    "FP"
+                                    "false Fail"
                                     if (pred is True and label is False)
                                     else (
-                                        "FN"
+                                        "false Pass"
                                         if (pred is False and label is True)
                                         else "DISAGREE"
                                     )
@@ -3728,17 +2914,35 @@ def main():
                             print(
                                 f"Passed: {passed_count}  Failed: {len(failed)}  Skipped: {len(skipped)}  Total: {total}"
                             )
-                            print(f"Counts: TP={tp} TN={tn} FP={fp} FN={fn}")
+                            print(
+                                f"Counts (Pass positive): TP={tp} TN={tn} FP={fp} FN={fn}"
+                            )
                             print(
                                 f"TPR: {tpr if tpr is not None else 'NA'}  TNR: {tnr if tnr is not None else 'NA'}"
                             )
                 except Exception as _:
-                    print(f"Counts: TP={tp} TN={tn} FP={fp} FN={fn}")
+                    print(f"Counts (Pass positive): TP={tp} TN={tn} FP={fp} FN={fn}")
                     print(
                         f"TPR: {tpr if tpr is not None else 'NA'}  TNR: {tnr if tnr is not None else 'NA'}"
                     )
                 out_path.write_text(json.dumps(out, indent=2), encoding="utf-8")
                 print(f"Wrote results: {out_path}")
+                from omniagents.core.eval.judge_validation import is_pinned
+
+                judge_model = (
+                    ((eval_cfg.config.get("judges") or {}).get(jkey) or {}).get("agent")
+                    or {}
+                ).get("model")
+                if not is_pinned(judge_model):
+                    print(
+                        f"Warning: {jkey}'s model {judge_model!r} is an alias; pin a "
+                        "dated snapshot so the judge cannot change under its validation"
+                    )
+                if out.get("validation"):
+                    print(
+                        f"Validated {jkey} on the test split; recorded in "
+                        f"judges/{jkey}/validation.yml"
+                    )
                 try:
                     results_for_exit = out.get("results") or []
                     any_disagree = any(
@@ -3780,9 +2984,7 @@ def main():
                     train_file=getattr(args, "train_file", None),
                     dev_file=getattr(args, "dev_file", None),
                     test_file=getattr(args, "test_file", None),
-                    name=(str(getattr(args, "name", "") or "") or None),
                     judge_key=(str(getattr(args, "judge", "") or "") or None),
-                    runs_file=getattr(args, "runs_file", None),
                     source=str(
                         getattr(args, "source", "final_assistant_text")
                         or "final_assistant_text"

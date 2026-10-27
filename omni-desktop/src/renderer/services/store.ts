@@ -1,33 +1,18 @@
 import type { ReadableAtom } from 'nanostores';
 import { atom } from 'nanostores';
 
-import { emptyMcpConfig, emptyModelsConfig, emptyNetworkConfig } from '@/lib/agent-config';
-import { migrateLayoutMode } from '@/lib/store-init';
-import { refreshSandboxProfiles } from '@/renderer/features/Sandboxes/state';
-import { loadTeams, loadWhoami } from '@/renderer/features/Teams/state';
-import { initComputeBridge } from '@/renderer/services/compute';
+import { normalizeLayoutMode } from '@/lib/store-init';
+import { refreshModelsConfig } from '@/renderer/services/config';
 import { emitter, ipc } from '@/renderer/services/ipc';
-import { initMachines } from '@/renderer/services/machines';
-import { initTunnelBridge } from '@/renderer/services/tunnel-bridge';
 import type { OperatingSystem, StoreData } from '@/shared/types';
 
 const getDefaults = (): StoreData => ({
-  defaultProfileName: 'host',
-  residentAgents: [],
-  residentMemories: {},
-  residentChannels: [],
-  residentChannelDefs: [],
-  residentAlarms: {},
-  residentMorningBeats: {},
-  residentChannelSeen: {},
   optInToLauncherPrereleases: false,
-  previewFeatures: false,
   notifyOnAgentAttention: false,
   textScale: 100,
   voicePersonas: [],
   activeVoicePersonaId: 'default',
   voiceToggleHotkey: null,
-  globalVoiceToggleHotkey: null,
   localVoiceEnabled: false,
   audioSettings: {
     inputDeviceId: null,
@@ -40,34 +25,15 @@ const getDefaults = (): StoreData => ({
   layoutMode: 'chat',
   theme: 'omni',
   onboardingComplete: false,
-  cliCardDismissed: false,
   remoteBackend: null,
   projects: [],
-  milestones: [],
-  pages: [],
-  inboxItems: [],
-  tasks: [],
-  tickets: [],
-  schemaVersion: 0,
   codeTabs: [],
   chatConversations: [],
   activeCodeTabId: null,
-  codeLayoutMode: 'focus',
-  activeTicketId: null,
-  wipLimit: 3,
   scheduledTasks: [],
-  automations: [],
-  activityLog: [],
-  dismissedHomeHints: [],
-  enabledExtensions: {},
   skillSources: {},
   installedBundles: {},
-  customApps: [],
   gitCredentials: [],
-  pullRequestLinks: [],
-  modelsConfig: emptyModelsConfig(),
-  mcpConfig: emptyMcpConfig(),
-  networkConfig: emptyNetworkConfig(),
   envVars: '',
   browserProfiles: [],
   browserTabsets: {},
@@ -167,8 +133,7 @@ const init = async () => {
   await persistedStoreApi.sync();
   const store = persistedStoreApi.get();
 
-  // Migrate legacy layoutMode values to current valid modes
-  const layoutReset = migrateLayoutMode(store.layoutMode as string);
+  const layoutReset = normalizeLayoutMode(store.layoutMode as string);
   if (layoutReset) {
     await persistedStoreApi.setKey('layoutMode', layoutReset);
   }
@@ -180,43 +145,7 @@ const init = async () => {
     await persistedStoreApi.setKey('workspaceDir', defaultDir);
   }
 
-  // Existing-user migration: if onboardingComplete is not set, mark it done when
-  // model providers are already configured (now sourced from the store, not a file).
-  if (!store.onboardingComplete) {
-    try {
-      const modelsConfig = await emitter.invoke('settings:get-models-config');
-      if (Object.keys(modelsConfig.providers).length > 0) {
-        await persistedStoreApi.setKey('onboardingComplete', true);
-      }
-    } catch {
-      // If we can't read the config, just leave onboardingComplete as false
-    }
-  }
-
-  // Teams/cloud: learn our principal + memberships so "my work" filters and the
-  // team switcher work. No-op (null/empty) in single-user/local mode.
-  void loadWhoami();
-  void loadTeams();
-
-  // Computer-as-sandbox: read this Electron's stable identity and (when
-  // cloud-linked) register it with the cloud so it appears in the picker.
-  // No-op in browser/server mode.
-  void initMachines();
-
-  // Sandbox profile discovery (bundled + user YAMLs on disk). The pickers
-  // (chat composer, project settings, scheduled tasks) all read
-  // `$sandboxProfiles`; without this boot fetch the catalog stayed empty
-  // until the user happened to open Sandboxes → Profiles, and every picker
-  // fell back to the hardcoded host/devbox pair.
-  void refreshSandboxProfiles();
-
-  // Bridge the cloud's compute reverse-RPCs through to local Electron main.
-  // No-op outside cloud-linked Electron.
-  initComputeBridge();
-
-  // Pipe local omni-serve tunnel frames from main back up to the cloud.
-  // No-op outside cloud-linked Electron.
-  initTunnelBridge();
+  await refreshModelsConfig().catch(() => undefined);
 
   $initialized.set(true);
 };

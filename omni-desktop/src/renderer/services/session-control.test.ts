@@ -1,16 +1,14 @@
-import { describe, expect, it } from 'vitest';
-
 import {
   createCursorAssigner,
   fullEntry,
-  getSessionController,
   lastEntrySignal,
-  listSessionRunStates,
-  registerSessionController,
   type SessionController,
   transcriptPage,
-} from '@/renderer/services/session-control';
-import type { MessageItem } from '@/shared/chat-types';
+} from '@omniagents/chat-ui/session-controller';
+import type { MessageItem } from '@omniagents/client/transcript/chat-types';
+import { describe, expect, it } from 'vitest';
+
+import { getSessionController, registerSessionController } from '@/renderer/services/session-control';
 
 const stub = (over?: Partial<SessionController>): SessionController => ({
   sendMessage: () => {},
@@ -49,38 +47,6 @@ describe('session-control registry', () => {
     unregisterFirst(); // stale — must not evict `second`
     expect(getSessionController('tab-B')).toBe(second);
     registerSessionController('tab-B', stub())(); // cleanup
-  });
-
-  it('listSessionRunStates snapshots every registered column', () => {
-    registerSessionController(
-      'tab-run',
-      stub({
-        getState: () => ({
-          running: true,
-          runId: 'r1',
-          awaitingApproval: [],
-          transcript: { total: 3, latestCursor: 3 },
-        }),
-      })
-    );
-    const states = listSessionRunStates();
-    expect(states['tab-run']?.transcript).toEqual({ total: 3, latestCursor: 3 });
-  });
-
-  it('a throwing getState degrades to a safe empty state', () => {
-    registerSessionController(
-      'tab-bad',
-      stub({
-        getState: () => {
-          throw new Error('boom');
-        },
-      })
-    );
-    expect(listSessionRunStates()['tab-bad']).toEqual({
-      running: false,
-      awaitingApproval: [],
-      transcript: { total: 0, latestCursor: null },
-    });
   });
 });
 

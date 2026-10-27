@@ -1,7 +1,7 @@
+import { $columnActivity, type ColumnActivity } from '@omniagents/chat-ui/services/column-activity';
 import { memo, useEffect, useState } from 'react';
 
 import { columnLabelFor } from '@/renderer/services/agent-attention';
-import { $columnActivity, type ColumnActivity } from '@/renderer/services/column-activity';
 import { buildAnnouncements } from '@/renderer/services/status-announcer';
 
 /** Announcements landing within this window read as one utterance. */

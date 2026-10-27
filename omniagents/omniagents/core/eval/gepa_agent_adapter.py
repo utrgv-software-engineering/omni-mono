@@ -4,6 +4,7 @@ import asyncio
 import json
 import inspect
 import os
+import secrets
 from dataclasses import dataclass
 from pathlib import Path
 import sys
@@ -13,6 +14,7 @@ import yaml
 
 from omniagents.core.config.loader import load_agent_spec_from_yaml
 from omniagents.core.agents.factory import create_unified_agent
+from omniagents.execution import AgentHostResources, register_host_environment
 from omniagents.core.session.history_db import load_history
 from omniagents.core.evaluation import (
     build_eval_context,
@@ -21,8 +23,8 @@ from omniagents.core.evaluation import (
 )
 from omniagents.core.eval.pipeline import (
     _failure_category_map,
-    _load_local_measures,
-    _run_judges,
+    load_project_measures,
+    run_judges,
 )
 from omniagents.core.utils.jinja import render_template
 from omniagents.core.project.runtime import load_project
@@ -84,7 +86,7 @@ class OmniAgentsAgentAdapter:
         }
         self._eval_cfg_dict = eval_cfg
 
-        _load_local_measures(
+        load_project_measures(
             self.compiled_yaml,
             project_root=(eval_config.project_root if eval_config else None),
             eval_dir=(eval_config.eval_dir if eval_config else None),
@@ -212,15 +214,13 @@ class OmniAgentsAgentAdapter:
 
         spec.get_agent_instructions = _get_instr
 
-        # Anchor builtin filesystem tools to the eval invocation's cwd.
-        # Without this, start_run raises WorkspaceRootRequiredError under
-        # strict mode (no default_host_workspace_root is set on the eval-side
-        # AgentService). Mirrors the judges path in _run_judges.
-        if not isinstance(spec.context, dict):
-            spec.context = {} if spec.context is None else {"_original": spec.context}
-        spec.context.setdefault("workspace_root", os.getcwd())
-
-        agent = await create_unified_agent(spec)
+        # The agent's tools work in the invocation's cwd: its host is composed
+        # with a host environment there as the default, as `omni serve` is.
+        resources = AgentHostResources.create(f"gepa-{secrets.token_hex(8)}")
+        resources.thread_bindings.set_initial_default(
+            register_host_environment(resources, os.getcwd(), owner_user_id=None)
+        )
+        agent = await create_unified_agent(spec, host_resources=resources)
         msgs = [{"role": "user", "content": prompt}]
 
         try:
@@ -256,12 +256,11 @@ class OmniAgentsAgentAdapter:
                 if key in scenario:
                     scen[key] = scenario[key]
         try:
-            metadata = await _run_judges(
-                self.compiled_yaml,
+            metadata = await run_judges(
                 eval_cfg,
                 scen,
                 history,
-                eval_dir=self._eval_dir,
+                Path(self._eval_dir) if self._eval_dir else self.compiled_yaml.parent,
             )
         except Exception:
             metadata = {}
@@ -329,7 +328,9 @@ class OmniAgentsAgentAdapter:
                 try:
                     if self.workflow_name:
                         try:
-                            from omniagents.studio.tracing import trace as studio_trace  # type: ignore
+                            from omniagents.core.tracing.local import (
+                                trace as studio_trace,
+                            )
                             import uuid as _uuid
 
                             run_uid = _uuid.uuid4().hex[:8]
@@ -919,7 +920,7 @@ class OmniAgentsAgentAdapter:
                 prompt = self._render_optimizer_prompt(name, base_text, ds_items)
                 if self.workflow_name:
                     try:
-                        from omniagents.studio.tracing import trace as studio_trace  # type: ignore
+                        from omniagents.core.tracing.local import trace as studio_trace
                         import uuid as _uuid
 
                         run_uid = _uuid.uuid4().hex[:8]

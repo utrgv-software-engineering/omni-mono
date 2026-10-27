@@ -14,7 +14,8 @@ test.describe('Omniagents v2 session surfaces', () => {
       1
     );
     await expect(recents.getByRole('button', { name: 'Retained canonical thread', exact: true })).toHaveCount(1);
-    await expect(page.getByRole('button', { name: 'New chat', exact: true })).toHaveCount(1);
+    // No placeholder row duplicates a session that already has a canonical row.
+    await expect(recents.getByRole('button', { name: 'New chat', exact: true })).toHaveCount(0);
     await attachProofPng(testInfo, 'canonical v2 session listing', await app.captureScreenshot());
   });
 

@@ -5,6 +5,7 @@ shell, cwd, backend, and ownership all come from the dispatcher-bound
 EnvironmentLease; session context is not an execution-routing fallback.
 """
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -105,7 +106,10 @@ async def test_terminal_create_attaches_manager_and_returns_ws_path(monkeypatch)
     assert created["rows"] == 40
     assert created["user"] is None
     assert created["owner_user_id"] is None
-    assert created["backend"].__class__.__name__ == "HostPtyBackend"
+    # Host terminals use ConPTY on Windows and a POSIX pty elsewhere.
+    assert created["backend"].__class__.__name__ == (
+        "WindowsConPtyBackend" if sys.platform == "win32" else "HostPtyBackend"
+    )
     assert created["environment_id"] == "test-host-environment"
     assert created["environment_generation"] == 1
     assert result["terminal_id"] == "term-1"
@@ -113,7 +117,7 @@ async def test_terminal_create_attaches_manager_and_returns_ws_path(monkeypatch)
     assert result["terminal_token"] == "tok-1"
     assert result["path"] == "/ws/terminal"
     assert result["session_id"] == "sess-1"
-    assert result["cwd"] == "/"
+    assert result["cwd"] == created["cwd"]
     assert result["environment_id"] == "test-host-environment"
     assert result["environment_generation"] == 1
 

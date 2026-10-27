@@ -7,7 +7,7 @@ output passes through the scanner.
 
 from __future__ import annotations
 
-from typing import Any, List, Union
+from typing import Any
 
 from omniagents.core.providers.content_scanner.base import ContentScanner
 

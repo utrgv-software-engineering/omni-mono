@@ -1,7 +1,7 @@
+import { Button } from '@omniagents/ui/button';
+import { RadioGroup, RadioGroupItem } from '@omniagents/ui/radio-group';
 import { memo } from 'react';
 
-import { Button } from '@/renderer/ds/ui/button';
-import { RadioGroup, RadioGroupItem } from '@/renderer/ds/ui/radio-group';
 import type { ProviderEntry } from '@/shared/types';
 
 type ProviderOption = {

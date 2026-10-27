@@ -19,9 +19,6 @@ export default [
   js.configs.recommended,
   includeIgnoreFile(gitignorePath, 'Imported .gitignore patterns'),
   {
-    ignores: ['src/generated/**'],
-  },
-  {
     languageOptions: {
       parser: typescriptParser,
       parserOptions: {
@@ -277,15 +274,6 @@ export default [
       // Seed content is standalone sample apps written into user projects;
       // they have no shadcn or launcher navigation to route through.
       'no-restricted-syntax': 'off',
-    },
-  },
-
-  {
-    files: ['src/renderer/ds/ui/field.tsx'],
-    rules: {
-      // This file is registry-owned and pinned byte-for-byte to shadcn. Keep
-      // upstream's intentional loose comparison without weakening app code.
-      eqeqeq: 'off',
     },
   },
 

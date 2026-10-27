@@ -3,7 +3,7 @@
 Covers: catalog parse/validation, manifest path resolution, the
 conventional-store hooks (config dir from product identity, env
 expansion at resolve time, codex OAuth wiring only for openai-oauth
-catalogs, auth-gated governed config), and install timing/precedence
+catalogs), and install timing/precedence
 (bootstrap_product installs the default store; load_project installs
 implicitly; an explicit set_model_store always wins).
 """
@@ -25,7 +25,6 @@ from omniagents.core.models import (
     reset_model_store,
     set_model_store,
 )
-from omniagents.core.models.catalog import _conventional_governed_config
 from omniagents.core.product import bootstrap_product, reset_product_info
 
 
@@ -228,43 +227,6 @@ def test_oauth_hooks_only_for_oauth_catalogs(tmp_path):
     )
     assert oauth._oauth_models is not None
     assert oauth._oauth_authenticated is not None
-
-
-def test_governed_hook_gated_on_platform_auth(tmp_path, monkeypatch):
-    from omniagents.core.models.governed import write_governed_config
-    from omniagents.core.providers.platform import client
-
-    root = _product_dir(tmp_path)
-    bootstrap_product(root)
-    config_dir = _product_config_dir()
-    write_governed_config(config_dir, {"gov": {"type": "openai", "models": {}}})
-
-    # Signed out: a governed file on disk must NOT apply.
-    monkeypatch.setattr(client, "is_authenticated", lambda: False)
-    assert _conventional_governed_config() is None
-
-    # Signed in: the standard governed file applies.
-    monkeypatch.setattr(client, "is_authenticated", lambda: True)
-    governed = _conventional_governed_config()
-    assert governed and "gov" in governed["providers"]
-
-
-def test_governed_hook_reapplies_once_when_cache_missing(tmp_path, monkeypatch):
-    from omniagents.core.models import governed as governed_mod
-    from omniagents.core.providers.platform import client
-
-    root = _product_dir(tmp_path)
-    bootstrap_product(root)
-    monkeypatch.setattr(client, "is_authenticated", lambda: True)
-
-    calls = []
-    monkeypatch.setattr(
-        governed_mod,
-        "apply_platform_model_governance",
-        lambda config_dir=None: calls.append(config_dir),
-    )
-    assert _conventional_governed_config() is None
-    assert calls == [_product_config_dir()]
 
 
 # ---------------------------------------------------------------------------

@@ -7,6 +7,8 @@ import textwrap
 from pathlib import Path
 from typing import Any, Dict
 
+import sys
+
 import pytest
 
 from omniagents.core.capabilities import (
@@ -117,7 +119,13 @@ async def test_sandbox_mode_passes_caps_to_sandbox_agent(tmp_path, monkeypatch):
 
     # Sandbox path was taken — the capabilities kwarg holds our cap
     assert "capabilities" in captured
-    assert cap in captured["capabilities"]
+    # This agent's copy of the cap (its tools carry the agent's rules)
+    [own] = [
+        c
+        for c in captured["capabilities"]
+        if getattr(c, "capability_name", None) == "filesystem"
+    ]
+    assert [t.name for t in own.tools()] == ["alpha"]
 
     # Host-mode merge skipped — agent.tools does NOT include the cap's
     # alpha tool (SDK runtime will add it via capability.tools() at run prep)
@@ -164,6 +172,11 @@ async def test_non_sandbox_mode_still_merges_caps_host_side(tmp_path, monkeypatc
     class _StubAgent:
         def __init__(self, **kwargs):
             captured.update(kwargs)
+            self.tools = kwargs.get("tools", [])
+
+        # install_output_budget wraps the built agent's tool resolution.
+        async def get_all_tools(self, run_context):
+            return list(self.tools)
 
     monkeypatch.setattr("agents.Agent", _StubAgent)
     await _default_build_agent({}, None, spec)
@@ -174,6 +187,9 @@ async def test_non_sandbox_mode_still_merges_caps_host_side(tmp_path, monkeypatc
     assert "host fs rules" in rendered  # appended
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="the unix_local sandbox is POSIX-only"
+)
 @pytest.mark.asyncio
 async def test_sandbox_mode_combines_legacy_and_pack_caps(tmp_path, monkeypatch):
     """Legacy `sandbox.capabilities:` block and new `capabilities:` packs

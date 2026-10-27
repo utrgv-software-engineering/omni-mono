@@ -593,7 +593,7 @@ export type BrowserContext = { manager: BrowserManager; broadcast: () => void };
 
 /**
  * Register browser:* handlers. `resolve(event)` picks the {@link BrowserContext}
- * — `() => ctx` for Electron, per-tenant on the server. Every mutating handler
+ * (`() => ctx` in both shells). Every mutating handler
  * broadcasts a full `browser:state-changed` snapshot for that context.
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -699,7 +699,7 @@ export function registerBrowserHandlers(ipc: IIpcListener, resolve: (event: unkn
 
 /**
  * Build a BrowserManager + its broadcaster over a key/value store. Used to
- * construct per-tenant browser contexts on the server.
+ * construct the server's browser context.
  */
 export function buildBrowserContext(
   store: ElectronStoreLike,

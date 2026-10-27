@@ -4,7 +4,7 @@ from agents import Agent
 from omniagents import Runner, function_tool
 from datetime import datetime
 import random
-import omniagents.studio.tracing as studio_tracing  # Import Studio for tracing
+from omniagents.core.tracing import local as studio_tracing
 
 INSTRUCTIONS = open("instructions.md", "r").read()
 

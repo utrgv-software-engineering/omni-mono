@@ -50,14 +50,12 @@ Example usage:
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union, TYPE_CHECKING
-import subprocess
 
 from .rewards import MeasureRewardAdapter, measure_to_reward, combine_rewards
 from .dataset import eval_suite_to_hf_dataset
 from .grpo import (
     GRPOTrainingConfig,
     GRPOTrainingResult,
-    GRPOTrainer,
     _extract_hf_model_name,
     _extract_tools_as_json_schemas,
     _get_agent_instructions,
@@ -65,10 +63,7 @@ from .grpo import (
 )
 
 if TYPE_CHECKING:
-    from datasets import Dataset
-    from transformers import PreTrainedModel, PreTrainedTokenizer
-    from trl import GRPOTrainer as TRLGRPOTrainer
-    from omniagents.notebook.evaluation import EvalSuite, TestCase
+    from omniagents.notebook.evaluation import EvalSuite
     from agents import Agent
 
 
@@ -399,7 +394,7 @@ def _filter_suite_by_tags(
         return suite
 
     # Import here to avoid circular imports
-    from omniagents.notebook.evaluation import EvalSuite as EvalSuiteClass, TestCase
+    from omniagents.notebook.evaluation import EvalSuite as EvalSuiteClass
 
     filtered = EvalSuiteClass(
         name=f"{suite.name} (filtered)", description=suite.description

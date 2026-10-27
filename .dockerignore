@@ -1,0 +1,23 @@
+# What the workplace's images build from (omniagents-workplace/Dockerfile): sources, not local state.
+**/node_modules
+**/.venv
+**/__pycache__
+**/*.pyc
+**/dist
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+.git
+# Other workspace members: only what the uv and npm workspaces read of them.
+omni-desktop/*
+!omni-desktop/package.json
+omniagents-studio/*
+!omniagents-studio/pyproject.toml
+!omniagents-studio/web/package.json
+omni-code/*
+!omni-code/pyproject.toml
+**/evaluations/runs
+**/evaluations/optimizations
+**/target
+**/.env
+omniagents-workplace/omniagents_workplace/static

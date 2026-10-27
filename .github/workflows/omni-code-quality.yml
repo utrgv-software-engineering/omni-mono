@@ -1,0 +1,83 @@
+name: Quality Gates
+
+# Format (black), lint (ruff), typecheck (mypy), and tests (pytest).
+# Tool configuration lives in pyproject.toml; the same four commands are
+# documented in AGENTS.md and must pass locally before pushing.
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - 'omni-code/**'
+      - 'omniagents/**'
+      - '.github/workflows/omni-code-quality.yml'
+  pull_request:
+    paths:
+      - 'omni-code/**'
+      - 'omniagents/**'
+      - '.github/workflows/omni-code-quality.yml'
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: omni-code
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: omni-code/pyproject.toml
+
+      - name: Install dependencies
+        # Test against this repository's omniagents, so a framework change
+        # that breaks omni-code fails here. Other Gemfury-hosted deps still
+        # resolve from the extra index; keep PyPI as the primary index.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ../omniagents
+          pip install -e . --extra-index-url https://pypi.fury.io/ericmichael/
+          pip install --group dev
+
+      - name: Format (black)
+        run: black --check .
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Typecheck (mypy)
+        run: mypy
+
+      - name: Tests (pytest)
+        run: pytest tests/
+
+  # The launcher runs omni-code natively on Windows (a venv under
+  # %USERPROFILE%\.omni, Python 3.11), so the test suite must pass there too.
+  # Format, lint, and typecheck are platform-independent and stay above.
+  tests-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: omni-code/pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ../omniagents
+          pip install -e . --extra-index-url https://pypi.fury.io/ericmichael/
+          pip install --group dev
+
+      - name: Tests (pytest)
+        run: pytest tests/

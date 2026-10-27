@@ -68,8 +68,8 @@ def env(kind, *capabilities):
         ),
         (env("container", "contained"), "user", "never", ApprovalRoute.HUMAN),
         (env("container", "contained"), "auto", "never", ApprovalRoute.GUARDIAN),
-        # kind "container" WITHOUT the contained capability (unix_local,
-        # host_bridge — sandbox sessions over raw host processes) never
+        # kind "container" WITHOUT the contained capability (unix_local —
+        # sandbox sessions over raw host processes) never
         # auto-approves, even under 'always'.
         (env("container"), "user", "always", ApprovalRoute.HUMAN),
         (env("container"), "auto", "always", ApprovalRoute.GUARDIAN),

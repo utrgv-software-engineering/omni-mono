@@ -1,12 +1,29 @@
 import asyncio
 import contextlib
-import json
 import sys
 import textwrap
 import types
 
-from omniagents.core.eval import pipeline
+import pytest
+
+from omniagents.core.eval import engine, pipeline, targets
 from omniagents.core.evaluation import registry
+
+
+class _Streamed:
+    """A streamed run over a fake ``Runner.run``: no events, then its final output."""
+
+    def __init__(self, pending):
+        self._pending = pending
+        self.final_output = None
+
+    async def stream_events(self):
+        self.final_output = (await self._pending).final_output
+        return
+        yield
+
+    def cancel(self):
+        pass
 
 
 def test_run_evaluation_async_handles_failure_categories(monkeypatch, tmp_path):
@@ -33,9 +50,11 @@ def test_run_evaluation_async_handles_failure_categories(monkeypatch, tmp_path):
     cfg_path = tmp_path / "compiled.yaml"
     cfg_path.write_text(config_text)
 
-    monkeypatch.setattr(pipeline, "_load_local_measures", lambda cfg, **kw: None)
+    monkeypatch.setattr(pipeline, "load_project_measures", lambda cfg, **kw: None)
     monkeypatch.setattr(
-        pipeline, "compute_metrics", lambda runs, metrics_cfg: {"run_count": len(runs)}
+        engine,
+        "compute_metrics",
+        lambda runs, metrics_cfg, **kw: {"run_count": len(runs)},
     )
 
     registry_map = {
@@ -49,9 +68,7 @@ def test_run_evaluation_async_handles_failure_categories(monkeypatch, tmp_path):
 
     calls = []
 
-    async def fake_run_scenario(
-        agent_yaml, scenario, defaults, eval_cfg, workflow_name, **kw
-    ):
+    async def fake_run_scenario(target, scenario, **kw):
         calls.append(
             {
                 "name": scenario["name"],
@@ -71,7 +88,7 @@ def test_run_evaluation_async_handles_failure_categories(monkeypatch, tmp_path):
             "metadata": {"judge": {"answer": "pass"}},
         }
 
-    monkeypatch.setattr(pipeline, "_run_scenario", fake_run_scenario)
+    monkeypatch.setattr(engine, "run_scenario", fake_run_scenario)
 
     progress_events = []
 
@@ -121,6 +138,11 @@ def test_run_judges_parses_coded_output(monkeypatch, tmp_path):
                 final_output='```json\n{"answer": "Pass", "reasoning": "ok"}\n```'
             )
 
+        @staticmethod
+        def run_streamed(agent, prompt, max_turns=1, context=None, **_kwargs):
+            # Judges run streamed (the Codex backend accepts only streaming).
+            return _Streamed(Runner.run(agent, prompt, max_turns, context=context))
+
     agents_mod.Runner = Runner
     monkeypatch.setitem(sys.modules, "agents", agents_mod)
 
@@ -163,7 +185,7 @@ def test_run_judges_parses_coded_output(monkeypatch, tmp_path):
     scenario = {"judges": ["quality"], "measures": ["quality_agent"]}
     history = [{"role": "assistant", "content": "final answer"}]
 
-    result = asyncio.run(pipeline._run_judges(cfg_path, eval_cfg, scenario, history))
+    result = asyncio.run(pipeline.run_judges(eval_cfg, scenario, history, cfg_dir))
 
     assert result["quality"]["answer"] == "Pass"
     assert "final answer" in prompts[0]
@@ -187,17 +209,15 @@ def test_run_evaluation_async_progress_callback_exceptions(monkeypatch, tmp_path
     cfg_path = tmp_path / "compiled.yaml"
     cfg_path.write_text(config_text)
 
-    monkeypatch.setattr(pipeline, "_load_local_measures", lambda cfg, **kw: None)
+    monkeypatch.setattr(pipeline, "load_project_measures", lambda cfg, **kw: None)
     monkeypatch.setattr(
-        pipeline, "compute_metrics", lambda runs, metrics_cfg: {"count": len(runs)}
+        engine, "compute_metrics", lambda runs, metrics_cfg, **kw: {"count": len(runs)}
     )
 
     registry_map = {"m1": lambda ctx: {"name": "m1", "passed": True}}
     monkeypatch.setattr(registry, "_MEASURES", registry_map)
 
-    async def fake_run_scenario(
-        agent_yaml, scenario, defaults, eval_cfg, workflow_name, **kw
-    ):
+    async def fake_run_scenario(target, scenario, **kw):
         return {
             "scenario": scenario["name"],
             "prompt": scenario["prompt"],
@@ -208,7 +228,7 @@ def test_run_evaluation_async_progress_callback_exceptions(monkeypatch, tmp_path
             "metadata": {},
         }
 
-    monkeypatch.setattr(pipeline, "_run_scenario", fake_run_scenario)
+    monkeypatch.setattr(engine, "run_scenario", fake_run_scenario)
 
     progress_calls = []
 
@@ -227,39 +247,40 @@ def test_run_evaluation_async_progress_callback_exceptions(monkeypatch, tmp_path
     assert progress_calls[1]["event"] == "progress"
 
 
-def test_load_local_measures_discovers_project_paths(tmp_path):
-    cfg_dir = tmp_path / "cfg"
-    cfg_dir.mkdir()
-    compiled = cfg_dir / "compiled.yaml"
-    compiled.write_text("{}", encoding="utf-8")
+def test_project_measures_load_from_the_configured_evaluations_dir(tmp_path):
+    from omniagents.core.evaluation.registry import _MEASURES
 
-    agents_dir = tmp_path / "project" / "agents"
+    project_root = tmp_path / "project"
+    agents_dir = project_root / "agents"
     agents_dir.mkdir(parents=True)
-    agent_file = agents_dir / "main.yaml"
-    agent_file.write_text("agent: {}")
+    (agents_dir / "main.yaml").write_text("agent: {}")
+    (project_root / "project.yml").write_text(
+        "paths:\n  evaluations:\n    - custom_eval\n"
+    )
+    measures_file = project_root / "custom_eval" / "measures.py"
+    measures_file.parent.mkdir()
+    body = (
+        "from omniagents.core.evaluation import evaluation_measure, pass_reason\n"
+        "@evaluation_measure\n"
+        "def custom_check(ctx):\n"
+        "    return pass_reason({reason!r})\n"
+    )
+    measures_file.write_text(body.format(reason="first"))
+    try:
+        loaded = pipeline.load_project_measures(agents_dir / "main.yaml")
+        assert loaded == ["custom_check"]
+        assert _MEASURES["custom_check"](None)["reason"] == "first"
 
-    project_root = agents_dir.parent
-    project_yaml = project_root / "project.yml"
-    project_yaml.write_text(textwrap.dedent("""
-            paths:
-              evaluations:
-                - custom_eval
-            """))
+        # An edited file replaces what it registered before.
+        measures_file.write_text(body.format(reason="second"))
+        pipeline.load_project_measures(agents_dir / "main.yaml")
+        assert _MEASURES["custom_check"](None)["reason"] == "second"
 
-    eval_dir = project_root / "custom_eval"
-    eval_dir.mkdir()
-    measures_file = eval_dir / "measures.py"
-    measures_file.write_text("MARKER = 'loaded'")
-
-    module_name = f"eval_measures_{eval_dir.name}"
-    sys.modules.pop(module_name, None)
-
-    pipeline._load_local_measures(compiled, project_root=project_root)
-
-    assert module_name in sys.modules
-    assert getattr(sys.modules[module_name], "MARKER") == "loaded"
-
-    sys.modules.pop(module_name, None)
+        measures_file.write_text("def broken(:\n")
+        with pytest.raises(RuntimeError, match="measures.py"):
+            pipeline.load_project_measures(agents_dir / "main.yaml")
+    finally:
+        _MEASURES.pop("custom_check", None)
 
 
 def test_run_judges_records_failure(monkeypatch, tmp_path):
@@ -295,8 +316,7 @@ def test_run_judges_records_failure(monkeypatch, tmp_path):
     }
 
     result = asyncio.run(
-        pipeline._run_judges(
-            cfg_path,
+        pipeline.run_judges(
             {
                 "judges": {
                     "quality": {
@@ -307,6 +327,7 @@ def test_run_judges_records_failure(monkeypatch, tmp_path):
             },
             scenario,
             [{"role": "assistant", "content": "final"}],
+            cfg_dir,
         )
     )
 
@@ -341,7 +362,7 @@ def test_run_scenario_traces_and_records_agent_error(monkeypatch, tmp_path):
         spec_holder["spec"] = spec
         return spec
 
-    monkeypatch.setattr(pipeline, "load_agent_spec_from_yaml", fake_load_spec)
+    monkeypatch.setattr(targets, "load_agent_spec_from_yaml", fake_load_spec)
 
     fake_agents = []
 
@@ -354,46 +375,44 @@ def test_run_scenario_traces_and_records_agent_error(monkeypatch, tmp_path):
             self.calls = []
             self._session_id = "sess-123"
 
-        def run_streamed(self, msgs):
+        def run_streamed(self, msgs, run_config=None):
             self.calls.append(msgs)
             return FakeRunResult()
 
         def get_last_run_end(self):
             return {"error": {"message": "bad", "type": "AgentError"}}
 
-    async def fake_create_agent(spec):
+    async def fake_create_agent(spec, **kwargs):
         agent = FakeAgent()
         fake_agents.append(agent)
         return agent
 
-    monkeypatch.setattr(pipeline, "create_unified_agent", fake_create_agent)
+    monkeypatch.setattr(targets, "create_unified_agent", fake_create_agent)
     monkeypatch.setattr(
-        pipeline,
+        targets,
         "load_history",
         lambda session_id, project_slug, agent_slug: [
             {"role": "assistant", "content": "final"}
         ],
     )
-    monkeypatch.setattr(pipeline, "final_assistant_text", lambda history: "final text")
+    monkeypatch.setattr(engine, "final_assistant_text", lambda history: "final text")
     monkeypatch.setattr(
-        pipeline,
+        engine,
         "build_eval_context",
-        lambda history, tools, metadata: {
-            "history": history,
-            "tools": tools,
-            "metadata": metadata,
-        },
-    )
-    monkeypatch.setattr(
-        pipeline,
-        "run_measures",
-        lambda ctx, measures: [{"name": m, "passed": True} for m in measures],
+        lambda history, tools, metadata: types.SimpleNamespace(
+            history=history, tools=tools, metadata=metadata
+        ),
     )
 
-    async def fake_run_judges(cfg_path, eval_cfg, scenario, history, **kw):
+    async def fake_run_measures(ctx, measures):
+        return [{"name": m, "passed": True} for m in measures]
+
+    monkeypatch.setattr(engine, "run_measures_async", fake_run_measures)
+
+    async def fake_run_judges(eval_cfg, scenario, history, base_dir):
         return {"quality": {"score": "ok"}}
 
-    monkeypatch.setattr(pipeline, "_run_judges", fake_run_judges)
+    monkeypatch.setattr(pipeline, "run_judges", fake_run_judges)
 
     trace_calls = []
 
@@ -402,8 +421,18 @@ def test_run_scenario_traces_and_records_agent_error(monkeypatch, tmp_path):
         trace_calls.append({"name": name, "group_id": group_id, "metadata": metadata})
         yield
 
-    tracing_mod = types.SimpleNamespace(trace=fake_trace)
-    monkeypatch.setitem(sys.modules, "omniagents.studio.tracing", tracing_mod)
+    annotations = []
+
+    class FakeConversations:
+        def __init__(self, project_slug, agent_slug):
+            self.slugs = (project_slug, agent_slug)
+
+        def update_thread(self, thread_id, *, can_access, metadata):
+            annotations.append((self.slugs, thread_id, metadata))
+
+    monkeypatch.setattr(
+        "omniagents.core.conversation.service.ConversationService", FakeConversations
+    )
 
     scenario = {
         "id": "scenario-id",
@@ -416,12 +445,13 @@ def test_run_scenario_traces_and_records_agent_error(monkeypatch, tmp_path):
     eval_cfg = {}
 
     result = asyncio.run(
-        pipeline._run_scenario(
-            str(agent_yaml),
+        engine.run_scenario(
+            targets.ProjectAgentTarget(agent_yaml),
             scenario,
-            defaults,
-            eval_cfg,
+            defaults=defaults,
+            eval_cfg=eval_cfg,
             workflow_name="EvalFlow",
+            studio_trace=fake_trace,
         )
     )
 
@@ -433,6 +463,8 @@ def test_run_scenario_traces_and_records_agent_error(monkeypatch, tmp_path):
     assert result["metadata"]["quality"] == {"score": "ok"}
     assert result["metadata"]["agent_error"]["error"]["message"] == "bad"
     assert any(m["name"] == "_agent_error" for m in result["measures"])
+    assert result["passed"] is False
+    assert result["trace_group_id"] == result["metadata"]["group_id"]
     # Telemetry fields
     assert "duration_seconds" in result
     assert isinstance(result["duration_seconds"], float)
@@ -448,6 +480,15 @@ def test_run_scenario_traces_and_records_agent_error(monkeypatch, tmp_path):
     assert trace_calls[0]["metadata"]["omniagents"]["synthetic"]["selection"][
         "mapping"
     ] == {"tone": "serious"}
+    # The run's conversation, kept in the project agent's own store (not the
+    # names the spec happened to carry), records what the run was.
+    assert annotations == [
+        (
+            targets._store_identity(agent_yaml.resolve(), tmp_path),
+            "sess-123",
+            trace_calls[0]["metadata"],
+        ),
+    ]
 
 
 def test_run_evaluation_with_studio_tracing(monkeypatch, tmp_path):
@@ -507,7 +548,8 @@ def test_run_evaluation_with_studio_tracing(monkeypatch, tmp_path):
         include_unmeasured=True,
     )
 
-    assert result == {"ok": True}
+    # The result carries the traces' workflow name for whoever saves the run.
+    assert result == {"ok": True, "workflow_name": async_calls[0]["workflow_name"]}
     # Verify that run_evaluation_async was called with a workflow name
     assert async_calls
     assert async_calls[0]["include_unmeasured"] is True
@@ -557,14 +599,11 @@ def test_derive_judge_keys_from_measures_handles_mixed_values():
     assert result == ["quality", "custom", "speed"]
 
 
-def test_run_evaluation_with_environment_returns_error_on_failed_build(
+def test_run_evaluation_stops_when_its_environment_cannot_be_built(
     monkeypatch, tmp_path
 ):
-    """A declared environment that fails to build is captured in the result."""
-    from omniagents.core.eval import multi_turn
-
-    # Config with an unknown environment type and no scenarios so no
-    # actual agent runs.
+    """Scenarios written for an environment never run without it: on this
+    machine they would act on its own credentials and services."""
     config_text = textwrap.dedent("""
         evaluation:
           environment:
@@ -573,24 +612,10 @@ def test_run_evaluation_with_environment_returns_error_on_failed_build(
         """)
     cfg_path = tmp_path / "compiled.yaml"
     cfg_path.write_text(config_text)
+    monkeypatch.setattr(pipeline, "load_project_measures", lambda cfg, **kw: None)
 
-    # _load_local_measures is imported from .pipeline inside the function
-    monkeypatch.setattr(pipeline, "_load_local_measures", lambda cfg, **kw: None)
-
-    result = asyncio.run(
-        multi_turn.run_evaluation_with_environment_async(
-            cfg_path, include_unmeasured=True
-        )
-    )
-
-    # Verify the error is captured even with no scenarios
-    assert "environment_error" in result
-    assert "nonexistent_type" in result["environment_error"]
-    assert "warnings" in result
-    assert len(result["warnings"]) == 1
-    assert "Environment loading failed" in result["warnings"][0]
-    # Verify runs are empty since we have no scenarios
-    assert result["runs"] == []
+    with pytest.raises(RuntimeError, match="nonexistent_type"):
+        asyncio.run(pipeline.run_evaluation_async(cfg_path, include_unmeasured=True))
 
 
 def test_run_evaluation_async_indexes_repeats_and_records_answered(
@@ -614,7 +639,7 @@ def test_run_evaluation_async_indexes_repeats_and_records_answered(
         """)
     cfg_path = tmp_path / "compiled.yaml"
     cfg_path.write_text(config_text)
-    monkeypatch.setattr(pipeline, "_load_local_measures", lambda cfg, **kw: None)
+    monkeypatch.setattr(pipeline, "load_project_measures", lambda cfg, **kw: None)
     monkeypatch.setattr(
         registry,
         "_MEASURES",
@@ -626,9 +651,7 @@ def test_run_evaluation_async_indexes_repeats_and_records_answered(
         },
     )
 
-    async def fake_run_scenario(
-        agent_yaml, scenario, defaults, eval_cfg, workflow_name, **kw
-    ):
+    async def fake_run_scenario(target, scenario, **kw):
         return {
             "scenario": scenario["name"],
             "prompt": scenario["prompt"],
@@ -640,7 +663,7 @@ def test_run_evaluation_async_indexes_repeats_and_records_answered(
             "metadata": {},
         }
 
-    monkeypatch.setattr(pipeline, "_run_scenario", fake_run_scenario)
+    monkeypatch.setattr(engine, "run_scenario", fake_run_scenario)
     result = asyncio.run(pipeline.run_evaluation_async(cfg_path))
     assert sorted(r["trial"] for r in result["runs"]) == [0, 1, 2]
     assert all(r["repeats"] == 3 for r in result["runs"])

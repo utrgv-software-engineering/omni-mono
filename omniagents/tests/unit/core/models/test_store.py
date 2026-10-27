@@ -79,31 +79,6 @@ def test_user_overrides_default_model_fields(tmp_path):
     assert store.get_model_config("gpt-test")["label"] == "Renamed"
 
 
-def test_governance_layers_and_user_veto(tmp_path):
-    governed = {
-        "providers": {
-            "gov": {"type": "azure", "models": {"g": {"model": "g"}}},
-        },
-        "_allow_user_models": False,
-        "default": "gov/g",
-    }
-    store = _store(
-        tmp_path,
-        default_providers=_defaults,
-        governed_config=lambda: governed,
-    )
-    store.add_model(
-        provider_name="mine",
-        provider_type="openai",
-        model_name="m",
-        model="m",
-    )
-    merged = store.merged_providers()
-    assert "gov" in merged
-    assert "mine" not in merged  # governance vetoed user models
-    assert store.get_default_model_name() == "gov/g"
-
-
 def test_oauth_discovery_merges_over_seed(tmp_path):
     def defaults():
         return {
@@ -194,35 +169,6 @@ def test_resolve_model_for_runtime_env_expansion(tmp_path, monkeypatch):
     runtime = store.resolve_model_for_runtime("gpt-test")
     assert runtime["api_key"] == "sk-expanded"
     assert runtime["provider"] == "openai"
-
-
-def test_resolve_model_for_runtime_credential_ref_priority(tmp_path):
-    def resolver(ref):
-        assert ref == "cred-1"
-        return {
-            "credential_type": "api_key",
-            "api_key": "sk-from-platform",
-            "base_url": "https://gov.example/v1",
-        }
-
-    def defaults():
-        return {
-            "openai": {
-                "type": "azure",
-                "models": {
-                    "gov-model": {
-                        "model": "gpt",
-                        "credential_ref": "cred-1",
-                        "api_key": "sk-static",
-                    }
-                },
-            }
-        }
-
-    store = _store(tmp_path, default_providers=defaults, credential_resolver=resolver)
-    runtime = store.resolve_model_for_runtime("gov-model")
-    assert runtime["api_key"] == "sk-from-platform"
-    assert runtime["base_url"] == "https://gov.example/v1"
 
 
 def test_resolve_model_env_fallback(tmp_path, monkeypatch):

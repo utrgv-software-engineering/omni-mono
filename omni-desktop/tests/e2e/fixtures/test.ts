@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import {
@@ -14,21 +15,30 @@ import {
 import electronExecutablePath from 'electron';
 import { startDeterministicModelServer } from 'tests/e2e/support/model-server';
 import type { ManagedProcess } from 'tests/e2e/support/process';
-import { killTcpPort, startProcess, waitForHttpOk } from 'tests/e2e/support/process';
+import {
+  commandLine,
+  crashProcessTree,
+  killTcpPort,
+  processTree,
+  runtimePidsUnder,
+  startProcess,
+  waitForHttpOk,
+} from 'tests/e2e/support/process';
 import { attachProofVideo, visualProofEnabled } from 'tests/e2e/support/proof';
 import {
   createE2eState,
   type E2eCodexCredentialState,
   type E2eMcpConfigState,
   type E2eState,
+  electronOmniagentsHome,
   inspectElectronCodexCredential,
   inspectElectronMcpConfig,
+  MODEL_SERVER_SEEDS,
   seedElectronState,
   seedServerState,
   type SeedState,
 } from 'tests/e2e/support/state';
 
-import { AgentHostControlClient } from '@/main/agent-host-control-client';
 import type { CodeTab } from '@/shared/types';
 
 export type LaunchMode = 'server-local' | 'electron-local';
@@ -36,7 +46,6 @@ export type LaunchMode = 'server-local' | 'electron-local';
 export type E2eOptions = {
   launchMode: LaunchMode;
   seedState: SeedState;
-  extraHostProfile: boolean;
 };
 
 type E2eFixtures = E2eOptions & {
@@ -47,6 +56,8 @@ type E2eFixtures = E2eOptions & {
 
 type LaunchedApp = {
   page: Page;
+  /** The launcher process whose descendants include its `omni serve` hosts. */
+  rootPid: () => number | undefined;
   releaseBackground?: () => void;
   resizeWindow?: (width: number, height: number) => Promise<void>;
   setMinimized?: (minimized: boolean) => Promise<void>;
@@ -57,6 +68,7 @@ type LaunchedApp = {
 };
 
 type E2eApp = {
+  setProviderFromCli: (model: string) => void;
   readonly page: Page;
   releaseBackground: () => void;
   resizeWindow: (width: number, height: number) => Promise<void>;
@@ -67,24 +79,22 @@ type E2eApp = {
   inspectMcpConfig: () => E2eMcpConfigState;
   inspectModelRequests: () => { marker: string; model: string }[];
   restart: (options?: { crash?: boolean; backendOnly?: boolean }) => Promise<Page>;
-  inspectChatCleanup: () => { tabs: CodeTab[]; jobs: CodeTab[]; runtimePids: number[] };
-  inspectChatResources: () => Promise<{
+  /** Chat tabs as persisted in the launcher store. */
+  storedTabs: () => CodeTab[];
+  /** Live `omni serve` hosts spawned by the current launcher. Linux only. */
+  runtimePids: () => number[];
+  /** Process-level totals across the live hosts. Linux only. */
+  inspectRuntimeResources: () => {
     hosts: number;
-    environments: number;
-    activeEnvironments: number;
-    workspaces: number;
     rssBytes: number;
     fileDescriptors: number;
     childProcesses: number;
     workerPids: number[];
-  }>;
+  };
 };
-
-type ObservedHost = { hostId: string; wsUrl: string; controlToken: string; pid: number };
 
 const serverUrl = process.env.E2E_SERVER_URL ?? 'http://127.0.0.1:3001/';
 const proofViewport = { width: 1920, height: 1080 };
-const proofSlowMo = Number(process.env.VISUAL_PROOF_SLOW_MO_MS ?? '120');
 
 function videoOptions(testInfo: TestInfo, launchIndex: number) {
   return visualProofEnabled
@@ -115,16 +125,23 @@ async function launchServerLocal(
 ): Promise<LaunchedApp> {
   let serverProcess: ManagedProcess | null = null;
   let context: BrowserContext | null = null;
-  const responseText =
-    seedState === 'lazy-host-first-message'
-      ? 'HOST_FIRST_MESSAGE_READY'
-      : seedState === 'lazy-devbox-first-message'
-        ? 'DEVBOX_FIRST_MESSAGE_READY'
-        : null;
+  const responseText = MODEL_SERVER_SEEDS.includes(seedState) ? 'HOST_FIRST_MESSAGE_READY' : null;
   const modelServer =
     responseText && !process.env.E2E_REAL_MODELS_FILE && !process.env.E2E_SERVER_URL
       ? await startDeterministicModelServer(responseText)
       : null;
+
+  // The teardown frees the port with `fuser -k`; never let it hit a server
+  // this fixture did not start.
+  if (!process.env.E2E_SERVER_URL) {
+    const occupied = await fetch(serverUrl, { signal: AbortSignal.timeout(2_000) }).then(
+      () => true,
+      () => false
+    );
+    if (occupied) {
+      throw new Error(`${serverUrl} is already serving; stop it or set E2E_SERVER_URL to reuse it`);
+    }
+  }
 
   const startBackend = () => {
     if (process.env.E2E_SERVER_URL) {
@@ -140,7 +157,6 @@ async function launchServerLocal(
         XDG_CONFIG_HOME: state.xdgConfigHome,
         HOST: parsed.hostname,
         PORT: parsed.port || '3001',
-        OMNI_WEB_AUTO_OPEN: 'false',
         ...(process.env.OMNI_PROXY_DYNAMIC_RUNTIME_SHIMS
           ? { OMNI_PROXY_DYNAMIC_RUNTIME_SHIMS: process.env.OMNI_PROXY_DYNAMIC_RUNTIME_SHIMS }
           : {}),
@@ -159,15 +175,17 @@ async function launchServerLocal(
   };
   startBackend();
 
+  // Kill only the launcher's node server; its `omni serve` hosts must notice
+  // stdin EOF and exit on their own.
   const crashBackend = () => {
-    const stored = JSON.parse(readFileSync(path.join(state.homeDir, '.config', 'Omni Code', 'config.json'), 'utf8'));
-    const owner = [...(stored.codeTabs ?? []), ...(stored.chatCleanupJobs ?? [])].find(
-      (tab) => tab.runtimeOwner
-    )?.runtimeOwner;
-    if (!owner || !serverProcess) {
-      throw new Error('Test launcher runtime owner not found');
+    const server = serverProcess;
+    const backendPid = server?.pid
+      ? processTree(server.pid).find((pid) => commandLine(pid).some((arg) => arg.endsWith('out/server/index.mjs')))
+      : undefined;
+    if (!server || !backendPid) {
+      throw new Error('Test launcher backend process not found');
     }
-    serverProcess.crashDescendant(Number(String(owner).split(':').at(-1)));
+    server.crashDescendant(backendPid);
   };
 
   await waitForHttpOk(serverUrl, 90_000);
@@ -177,6 +195,7 @@ async function launchServerLocal(
 
   return {
     page,
+    rootPid: () => (serverProcess as ManagedProcess | null)?.pid,
     captureScreenshot: () => page.screenshot({ animations: 'disabled' }),
     inspectModelRequests: () => [...(modelServer?.observations ?? [])],
     releaseBackground: () => modelServer?.releaseBackground(),
@@ -192,27 +211,10 @@ async function launchServerLocal(
       await waitForHttpOk(serverUrl, 90_000);
     },
     close: async (options) => {
-      const recoveryLog = serverProcess
-        ?.logs()
-        .split('\n')
-        .filter((line) => line.includes('[chat-cleanup]'))
-        .join('\n');
-      if (recoveryLog) {
-        console.log(recoveryLog);
-      }
       await context?.close().catch(() => undefined);
       await attachPageVideo(page, testInfo, `server-local video ${launchIndex}`);
       if (options?.backendOnly) {
-        const stored = JSON.parse(
-          readFileSync(path.join(state.homeDir, '.config', 'Omni Code', 'config.json'), 'utf8')
-        );
-        const owner = [...(stored.codeTabs ?? []), ...(stored.chatCleanupJobs ?? [])].find(
-          (tab) => tab.runtimeOwner
-        )?.runtimeOwner;
-        if (!owner || !serverProcess) {
-          throw new Error('Test launcher runtime owner not found');
-        }
-        serverProcess.crashDescendant(Number(String(owner).split(':').at(-1)));
+        crashBackend();
       } else {
         await serverProcess?.stop(options?.crash ? 'SIGKILL' : 'SIGTERM');
       }
@@ -235,35 +237,35 @@ async function launchElectronLocal(
   // variable to select a dev renderer, which would make the child Electron
   // window display the host application instead of this built test app.
   const { ELECTRON_RENDERER_URL: _hostRendererUrl, ...electronEnv } = process.env;
-  const firstMessageResponse =
-    seedState === 'lazy-host-first-message'
-      ? 'HOST_FIRST_MESSAGE_READY'
-      : seedState === 'lazy-devbox-first-message'
-        ? 'DEVBOX_FIRST_MESSAGE_READY'
-        : null;
+  const firstMessageResponse = MODEL_SERVER_SEEDS.includes(seedState) ? 'HOST_FIRST_MESSAGE_READY' : null;
   const modelServer =
     firstMessageResponse && !process.env.E2E_REAL_MODELS_FILE
       ? await startDeterministicModelServer(firstMessageResponse)
       : null;
   const electronApp: ElectronApplication = await electron.launch({
-    executablePath: electronExecutablePath,
-    args: [...(process.env.E2E_ELECTRON_X11 === '1' ? ['--ozone-platform=x11'] : []), '.'],
+    // Under Node the `electron` package exports its binary path, not the API.
+    executablePath: electronExecutablePath as unknown as string,
+    // E2E_ELECTRON_OZONE=wayland targets a headless compositor (set
+    // WAYLAND_DISPLAY/XDG_RUNTIME_DIR to it) instead of the live desktop.
+    args: [
+      ...(process.env.E2E_ELECTRON_X11 === '1' ? ['--ozone-platform=x11'] : []),
+      ...(process.env.E2E_ELECTRON_OZONE ? [`--ozone-platform=${process.env.E2E_ELECTRON_OZONE}`] : []),
+      '.',
+    ],
     cwd: process.cwd(),
     env: {
       ...electronEnv,
       XDG_CONFIG_HOME: state.xdgConfigHome,
-      OMNIAGENTS_HOME: path.join(state.rootDir, 'omniagents'),
+      OMNIAGENTS_HOME: electronOmniagentsHome(state),
       OPENAI_BASE_URL:
         modelServer?.baseUrl ??
         process.env.OPENAI_BASE_URL ??
         process.env.SANDBOX_OPENAI_BASE_URL ??
         'http://127.0.0.1:9/v1',
       OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? process.env.SANDBOX_OPENAI_API_KEY ?? 'test-key',
-      OMNI_SKIP_DOCKER_PRUNE: '1',
-      DISPLAY: process.env.DISPLAY ?? ':0',
+      ...(process.env.DISPLAY ? { DISPLAY: process.env.DISPLAY } : {}),
     },
     recordVideo: videoOptions(testInfo, launchIndex),
-    slowMo: visualProofEnabled ? proofSlowMo : undefined,
   });
   if (process.env.E2E_FORWARD_ELECTRON_LOGS === '1') {
     electronApp.process().stdout?.pipe(process.stdout);
@@ -284,11 +286,13 @@ async function launchElectronLocal(
 
   return {
     page,
+    rootPid: () => electronApp.process().pid,
     resizeWindow: async (width, height) => {
       await browserWindow.evaluate((window, size) => window.setSize(size.width, size.height), { width, height });
       await page.setViewportSize({ width, height });
     },
     releaseBackground: () => modelServer?.releaseBackground(),
+    inspectModelRequests: () => [...(modelServer?.observations ?? [])],
     setMinimized: async (minimized) => {
       await browserWindow.evaluate((window, value) => (value ? window.minimize() : window.restore()), minimized);
       await expect.poll(() => browserWindow.evaluate((window) => window.isMinimized())).toBe(minimized);
@@ -297,7 +301,11 @@ async function launchElectronLocal(
     // capturePage can return a stale compositor surface (or a host-WM crop)
     // after DOM assertions pass, making the artifact contradict the test.
     captureScreenshot: () => page.screenshot({ animations: 'disabled' }),
-    close: async () => {
+    close: async (options) => {
+      const process = electronApp.process();
+      if (options?.crash && process.pid && process.exitCode === null) {
+        crashProcessTree(process.pid);
+      }
       await electronApp.close().catch(() => undefined);
       await attachPageVideo(page, testInfo, `electron-local video ${launchIndex}`);
       await modelServer?.close().catch(() => undefined);
@@ -308,21 +316,12 @@ async function launchElectronLocal(
 export const test = base.extend<E2eFixtures>({
   launchMode: ['server-local', { option: true }],
   seedState: ['blank', { option: true }],
-  extraHostProfile: [false, { option: true }],
   mode: async ({ launchMode }, fixtureUse) => {
     await fixtureUse(launchMode);
   },
-  app: async ({ browser, launchMode, seedState, extraHostProfile }, fixtureUse, testInfo) => {
+  app: async ({ browser, launchMode, seedState }, fixtureUse, testInfo) => {
     const testId = `${launchMode}-${testInfo.workerIndex}-${testInfo.repeatEachIndex}`;
     const state = createE2eState(testId);
-    if (extraHostProfile) {
-      const directory = path.join(state.xdgConfigHome, 'omni_code', 'sandbox');
-      mkdirSync(directory, { recursive: true });
-      writeFileSync(
-        path.join(directory, 'soak-host.yml'),
-        'version: 1\nclient:\n  type: host\nmanifest:\n  root: ${workspace_dir}\n'
-      );
-    }
     if (launchMode === 'server-local') {
       seedServerState(state, seedState);
     } else {
@@ -339,8 +338,18 @@ export const test = base.extend<E2eFixtures>({
     };
 
     let launched = await launch();
-    const observedHosts = new Map<string, ObservedHost>();
+    const runtimePids = () => {
+      const root = launched.rootPid();
+      return root ? runtimePidsUnder(root) : [];
+    };
     const app: E2eApp = {
+      setProviderFromCli: (model) => {
+        execFileSync(process.env.OMNI_CLI_PATH ?? 'omni', ['model', 'default', model, '--confirm-provider-change'], {
+          env: { ...process.env, HOME: state.homeDir, XDG_CONFIG_HOME: state.xdgConfigHome },
+          stdio: 'pipe',
+          timeout: 30_000,
+        });
+      },
       releaseBackground: () => launched.releaseBackground?.(),
       get page() {
         return launched.page;
@@ -360,90 +369,34 @@ export const test = base.extend<E2eFixtures>({
       inspectCodexCredential: () => inspectElectronCodexCredential(state),
       inspectMcpConfig: () => inspectElectronMcpConfig(state),
       inspectModelRequests: () => launched.inspectModelRequests?.() ?? [],
-      inspectChatResources: async () => {
-        const journal = path.join(state.xdgConfigHome, 'omni_code', 'chat-runtime-journal');
-        const claims = existsSync(journal)
-          ? readdirSync(journal)
-              .filter((file) => file.endsWith('.json'))
-              .flatMap((file) => JSON.parse(readFileSync(path.join(journal, file), 'utf8')) as ObservedHost[])
-          : [];
-        for (const claim of claims) {
-          observedHosts.set(claim.hostId, claim);
-        }
-        for (const [id, host] of observedHosts) {
-          try {
-            const stat = readFileSync(`/proc/${host.pid}/stat`, 'utf8').split(') ')[1];
-            if (stat?.startsWith('Z ')) {
-              observedHosts.delete(id);
-            }
-          } catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-              throw error;
-            }
-            observedHosts.delete(id);
-          }
-        }
-        const hosts = [...observedHosts.values()];
+      storedTabs: () => {
+        const base = launchMode === 'server-local' ? path.join(state.homeDir, '.config') : state.xdgConfigHome;
+        const stored = JSON.parse(readFileSync(path.join(base, 'Omni Code', 'config.json'), 'utf8'));
+        return stored.codeTabs ?? [];
+      },
+      runtimePids,
+      inspectRuntimeResources: () => {
+        const hosts = runtimePids();
         const totals = {
           hosts: hosts.length,
-          environments: 0,
-          activeEnvironments: 0,
-          workspaces: 0,
           rssBytes: 0,
           fileDescriptors: 0,
           childProcesses: 0,
           workerPids: [] as number[],
         };
-        for (const host of hosts) {
+        for (const pid of hosts) {
           totals.rssBytes +=
-            Number(readFileSync(`/proc/${host.pid}/status`, 'utf8').match(/^VmRSS:\s+(\d+)/m)?.[1] ?? 0) * 1024;
-          totals.fileDescriptors += readdirSync(`/proc/${host.pid}/fd`).length;
-          const workerPids = readFileSync(`/proc/${host.pid}/task/${host.pid}/children`, 'utf8')
+            Number(readFileSync(`/proc/${pid}/status`, 'utf8').match(/^VmRSS:\s+(\d+)/m)?.[1] ?? 0) * 1024;
+          totals.fileDescriptors += readdirSync(`/proc/${pid}/fd`).length;
+          const workerPids = readFileSync(`/proc/${pid}/task/${pid}/children`, 'utf8')
             .trim()
             .split(/\s+/)
             .filter(Boolean)
             .map(Number);
           totals.childProcesses += workerPids.length;
           totals.workerPids.push(...workerPids);
-          // Privileged credentials stay in the Node fixture, never in page
-          // state, reports or snapshots. Expose aggregate counts only.
-          const control = new AgentHostControlClient(host.wsUrl, host.controlToken, 10_000);
-          try {
-            const resources = (await control.call('agent_host_list_resources', {})) as {
-              agent_host_id: string;
-              workspaces: unknown[];
-              environments: { state: string }[];
-            };
-            if (resources.agent_host_id !== host.hostId) {
-              throw new Error('Resource probe host identity changed');
-            }
-            totals.workspaces += resources.workspaces.length;
-            totals.environments += resources.environments.length;
-            totals.activeEnvironments += resources.environments.filter((env) => env.state !== 'stopped').length;
-          } finally {
-            control.close();
-          }
         }
         return totals;
-      },
-      inspectChatCleanup: () => {
-        const base = launchMode === 'server-local' ? path.join(state.homeDir, '.config') : state.xdgConfigHome;
-        const stored = JSON.parse(readFileSync(path.join(base, 'Omni Code', 'config.json'), 'utf8'));
-        const journal = path.join(state.xdgConfigHome, 'omni_code', 'chat-runtime-journal');
-        const runtimePids = existsSync(journal)
-          ? ([
-              ...new Set(
-                readdirSync(journal)
-                  .filter((file) => file.endsWith('.json'))
-                  .flatMap((file) =>
-                    JSON.parse(readFileSync(path.join(journal, file), 'utf8')).map(
-                      (claim: { pid: number }) => claim.pid
-                    )
-                  )
-              ),
-            ] as number[])
-          : [];
-        return { tabs: stored.codeTabs ?? [], jobs: stored.chatCleanupJobs ?? [], runtimePids };
       },
       restart: async (options) => {
         if (options?.backendOnly && launched.restartBackend) {

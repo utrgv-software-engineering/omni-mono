@@ -18,6 +18,10 @@ async def create_unified_agent(
     settings: Optional[Dict[str, Any]] = None,
     approval_callback: Optional[Any] = None,
     mcp_servers: Optional[List[Any]] = None,
+    host_resources: Optional[Any] = None,
+    approvals_reviewer: Optional[str] = None,
+    unattended: bool = False,
+    session_id: Optional[str] = None,
 ) -> UnifiedAgent:
     """
     Create a unified agent based on spec configuration.
@@ -31,6 +35,14 @@ async def create_unified_agent(
         settings: Optional settings dict (for API keys, etc.)
         approval_callback: Optional callback for tool approval (local agents only)
         mcp_servers: Optional list of MCP server instances (local agents only)
+        host_resources: AgentHostResources the local agent's service joins,
+            with the environments its runs are routed to (local agents only)
+        approvals_reviewer: Who answers the agent's tool approvals: ``"user"``
+            or ``"auto"`` (the guardian); ``None`` keeps the runtime default
+        unattended: Nobody watches the agent: approval prompts that still
+            reach its client are rejected instead of waiting
+        session_id: The conversation to run in (the caller named it, to bind
+            its environment first); by default the agent names it
 
     Returns:
         A UnifiedAgent instance (either RemoteAgent or LocalAgent)
@@ -43,7 +55,13 @@ async def create_unified_agent(
 
         # Pass both variables and context from spec to RemoteAgent
         agent = RemoteAgent(
-            spec.remote_ws_url, token, variables=spec.variables, context=spec.context
+            spec.remote_ws_url,
+            token,
+            variables=spec.variables,
+            context=spec.context,
+            approvals_reviewer=approvals_reviewer,
+            unattended=unattended,
+            session_id=session_id,
         )
 
         # Override properties from spec if provided
@@ -110,7 +128,16 @@ async def create_unified_agent(
                 spec.model_settings = merged
 
         # Create local agent adapter with settings, approval callback, and MCP servers
-        adapter = LocalAgent(spec, settings, approval_callback, mcp_servers)
+        adapter = LocalAgent(
+            spec,
+            settings,
+            approval_callback,
+            mcp_servers,
+            host_resources=host_resources,
+            approvals_reviewer=approvals_reviewer,
+            unattended=unattended,
+            session_id=session_id,
+        )
 
         return adapter
 

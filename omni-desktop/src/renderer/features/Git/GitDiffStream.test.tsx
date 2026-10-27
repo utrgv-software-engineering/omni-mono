@@ -1,12 +1,11 @@
+import type { GitDiffFile, GitStatusEntry } from '@omniagents/client/rpc/git';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { GitDiffFile, GitStatusEntry } from '@/renderer/omniagents-ui/rpc/git';
-
 import { GitDiffStream } from './GitDiffStream';
 
-vi.mock('@/renderer/omniagents-ui/components/ai/code-block', () => ({
+vi.mock('@omniagents/chat-ui/components/ai/code-block', () => ({
   highlightCode: () => null,
   TokenSpan: () => null,
 }));
@@ -147,16 +146,11 @@ describe('GitDiffStream', () => {
     });
   });
 
-  it('offers unstage in the staged view and no mutations in the session view', () => {
+  it('offers unstage in the staged view', () => {
     const staged = render({ mode: 'staged' });
     act(() => button('Unstage src/index.ts').click());
     expect(staged.onUnstage).toHaveBeenCalledWith({ paths: ['src/index.ts'], contextLines: 3 });
     expect(() => button('Stage src/index.ts')).toThrow();
-
-    render({ mode: 'session' });
-    expect(() => button('Unstage src/index.ts')).toThrow();
-    expect(() => button('Discard src/index.ts')).toThrow();
-    expect(container.textContent).toContain('const value = 2;');
   });
 
   it('renders whole-file-only diffs without hunk actions and explains binary files', () => {

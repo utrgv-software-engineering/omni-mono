@@ -1,15 +1,11 @@
 // @vitest-environment node
 import type { AddressInfo } from 'node:net';
 
+import type { OmniagentsRpcError } from '@omniagents/client/protocol/errors';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocketServer } from 'ws';
 
-import {
-  AgentHostControlClient,
-  agentHostControlTimeoutMs,
-  experimentalOperationsFromInitialize,
-} from '@/main/agent-host-control-client';
-import type { OmniagentsRpcError } from '@/shared/omniagents-rpc';
+import { AgentHostControlClient, agentHostControlTimeoutMs } from '@/main/agent-host-control-client';
 
 describe('AgentHostControlClient', () => {
   let server: WebSocketServer | undefined;
@@ -30,21 +26,6 @@ describe('AgentHostControlClient', () => {
     expect(agentHostControlTimeoutMs('agent_host_materialize_environment')).toBe(15 * 60_000);
     expect(agentHostControlTimeoutMs('agent_host_stop_environment')).toBe(2 * 60_000);
     expect(agentHostControlTimeoutMs('agent_host_materialize_environment', 25)).toBe(25);
-  });
-
-  it('fails closed on malformed negotiated capability envelopes', () => {
-    expect(experimentalOperationsFromInitialize(null)).toEqual([]);
-    expect(experimentalOperationsFromInitialize({ capabilities: {} })).toEqual([]);
-    expect(
-      experimentalOperationsFromInitialize({
-        capabilities: { experimental_operations: ['validate_config', 42] },
-      })
-    ).toEqual([]);
-    expect(
-      experimentalOperationsFromInitialize({
-        capabilities: { experimental_operations: ['validate_config', 'write_config'] },
-      })
-    ).toEqual(['validate_config', 'write_config']);
   });
 
   it('uses the private bearer credential and multiplexes typed calls', async () => {
@@ -96,11 +77,8 @@ describe('AgentHostControlClient', () => {
       'agent_host_list_resources',
     ]);
     expect((calls[0]!['params'] as Record<string, unknown>)['capabilities']).toMatchObject({
-      experimental_operations: expect.arrayContaining(['agent_host_list_resources', 'validate_config', 'write_config']),
+      experimental_operations: expect.arrayContaining(['agent_host_list_resources']),
     });
-    await expect(client.getExperimentalOperations()).resolves.toEqual(
-      expect.arrayContaining(['validate_config', 'write_config'])
-    );
     expect(new Set(calls.slice(2).map((call) => call['id'])).size).toBe(2);
     client.close();
   });
@@ -140,4 +118,4 @@ describe('AgentHostControlClient', () => {
     client.close();
   });
 });
-import { guiInitializeResult } from 'tests/unit/gui-initialize';
+import { guiInitializeResult } from '@omniagents/client/testing/gui-initialize';

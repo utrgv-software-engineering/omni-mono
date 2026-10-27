@@ -355,7 +355,7 @@ class TestObservation:
 
     @pytest.mark.asyncio
     async def test_pre_existing_content_is_the_baseline(self, workspace, observed):
-        (workspace / "a.txt").write_text("original\n")
+        (workspace / "a.txt").write_bytes("original\n".encode())
         observer, published = observed
         await ws.write_text("a.txt", "edited\n")
         snapshot = published[-1]
@@ -375,7 +375,7 @@ class TestObservation:
     async def test_a_run_that_changes_nothing_publishes_nothing(
         self, workspace, observed
     ):
-        (workspace / "a.txt").write_text("same\n")
+        (workspace / "a.txt").write_bytes("same\n".encode())
         observer, published = observed
         await ws.write_text("a.txt", "same\n")
         assert published == []
@@ -384,7 +384,7 @@ class TestObservation:
     async def test_removing_a_pre_existing_file_is_a_deletion(
         self, workspace, observed
     ):
-        (workspace / "a.txt").write_text("bye\n")
+        (workspace / "a.txt").write_bytes("bye\n".encode())
         observer, published = observed
         await ws.remove("a.txt")
         assert published[-1]["files"][0]["change_type"] == "deleted"
@@ -497,7 +497,7 @@ class TestObservation:
         """A transient FS/sandbox fault on the read-back must not report the
         file as deleted. "The read failed" and "the file is gone" are
         different facts, and the run diff is the authoritative record."""
-        (workspace / "a.txt").write_text("original\n")
+        (workspace / "a.txt").write_bytes("original\n".encode())
         observer, published = observed
 
         real_exists = ws.exists
@@ -523,7 +523,7 @@ class TestObservation:
     ):
         """The mirror case: an unreadable baseline must not turn an edit to
         an existing file into an "added" entry."""
-        (workspace / "a.txt").write_text("original\n")
+        (workspace / "a.txt").write_bytes("original\n".encode())
         observer, published = observed
 
         real_read = ws.read_bytes
@@ -559,7 +559,7 @@ class TestObservation:
         """N10 end to end: the pre-read faults, then the file is removed.
         Both observed "sides" are absent, so without the unknown-baseline
         guard the deletion is silently dropped from the run's record."""
-        (workspace / "gone.txt").write_text("bye\n")
+        (workspace / "gone.txt").write_bytes("bye\n".encode())
         observer, published = observed
 
         real_read = ws.read_bytes
@@ -612,7 +612,7 @@ class TestObservation:
     ):
         """N25, the damaging direction: the file EXISTED, so a contentless
         post-image reads as "the run deleted every line"."""
-        (workspace / "mod.py").write_text("original\n")
+        (workspace / "mod.py").write_bytes("original\n".encode())
         observer, published = observed
         await ws.write_text("mod.py", "edited\n")
 

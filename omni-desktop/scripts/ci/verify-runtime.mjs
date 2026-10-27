@@ -8,8 +8,7 @@
 // 2. `omni serve` boots with the same flag shape the launcher uses, prints
 //    its ready line, and answers HTTP on the advertised URL.
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -43,7 +42,6 @@ if (info.serve_protocol !== protocol) {
   throw new Error(`runtime speaks serve protocol ${info.serve_protocol}, launcher expects ${protocol}`);
 }
 
-const snapshots = mkdtempSync(join(tmpdir(), 'omni-ci-snapshots-'));
 const serve = spawn(
   omni,
   [
@@ -54,10 +52,9 @@ const serve = spawn(
     'ci-smoke',
     '--agent-host-control-token',
     'ci-smoke-control',
-    '--snapshot-dir',
-    snapshots,
+    '--exit-on-stdin-close',
   ],
-  { stdio: ['ignore', 'pipe', 'pipe'] }
+  { stdio: ['pipe', 'pipe', 'pipe'] }
 );
 
 let stdout = '';
@@ -117,7 +114,19 @@ try {
   if (response.status >= 500) {
     throw new Error(`omni serve answered HTTP ${response.status}`);
   }
-} finally {
+} catch (err) {
   serve.removeAllListeners('exit');
   serve.kill();
+  throw err;
 }
+
+// The launcher never writes stdin; EOF (the launcher dying) must stop serve.
+serve.removeAllListeners('exit');
+const exited = new Promise((resolve) => serve.once('exit', resolve));
+serve.stdin.end();
+const outcome = await Promise.race([exited, new Promise((resolve) => setTimeout(() => resolve('timeout'), 30_000))]);
+if (outcome === 'timeout') {
+  serve.kill();
+  throw new Error('omni serve kept running 30s after its stdin closed');
+}
+console.log('omni serve exited after stdin closed');

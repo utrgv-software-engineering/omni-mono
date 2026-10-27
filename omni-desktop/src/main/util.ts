@@ -1,5 +1,4 @@
-import type { ChildProcess } from 'child_process';
-import { exec, execFile } from 'child_process';
+import { exec } from 'child_process';
 import type { BrowserWindow } from 'electron';
 import { app, screen } from 'electron';
 import fs from 'fs/promises';
@@ -9,7 +8,7 @@ import { promisify } from 'util';
 import { checkOmniVersion, OMNI_CODE_VERSION } from '@/lib/omni-version';
 import { getActiveProduct, getCachedProductRuntimeInfo } from '@/lib/product';
 import { withResultAsync } from '@/lib/result';
-import type { GpuType, OmniRuntimeInfo, OperatingSystem, RuntimeModelList, WindowProps } from '@/shared/types';
+import type { OmniRuntimeInfo, OperatingSystem, RuntimeModelList, WindowProps } from '@/shared/types';
 
 const execAsync = promisify(exec);
 
@@ -102,48 +101,6 @@ export const getOmniCliPath = (): string => {
   return path.join(venvPath, process.platform === 'win32' ? `Scripts/${prog}.exe` : `bin/${prog}`);
 };
 
-/**
- * Gets the path to the `activate` executable in the given installation location
- */
-const getActivateVenvPath = (installLocation: string): string => {
-  return process.platform === 'win32'
-    ? path.join(installLocation, '.venv', 'Scripts', 'Activate.ps1')
-    : path.join(installLocation, '.venv', 'bin', 'activate');
-};
-
-export const getActivateVenvCommand = (installLocation: string): string => {
-  const activateVenvPath = getActivateVenvPath(installLocation);
-  return process.platform === 'win32' ? `& "${activateVenvPath}"` : `source "${activateVenvPath}"`;
-};
-
-/**
- * Gets the appropriate platform for a given GPU type.
- *
- * Note: If the system is MacOS, we return 'cpu' regardless of the given GPU type.
- *
- * @param gpuType The GPU type
- * @returns The platform corresponding to the GPU type
- */
-export const getTorchPlatform = (gpuType: GpuType): 'cuda' | 'rocm' | 'cpu' => {
-  if (process.platform === 'darwin') {
-    // macOS uses MPS, but we don't need to provide a separate option for this because pytorch doesn't have a separate index url for MPS
-    return 'cpu';
-  } else {
-    switch (gpuType) {
-      case 'amd':
-        return 'rocm';
-      case 'nvidia<30xx':
-      case 'nvidia>=30xx':
-        return 'cuda';
-      case 'nogpu':
-        return 'cpu';
-      default:
-        // Default to cuda because in reality this is the most common gpu type at the moment
-        return 'cuda';
-    }
-  }
-};
-
 //#endregion
 
 //#region Path validation
@@ -226,6 +183,13 @@ export const getOmniConfigDir = (): string => {
   return path.join(app.getPath('home'), '.config', 'omni_code');
 };
 
+/**
+ * Clone directory for one git-remote source of a project. Every chat on the
+ * project works in this one checkout, the way chats share a local folder.
+ */
+export const projectCheckoutPath = (projectId: string, sourceId: string): string =>
+  path.join(getOmniConfigDir(), 'checkouts', projectId, sourceId);
+
 export const getDefaultWorkspaceDir = (): string => {
   return path.join(app.getPath('home'), 'Omni', 'Workspace');
 };
@@ -238,19 +202,6 @@ export const getProjectDir = (slug: string): string => {
   return path.join(getProjectsDir(), slug);
 };
 
-/**
- * Absolute filesystem directory holding a project's pages and notebooks.
- *
- * Pages now live under `<config>/pages/<projectId>/<pageId>.{md,py}` rather
- * than `<workspaceDir>/Projects/<slug>/pages/`. Keyed by stable id, not slug,
- * so rename doesn't break the filesystem. Shared 1:1 with the MCP layout
- * (`getDefaultPagesDir` in omni-projects-db), so both writers land on the
- * same files.
- */
-export const getProjectPagesDir = (projectId: string): string => {
-  return path.join(getOmniConfigDir(), 'pages', projectId);
-};
-
 /** Generate a filesystem-safe slug from a project label. */
 export const slugify = (label: string): string => {
   return (
@@ -260,10 +211,6 @@ export const slugify = (label: string): string => {
       .replace(/^-|-$/g, '')
       .slice(0, 60) || 'project'
   );
-};
-
-export const getWorktreesDir = (): string => {
-  return path.join(app.getPath('home'), 'Omni', 'Worktrees');
 };
 
 export const ensureDirectory = async (dirPath: string): Promise<boolean> => {
@@ -437,8 +384,6 @@ export const getCliInstalledPath = (): string => {
   return path.join(getCliInstallDir(), prog);
 };
 
-// Keep old names as aliases for backward compatibility with IPC callers
-export const getCliSymlinkDir = getCliInstallDir;
 export const getCliSymlinkPath = getCliInstalledPath;
 
 /**
@@ -645,20 +590,6 @@ export const listRuntimeModels = async (): Promise<RuntimeModelList> => {
 };
 
 /**
- * Check if models are configured by running `omni model check`.
- * Returns true if exit code is 0, false otherwise.
- */
-export const checkModelsConfigured = async (): Promise<boolean> => {
-  const omniPath = getOmniCliPath();
-  try {
-    await execAsync(`"${omniPath}" model check`);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-/**
  * Test a model connection by running `omni model test [ref]`.
  * Returns success/failure and the command output.
  */
@@ -678,152 +609,6 @@ export const testModelConnection = async (modelRef?: string): Promise<{ success:
 //#endregion
 
 //#region Process
-
-/**
- * Kills a child process using the appropriate method for the platform
- * @param childProcess The child process to kill
- * @returns Promise that resolves when the process has been terminated
- */
-export const killProcess = async (childProcess: ChildProcess): Promise<void> => {
-  if (childProcess.pid === undefined) {
-    // He's dead, Jim
-    return;
-  }
-
-  const pid = childProcess.pid;
-
-  // Helper to check if process is still running
-  const isProcessRunning = (): boolean => {
-    // First check if Node.js knows the process is dead
-    if (childProcess.killed || childProcess.exitCode !== null) {
-      return false;
-    }
-
-    try {
-      // process.kill(pid, 0) checks if process exists without killing it
-      // This can have false positives due to PID reuse, so we check childProcess.killed first
-      process.kill(pid, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
-  // Helper to wait for process exit with timeout
-  const waitForExit = (timeoutMs: number): Promise<boolean> => {
-    return new Promise((resolve) => {
-      // If process has exit handler, use it for more reliable detection
-      const exitHandler = () => {
-        resolve(true);
-      };
-
-      // Try to attach exit handler if process is still alive
-      if (!childProcess.killed) {
-        childProcess.once('exit', exitHandler);
-      }
-
-      const startTime = Date.now();
-      const checkInterval = setInterval(() => {
-        if (!isProcessRunning()) {
-          clearInterval(checkInterval);
-          childProcess.removeListener('exit', exitHandler);
-          resolve(true);
-        } else if (Date.now() - startTime > timeoutMs) {
-          clearInterval(checkInterval);
-          childProcess.removeListener('exit', exitHandler);
-          resolve(false);
-        }
-      }, 100);
-    });
-  };
-
-  if (process.platform === 'win32') {
-    // Windows: Try graceful shutdown first, then escalate if needed
-
-    // Stage 1: Try graceful shutdown (sends WM_CLOSE)
-    try {
-      execFile('taskkill', ['/pid', pid.toString(), '/T'], (error) => {
-        // Ignore error - process might resist graceful shutdown
-        if (error) {
-          console.debug(`Graceful shutdown failed for PID ${pid}: ${error.message}`);
-        }
-      });
-
-      // Wait up to 5 seconds for graceful exit
-      const exitedGracefully = await waitForExit(5000);
-      if (exitedGracefully) {
-        console.debug(`Process ${pid} terminated gracefully`);
-        return;
-      }
-    } catch (error) {
-      console.debug(`Failed to send graceful shutdown signal: ${error}`);
-    }
-
-    // Stage 2: Try Node's kill (might work for some processes)
-    try {
-      childProcess.kill('SIGTERM');
-
-      // Wait 2 more seconds
-      const exitedWithSigterm = await waitForExit(2000);
-      if (exitedWithSigterm) {
-        console.debug(`Process ${pid} terminated with SIGTERM`);
-        return;
-      }
-    } catch (error) {
-      console.debug(`SIGTERM failed: ${error}`);
-    }
-
-    // Stage 3: Force kill as last resort
-    try {
-      execFile('taskkill', ['/pid', pid.toString(), '/T', '/F'], (error) => {
-        if (error) {
-          console.error(`Force kill failed for PID ${pid}: ${error.message}`);
-        }
-      });
-
-      // Wait for force kill to complete
-      const exitedForcefully = await waitForExit(2000);
-      if (!exitedForcefully) {
-        console.error(`Process ${pid} could not be terminated even with force kill`);
-      } else {
-        console.debug(`Process ${pid} force terminated`);
-      }
-    } catch (error) {
-      console.error(`Critical error killing process ${pid}: ${error}`);
-    }
-  } else {
-    // Unix-like systems: Use SIGTERM
-    childProcess.kill('SIGTERM');
-
-    // Wait for process to exit
-    const exited = await waitForExit(5000);
-    if (!exited) {
-      // Try SIGKILL as last resort
-      try {
-        childProcess.kill('SIGKILL');
-        await waitForExit(2000);
-      } catch (error) {
-        console.error(`Failed to kill process ${pid}: ${error}`);
-      }
-    }
-  }
-};
-
-/**
- * Gets the shell to use for running commands. If the COMSPEC (Windows) or SHELL (Linux/macOS) environment variables
- * are set, they will be used. Otherwise, Windows will default to Powershell and Linux/macOS will default to sh.
- * @returns The shell to use for running commands
- */
-export const getShell = () => {
-  if (process.platform === 'win32') {
-    return 'Powershell.exe';
-  } else if (process.platform === 'darwin') {
-    return '/bin/zsh';
-  } else {
-    // Linux
-    return '/bin/bash';
-  }
-};
 
 //#endregion
 

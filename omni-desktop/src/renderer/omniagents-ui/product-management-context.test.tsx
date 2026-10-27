@@ -1,8 +1,7 @@
+import type { RpcMethodMap, RpcNotificationMap } from '@omniagents/client/protocol/gui-v2';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-import type { RpcMethodMap, RpcNotificationMap } from '@/generated/omniagents-gui-v2/gui-v2';
 
 const launcherConnect = vi.hoisted(() => ({ callback: null as (() => void) | null }));
 vi.mock('@/renderer/services/ipc', () => ({
@@ -19,6 +18,9 @@ vi.mock('@/renderer/services/ipc', () => ({
   },
 }));
 
+import type { RPCConnectionState } from '@omniagents/client/rpc/client';
+import type { ManagementSnapshot } from '@omniagents/client/rpc/management-repository';
+
 import {
   type ProductManagementClient,
   ProductManagementProvider,
@@ -26,8 +28,6 @@ import {
   useProductManagement,
   useProductManagementSnapshot,
 } from './product-management-context';
-import type { RPCConnectionState } from './rpc/client';
-import type { ManagementSnapshot } from './rpc/management-repository';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -94,16 +94,13 @@ describe('ProductManagementProvider', () => {
     const ensureConnection = vi.fn(async () => ({
       baseUrl: 'http://runtime.test',
       authToken: 'ordinary-token',
-      mutationCapabilities: { validateConfig: true, writeConfig: true },
     }));
     const createClient = vi.fn(() => client);
 
     const Harness = () => {
       const management = useProductManagement();
       const snapshot = useProductManagementSnapshot();
-      return (
-        <span>{`${management.status}:${snapshot.status}:${management.mutationCapabilities.validateConfig}:${management.mutationCapabilities.writeConfig}`}</span>
-      );
+      return <span>{`${management.status}:${snapshot.status}`}</span>;
     };
 
     act(() => {
@@ -119,7 +116,7 @@ describe('ProductManagementProvider', () => {
     });
 
     expect(client.connect).toHaveBeenCalledOnce();
-    await vi.waitFor(() => expect(container.textContent).toBe('ready:ready:true:true'));
+    await vi.waitFor(() => expect(container.textContent).toBe('ready:ready'));
     expect(ensureConnection).toHaveBeenCalledOnce();
     expect(createClient).toHaveBeenCalledWith('ws://runtime.test/ws', 'ordinary-token');
   });
@@ -130,7 +127,6 @@ describe('ProductManagementProvider', () => {
     const connection = {
       baseUrl: 'http://old.test',
       authToken: 'ordinary-token',
-      mutationCapabilities: { validateConfig: true, writeConfig: true },
     };
     const ensureConnection = vi.fn(async () => connection);
     const createClient = vi.fn().mockReturnValueOnce(oldClient).mockReturnValueOnce(newClient);
@@ -160,7 +156,6 @@ describe('ProductManagementProvider', () => {
     const connection = {
       baseUrl: 'http://new.test',
       authToken: 'ordinary-token',
-      mutationCapabilities: { validateConfig: true, writeConfig: true },
     };
     let resolveOld!: (value: typeof connection) => void;
     const ensureConnection = vi

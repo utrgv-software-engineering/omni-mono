@@ -62,11 +62,6 @@ function getState(wc: WebContents): AttachmentState {
   return s;
 }
 
-/** Expose the backendNodeId map to callers that persist their own diff state. */
-export function getInternalState(wc: WebContents): AttachmentState {
-  return getState(wc);
-}
-
 /**
  * Attach the debugger to a WebContents exactly once. Safe to call repeatedly.
  * Throws if another client already holds the debugger (e.g. user opened

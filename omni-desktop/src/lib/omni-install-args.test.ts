@@ -46,10 +46,6 @@ describe('omni-install-manager', () => {
     expect(managerSource).toContain('LongPathsEnabled');
     expect(managerSource).toMatch(/reg add.*LongPathsEnabled/);
   });
-
-  test('legacy Windows runtime dir is migrated on startInstall', () => {
-    expect(managerSource).toContain('migrateWindowsRuntimeDir');
-  });
 });
 
 describe('util - runtime dir', () => {

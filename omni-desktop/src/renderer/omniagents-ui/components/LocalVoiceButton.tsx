@@ -4,14 +4,14 @@
  * record, click again to transcribe-and-send. Enabling voice mode registers the
  * agent's `speak` tool so the reply comes back as speech.
  */
+import { $recordingScope, registerVoiceMic, VoiceScopeContext } from '@omniagents/chat-ui/services/voice-recording';
+import { Button } from '@omniagents/ui/button';
+import { Spinner } from '@omniagents/ui/spinner';
 import { MicIcon, SquareIcon } from 'lucide-react';
 import { useContext, useEffect, useRef } from 'react';
 
-import { Button } from '@/renderer/ds/ui/button';
-import { Spinner } from '@/renderer/ds/ui/spinner';
 import { useVoiceCapture } from '@/renderer/services/use-voice-capture';
 import { getVoiceClient } from '@/renderer/services/voice-client';
-import { $recordingScope, registerVoiceMic, VoiceScopeContext } from '@/renderer/services/voice-recording';
 
 export function LocalVoiceButton({ onSubmit }: { onSubmit: (text: string) => void }) {
   const cap = useVoiceCapture();

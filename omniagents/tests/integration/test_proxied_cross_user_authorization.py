@@ -22,11 +22,9 @@ ownership rules had nothing to separate.
 import asyncio
 import json
 import os
-import socket
 from contextlib import asynccontextmanager
 
 import pytest
-import uvicorn
 import websockets
 
 from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
@@ -37,6 +35,7 @@ from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.providers.auth.none import NoneAuthProvider
 from omniagents.core.runtime import bridge as runner_bridge
 from omniagents.rpc.auth import RPC_ERROR_AUTHORIZATION_DENIED
+from tests.fixtures.servers import start_server
 
 ALICE = {"Authorization": "Bearer alice-token"}
 BOB = {"Authorization": "Bearer bob-token"}
@@ -69,19 +68,8 @@ async def _stream_agent(agent, prompt, sess, channel, max_turns=20, **kwargs):
 # ---------------------------------------------------------------------------
 
 
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
 
 
-async def _serve(app, port):
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
-    server = uvicorn.Server(config)
-    task = asyncio.create_task(server.serve())
-    while not server.started:
-        await asyncio.sleep(0.01)
-    return server, task
 
 
 def _upstream_spec() -> AgentSpec:
@@ -130,14 +118,12 @@ async def proxied_topology():
     upstream_app = server_app.build_app(
         spec=_upstream_spec(), default_host_workspace_root="/tmp"
     )
-    upstream_port = _free_port()
-    upstream_server, upstream_task = await _serve(upstream_app, upstream_port)
+    upstream_server, upstream_task, upstream_port = await start_server(upstream_app)
 
     proxy_app = server_app.build_app(
         spec=_proxy_spec(upstream_port), default_host_workspace_root="/tmp"
     )
-    proxy_port = _free_port()
-    proxy_server, proxy_task = await _serve(proxy_app, proxy_port)
+    proxy_server, proxy_task, proxy_port = await start_server(proxy_app)
 
     try:
         yield {
@@ -687,15 +673,13 @@ def test_rejected_assertion_closes_the_client_socket_terminally(monkeypatch):
         upstream_app = server_app.build_app(
             spec=_upstream_spec(), default_host_workspace_root="/tmp"
         )
-        upstream_port = _free_port()
-        upstream_server, upstream_task = await _serve(upstream_app, upstream_port)
+        upstream_server, upstream_task, upstream_port = await start_server(upstream_app)
 
         os.environ[IDENTITY_SECRET_ENV] = "a-completely-different-signing-secret-9f2c"
         proxy_app = server_app.build_app(
             spec=_proxy_spec(upstream_port), default_host_workspace_root="/tmp"
         )
-        proxy_port = _free_port()
-        proxy_server, proxy_task = await _serve(proxy_app, proxy_port)
+        proxy_server, proxy_task, proxy_port = await start_server(proxy_app)
         try:
             ws = await server_app._connect_remote(
                 f"ws://127.0.0.1:{proxy_port}/ws", dict(ALICE)
@@ -779,14 +763,12 @@ def test_composite_upstream_serves_direct_and_proxied_clients(monkeypatch):
         upstream_app = server_app.build_app(
             spec=upstream_spec, default_host_workspace_root="/tmp"
         )
-        upstream_port = _free_port()
-        upstream_server, upstream_task = await _serve(upstream_app, upstream_port)
+        upstream_server, upstream_task, upstream_port = await start_server(upstream_app)
 
         proxy_app = server_app.build_app(
             spec=_proxy_spec(upstream_port), default_host_workspace_root="/tmp"
         )
-        proxy_port = _free_port()
-        proxy_server, proxy_task = await _serve(proxy_app, proxy_port)
+        proxy_server, proxy_task, proxy_port = await start_server(proxy_app)
         try:
             upstream_url = f"ws://127.0.0.1:{upstream_port}/ws"
             proxy_url = f"ws://127.0.0.1:{proxy_port}/ws"

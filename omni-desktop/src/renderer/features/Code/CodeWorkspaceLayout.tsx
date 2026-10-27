@@ -1,22 +1,17 @@
-import { useStore } from '@nanostores/react';
-import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ClientToolCallHandler } from '@omniagents/chat-ui/App';
+import type { PendingMessage } from '@omniagents/chat-ui/ChatShell';
+import type { SessionController } from '@omniagents/chat-ui/session-controller';
+import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
+import { memo, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 
 import { dispatchOpenFileIntent, WorkspaceFilesPortal } from '@/renderer/features/Files';
 import { WorkspaceGitPortal } from '@/renderer/features/Git';
 import { WorkspaceReviewPortal } from '@/renderer/features/Review';
 import { OmniAgentsApp } from '@/renderer/omniagents-ui';
-import type { ClientToolCallHandler } from '@/renderer/omniagents-ui/App';
-import type { PendingMessage } from '@/renderer/omniagents-ui/ChatShell';
-import {
-  emitColumnRunEnd,
-  emitColumnRunStarted,
-  registerSessionController,
-  type SessionController,
-} from '@/renderer/services/session-control';
-import { persistedStoreApi } from '@/renderer/services/store';
+import { emitColumnRunEnd, emitColumnRunStarted, registerSessionController } from '@/renderer/services/session-control';
 import type { AppId } from '@/shared/app-registry';
-import { buildAppRegistry } from '@/shared/app-registry';
-import type { AgentRuntimeConnection, ExecutionTarget, TicketId, WorkspaceMountDescriptor } from '@/shared/types';
+import { APP_REGISTRY } from '@/shared/app-registry';
+import type { AgentRuntimeConnection, WorkspaceMountDescriptor } from '@/shared/types';
 
 import { EnvironmentDock } from './EnvironmentDock';
 import { codeApi } from './state';
@@ -27,27 +22,14 @@ type CodeWorkspaceLayoutProps = {
   onSessionChange?: (sessionId: string | undefined) => void;
   variables?: Record<string, unknown>;
   voiceVariables?: Record<string, unknown>;
-  codeServerSrc?: string;
-  vncSrc?: string;
   activeApp?: AppId;
   onActiveAppChange?: (app: AppId) => void;
   onReady?: () => void;
   headerActionsTargetId?: string;
   headerActionsCompact?: boolean;
-  sandboxLabel?: string;
-  sandboxOptions?: { value: string; label: string }[];
-  currentSandboxProfile?: string;
-  onSandboxChange?: (value: string) => void;
-  /**
-   * Capability names of the attached execution environment. Gates
-   * capability-dependent dock apps: Terminal hides when `pty` is absent
-   * (wasm sandboxes run commands to completion — nothing to attach a
-   * shell to). Undefined = unknown environment; everything stays visible.
-   */
-  environmentCapabilities?: string[];
   composerExtras?: ReactNode;
   onClientToolCall?: ClientToolCallHandler;
-  pendingPlan?: import('@/shared/chat-types').PlanItem | null;
+  pendingPlan?: import('@omniagents/client/transcript/chat-types').PlanItem | null;
   onPlanDecision?: (approved: boolean) => void;
   /** Chat mode: time-of-day greeting shown on the empty conversation. */
   greeting?: string;
@@ -63,17 +45,12 @@ type CodeWorkspaceLayoutProps = {
    */
   tabId?: string;
   /**
-   * What the in-sandbox agent should treat as its workspace root.
-   * For host profiles this is the host path; for containerized
-   * profiles it's the in-container path (``/workspace/<mountName>``).
-   * Plumbed to ``OmniAgentsApp.workspaceDir`` so
-   * ``session.variables.workspace_root`` is valid inside whatever
-   * environment the agent's tools execute in.
+   * What the agent should treat as its workspace root, as reported by
+   * materialization. Plumbed to ``OmniAgentsApp.workspaceDir`` so
+   * ``session.variables.workspace_root`` is set.
    *
    * Terminals do NOT use this — they route through `omni serve`'s
-   * `SessionPtyBackend` and land at the sandbox profile's
-   * `terminal.cwd`. The renderer has no business choosing a terminal
-   * cwd.
+   * `SessionPtyBackend`, which picks the cwd.
    */
   agentWorkspaceDir?: string;
   /**
@@ -93,11 +70,12 @@ type CodeWorkspaceLayoutProps = {
   reviewHost: HTMLDivElement;
   /** Execution environment whose workspace the Files and Git RPC surfaces address. */
   executionTarget?: ExecutionTarget;
-  /** Ticket bound to this column — enables the supervisor bridge actor. */
-  ticketId?: TicketId;
   /** Routine bound to this column — enables the routine bridge actor. */
   routineId?: string;
 };
+
+/** The column dock surfaces every column-scoped app except chat itself. */
+const DOCK_APPS = APP_REGISTRY.filter((app) => app.columnScoped && app.id !== 'chat');
 
 export const CodeWorkspaceLayout = memo(
   ({
@@ -106,18 +84,11 @@ export const CodeWorkspaceLayout = memo(
     onSessionChange,
     variables,
     voiceVariables,
-    codeServerSrc,
-    vncSrc,
     activeApp = 'chat',
     onActiveAppChange,
     onReady,
     headerActionsTargetId,
     headerActionsCompact,
-    sandboxLabel,
-    sandboxOptions,
-    currentSandboxProfile,
-    onSandboxChange,
-    environmentCapabilities,
     composerExtras,
     onClientToolCall,
     pendingPlan,
@@ -134,40 +105,8 @@ export const CodeWorkspaceLayout = memo(
     gitHost,
     reviewHost,
     executionTarget,
-    ticketId,
     routineId,
   }: CodeWorkspaceLayoutProps) => {
-    const store = useStore(persistedStoreApi.$atom);
-    const registry = useMemo(() => buildAppRegistry(store.customApps ?? []), [store.customApps]);
-    // The dock only surfaces apps marked column-scoped. Global-only custom
-    // apps are opened via the app launcher as their own deck column instead.
-    // Capability-dependent apps additionally require the attached
-    // environment to affirmatively support them: Terminal appears only
-    // once the environment reports the `pty` capability — no environment
-    // yet means no shell to offer, and wasm sandboxes never grow one
-    // (terminal.create would only return a typed refusal).
-    const dockApps = useMemo(
-      () =>
-        registry.filter((app) => {
-          if (!app.columnScoped || app.id === 'chat') {
-            return false;
-          }
-          if (app.id === 'terminal' && !environmentCapabilities?.includes('pty')) {
-            return false;
-          }
-          return true;
-        }),
-      [registry, environmentCapabilities]
-    );
-    // If Terminal was already open when its capability disappeared (column
-    // relaunched, profile switched to a wasm sandbox), bounce back to chat
-    // instead of stranding the user on a panel whose dock icon vanished.
-    useEffect(() => {
-      if (activeApp === 'terminal' && !environmentCapabilities?.includes('pty')) {
-        onActiveAppChange?.('chat');
-      }
-    }, [activeApp, environmentCapabilities, onActiveAppChange]);
-
     // Register this column's agent controller (by tabId) so the global
     // orchestrator can drive it via the `column_*` tools. The App hands the
     // controller up through `onController`; we (re)register on each change and
@@ -203,8 +142,6 @@ export const CodeWorkspaceLayout = memo(
       },
       [tabId]
     );
-
-    const sandboxUrls = useMemo(() => ({ codeServerUrl: codeServerSrc, noVncUrl: vncSrc }), [codeServerSrc, vncSrc]);
 
     const [filesActivated, setFilesActivated] = useState(activeApp === 'files');
     const [gitActivated, setGitActivated] = useState(activeApp === 'git');
@@ -278,10 +215,6 @@ export const CodeWorkspaceLayout = memo(
               onReady={handleUiReady}
               headerActionsTargetId={headerActionsTargetId}
               headerActionsCompact={headerActionsCompact}
-              sandboxLabel={sandboxLabel}
-              sandboxOptions={sandboxOptions}
-              currentSandboxProfile={currentSandboxProfile}
-              onSandboxChange={onSandboxChange}
               composerExtras={composerExtras}
               onClientToolCall={onClientToolCall}
               onController={handleController}
@@ -289,7 +222,6 @@ export const CodeWorkspaceLayout = memo(
               onRunStarted={handleRunStarted}
               pendingPlan={pendingPlan}
               onPlanDecision={onPlanDecision}
-              ticketId={ticketId}
               routineId={routineId}
               workspaceDir={agentWorkspaceDir}
               onOpenApp={tabId ? handleOpenApp : undefined}
@@ -310,7 +242,6 @@ export const CodeWorkspaceLayout = memo(
                       <WorkspaceGitPortal
                         host={gitHost}
                         active={activeApp === 'git'}
-                        tabId={tabId}
                         executionTarget={executionTarget}
                         sessionId={sessionId}
                         workspaceRoot={agentWorkspaceDir}
@@ -335,12 +266,7 @@ export const CodeWorkspaceLayout = memo(
             />
           </div>
         </div>
-        <EnvironmentDock
-          apps={dockApps}
-          activeAppId={activeApp}
-          onSelect={handleDockSelect}
-          sandboxUrls={sandboxUrls}
-        />
+        <EnvironmentDock apps={DOCK_APPS} activeAppId={activeApp} onSelect={handleDockSelect} />
       </div>
     );
   }

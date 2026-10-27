@@ -1,7 +1,7 @@
+import type { ConnectionState } from '@omniagents/client/lifecycle';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { WsTransportEmitter } from '@/renderer/transport/ws-transport';
-import type { ConnectionState } from '@/shared/lifecycle';
 
 /**
  * Minimal browser-WebSocket stand-in. Tests drive the server side via
@@ -57,7 +57,7 @@ const settle = async (): Promise<void> => {
   }
 };
 
-const cloudConfig = () => ({
+const remoteConfig = () => ({
   baseUrl: 'https://cloud.example.com',
   getWsToken: async () => 'cloud-token',
 });
@@ -82,46 +82,6 @@ describe('WsTransportEmitter lifecycle', () => {
       expect(FakeWebSocket.instances).toHaveLength(0);
     }
   );
-
-  it('keeps a document in its own team when another window changes the stored team', async () => {
-    localStorage.setItem('omni-active-team', 'team-a');
-    new WsTransportEmitter(cloudConfig());
-    await settle();
-    const original = FakeWebSocket.instances[0]!;
-    original.serverOpen();
-    expect(new URL(original.url).searchParams.get('team')).toBe('team-a');
-    // Another document switches teams and reloads itself, not this document.
-    localStorage.setItem('omni-active-team', 'team-b');
-    original.serverClose(1006);
-    await vi.advanceTimersByTimeAsync(2000);
-    await settle();
-    const replacement = FakeWebSocket.instances.at(-1)!;
-    expect(new URL(replacement.url).searchParams.get('team')).toBe('team-a');
-  });
-
-  it('does not deliver an old reverse-RPC result to a replacement connection', async () => {
-    const transport = new WsTransportEmitter(cloudConfig());
-    await settle();
-    const original = FakeWebSocket.instances[0]!;
-    original.serverOpen();
-    let finish!: (value: string) => void;
-    transport.addReverseHandler(
-      'audit:slow',
-      () =>
-        new Promise<string>((resolve) => {
-          finish = resolve;
-        })
-    );
-    original.serverMessage({ type: 'reverse-invoke', id: 1, channel: 'audit:slow', args: [] });
-    original.serverClose(1006);
-    await vi.advanceTimersByTimeAsync(2000);
-    await settle();
-    const replacement = FakeWebSocket.instances.at(-1)!;
-    replacement.serverOpen();
-    finish('result-owned-by-original-connection');
-    await settle();
-    expect(replacement.sent.filter((frame) => JSON.parse(frame).type === 'reverse-response')).toEqual([]);
-  });
 
   beforeEach(() => {
     FakeWebSocket.instances = [];
@@ -158,7 +118,7 @@ describe('WsTransportEmitter lifecycle', () => {
   });
 
   it('remote: a terminal close code rejects pending requests and enters the terminal state', async () => {
-    const transport = new WsTransportEmitter(cloudConfig());
+    const transport = new WsTransportEmitter(remoteConfig());
     await settle();
     const ws = FakeWebSocket.instances[0]!;
     ws.serverOpen();
@@ -198,7 +158,7 @@ describe('WsTransportEmitter lifecycle', () => {
   });
 
   it('remote: queued (not-yet-sent) invokes are rejected with a structured error on terminal entry', async () => {
-    const transport = new WsTransportEmitter(cloudConfig());
+    const transport = new WsTransportEmitter(remoteConfig());
     await settle();
     const ws0 = FakeWebSocket.instances[0]!;
     ws0.serverOpen();
@@ -221,7 +181,7 @@ describe('WsTransportEmitter lifecycle', () => {
   });
 
   it('rejects in-flight requests on a transient close but keeps queued ones for the reconnect', async () => {
-    const transport = new WsTransportEmitter(cloudConfig());
+    const transport = new WsTransportEmitter(remoteConfig());
     await settle();
     const ws0 = FakeWebSocket.instances[0]!;
     ws0.serverOpen();
@@ -243,7 +203,7 @@ describe('WsTransportEmitter lifecycle', () => {
   });
 
   it('remote: exhausts the 10-attempt budget on repeated retryable failures and goes terminal', async () => {
-    const transport = new WsTransportEmitter(cloudConfig());
+    const transport = new WsTransportEmitter(remoteConfig());
     await settle();
 
     for (let i = 0; i < 10; i++) {

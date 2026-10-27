@@ -12,15 +12,11 @@ import tsconfigPaths from 'vite-tsconfig-paths';
 const SERVER_PORT = parseInt(process.env['PORT'] ?? '3001', 10);
 
 export default defineConfig(({ mode }) => {
-  const platformDefines = {
-    __PLATFORM_URL__: JSON.stringify(process.env.OMNI_PLATFORM_URL || ''),
-  };
-
   // The ContextEditor's WASM runtime uses both WebAssembly instantiation
   // (needs 'wasm-unsafe-eval') and JS string evaluation / new Function (needs
   // 'unsafe-eval'), so prod requires both. Dev additionally needs unsafe-inline
-  // for the Vite client. (script-src is the app's own trusted bundle; the app
-  // is behind EasyAuth, and the strict artifact: CSP is unaffected.)
+  // for the Vite client. (script-src is the app's own trusted bundle, and the
+  // strict artifact: CSP is unaffected.)
   const cspScriptSrc =
     mode === 'development'
       ? "'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'"
@@ -45,7 +41,6 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
-    define: platformDefines,
     // Pre-bundle streamdown + its plugins at server start. They lazy-load
     // inner chunks (e.g. streamdown's `highlighted-body`), so if Vite
     // discovers them on first markdown render it re-optimizes mid-session,

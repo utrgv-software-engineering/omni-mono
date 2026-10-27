@@ -36,7 +36,6 @@ describe('AgentHostManager', () => {
 
     expect(moved.host).not.toBe(shared);
     expect(moved.released).toBeUndefined();
-    expect(manager.hostForConsumer('tab-b')).toBe(shared);
     expect(manager.consumersForHost(shared)).toEqual(['tab-b']);
   });
 
@@ -48,14 +47,5 @@ describe('AgentHostManager', () => {
 
     expect(moved.released).toBe(old);
     expect(manager.hosts()).toEqual([moved.host]);
-  });
-
-  it('only rekeys an exclusively attached host into a free key', () => {
-    const manager = new AgentHostManager<object>();
-    const host = manager.attach('tab-a', 'old', () => ({})).host;
-
-    expect(manager.rekey('tab-a', 'new')).toBe(true);
-    expect(manager.attach('tab-b', 'new', () => ({})).host).toBe(host);
-    expect(manager.rekey('tab-a', 'another')).toBe(false);
   });
 });

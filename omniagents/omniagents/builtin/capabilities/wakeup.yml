@@ -32,6 +32,6 @@ instructions: |
 
   Use this when the user says things like "keep an eye on X every few
   hours", "check Y until it lands", "remind me in 30 minutes". Do NOT
-  use this for blocking waits within a single turn — for that, kick
-  the work off with `execute_bash(background=True)` or `spawn_worker`
-  and rely on those completion notifications.
+  use this for blocking waits within a single turn — for that, run
+  the work as a background job or a worker and rely on its completion
+  notification.

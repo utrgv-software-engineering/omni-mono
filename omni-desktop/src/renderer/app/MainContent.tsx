@@ -1,18 +1,16 @@
 import { useStore } from '@nanostores/react';
+import { cn } from '@omniagents/ui/cn';
+import { SidebarInset, SidebarProvider } from '@omniagents/ui/sidebar';
 import { memo, useCallback, useEffect, useState } from 'react';
 
 import { AppSidebar } from '@/renderer/app/AppSidebar';
-import { cn } from '@/renderer/ds/cn';
-import { SidebarInset, SidebarProvider } from '@/renderer/ds/ui/sidebar';
 import { Code } from '@/renderer/features/Code/Code';
-import { Dashboards } from '@/renderer/features/Dashboards/Dashboards';
 import { Gallery } from '@/renderer/features/Gallery/Gallery';
 import { OnboardingWizard } from '@/renderer/features/Onboarding/OnboardingWizard';
 import { PluginsView } from '@/renderer/features/Plugins/PluginsView';
-import { ResidentsTab } from '@/renderer/features/Residents/ResidentsTab';
-import { SandboxesTabContent } from '@/renderer/features/Sandboxes/SandboxesTabContent';
+import { ProjectsSurface } from '@/renderer/features/Projects/ProjectsSurface';
+import { ScheduledTasks } from '@/renderer/features/ScheduledTasks/ScheduledTasks';
 import { SettingsPage } from '@/renderer/features/SettingsModal/SettingsPage';
-import { Tickets } from '@/renderer/features/Tickets/Tickets';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { LayoutMode } from '@/shared/types';
 
@@ -71,16 +69,13 @@ export const MainContent = memo(() => {
   }
 
   const panels: { key: LayoutMode; Component: React.ComponentType }[] = [
-    // Work owns the inbox, projects, tasks, pages, and milestones.
-    { key: 'work', Component: Tickets },
+    // The Projects surface (layout mode 'work').
+    { key: 'work', Component: ProjectsSurface },
     // Chat IS the deck since the tab merge: chat columns and work sessions
-    // share one surface (Spaces/Focus), so there's a single panel for both.
+    // share one surface, so there's a single panel for both.
     { key: 'chat', Component: Code },
-    { key: 'dashboards', Component: Dashboards },
-    // Agents hosts the resident roster, channels/DMs, and the Routines surface.
-    { key: 'agents', Component: ResidentsTab },
+    { key: 'routines', Component: ScheduledTasks },
     { key: 'plugins', Component: PluginsView },
-    { key: 'sandboxes', Component: SandboxesTabContent },
     { key: 'settings', Component: SettingsPage },
     ...(import.meta.env.DEV ? [{ key: 'gallery' as const, Component: Gallery }] : []),
   ];

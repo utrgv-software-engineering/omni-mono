@@ -22,56 +22,29 @@ python -m omniagents.cli run -P examples/weather_agent/project.yml
 
 Ask things like: "Weather in Paris" or "What’s the weather in New York?"
 
-## Evaluation (dbt-style)
+## Evaluation
 
-Organize evaluation assets under `evaluations/` and use the omniagents CLI (dbt-style):
+The evaluation lives in `evaluations/`: settings and metrics in
+`evaluation.yml`, the suite in `scenarios/`, a judge in
+`judges/ambiguous_location_assumption_judge/`, and two generated sets in
+`generated/`.
 
 ```bash
-# Compile (optional; most eval commands compile automatically)
-python -m omniagents.cli compile -P examples/weather_agent/project.yml
-
-# Run evaluation
 export OPENAI_API_KEY=...  # required for model runs
-python -m omniagents.cli eval run -P examples/weather_agent/project.yml --reporter pretty
-```
 
-This compiles resources into `target/evaluation_compiled.yml` and evaluates with the runner. Reports metrics like:
-- Happy Path Pass Rate
-- Ambiguity Handling Pass Rate
-- Fahrenheit Temperature Pass Rate
-- Unknown Tool Call Rate
-- Friendliness Pass Rate
+# Run the suite; the run is saved in evaluations/runs/
+python -m omniagents.cli eval suite run -P examples/weather_agent/project.yml --reporter pretty
 
-To generate synthetic scenarios into a named set (outputs under `artifacts/eval/<name>/`), run:
-
-```bash
+# Generate a set from the dimensions into evaluations/generated/demo/, and run it
 python -m omniagents.cli eval scenarios generate -P examples/weather_agent/project.yml --name demo --count 100
-```
+python -m omniagents.cli eval scenarios run -P examples/weather_agent/project.yml --set demo
 
-After running scenarios to produce traces in Studio, annotate all scenarios with failure categories (keeps all scenarios, does not prune). The output goes to the same `<name>` folder as the input:
+# Review that run's answers in Studio's Logs (reviews go to evaluations/reviews/),
+# then build a category's judge dataset from the reviews
+python -m omniagents.cli judge dataset -P examples/weather_agent/project.yml \
+  -c ambiguous_location_assumption
 
-```bash
-python -m omniagents.cli eval annotate -P examples/weather_agent/project.yml \
-  --name demo \
-  -o artifacts/eval/annotated_scenarios.yml
-
-To create train/dev/test splits for a failure category (writes under `artifacts/eval/<name>/splits/<category>/`):
-
-```bash
-python -m omniagents.cli eval split \
-  --name demo \
-  -c out_of_scope_engagement
-```
-
-Use `--name` consistently to reference the scenario set.
-
-Evaluate an LLM-as-Judge on a split and report TPR/TNR (requires `OPENAI_API_KEY`):
-
-```bash
-export OPENAI_API_KEY=...
-python -m omniagents.cli eval judge run \
-  -P examples/weather_agent/project.yml \
-  --name demo -c out_of_scope_engagement -s dev \
-  -j out_of_scope_judge --max-turns 1 --run-max-turns 6
-```
+# Check the judge on the dataset's dev split (it judges the reviewed answers)
+python -m omniagents.cli judge run -P examples/weather_agent/project.yml \
+  -c ambiguous_location_assumption -s dev -j ambiguous_location_assumption_judge
 ```

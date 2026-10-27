@@ -1,13 +1,7 @@
+import type { McpServerSnapshot } from '@omniagents/client/rpc/mcp-management';
 import { describe, expect, it } from 'vitest';
 
-import type { McpServerSnapshot } from '@/renderer/omniagents-ui/rpc/mcp-management';
-
-import {
-  hasDurableLocalMcpPersistence,
-  mcpCreateInput,
-  mcpServerEntryFromSnapshot,
-  mcpUpdateInput,
-} from './mcp-config-adapter';
+import { mcpCreateInput, mcpServerEntryFromSnapshot, mcpUpdateInput } from './mcp-config-adapter';
 
 const snapshot = (overrides: Partial<McpServerSnapshot> = {}): McpServerSnapshot => ({
   server_name: 'github',
@@ -69,24 +63,5 @@ describe('canonical MCP config adapter', () => {
       type: 'streamable_http',
       params: { url: 'https://example.test/mcp', headers: { 'X-Token': 'secret' } },
     });
-  });
-
-  it('requires both durable stores and managed connector protection', () => {
-    expect(
-      hasDurableLocalMcpPersistence({
-        user_config: { durable: true, scope: 'host' },
-        oauth_tokens: { durable: true, scope: 'host' },
-        pending_auth: { durable: false, scope: 'process' },
-        managed_servers: ['omni-projects'],
-      })
-    ).toBe(true);
-    expect(
-      hasDurableLocalMcpPersistence({
-        user_config: { durable: true, scope: 'host' },
-        oauth_tokens: { durable: false, scope: null },
-        pending_auth: { durable: false, scope: 'process' },
-        managed_servers: ['omni-projects'],
-      })
-    ).toBe(false);
   });
 });

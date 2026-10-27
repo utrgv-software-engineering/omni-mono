@@ -1,11 +1,17 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import ts from 'typescript';
 
 const rendererRoot = path.resolve('src/renderer');
+// The shared UI packages render inside the desktop and follow its rules too.
+// Their registry-owned shadcn components are checked against upstream by
+// packages/ui instead.
+const sharedRoots = [path.resolve('../packages/ui/src'), path.resolve('../packages/chat-ui/src')];
+const themeCssPath = '../packages/ui/src/theme.css';
 const sourceExtensions = new Set(['.ts', '.tsx', '.css']);
 const reportMode = process.argv.includes('--json') ? 'json' : process.argv.includes('--summary') ? 'summary' : 'full';
 
@@ -132,7 +138,7 @@ function sha256(value) {
 }
 
 function shouldScanBoundaryFile(file) {
-  return !file.startsWith('src/renderer/ds/ui/');
+  return !file.startsWith('../packages/ui/src/components/');
 }
 
 function locationOf(sourceFile, position) {
@@ -605,8 +611,7 @@ function inspectCss(file, sourceText) {
     const propertyPosition = (declaration.index ?? 0) + declaration[0].indexOf(property);
     const valuePosition = (declaration.index ?? 0) + declaration[0].indexOf(value);
     const isPaint = property.startsWith('--') || paintCssPropertyPattern.test(property);
-    const isApprovedThemeDefinition =
-      file === 'src/renderer/styles/tailwind.css' && approvedThemePaintTokens.has(property);
+    const isApprovedThemeDefinition = file === themeCssPath && approvedThemePaintTokens.has(property);
     if (isPaint && !isApprovedThemeDefinition) {
       violations.push(
         ...scanPaintFragment({
@@ -761,7 +766,7 @@ export const Example = () => (
   );
 
   assert(shouldScanBoundaryFile('src/renderer/features/example.tsx'));
-  assert(!shouldScanBoundaryFile('src/renderer/ds/ui/button.tsx'));
+  assert(!shouldScanBoundaryFile('../packages/ui/src/components/button.tsx'));
 
   const radixFixture = `
 const className = cn(
@@ -891,7 +896,7 @@ export const Element = (props) => <div style={props['style']} />;
   );
 
   const themeFixture = ':root { --background: oklch(1 0 0); }';
-  assert.equal(inspectCss('src/renderer/styles/tailwind.css', themeFixture).length, 0);
+  assert.equal(inspectCss(themeCssPath, themeFixture).length, 0);
   console.log('shadcn boundary linter self-test passed');
 }
 
@@ -901,6 +906,9 @@ if (process.argv.includes('--self-test')) {
 }
 
 await collect(rendererRoot);
+for (const root of sharedRoots) {
+  if (existsSync(root)) await collect(root);
+}
 
 const violations = [];
 for (const absolute of files.sort()) {
@@ -925,11 +933,11 @@ const checkInfrastructure = async () => {
     });
   };
 
-  const themeCss = await readFile(path.join(rendererRoot, 'styles/tailwind.css'), 'utf8');
+  const themeCss = await readFile(themeCssPath, 'utf8');
   if (/\*:focus-visible\s*\{/.test(maskCssComments(themeCss))) {
     addInfrastructureViolation(
       'global-component-override',
-      'src/renderer/styles/tailwind.css',
+      themeCssPath,
       '*:focus-visible',
       'Global focus styling overrides stock shadcn component focus states.'
     );
@@ -937,12 +945,7 @@ const checkInfrastructure = async () => {
   for (let index = 1; index <= 5; index += 1) {
     const marker = `--color-chart-${index}: var(--chart-${index});`;
     if (!themeCss.includes(marker)) {
-      addInfrastructureViolation(
-        'theme-mapping',
-        'src/renderer/styles/tailwind.css',
-        marker,
-        `Missing stock chart mapping: ${marker}`
-      );
+      addInfrastructureViolation('theme-mapping', themeCssPath, marker, `Missing stock chart mapping: ${marker}`);
     }
   }
 };

@@ -149,6 +149,14 @@ def finish(store, thread_id, item_id, owner):
     def update(state, receipt):
         for index, entry in enumerate(state["items"]):
             if entry["item"]["id"] == item_id and entry["owner"] == owner:
+                for report in entry["item"].get("worker_reports", []):
+                    row = (
+                        state.get("worker_recovery", {})
+                        .get("workers", {})
+                        .get(report["worker_id"])
+                    )
+                    if row and row["generation"] == report["generation"]:
+                        row["report_status"] = "delivered"
                 del state["items"][index]
                 return True, None
         return False, None
@@ -175,6 +183,14 @@ def cancel(store, thread_id, item_id):
                 # Cancel always removes the item. If a dispatcher had already
                 # handed it to start_run, that run is already visible in the
                 # transcript and is stopped through stop_run, not here.
+                for report in entry["item"].get("worker_reports", []):
+                    worker = (
+                        state.get("worker_recovery", {})
+                        .get("workers", {})
+                        .get(report["worker_id"])
+                    )
+                    if worker and worker["generation"] == report["generation"]:
+                        worker["report_status"] = "dismissed"
                 del state["items"][index]
                 return {"ok": True, "id": item_id, "depth": len(state["items"])}, None
         return {"ok": False, "id": item_id, "reason": "not_found"}, None
@@ -211,6 +227,11 @@ def promote_notifications(store, thread_id, make_item, *, limit=100):
         if not buffered or state.get("archived") or len(state["items"]) >= limit:
             return False, None
         item = make_item(buffered)
+        reports = [
+            notice["worker_report"] for notice in buffered if "worker_report" in notice
+        ]
+        if reports:
+            item["worker_reports"] = reports
         state["items"].append({"item": item, "owner": None})
         state["notifications"] = []
         return True, None

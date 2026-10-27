@@ -1,6 +1,5 @@
+import type { GitStatusEntry, GitStatusResult } from '@omniagents/client/rpc/git';
 import { describe, expect, it } from 'vitest';
-
-import type { GitStatusEntry, GitStatusResult } from '@/renderer/omniagents-ui/rpc/git';
 
 import {
   buildFileTree,

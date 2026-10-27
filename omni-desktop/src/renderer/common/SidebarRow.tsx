@@ -1,9 +1,8 @@
 import './SidebarRow.css';
 
+import { cn } from '@omniagents/ui/cn';
+import { SidebarMenuItem } from '@omniagents/ui/sidebar';
 import type { ComponentProps, ReactNode } from 'react';
-
-import { cn } from '@/renderer/ds/cn';
-import { SidebarMenuItem } from '@/renderer/ds/ui/sidebar';
 
 export function SidebarRow({ className, ...props }: ComponentProps<typeof SidebarMenuItem>) {
   return (

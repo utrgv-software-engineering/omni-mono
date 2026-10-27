@@ -198,6 +198,7 @@ def test_resumed_worker_keeps_its_model():
             model="codex/gpt-6-luna",
         )
         manager._workers = {"w1": handle}
+        manager._scoped_workers = {}
         seen = {}
 
         async def create_worker(**kwargs):

@@ -1,9 +1,7 @@
-optimizers:
-  {sanitized}:
-    agent:
-      name: {agent_name}
-      model: {model}
-      instructions_file: ../evaluations/optimizers/{sanitized}/instructions.md
-    proposals:
-      instructions_template_file: ../evaluations/optimizers/{sanitized}/rewrite_instructions.md
-      template_template_file: ../evaluations/optimizers/{sanitized}/rewrite_template.md
+agent:
+  name: {agent_name}
+  model: {model}
+  instructions_file: instructions.md
+proposals:
+  instructions_template_file: rewrite_instructions.md
+  template_template_file: rewrite_template.md

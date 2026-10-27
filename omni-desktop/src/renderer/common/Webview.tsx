@@ -1,3 +1,7 @@
+import { Button } from '@omniagents/ui/button';
+import { ButtonGroup } from '@omniagents/ui/button-group';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@omniagents/ui/collapsible';
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@omniagents/ui/empty';
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 
 import {
@@ -13,10 +17,6 @@ import {
   openInBrowserTab,
   type WebviewLoadError,
 } from '@/renderer/common/webview-fallback';
-import { Button } from '@/renderer/ds/ui/button';
-import { ButtonGroup } from '@/renderer/ds/ui/button-group';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/renderer/ds/ui/collapsible';
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@/renderer/ds/ui/empty';
 import { registerApp, unregisterApp, updateApp } from '@/renderer/features/AppControl/live-registry';
 import { resolveProxiedSrc, unproxyUrl } from '@/renderer/services/proxy-resolver';
 import type { AppHandleId, AppRegistrationPayload } from '@/shared/app-control-types';
@@ -383,8 +383,7 @@ export const Webview = forwardRef<
           }
           try {
             const win = (el as HTMLIFrameElement).contentWindow as
-              | (Window & { eval: (code: string) => unknown })
-              | null;
+              (Window & { eval: (code: string) => unknown }) | null;
             if (!win) {
               return undefined;
             }

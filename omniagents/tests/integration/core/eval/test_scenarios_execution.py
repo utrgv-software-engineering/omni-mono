@@ -1,12 +1,11 @@
 import asyncio
 import contextlib
-import sys
 import types
 from pathlib import Path
 
 import yaml
 
-from omniagents.core.eval import multi_turn
+from omniagents.core.eval import engine, targets
 
 
 def _prepare_agent_yaml(tmp_path: Path) -> Path:
@@ -80,7 +79,7 @@ def _configure_execution(monkeypatch, responses):
         def get_last_run_end(self):
             return responses[self._prompt].get("last_run")
 
-    async def fake_create_agent(spec):
+    async def fake_create_agent(spec, **kwargs):
         return FakeAgent()
 
     def fake_load_history(session_id, project_slug, agent_slug):
@@ -118,24 +117,33 @@ def _configure_execution(monkeypatch, responses):
         )
         yield
 
-    studio_tracing_mod = types.ModuleType("omniagents.studio.tracing")
-    studio_tracing_mod.trace = fake_trace
-
-    monkeypatch.setattr(multi_turn, "create_unified_agent", fake_create_agent)
-    monkeypatch.setattr(multi_turn, "load_history", fake_load_history)
-    monkeypatch.setattr(multi_turn, "final_assistant_text", fake_final_assistant_text)
+    monkeypatch.setattr(targets, "create_unified_agent", fake_create_agent)
+    monkeypatch.setattr(targets, "load_history", fake_load_history)
+    monkeypatch.setattr(engine, "final_assistant_text", fake_final_assistant_text)
     monkeypatch.setattr("omniagents.core.tracing.setup_tracing", fake_setup_tracing)
-    monkeypatch.setattr(multi_turn, "load_agent_spec_from_yaml", fake_load_spec)
-    # Also patch the history_db module since run_scenarios_against_agent imports it locally
-    monkeypatch.setattr(
-        "omniagents.core.session.history_db.load_history", fake_load_history
-    )
-    monkeypatch.setitem(sys.modules, "omniagents.studio.tracing", studio_tracing_mod)
+    monkeypatch.setattr(targets, "load_agent_spec_from_yaml", fake_load_spec)
+    monkeypatch.setattr("omniagents.core.tracing.local.trace", fake_trace)
 
     return progress_events, trace_calls, setup_calls
 
 
-def test_run_scenarios_against_agent_tracks_traces_and_history(tmp_path, monkeypatch):
+def _run_set(agent_yaml, scenarios, progress):
+    """A scenario set's run, as the evaluation workspace makes it."""
+    from omniagents.core.eval.pipeline import run_evaluation_async
+
+    return asyncio.run(
+        run_evaluation_async(
+            agent_yaml,
+            eval_cfg={"scenarios": scenarios},
+            include_unmeasured=True,
+            include_history=True,
+            workflow_name="wf",
+            progress_cb=progress,
+        )
+    )["runs"]
+
+
+def test_a_set_run_records_traces_and_history(tmp_path, monkeypatch):
     agent_yaml = _prepare_agent_yaml(tmp_path)
     responses = {
         "prompt-one": {
@@ -162,45 +170,36 @@ def test_run_scenarios_against_agent_tracks_traces_and_history(tmp_path, monkeyp
             "name": "Alpha",
             "prompt": "prompt-one",
             "dimensions": {"Persona": "Expert", "Region": "US"},
+            "_source_path": str(scenario_path),
         },
         {
             "id": "beta",
             "name": "Beta",
             "prompt": "prompt-two",
             "dimensions": {"Persona": "Novice", "Region": "EU"},
+            "_source_path": str(scenario_path),
         },
     ]
-    result = asyncio.run(
-        multi_turn.run_scenarios_against_agent(
-            agent_yaml,
-            scenario_list,
-            include_history=True,
-            workflow_name="wf",
-            progress_cb=progress_events.append,
-            scenario_source_path=scenario_path,
-        )
-    )
+    result = _run_set(agent_yaml, scenario_list, progress_events.append)
     assert len(result) == 2
     # setup_tracing is no longer called - tracing is initialized inline
     assert progress_events[0]["event"] == "start"
-    assert progress_events[-1]["event"] == "done"
-    assert progress_events[-1]["count"] == 2
-    assert "failed" not in progress_events[-1]
+    assert [e["index"] for e in progress_events if e["event"] == "progress"] == [1, 2]
     assert len(trace_calls) == 2
     first_trace = trace_calls[0]
     assert first_trace["workflow_name"] == "wf"
     meta = first_trace["metadata"]["omniagents"]
     assert meta["scenario"]["id"] == "alpha"
-    # config key no longer exists in metadata - just scenario and run info
-    assert result[0]["scenario_id"] == "alpha"
+    # The trace names the file the scenario is in, so a review can label it.
+    assert meta["scenario"]["path"] == str(scenario_path)
+    assert result[0]["scenario_config"]["id"] == "alpha"
     assert result[0]["history"] == responses["prompt-one"]["history"]
     assert result[0]["history_len"] == 1
     assert result[0]["final_assistant_text"] == "Answer one"
-    assert result[0]["scenario_path"] == str(scenario_path)
     assert "error" not in result[0]
 
 
-def test_run_scenarios_against_agent_records_partial_failures(tmp_path, monkeypatch):
+def test_a_set_run_records_partial_failures(tmp_path, monkeypatch):
     agent_yaml = _prepare_agent_yaml(tmp_path)
     failure = RuntimeError("network down")
     responses = {
@@ -235,22 +234,13 @@ def test_run_scenarios_against_agent_records_partial_failures(tmp_path, monkeypa
             "dimensions": {"Persona": "Novice", "Region": "EU"},
         },
     ]
-    result = asyncio.run(
-        multi_turn.run_scenarios_against_agent(
-            agent_yaml,
-            scenario_list,
-            include_history=True,
-            workflow_name="wf",
-            progress_cb=progress_events.append,
-        )
-    )
+    result = _run_set(agent_yaml, scenario_list, progress_events.append)
     assert len(result) == 2
-    assert result[1]["scenario_id"] == "beta"
+    assert result[1]["scenario_config"]["id"] == "beta"
     assert result[1]["error"]["message"] == "network down"
     assert result[1]["error"]["type"] == "run_failed"
     assert result[1]["history_len"] == 0
-    assert result[1]["final_assistant_text"] == ""
-    assert progress_events[-1]["failed"] == 1
+    assert result[1]["passed"] is False
     assert "error" not in result[0]
     # setup_tracing is no longer called - tracing is initialized inline
     assert len(trace_calls) == 2

@@ -5,10 +5,12 @@ test.describe('settings basics', () => {
   test('exposes core configuration areas without leaking seeded secrets', async ({ app }) => {
     await openSettings(app.page);
 
-    for (const section of ['General', 'Environment', 'Models', 'MCP Servers', 'Git', 'Skills', 'Network']) {
+    const nav = app.page.getByRole('main').getByRole('navigation');
+    for (const section of ['General', 'AI', 'Appearance', 'Voice & Audio', 'Workspace', 'Environment', 'Git']) {
       await test.step(`open ${section}`, async () => {
-        await app.page.getByRole('button', { name: section }).first().click();
-        await expect(app.page.getByText(section).first()).toBeVisible();
+        const button = nav.getByRole('button', { name: section, exact: true });
+        await button.click();
+        await expect(button).toHaveAttribute('data-active', 'true');
       });
     }
 
@@ -21,7 +23,8 @@ test.describe('settings basics', () => {
 
     const restarted = await app.restart();
     await openSettings(restarted);
-    await expect(restarted.getByRole('button', { name: 'Models' }).first()).toBeVisible();
-    await expect(restarted.getByRole('button', { name: 'Git' }).first()).toBeVisible();
+    const restartedNav = restarted.getByRole('main').getByRole('navigation');
+    await expect(restartedNav.getByRole('button', { name: 'AI', exact: true })).toBeVisible();
+    await expect(restartedNav.getByRole('button', { name: 'Git', exact: true })).toBeVisible();
   });
 });

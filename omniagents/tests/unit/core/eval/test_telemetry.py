@@ -184,3 +184,44 @@ def test_build_telemetry_assembles_all_fields():
     assert result["error_count"] == 1
     assert result["usage"]["total_tokens"] == 150
     assert result["usage"]["requests"] == 2
+
+
+def test_consume_stream_events_counts_project_agent_token_usage():
+    """A project agent's RPC stream carries usage as ``token_usage`` items.
+
+    Each item's ``totals`` is that response's usage; the eval used to read
+    only the SDK's raw events and recorded zero for every project agent.
+    """
+    from agents.stream_events import RunItemStreamEvent
+
+    def _usage(i, o):
+        return RunItemStreamEvent(
+            name="token_usage",
+            item={
+                "delta": {"requests": 1, "input_tokens": 0},
+                "totals": {
+                    "requests": 1,
+                    "input_tokens": i,
+                    "input_tokens_details": {"cached_tokens": i - 1},
+                    "output_tokens": o,
+                    "output_tokens_details": {"reasoning_tokens": 1},
+                    "total_tokens": i + o,
+                },
+            },
+        )
+
+    async def _stream():
+        yield _usage(3, 2)
+        yield _usage(7, 1)
+
+    result = asyncio.run(consume_stream_events(_stream()))
+    # Cached and reasoning tokens too: what a run costs depends on them.
+    assert result["usage"] == {
+        "requests": 2,
+        "input_tokens": 10,
+        "cached_tokens": 8,
+        "cache_write_tokens": 0,
+        "output_tokens": 3,
+        "reasoning_tokens": 2,
+        "total_tokens": 13,
+    }

@@ -119,10 +119,10 @@ async def test_run_failure_returns_declared_failure_message(
     service = make_service(monkeypatch)
     session = service._session_manager.get_or_create("slash-fail")
     assert (await service.server_call("init", {}, session.id))["message"] == (
-        "Failed to update AGENTS.md"
+        "Failed to update AGENTS.md (boom)"
     )
     assert (await service.server_call("bare", {}, session.id))["message"] == (
-        "Failed to run /bare."
+        "Failed to run /bare. (boom)"
     )
 
 

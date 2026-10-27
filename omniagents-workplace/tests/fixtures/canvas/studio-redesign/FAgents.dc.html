@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Agents</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap">
+<style>
+body{margin:0;background:#F6F6F7}
+a{color:#1D4ED8;text-decoration:none}a:hover{color:#1E3A8A}
+.mono{font-family:'JetBrains Mono',monospace;font-size:12px}
+.file{font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#52525B;background:#F4F4F5;border-radius:4px;padding:2px 6px}
+.code{margin:0;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.65;background:#FAFAFA;border:1px solid #F0F0F1;border-radius:8px;padding:10px 12px;overflow-x:auto;white-space:pre}
+.cli{font-family:'JetBrains Mono',monospace;font-size:12px;background:#18181B;color:#E4E4E7;border-radius:8px;padding:9px 12px;overflow-x:auto;white-space:nowrap}
+.card{background:#FFFFFF;border:1px solid #E4E4E7;border-radius:12px;padding:18px 20px}
+.detail{background:#FAFAFA;border:1px dashed #D4D4D8;border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.dlabel{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#71717A}
+.h2{margin:0;font-size:15px;font-weight:600}
+.muted{font-size:13px;color:#52525B;line-height:1.55}
+.photo{background:repeating-linear-gradient(135deg,#E4E4E7 0 10px,#EDEDEF 10px 20px);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#71717A;font-size:12px}
+.user{align-self:flex-end;max-width:85%;background:#F4F4F5;padding:10px 14px;border-radius:14px 14px 4px 14px}
+.turn{border:1px solid #FDBA74;background:#FFF7ED;border-radius:12px;padding:12px 14px}
+.turn b{display:block;font-size:12px;font-weight:600;color:#9A3412;letter-spacing:.02em;margin-bottom:4px}
+.noticed{border:1px solid #FDBA74;background:#FFF7ED;border-radius:10px;padding:12px 14px;font-size:14px;line-height:1.55;color:#431407}
+.noticed b{display:block;font-size:12px;font-weight:600;color:#9A3412;letter-spacing:.02em;margin-bottom:2px}
+.ok{color:#1D4ED8}.warn{color:#C2410C}
+.btn{font:inherit;font-size:13px;padding:7px 12px;border-radius:8px;border:1px solid #D4D4D8;background:#FFFFFF;color:#18181B;cursor:pointer}
+.btn.primary{border-color:#18181B;background:#18181B;color:#FFFFFF;font-weight:500}
+.pill{font:inherit;font-size:13px;padding:6px 12px;border-radius:999px;border:1px solid #D4D4D8;background:#FFFFFF;color:#18181B;cursor:pointer}
+.row{display:flex;gap:12px;align-items:center;padding:10px 0;border-top:1px solid #F0F0F1}
+.prov{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;padding:2px 8px;border-radius:999px;white-space:nowrap;vertical-align:middle}
+.prov::before{content:"";width:6px;height:6px;border-radius:3px;display:inline-block}
+.prov.you{background:#F4F4F5;color:#3F3F46}.prov.you::before{background:#18181B}
+.prov.sug{background:#FEF3C7;color:#78350F}.prov.sug::before{background:#D97706}
+.prov.calc{background:#EFF6FF;color:#1E3A8A}.prov.calc::before{background:#2563EB}
+.legend{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12px;color:#71717A}
+
+.qcard{border:1px solid #D4D4D8;border-radius:12px;background:#FFFFFF;padding:14px 16px;display:flex;flex-direction:column;gap:10px;box-shadow:0 1px 2px rgba(24,24,27,.05)}
+.qcard .q{font-size:15px;font-weight:600;line-height:1.4}
+.qopts{display:flex;flex-wrap:wrap;gap:6px}
+.did{border:1px solid #E4E4E7;border-radius:10px;overflow:hidden;font-size:13px}
+.did div{padding:8px 12px;border-bottom:1px solid #F0F0F1;display:flex;gap:8px}
+.did div:last-child{border-bottom:0}
+.node{border:1px solid #D4D4D8;background:#FFFFFF;border-radius:10px;padding:10px 12px;min-width:150px;max-width:200px}
+.node .t{font-size:14px;font-weight:600}
+.node .r{font-size:12px;color:#52525B;margin-top:2px;line-height:1.4}
+.arrow{color:#A1A1AA;font-size:18px;align-self:center}
+.bubble{font-size:14px;line-height:1.6}
+.when{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#A1A1AA;text-align:center}
+
+.nav a{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-radius:8px;color:#3F3F46;font-size:14px}
+.nav a.on{background:#E4E4E7;color:#18181B;font-weight:600}
+.nav .badge{font-size:11px;font-weight:600;color:#52525B}
+.nav .badge.warn{color:#C2410C}
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{text-align:left;font-weight:500;color:#52525B;font-size:12px;padding:8px 10px;border-bottom:1px solid #E4E4E7;white-space:nowrap}
+.tbl td{padding:10px;border-bottom:1px solid #F0F0F1;vertical-align:middle}
+.tbl tr.sel td{background:#EFF6FF}
+.status{font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;white-space:nowrap}
+.status.ok{background:#DBEAFE;color:#1E3A8A}.status.warn{background:#FFEDD5;color:#9A3412}.status.none{background:#F4F4F5;color:#52525B}.status.crit{background:#FEE2E2;color:#991B1B}
+.pagehead{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
+.pagehead h1{margin:0;font-size:22px;font-weight:600}
+.sug{border:1px solid #E4E4E7;border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.5;background:#FFFFFF;display:flex;flex-direction:column;gap:8px}
+</style>
+</helmet>
+<div style="font-family: Inter, system-ui, sans-serif; color: #18181B; background: #F6F6F7; height: 100vh; display: flex; flex-direction: column">
+  <header style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 20px; background: #FFFFFF; border-bottom: 1px solid #E4E4E7">
+    <div style="display: flex; align-items: center; gap: 10px">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#18181B" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="5"></circle><ellipse cx="12" cy="12" rx="10" ry="3.5" transform="rotate(-20 12 12)"></ellipse></svg>
+      <span style="font-weight: 600; font-size: 15px">Studio</span>
+      <span style="color: #A1A1AA">/</span>
+      <button type="button" style="font: inherit; font-size: 14px; font-weight: 500; background: none; border: 0; padding: 4px 6px; border-radius: 6px; cursor: pointer; color: #18181B">patient-messages ▾</button>
+    </div>
+    <div style="display: flex; align-items: center; gap: 14px">
+      <button type="button" onClick="{{toggleDetails}}" aria-pressed="{{detailsPressed}}" style="font: inherit; font-size: 13px; display: flex; align-items: center; gap: 8px; background: none; border: 0; cursor: pointer; color: #18181B; padding: 4px">Details <span style="{{detTrack}}"><span style="width: 18px; height: 18px; border-radius: 9px; background: #FFFFFF; display: block"></span></span></button>
+      <button type="button" onClick="{{toggleCopilot}}" aria-pressed="{{copilotPressed}}" style="{{copilotBtn}}">✦ Builder</button>
+    </div>
+  </header>
+  <div style="flex: 1; min-height: 0; display: flex">
+    <nav class="nav" aria-label="Project" style="flex: 0 0 200px; padding: 14px 10px; display: flex; flex-direction: column; gap: 2px; border-right: 1px solid #E4E4E7; background: #FAFAFA">
+      <a href="FHome.dc.html" class=""><span>Home</span><span class="badge"></span></a>
+      <a href="FAgents.dc.html" class="on"><span>Agents</span><span class="badge">5</span></a>
+      <a href="FAutomations.dc.html" class=""><span>Automations</span><span class="badge">3</span></a>
+      <a href="FRuns.dc.html" class=""><span>Runs</span><span class="badge">1,204 this week</span></a>
+      <a href="FChecks.dc.html" class=""><span>Checks</span><span class="badge">6</span></a>
+      <a href="FTests.dc.html" class=""><span>Tests</span><span class="badge">1 running</span></a>
+      <a href="FReviews.dc.html" class=""><span>Reviews</span><span class="badge warn">6</span></a>
+      <a href="#skills" class=""><span>Skills</span><span class="badge">2</span></a>
+    </nav>
+    <main style="flex: 1; min-width: 0; min-height: 0; overflow-y: auto; padding: 24px 28px 48px; display: flex; flex-direction: column; gap: 18px">
+
+<div class="pagehead"><div><h1>Agents</h1><div class="muted">Each agent has versions. One is in use; others are kept to compare or go back to.</div></div>
+<button type="button" class="btn">+ New agent</button></div>
+<div style="display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start">
+  <section style="flex: 1 1 230px; max-width: 280px; display: flex; flex-direction: column; gap: 8px">
+    <sc-for list="{{agents}}" as="a" hint-placeholder-count="4">
+      <button type="button" onClick="{{a.pick}}" style="{{a.style}}">
+        <span style="display: flex; justify-content: space-between; gap: 8px"><span style="font-size: 14px; font-weight: 600">{{a.name}}</span><span style="font-size: 12px; color: #52525B">{{a.nver}}</span></span>
+        <span style="display: block; font-size: 12px; color: #52525B; margin-top: 2px">{{a.role}}</span>
+        <span style="display: block; font-size: 11px; color: #71717A; margin-top: 4px">{{a.links}}</span>
+        <span style="display: block; margin-top: 8px"><span class="{{a.statusClass}}">{{a.status}}</span></span>
+      </button>
+    </sc-for>
+  </section>
+  <section style="flex: 3 1 420px; min-width: 0; display: flex; flex-direction: column; gap: 14px">
+    <div class="card">
+      <div style="display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: baseline"><h2 class="h2" style="font-size: 18px">{{selName}}</h2><span style="font-size: 12px; color: #52525B">{{selLinks}}</span></div>
+      <div style="margin-top: 6px; font-size: 13px; color: #52525B">Checked by: <a href="FChecks.dc.html">{{selScored}}</a></div>
+      <div style="margin-top: 12px; display: flex; justify-content: space-between; align-items: baseline"><span class="dlabel">Versions</span><button type="button" class="btn">+ New version</button></div>
+      <div style="margin-top: 6px; display: flex; flex-direction: column; gap: 4px">
+        <sc-for list="{{versions}}" as="v" hint-placeholder-count="2">
+          <button type="button" onClick="{{v.pick}}" style="{{v.style}}">
+            <span style="flex: 0 0 170px; text-align: left"><strong style="font-weight: 600">{{v.v}} · {{v.label}}</strong><span style="display: block; font-size: 12px; color: #52525B">{{v.lineage}}</span></span>
+            <span style="flex: 1 1 160px; text-align: left; color: #3F3F46">{{v.change}}</span>
+            <span class="mono" style="flex: 0 0 150px; text-align: left">{{v.result}}</span>
+            <span class="{{v.stateClass}}">{{v.state}}</span>
+          </button>
+        </sc-for>
+      </div>
+    </div>
+    <div class="card">
+      <div style="display: flex; justify-content: space-between; align-items: baseline"><h2 class="h2">Job description · {{selVer}}</h2><button type="button" class="btn">Edit</button></div>
+      <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 8px"><sc-for list="{{job}}" as="j" hint-placeholder-count="3"><p style="{{j.style}}">{{j.text}}</p></sc-for></div>
+    </div>
+    <div class="card">
+      <div style="display: flex; justify-content: space-between; align-items: baseline"><h2 class="h2">Can use</h2><button type="button" class="btn">Add from catalog</button></div>
+      <div style="margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px"><sc-for list="{{abilities}}" as="ab" hint-placeholder-count="2"><span class="pill" style="cursor: default">{{ab}}</span></sc-for></div>
+    </div>
+    <div class="card">
+      <h2 class="h2">Try it</h2>
+      <div style="margin-top: 10px; display: flex; gap: 8px"><span style="flex: 1; border: 1px solid #D4D4D8; border-radius: 8px; padding: 9px 12px; font-size: 14px; color: #A1A1AA">Try an input…</span><button type="button" class="btn primary">Send</button></div>
+    </div>
+<sc-if value="{{detailsOn}}" hint-placeholder-val="{{ false }}"><div class="detail"><div class="dlabel">agents/{{selId}}/agent.yml</div><pre class="code">{{yml}}</pre></div></sc-if>
+  </section>
+</div>
+
+    </main>
+    <sc-if value="{{copilotOpen}}" hint-placeholder-val="{{ true }}">
+    <aside aria-label="Builder" style="flex: 0 0 360px; min-height: 0; background: #FFFFFF; border-left: 1px solid #E4E4E7; display: flex; flex-direction: column">
+      <div style="padding: 12px 16px; border-bottom: 1px solid #F0F0F1; display: flex; justify-content: space-between; align-items: center"><span style="font-size: 14px; font-weight: 600">✦ Builder</span><span style="font-size: 12px; color: #52525B">sees: Agents › {{selName}}</span></div>
+      <div style="flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px">
+<div class="bubble">You’re looking at <strong style="font-weight: 600">{{selName}}</strong>. {{hint}}</div>
+<div class="sug"><strong style="font-weight: 600">Try an alternative version?</strong>I’ll make it alongside the one in use and compare both on the same cases. What should be different?<div class="qopts"><sc-for list="{{ideas}}" as="o" hint-placeholder-count="3"><button type="button" onClick="{{o.pick}}" style="{{o.style}}">{{o.label}}</button></sc-for></div></div>
+<sc-if value="{{ideaPicked}}" hint-placeholder-val="{{ false }}"><div class="bubble">{{ideaReply}}</div></sc-if>
+      </div>
+      <div style="padding: 12px 14px; border-top: 1px solid #E4E4E7">
+        <div style="display: flex; gap: 8px; align-items: flex-end; border: 1px solid #D4D4D8; border-radius: 12px; padding: 8px 8px 8px 12px">
+          <span style="flex: 1; font-size: 14px; color: #A1A1AA; padding: 6px 0">Ask the builder…</span>
+          <button type="button" aria-label="Send" style="width: 30px; height: 30px; border-radius: 8px; border: 0; background: #18181B; color: #FFFFFF; cursor: pointer">↑</button>
+        </div>
+      </div>
+    </aside>
+    </sc-if>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1040}}'>
+
+const chipStyle = (on) => 'font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 999px; cursor: pointer; ' + (on ? 'border: 1px solid #18181B; background: #18181B; color: #FFFFFF' : 'border: 1px solid #E4E4E7; background: #FFFFFF; color: #3F3F46');
+const toneChip = (on) => 'font: inherit; font-size: 13px; padding: 5px 10px; border-radius: 999px; cursor: pointer; ' + (on ? 'border: 1px solid #C2410C; background: #FFEDD5; color: #7C2D12; font-weight: 500' : 'border: 1px solid #E4E4E7; background: #FFFFFF; color: #3F3F46');
+const verdictBtn = (on, tone) => 'font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 8px; cursor: pointer; ' + (on ? (tone === 'yes' ? 'border: 1px solid #1D4ED8; background: #DBEAFE; color: #1E3A8A; font-weight: 600' : 'border: 1px solid #C2410C; background: #FFEDD5; color: #7C2D12; font-weight: 600') : 'border: 1px solid #E4E4E7; background: #FFFFFF; color: #18181B');
+const icon = (ok) => 'flex: none; width: 22px; height: 22px; border-radius: 11px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; ' + (ok ? 'background: #DBEAFE; color: #1E3A8A' : 'background: #FFEDD5; color: #9A3412');
+
+const optStyle = (on, primary) => 'font: inherit; font-size: 13px; padding: 7px 12px; border-radius: 999px; cursor: pointer; ' + (on ? 'border: 1px solid #1D4ED8; background: #DBEAFE; color: #1E3A8A; font-weight: 600' : primary ? 'border: 1px solid #18181B; background: #18181B; color: #FFFFFF' : 'border: 1px solid #D4D4D8; background: #FFFFFF; color: #18181B');
+
+const wilson = (k, n) => { if (!n) return [0, 0]; const z = 1.96, p = k / n, d = 1 + z * z / n, c = (p + z * z / (2 * n)) / d, h = z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d; return [Math.max(0, c - h), Math.min(1, c + h)]; };
+const choose = (n, k) => { let r = 1; for (let i = 1; i <= k; i++) r = r * (n - k + i) / i; return r; };
+const signP = (b, w) => { const n = b + w; if (!n) return 1; const k = Math.min(b, w); let t = 0; for (let i = 0; i <= k; i++) t += choose(n, i); return Math.min(1, 2 * t / Math.pow(2, n)); };
+const pick = (self, key, defs, cur) => defs.map(([k, label, primary]) => ({ label, pick: () => self.setState({ [key]: k }), style: optStyle(cur === k, primary && !cur) }));
+const AGENTS = [{"id": "triage", "name": "Triage", "role": "Decides where each message goes. Never answers.", "links": "Started by New portal message · hands off to Clinic info, Refills, Nurse handoff", "scored": "Routed correctly, Matches expected route", "status": ["Routed correctly 91% ▼5", "warn"], "abilities": ["Hand off to another agent"], "versions": [{"v": "v1", "label": "First version", "parent": "", "change": "Written from your description", "state": "in use", "result": "26 of 30 routed right"}, {"v": "v2", "label": "Reads intent first", "parent": "v1", "change": "Instructions: work out what’s asked before looking at place names", "state": "being tested", "result": "fixed 12, broke 0 · 41 cases"}], "job": ["Read each patient message and decide which agent should handle it: Clinic info, Refills, or Nurse handoff.", "Anything that mentions symptoms, medicines or worry goes to Nurse handoff, even if it also asks something simple.", "Never answer the patient yourself."]}, {"id": "info", "name": "Clinic info", "role": "Hours, locations, parking.", "links": "Reached from Triage", "scored": "Warm tone", "status": ["Warm tone 84%", "ok"], "abilities": ["Clinic directory"], "versions": [{"v": "v1", "label": "First version", "parent": "", "change": "Written from your description", "state": "in use", "result": "18 of 18 OK"}], "job": ["Answer questions about clinic hours, locations and parking using the clinic directory.", "Reply in the language the patient wrote in."]}, {"id": "refills", "name": "Refills", "role": "Refill requests, through the pharmacy system.", "links": "Reached from Triage", "scored": "Refill handled, Warm tone", "status": ["Refill handled 94%", "ok"], "abilities": ["Pharmacy refills (test mode)", "Clinic directory"], "versions": [{"v": "v1", "label": "First version", "parent": "", "change": "Written from your description", "state": "kept", "result": "38 of 40 · tone 11 of 40"}, {"v": "v2", "label": "Warmer", "parent": "v1", "change": "Instructions: the tone section", "state": "in use", "result": "38 of 40 · tone 29 of 40"}], "job": ["Handle prescription refill requests by sending them to the patient’s pharmacy through the pharmacy system.", "+Thank the patient, say what you did in one sentence, and when it should be ready. Keep it warm but short.", "Never advise on doses or whether to take a medicine; send those to Nurse handoff."]}, {"id": "handoff", "name": "Nurse handoff", "role": "3-line summary for the nurse queue.", "links": "Started by Summary on request, and reached from Triage", "scored": "Red flags first (not trusted yet)", "status": ["check not trusted yet", "none"], "abilities": ["Nurse queue"], "versions": [{"v": "v1", "label": "First version", "parent": "", "change": "Written from your description", "state": "in use", "result": "1 flow failure started here"}], "job": ["Summarize the message for a nurse in 3 lines: who, what, how urgent.", "Tell the patient a nurse will reply, and when to call 911 instead."]}, {"id": "digest", "name": "Weekly digest", "role": "Summarizes the week for managers.", "links": "Started by Weekly digest (Mondays 7:00) · not connected to other agents", "scored": "Digest is accurate", "status": ["1 run so far", "none"], "abilities": ["Read message log"], "versions": [{"v": "v1", "label": "First version", "parent": "", "change": "Written from your description", "state": "in use", "result": "no cases yet"}], "job": ["Every Monday, summarize last week’s portal messages for clinic managers: volume by type, anything that went to nurses, and common questions without a good answer."]}];
+const INIT = {"agent": "triage", "ver": null, "idea": null};
+function VALS(s) {
+
+  const a = AGENTS.find((x) => x.id === s.agent) || AGENTS[0];
+  const ver = a.versions.find((v) => v.v === s.ver) || a.versions.find((v) => v.state === 'in use') || a.versions[0];
+  const hints = { triage: 'Routed correctly dropped this week, mostly on Spanish inputs. v2 is being tested for that now.', info: 'It has passed everything you’ve reviewed.', refills: 'You switched it to the warmer version last week.', handoff: 'It’s started by Summary on request and also reached from Triage. Summary on request has no tests yet.', digest: 'Weekly digest starts it every Monday; it isn’t connected to the other agents.' };
+  const ideaDefs = { triage: [['es', 'Better with Spanish messages', true], ['urgent', 'More cautious with symptoms', false], ['other', 'Something else', false]],
+    info: [['short', 'Shorter replies', true], ['map', 'Include a map link', false], ['other', 'Something else', false]],
+    refills: [['short', 'Shorter replies', true], ['ask', 'Ask which pharmacy if missing', false], ['other', 'Something else', false]],
+    handoff: [['flags', 'List red flags first', true], ['es', 'Summaries in English for Spanish messages', false], ['other', 'Something else', false]],
+    digest: [['short', 'Shorter digest', true], ['trend', 'Compare with last week', false], ['other', 'Something else', false]] }[a.id];
+  return {
+    agents: AGENTS.map((x) => ({ name: x.name, role: x.role, links: x.links, nver: x.versions.length + (x.versions.length === 1 ? ' version' : ' versions'), status: x.status[0], statusClass: 'status ' + x.status[1],
+      pick: () => this.setState({ agent: x.id, ver: null, idea: null }),
+      style: 'font: inherit; text-align: left; padding: 12px 14px; border-radius: 10px; cursor: pointer; color: #18181B; ' + (x.id === a.id ? 'border: 1px solid #1D4ED8; background: #EFF6FF' : 'border: 1px solid #E4E4E7; background: #FFFFFF') })),
+    selName: a.name, selLinks: a.links, selScored: a.scored, selVer: ver.v + ' · ' + ver.label, selId: a.id, hint: hints[a.id],
+    versions: a.versions.map((v) => ({ ...v, lineage: v.parent ? 'built on ' + v.parent : 'starting point', style: 'font: inherit; font-size: 13px; width: 100%; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 10px 12px; border-radius: 8px; cursor: pointer; color: #18181B; ' + (v.v === ver.v ? 'border: 1px solid #1D4ED8; background: #EFF6FF' : 'border: 1px solid #F0F0F1; background: #FFFFFF'), pick: () => this.setState({ ver: v.v }),
+      stateClass: 'status ' + (v.state === 'in use' ? 'ok' : v.state === 'being tested' ? 'warn' : 'none') })),
+    job: a.job.map((t) => { const added = t.startsWith('+') && ver.v !== 'v1'; const text = t.startsWith('+') ? t.slice(1) : t; return { text, style: 'margin: 0; font-size: 14px; line-height: 1.6; ' + (added ? 'background: #FEF3C7; border-radius: 4px; padding: 2px 6px' : '') }; }),
+    abilities: a.abilities,
+    yml: 'name: ' + a.id + '_' + ver.v + '\nmodel: gpt-5.1-2025-11-13\ninstructions_file: instructions.md' + (ver.parent ? '\n# built on ' + a.id + '_' + ver.parent : ''),
+    ideas: pick(this, 'idea', ideaDefs, s.idea), ideaPicked: !!s.idea,
+    ideaReply: s.idea === 'other' ? 'Tell me what you have in mind. If it’s two changes at once, I’ll make two versions so you can tell which one helped.' : 'Made ' + a.name + ' v' + (a.versions.length + 1) + ', built on the version in use. Only that part of the instructions differs. Running both on the same cases; results will show up in Tests.'
+  };
+
+}
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = Object.assign({ details: false, copilot: true }, INIT); }
+  renderVals() {
+    const s = this.state;
+    const v = VALS.call(this, s) || {};
+    v.detailsOn = s.details;
+    v.detailsPressed = s.details ? 'true' : 'false';
+    v.toggleDetails = () => this.setState({ details: !s.details });
+    v.detTrack = 'width: 38px; height: 22px; border-radius: 11px; padding: 2px; box-sizing: border-box; display: flex; ' + (s.details ? 'background: #1D4ED8; justify-content: flex-end' : 'background: #D4D4D8; justify-content: flex-start');
+    v.copilotOpen = s.copilot;
+    v.copilotPressed = s.copilot ? 'true' : 'false';
+    v.toggleCopilot = () => this.setState({ copilot: !s.copilot });
+    v.copilotBtn = 'font: inherit; font-size: 13px; font-weight: 500; padding: 6px 12px; border-radius: 8px; cursor: pointer; ' + (s.copilot ? 'border: 1px solid #18181B; background: #18181B; color: #FFFFFF' : 'border: 1px solid #D4D4D8; background: #FFFFFF; color: #18181B');
+    return v;
+  }
+}
+</script>
+</body>
+</html>

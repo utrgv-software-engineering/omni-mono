@@ -10,25 +10,24 @@
 // blocked is the single most important row in the panel, so the ordering is
 // derived from one exhaustive list here and the maps are keyed by it.
 
-import type { TaskStatus, TaskSummary } from "../store/appStore.js";
-import type { PlanStep } from "../types/conversation.js";
+import type { TaskSummary } from "@omniagents/client/transcript/canonical-plan-tasks";
 import { roleMap } from "../theme.js";
 
-export const TASK_STATUSES: readonly TaskStatus[] = [
+export const TASK_STATUSES: readonly TaskSummary["status"][] = [
   "in_progress",
   "blocked",
   "pending",
   "completed",
 ] as const;
 
-export const STATUS_GLYPH: Record<TaskStatus, string> = {
+export const STATUS_GLYPH: Record<TaskSummary["status"], string> = {
   in_progress: "◐",
   blocked: "◇",
   pending: "○",
   completed: "✔",
 };
 
-export const STATUS_COLOR: Record<TaskStatus, string> = roleMap({
+export const STATUS_COLOR: Record<TaskSummary["status"], string> = roleMap({
   in_progress: "stateActive",
   blocked: "stateBlocked",
   pending: "textChrome",
@@ -51,38 +50,10 @@ export function orderTasks(tasks: TaskSummary[]): TaskSummary[] {
   return ordered;
 }
 
-/**
- * Project durable plan steps (get_plan / `plan` item content) onto the
- * dock's TaskSummary shape. The statuses are the same closed set; the
- * field names differ (snake_case wire → camelCase dock). Tolerant of a
- * malformed payload: returns null so the caller keeps the current dock
- * instead of blanking it.
- */
-export function planStepsToTasks(steps: unknown): TaskSummary[] | null {
-  if (!Array.isArray(steps)) return null;
-  const out: TaskSummary[] = [];
-  for (const raw of steps) {
-    const step = raw as Partial<PlanStep>;
-    if (typeof step?.id !== "string" || typeof step?.subject !== "string") {
-      return null;
-    }
-    out.push({
-      id: step.id,
-      subject: step.subject,
-      activeForm:
-        typeof step.active_form === "string" ? step.active_form : undefined,
-      status: (step.status as TaskStatus) ?? "pending",
-      owner: typeof step.owner === "string" ? step.owner : undefined,
-      blockedBy: Array.isArray(step.blocked_by)
-        ? step.blocked_by.filter((id): id is string => typeof id === "string")
-        : undefined,
-    });
-  }
-  return out;
-}
-
-export function taskCounts(tasks: TaskSummary[]): Record<TaskStatus, number> {
-  const counts: Record<TaskStatus, number> = {
+export function taskCounts(
+  tasks: TaskSummary[],
+): Record<TaskSummary["status"], number> {
+  const counts: Record<TaskSummary["status"], number> = {
     in_progress: 0,
     blocked: 0,
     pending: 0,

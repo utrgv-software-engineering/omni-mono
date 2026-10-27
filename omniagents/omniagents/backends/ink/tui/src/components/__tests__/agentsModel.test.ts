@@ -4,7 +4,25 @@ import {
   buildWorkerDetail,
   wrapPlain,
 } from "../agents-model.js";
-import type { SubagentSummary } from "../../store/appStore.js";
+import type { SubagentSummary } from "@omniagents/client/transcript/activity-store";
+import type { MessageItem } from "@omniagents/client/transcript/chat-types";
+
+const toolItem = (
+  tool: string,
+  input: string,
+  overrides: Record<string, unknown> = {},
+): MessageItem =>
+  ({
+    type: "tool",
+    tool,
+    input,
+    call_id: "c1",
+    status: "called",
+    ...overrides,
+  }) as MessageItem;
+
+const prose = (content: string): MessageItem =>
+  ({ type: "chat", role: "assistant", content }) as MessageItem;
 
 describe("wrapPlain", () => {
   it("breaks on spaces and preserves explicit newlines", () => {
@@ -71,20 +89,11 @@ describe("buildLiveActivity", () => {
   it("renders tool calls in beat language, prose wrapped, failures red", () => {
     const lines = buildLiveActivity(
       [
-        {
-          method: "tool_called",
-          params: {
-            tool: "read_file",
-            input: JSON.stringify({ path: "src/app.ts" }),
-            call_id: "c1",
-          },
-        },
-        {
-          method: "tool_result",
-          params: { tool: "read_file", metadata: { success: false } },
-        },
-        { method: "message_output", params: { content: "found the bug" } },
-        { method: "run_started", params: {} },
+        toolItem("read_file", JSON.stringify({ path: "src/app.ts" }), {
+          status: "result",
+          metadata: { success: false },
+        }),
+        prose("found the bug"),
       ],
       60,
     );
@@ -109,7 +118,7 @@ describe("buildLiveActivity", () => {
         wall_time_ms: 0,
       } as never,
       60,
-      [{ method: "message_output", params: { content: "on it" } }],
+      [prose("on it")],
     );
     expect(lines.at(-1)?.text).toBe("on it");
   });
@@ -132,18 +141,8 @@ describe("settled subagent detail", () => {
       } as never,
       60,
       [
-        {
-          method: "tool_called",
-          params: {
-            tool: "read_file",
-            input: JSON.stringify({ path: "index.html" }),
-            call_id: "c1",
-          },
-        },
-        {
-          method: "message_output",
-          params: { content: "It is a small web app." },
-        },
+        toolItem("read_file", JSON.stringify({ path: "index.html" })),
+        prose("It is a small web app."),
       ],
     );
     const texts = lines.map((l) => l.text);

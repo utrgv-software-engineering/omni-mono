@@ -1,0 +1,55 @@
+[project]
+name = "omniagents-workplace"
+version = "0.1.0"
+description = "OmniAgents Workplace: self-hosted Slack, GitHub, Linear and design canvases for software factories"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi[all]>=0.115.12",
+    "uvicorn>=0.34.1",
+    "httpx>=0.27",
+    "mcp>=1.30,<2",
+    "PyYAML",
+    # Encrypted credentials (AES-256-GCM).
+    "cryptography>=42",
+    # The factory's runtime, over its /ws (the Factory model page).
+    "websockets>=13",
+]
+
+[project.scripts]
+omniagents-workplace = "omniagents_workplace.cli:main"
+
+[project.entry-points."omniagents.eval_environments"]
+workplace = "omniagents_workplace.evaluation:build"
+
+[dependency-groups]
+dev = [
+    "black==26.5.1",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-timeout",
+    "websockets>=13",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+timeout = 120
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["omniagents_workplace*"]
+
+[tool.setuptools.package-data]
+"omniagents_workplace" = [
+    "reference/*.json",
+    "seeds/*.yml",
+    "seeds/**/*",
+    "seeds/**/.github/workflows/*",
+    "static/*",
+    "static/assets/*",
+    "canvas/support.js",
+]

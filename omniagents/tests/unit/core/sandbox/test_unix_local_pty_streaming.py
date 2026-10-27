@@ -15,10 +15,17 @@ from __future__ import annotations
 import asyncio
 import os
 
+import sys
+
 import pytest
 
 from omniagents.core.sandbox.factory import build_sandbox_client
 from omniagents.core.sandbox.pty_stream import coerce_pty_streaming
+
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="the unix_local sandbox (fcntl/termios PTYs) is POSIX-only",
+)
 
 TIMEOUT = 10.0
 

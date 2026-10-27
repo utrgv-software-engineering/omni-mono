@@ -1,0 +1,56 @@
+{
+  "name": "@omniagents/ui",
+  "private": true,
+  "version": "0.0.0",
+  "description": "The OmniAgents design system: shadcn components and the theme tokens every OmniAgents UI renders with.",
+  "type": "module",
+  "exports": {
+    "./theme.css": "./src/theme.css",
+    "./cn": "./src/cn.ts",
+    "./themes": "./src/themes.ts",
+    "./hooks/*": "./src/hooks/*.ts",
+    "./*": "./src/components/*.tsx"
+  },
+  "scripts": {
+    "lint": "eslint --max-warnings=0 . && prettier --check src && node scripts/check-shadcn-registry.mjs --summary",
+    "fix": "eslint --fix . && prettier --write src",
+    "test": "vitest run",
+    "type-check": "tsc --noEmit",
+    "shadcn:registry:self-test": "node scripts/check-shadcn-registry.mjs --self-test"
+  },
+  "peerDependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "dependencies": {
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "cmdk": "^1.1.1",
+    "lucide-react": "^1.8.0",
+    "radix-ui": "^1.6.7",
+    "react-resizable-panels": "^4.12.2",
+    "sonner": "^2.0.7",
+    "tailwind-merge": "^3.6.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.32.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@typescript-eslint/eslint-plugin": "^8.39.0",
+    "@typescript-eslint/parser": "^8.39.0",
+    "eslint": "^9.32.0",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-simple-import-sort": "^12.1.1",
+    "eslint-plugin-unused-imports": "^4.1.4",
+    "globals": "^16.3.0",
+    "jsdom": "^26.1.0",
+    "prettier": "^3.6.2",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "tailwindcss": "^4.2.0",
+    "typescript": "5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

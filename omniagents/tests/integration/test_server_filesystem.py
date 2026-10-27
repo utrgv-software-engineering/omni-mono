@@ -112,7 +112,7 @@ def workspace(tmp_path):
 
 
 @pytest.fixture
-def client(workspace) -> TestClient:
+def client(workspace):
     resources = AgentHostResources.create("fs-test-host")
     register_host_environment(
         resources,
@@ -121,9 +121,11 @@ def client(workspace) -> TestClient:
         workspace_id="fs-workspace",
         environment_id="fs-env",
     )
-    return TestClient(
+    # One shared event loop for every websocket, as in a real server.
+    with TestClient(
         server_app.build_app(spec=_spec(), agent_host_resources=resources)
-    )
+    ) as test_client:
+        yield test_client
 
 
 def _ensure_session(ws, session_id, workspace_root, call_id="ensure"):

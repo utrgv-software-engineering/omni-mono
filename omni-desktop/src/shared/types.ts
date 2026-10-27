@@ -1,42 +1,11 @@
+import type { AudioSettings, RoutineEvent } from '@omniagents/chat-ui/host';
+import type { RunOverrides } from '@omniagents/client/rpc/execution';
+import type { OmniTheme } from '@omniagents/ui/themes';
 import type { Rectangle } from 'electron/main';
 import type { Schema } from 'electron-store';
 
-import type { CustomAppEntry } from '@/shared/app-registry';
-import type { ExtensionDescriptor, ExtensionEnsureResult, ExtensionInstanceState } from '@/shared/extensions';
 import type { ManagementAdminRequest, ManagementAdminResult } from '@/shared/management-admin';
 import type { VoicePersona } from '@/shared/voice-personas';
-
-// Normally we'd use SWR or some query library, but I had some issues with react render cycles and the easiest fix
-// was to just move all the fetching outside react. Also SWR doesn't narrow its data field when the request is
-// successful, which is suuuuper annoying. This type provides a similar API, but better types. Just have to implement
-// the fetching logic yourself.
-export type AsyncRequest<T, E> =
-  | {
-      isUninitialized: true;
-      isLoading: false;
-      isError: false;
-      isSuccess: false;
-    }
-  | {
-      isUninitialized: false;
-      isLoading: true;
-      isError: false;
-      isSuccess: false;
-    }
-  | {
-      isUninitialized: false;
-      isLoading: false;
-      isError: true;
-      isSuccess: false;
-      error: E;
-    }
-  | {
-      isUninitialized: false;
-      isLoading: false;
-      isError: false;
-      isSuccess: true;
-      data: T;
-    };
 
 /**
  * Window size and position properties, used to save and restore window state.
@@ -50,108 +19,7 @@ export type WindowProps = {
 /**
  * Data stored in the electron store.
  */
-export type LayoutMode = 'work' | 'chat' | 'dashboards' | 'agents' | 'plugins' | 'sandboxes' | 'settings' | 'gallery';
-export type OmniTheme =
-  | 'omni'
-  | 'teams-light'
-  | 'teams-dark'
-  | 'default'
-  | 'tokyo-night'
-  | 'vscode-dark'
-  | 'vscode-light'
-  | 'utrgv';
-
-/**
- * Summary of a sandbox profile available to the launcher. Discovered at
- * runtime by the main process from disk (`<config>/sandbox/*.yml`) plus
- * bundled built-ins. Not persisted to the store — re-derived each boot.
- */
-export type ProfileSummary = {
-  /** Profile name; matches the YAML filename without extension. */
-  name: string;
-  /** Human-readable label for UI. */
-  label: string;
-  /** Sandbox client type from the profile (`unix_local`, `docker`, ...). */
-  clientType: string;
-  /** True for profiles shipped with the launcher (not user-created). */
-  builtin: boolean;
-  /** Absolute path of the YAML backing this profile; null for the implicit host profile. */
-  path: string | null;
-  origin: 'builtin' | 'user-override' | 'implicit';
-  /** Parsed highlights for the detail pane; absent fields simply unknown. */
-  details?: { image?: string; services?: string[]; runAs?: string; confine?: boolean };
-};
-
-/**
- * One Docker container carrying the omni-code label, as shown in the
- * Sandboxes → Running pane. Ownership is joined main-side against live
- * AgentHost consumer environments.
- */
-export type SandboxContainerSummary = {
-  id: string;
-  name: string;
-  image: string;
-  createdAt: string;
-  state: string;
-  ownerKind: 'process' | 'orphan';
-  /** Human label for the owner (session/tab title); null for orphans. */
-  ownerLabel: string | null;
-};
-
-/** Result of the Docker substrate probe (Sandboxes → Health pane). */
-export type SandboxSubstrateStatus = {
-  docker: 'ok' | 'missing' | 'daemon-down';
-  dockerVersion?: string;
-};
-
-/**
- * Platform credentials for enterprise mode.
- * The platform URL is baked in at build time via OMNI_PLATFORM_URL.
- * These credentials are stored after the user signs in via device code flow.
- * When absent, the launcher runs in open-source mode with local Docker.
- */
-export type PlatformCredentials = {
-  accessToken: string;
-  refreshToken: string;
-  userEmail?: string;
-  userName?: string;
-  userRole?: string;
-  domains?: Array<{ id: number; name: string; slug: string }>;
-};
-
-export type AudioSettings = {
-  /** mediaDevices deviceId for the input mic. Null = OS default. */
-  inputDeviceId: string | null;
-  /** mediaDevices deviceId for output (applied via setSinkId on a routed <audio> element). Null = OS default. */
-  outputDeviceId: string | null;
-  echoCancellation: boolean;
-  noiseSuppression: boolean;
-  autoGainControl: boolean;
-};
-
-/**
- * Identity claims pulled from the AAD token (id_token / access_token) at
- * link time. Only the bits we display + the oid used for cross-tab identity.
- */
-export type CloudAccount = {
-  /** Stable AAD object id. Survives email + display-name changes. */
-  oid: string;
-  /** Display name from the id_token (preferred for UI). */
-  name?: string;
-  /** Email / UPN. */
-  email?: string;
-};
-
-export type CloudBackend = {
-  kind: 'cloud';
-  /** Origin of the launcher cloud (e.g. ``https://omni.example.com``). */
-  url: string;
-  /** AAD tenant the cloud is registered in. Cached from /.well-known/omni-cloud. */
-  tenantId: string;
-  /** AAD client id of the launcher's app registration. Used for token refresh. */
-  clientId: string;
-  account: CloudAccount;
-};
+export type LayoutMode = 'work' | 'chat' | 'routines' | 'plugins' | 'settings' | 'gallery';
 
 export type WslBackend = {
   kind: 'wsl';
@@ -176,379 +44,15 @@ export type ServerBackend = {
   url: string;
 };
 
-export type RemoteBackend = CloudBackend | WslBackend | ServerBackend;
+export type RemoteBackend = WslBackend | ServerBackend;
 
 /** Shape injected into the renderer via preload — wsl kind carries the resolved live URL. */
-export type RemoteBackendBootstrap = CloudBackend | (WslBackend & { url: string }) | ServerBackend;
-
-/**
- * One member of the resident-agent roster (docs/resident-agents-plan.md):
- * a named, specialized, persistent work agent. Persona is shipped prior;
- * durable memory (`residentMemories`) is earned posterior. The runtime
- * process is a normal AgentProcess keyed `agent:<id>`.
- */
-export type ResidentAgent = {
-  /** Stable slug id — also the DM address (`@<id>:`) and process-id suffix. */
-  id: string;
-  /** Display name. */
-  name: string;
-  /** One-line specialization, e.g. "release engineer". */
-  role: string;
-  /** Persona markdown — who the agent is, voice, doctrine. User-editable. */
-  personaText: string;
-  /** Explicit resident execution profile. New residents use host with Guardian review.
-   * Legacy residents without an override retain the existing profile resolution. */
-  profileName?: string;
-  /** Durable approval routing. auto delegates to Guardian; user waits for a human. */
-  approvalsReviewer?: 'auto' | 'user';
-  /**
-   * Projects this agent is responsible for. Every scoped project's
-   * declared sources mount into the agent's sandbox (union, mount-name
-   * collisions suffixed; git credentials resolve per source exactly like
-   * a project launch) and the agent's private home rides along as an
-   * extra `home` mount so its files travel with it (identity rides the
-   * session variables, not the filesystem). Source-less (context-only) projects contribute no mounts — the
-   * agent reaches them through the project MCP tools. Empty/absent =
-   * generalist with only the home workspace. Note: scoped sources are
-   * seeded at launch and thereafter live behind the snapshot — git
-   * sources refresh via fetch/pull in-sandbox; plain folders do not.
-   */
-  projectIds?: string[];
-  /**
-   * Local hour (0–23) of the daily morning beat (`day_start` — the planning
-   * wakeup that carries memories + the overnight digest). `null` (the
-   * default) disables the beat: proactivity is opt-in. Quiet-start rule:
-   * a beat fires only when its hour comes due while the app is running —
-   * an hour that passes while the app is closed (or the machine sleeps) is
-   * skipped for the day, never delivered late, so opening the app is never
-   * what starts agents working.
-   */
-  morningHour: number | null;
-  /** Disabled agents receive no events and never wake. */
-  enabled: boolean;
-  /**
-   * Workspace superuser: this agent's watcher additionally declares the
-   * workspace/column client tools (`list_workspace`, `column_send`,
-   * `app_*`, …), fulfilled by the launcher renderer — it can observe and
-   * drive every deck column, approve blocked runs, and launch apps. The
-   * tools error honestly when no app window is connected (columns only
-   * exist while the renderer does). Absent = ordinary resident.
-   */
-  superuser?: boolean;
-  createdAt: number;
-};
-
-/** One durable memory, keyed like a KV entry. */
-export type ResidentMemoryEntry = {
-  /** Stable slug identity — `remember(key, …)` upserts by it, `forget(key)`
-   *  retracts by it, and the identity block shows it as `[key]`. */
-  key: string;
-  text: string;
-  at: number;
-};
-
-/**
- * A self-set future wakeup (the game's `plan("@HH:MM …")`, launcher-side
- * because alarms must survive parking — the serve process an alarm would
- * otherwise live in gets stopped when the agent idles). Fires once as a
- * WAKE_NOW `scheduled` event, then is removed.
- */
-export type ResidentAlarm = {
-  id: number;
-  /** Wall-clock ms when the alarm fires. */
-  at: number;
-  /** The agent's own note, rendered back in the waking ping. */
-  note: string;
-  createdAt: number;
-};
-
-/**
- * A named shared channel beside the built-in `team`. All named channels
- * are public to the whole roster (the game's village-channel model);
- * membership scoping is a later concern.
- */
-export type ResidentChannelDef = {
-  /** Slug id (`deploy-log`); reserved: `team`, `system`, `user`, `dm:*`. */
-  id: string;
-  /** One-line purpose shown in the UI and channel list. */
-  description?: string;
-  /**
-   * Roster ids that belong to this channel (Slack-style membership):
-   * only members are woken by posts, see the channel in digests, and may
-   * post to it. Absent = open to every agent. The user is implicitly in
-   * every channel; `team` is always all-hands.
-   */
-  members?: string[];
-  createdAt: number;
-};
-
-/**
- * One message in the resident channels log. `channel` is `"team"`, a
- * named channel id, a `dm:<a>:<b>` pair id, or `"system"`; `from` is
- * `"user"`, `"system"`, or a roster id. The log is the observability
- * surface — all agent↔agent traffic lands here.
- */
-export type ResidentChannelMessage = {
-  id: number;
-  channel: string;
-  from: string;
-  /** Display name at post time (roster names can change later). */
-  fromName?: string;
-  text: string;
-  at: number;
-  /**
-   * Threading (named channels only — DM channels are threads by
-   * construction): id of the thread's ROOT message. Always normalized to
-   * the root on write — replying to a reply threads under the same root,
-   * so threads are one level deep (the Slack shape), never trees.
-   */
-  replyTo?: number;
-};
-
-/** Live runtime view of one resident agent, broadcast on `resident:status`. */
-export type ResidentAgentRuntime = {
-  state: 'parked' | 'starting' | 'idle' | 'thinking' | 'reflecting';
-  /** Outstanding requests requiring a human decision. */
-  pendingApprovalCount?: number;
-  activeProfileName?: string;
-  /** Wall-clock ms of the last delivered wakeup (null = never this boot). */
-  lastWakeupAt: number | null;
-  /** Primary event kind of the last wakeup. */
-  lastReason: string | null;
-  /** Current day key (`YYYY-MM-DD`) of the agent's session. */
-  day: string | null;
-  pendingCount: number;
-  /** Wakeups delivered since boot. */
-  decisions: number;
-  /**
-   * Highest channel-log message id this agent has ingested — its digest
-   * cursor, advanced when a wakeup is actually DELIVERED. A message at or
-   * below it has reached the agent's context; above it, the agent has not
-   * read it yet. This is the read-receipt watermark.
-   *
-   * Runtime-only, so a fresh boot starts at 0 and every historical message
-   * reads as unseen. That is why receipts render only against the user's
-   * NEWEST message in a thread (see `SeenReceipt`) — a stale "unseen" on
-   * last week's history would be a lie, but "no receipt yet" on a message
-   * posted seconds ago is simply the truth.
-   */
-  seenMessageId: number;
-  /**
-   * Channel-log ids routed to this agent but not yet delivered — sitting in
-   * the delivery-debounce window, or riding as digest until the next
-   * WAKE_NOW event. "Will read", as against `seenMessageId`'s "has read".
-   * The distinction is load-bearing here in a way it is not in an
-   * always-on chat: an ambient channel post may wait hours for a wakeup,
-   * and the user deserves to see that rather than silence.
-   */
-  queuedMessageIds: number[];
-};
-
-export type ResidentAgentInput = {
-  name: string;
-  role: string;
-  personaText: string;
-  profileName?: string;
-  approvalsReviewer?: 'auto' | 'user';
-  /** Project scope — see `ResidentAgent.projectIds`. */
-  projectIds?: string[];
-  /** Hour (0–23) of the daily morning beat; `null`/omitted = no morning
-   *  beat (the default — proactivity is opt-in). */
-  morningHour?: number | null;
-  /** Workspace superuser — see `ResidentAgent.superuser`. */
-  superuser?: boolean;
-};
-
-/** `projectIds: []` unassigns (undefined = leave unchanged). */
-export type ResidentAgentUpdate = Partial<ResidentAgentInput> & {
-  enabled?: boolean;
-};
-
-// #region chat-v1
-// The participant-facing messaging contract (docs/chat-v1-plan.md): one
-// method/notification map, served over two bindings — the internal IPC
-// transport (channel names ARE the wire names) and the public /ws/chat
-// JSON-RPC endpoint. `protocol/chat-v1/openrpc.json` is the published
-// artifact; a parity test keeps it aligned with these names.
-
-export type ChatChannelKind = 'team' | 'named' | 'dm' | 'system';
-
-/** One channel as chat-v1 clients see it. `members` follows the def
- *  semantics (absent = open to every agent); DM channels carry their
- *  participant pair instead. */
-export type ChatChannel = {
-  id: string;
-  kind: ChatChannelKind;
-  description?: string;
-  members?: string[];
-  /** DM channels only: the two participant ids (`user` or roster ids). */
-  dmParticipants?: [string, string];
-  createdAt?: number;
-};
-
-/** Roster projection for chat clients — addressing and display only
- *  (persona/config stay on the `resident:*` admin surface). */
-export type ChatRosterAgent = {
-  id: string;
-  handle: string;
-  name: string;
-  role: string;
-  enabled: boolean;
-  superuser?: boolean;
-};
-
-export type ChatHello = {
-  protocol: 'chat-v1';
-  /** The caller's stamped participant identity — what its posts carry. */
-  self: { id: string; name: string | null };
-  capabilities: string[];
-};
-
-/** Bridge-scope posting identity: stamped as `ext:<network>:<id>`. */
-export type ChatExternalPoster = { network: string; id: string; displayName: string };
-
-export type ChatListMessagesParams = {
-  /** Omitted = all channels (the Activity view / full record). */
-  channel?: string;
-  /** Keyset cursor: rows with id > after, oldest-first (resume/replay). */
-  after?: number;
-  /** Keyset cursor: the newest rows with id < before (history paging). */
-  before?: number;
-  /** Max rows (default 100, cap 500). */
-  limit?: number;
-};
-
-export type ChatPostMessageParams = {
-  channel: string;
-  text: string;
-  /** Threads under this message's root (named channels only). */
-  replyTo?: number;
-  /** Bridge scope only: post as a bridged external user. */
-  asExternal?: ChatExternalPoster;
-};
-
-/**
- * chat-v1 request methods. Every method takes ONE params object (JSON-RPC
- * named params; the internal binding passes the same object positionally),
- * so both bindings share these signatures verbatim.
- */
-export type ChatMethodMap = {
-  'chat.hello': { params: Record<string, never>; result: ChatHello };
-  'chat.list_channels': { params: Record<string, never>; result: { channels: ChatChannel[] } };
-  'chat.list_messages': {
-    params: ChatListMessagesParams;
-    result: { messages: ResidentChannelMessage[]; hasMore: boolean };
-  };
-  'chat.post_message': { params: ChatPostMessageParams; result: { message: ResidentChannelMessage } };
-  'chat.create_channel': { params: { name: string; description?: string }; result: { channel: ChatChannel } };
-  'chat.update_channel': { params: { channelId: string; description?: string }; result: { channel: ChatChannel } };
-  'chat.delete_channel': { params: { channelId: string }; result: Record<string, never> };
-  'chat.set_channel_members': {
-    params: { channelId: string; members: string[] | null };
-    result: { channel: ChatChannel };
-  };
-  'chat.list_roster': { params: Record<string, never>; result: { agents: ChatRosterAgent[] } };
-  'chat.get_presence': { params: Record<string, never>; result: { presence: Record<string, ResidentAgentRuntime> } };
-  'chat.wake_agent': { params: { agentId: string }; result: Record<string, never> };
-  'chat.attach_agent_session': {
-    params: { agentId: string };
-    result: { sessionId: string; connection: AgentRuntimeConnection };
-  };
-};
-
-export const CHAT_METHOD_NAMES = [
-  'chat.hello',
-  'chat.list_channels',
-  'chat.list_messages',
-  'chat.post_message',
-  'chat.create_channel',
-  'chat.update_channel',
-  'chat.delete_channel',
-  'chat.set_channel_members',
-  'chat.list_roster',
-  'chat.get_presence',
-  'chat.wake_agent',
-  'chat.attach_agent_session',
-] as const satisfies ReadonlyArray<keyof ChatMethodMap>;
-
-/** chat-v1 notifications (server → client). */
-export type ChatNotificationMap = {
-  'chat.message_added': { message: ResidentChannelMessage };
-  'chat.channel_changed': { channel?: ChatChannel; deletedId?: string };
-  'chat.presence_changed': { presence: Record<string, ResidentAgentRuntime> };
-  'chat.roster_changed': { agents: ChatRosterAgent[] };
-  'chat.attention': { agentId: string; message: string; at: number };
-};
-
-export const CHAT_NOTIFICATION_NAMES = [
-  'chat.message_added',
-  'chat.channel_changed',
-  'chat.presence_changed',
-  'chat.roster_changed',
-  'chat.attention',
-] as const satisfies ReadonlyArray<keyof ChatNotificationMap>;
-
-/** One notification as a tagged value — what the manager's chat-event
- *  subscribers (the /ws/chat fan-out) receive. */
-export type ChatEvent = {
-  [K in keyof ChatNotificationMap]: { method: K; params: ChatNotificationMap[K] };
-}[keyof ChatNotificationMap];
-
-// #endregion chat-v1
+export type RemoteBackendBootstrap = (WslBackend & { url: string }) | ServerBackend;
 
 export type StoreData = {
-  userGoals?: import('./user-goals').UserGoal[];
-  userIdeas?: import('./user-ideas').UserIdea[];
-  /** The resident the nav rail's disc opens. Per user, per team — it used to
-   *  live in each browser's localStorage, so every origin and device had its
-   *  own answer. Null when none is pinned. */
-  primaryAgentId?: string | null;
-  /** Who the user is — roles and a note — handed to every bot as context. */
-  userProfile?: import('./user-profile').UserProfile;
   workspaceDir?: string;
-  // Resident durable data lives in projects-db (docs/residents-in-projects-db-plan.md).
-  // roster/memories/alarms are read-only SNAPSHOT MIRRORS assembled from the
-  // repo — never persisted to the host store; writes go through `resident:*`
-  // IPC. Channel data no longer rides the snapshot at all: it moved to the
-  // chat-v1 binding (docs/chat-v1-plan.md) — the two channel keys below are
-  // legacy-store residue kept only so the one-shot store→db migration can
-  // still read a pre-fold store.
-  /** Resident-agent roster (docs/resident-agents-plan.md). */
-  residentAgents: ResidentAgent[];
-  /** Durable memories per roster id — earned facts, editable, `forget`-able. */
-  residentMemories: Record<string, ResidentMemoryEntry[]>;
-  /** Legacy (pre-fold) channel log — migration source only; always empty after. */
-  residentChannels: ResidentChannelMessage[];
-  /** Legacy (pre-fold) channel defs — migration source only; always empty after. */
-  residentChannelDefs: ResidentChannelDef[];
-  /** Self-set future wakeups per roster id (survive parks and restarts). */
-  residentAlarms: Record<string, ResidentAlarm[]>;
-  /** Day key (`YYYY-MM-DD`) of the last delivered morning beat per roster
-   *  id. Persisted so a mid-day restart neither re-fires a beat already
-   *  delivered nor swallows one the closed app owed — a missed beat
-   *  catches up (marked late) on the next launch that day. */
-  residentMorningBeats: Record<string, string>;
-  /** Highest message id the USER has seen per channel — genuinely persisted
-   *  host-store UI state (not a projects-db mirror), so unread badges
-   *  survive restarts. Advance-only. */
-  residentChannelSeen: Record<string, number>;
-  /**
-   * Name of the default sandbox profile. Resolved at launch time against
-   * the launcher's profile chain (built-in → user-default → per-project).
-   * Built-in profiles always present: `host` (no isolation, unix_local) and
-   * `devbox` (docker with code-server + VNC). Enterprise adds `platform`.
-   */
-  defaultProfileName: string;
-  /**
-   * Sandbox profiles the UI picker should offer. When set by the backend,
-   * the picker shows exactly these. Unset → the renderer falls back to the
-   * built-in list (`host`/`devbox`, plus `platform` on enterprise builds).
-   */
-  availableSandboxProfiles?: string[];
   launcherWindowProps?: WindowProps;
-  appWindowProps?: WindowProps;
   optInToLauncherPrereleases: boolean;
-  previewFeatures: boolean;
   /** System notifications when a backgrounded agent finishes or needs approval. */
   notifyOnAgentAttention: boolean;
   /** "Text size" in percent (90 | 100 | 110 | 125), applied as the CSS root
@@ -568,31 +72,15 @@ export type StoreData = {
    * on the hovered code-deck column or the active chat. Null = unbound.
    */
   voiceToggleHotkey: string | null;
-  /**
-   * Separate global hotkey that opens the superuser resident's DM and toggles
-   * voice on its composer mic. Independent of `voiceToggleHotkey`. Null =
-   * unbound.
-   */
-  globalVoiceToggleHotkey: string | null;
 
   layoutMode: LayoutMode;
   theme: OmniTheme;
   onboardingComplete: boolean;
-  /** User dismissed the "Use Omni from your terminal" card in Spaces. */
-  cliCardDismissed: boolean;
   /**
    * Set when the Electron app is linked to a remote launcher backend. When
    * non-null the renderer routes its transport to the backend over WebSocket
    * instead of using local Electron IPC, so chat sessions, projects, tickets
    * etc. live in the backend's store.
-   *
-   * ``kind: 'cloud'`` — a deployed cloud launcher (Bearer-authenticated
-   * against AAD). ``url`` is the launcher origin (no trailing slash);
-   * ``tenantId`` + ``clientId`` are discovered from
-   * ``<url>/.well-known/omni-cloud`` at link time so the renderer doesn't
-   * need them — they're cached here for token refresh. ``account`` is what
-   * we display in the UI; the access + refresh tokens themselves live in
-   * the local secret store (`git-secrets.json`) under the ``entra`` id.
    *
    * ``kind: 'wsl'`` — the server build running as a daemon inside a WSL
    * distro on this machine (Windows only), authenticated by a per-boot
@@ -607,33 +95,8 @@ export type StoreData = {
    */
   remoteBackend: RemoteBackend | null;
   projects: Project[];
-  milestones: Milestone[];
-  pages: Page[];
-  inboxItems: InboxItem[];
-  tasks: Task[];
-  tickets: Ticket[];
-  /**
-   * Autopilot dispatch concurrency: the max tickets auto-dispatch will run
-   * at once across all projects. Manual starts are never gated by this.
-   * Default: 3.
-   */
-  wipLimit: number;
   scheduledTasks: ScheduledTask[];
-  /** Event-driven agent rules: when <trigger> fires, wake <resident> with an
-   *  instruction (docs pattern: the resident IS the workflow engine). */
-  automations: Automation[];
-  /**
-   * Background-actor outcomes for Home's "While you were away" feed,
-   * newest-first. Appended by main-process managers via
-   * `appendActivityEvent`; capped and time-pruned on every write.
-   */
-  activityLog: ActivityEvent[];
-  /** Growth hints (Home's one-slot suggestions) the user dismissed, by id. */
-  dismissedHomeHints: string[];
-  schemaVersion: number;
   codeTabs: CodeTab[];
-  /** Authority-owned removal outbox. Never writable through generic renderer settings. */
-  chatCleanupJobs?: CodeTab[];
   /**
    * Indexed agent conversations, newest-first. Project identity is retained
    * so the sidebar can group sessions beneath their project. Archived entries
@@ -641,17 +104,6 @@ export type StoreData = {
    */
   chatConversations: ChatConversation[];
   activeCodeTabId: CodeTabId | null;
-  codeLayoutMode: CodeLayoutMode;
-  activeTicketId: TicketId | null;
-
-  // Enterprise platform (optional — when set, enables enterprise mode)
-  platform?: PlatformCredentials;
-
-  /**
-   * Per-extension enabled flag. Missing/false means the extension is dormant
-   * and never spawns a subprocess. Toggled from Settings → Extensions.
-   */
-  enabledExtensions: Record<string, boolean>;
 
   /**
    * How each skill was installed. Missing means discovered locally (user
@@ -670,9 +122,6 @@ export type StoreData = {
    */
   installedBundles: Record<string, InstalledBundle>;
 
-  /** User-added custom apps for the workspace dock. */
-  customApps: CustomAppEntry[];
-
   /**
    * Stored git credentials (metadata only — token bytes live in the
    * `SecretStore`, keyed by `id`). Host-scoped: a `git-remote` source resolves
@@ -682,15 +131,6 @@ export type StoreData = {
   gitCredentials: GitCredential[];
 
   /**
-   * Pull requests detected for ticket-less scopes (chat conversations,
-   * un-ticketed code tabs), scoped by `sessionId`/`codeTabId`. This is the
-   * memory that lets a merged PR render the ✓ badge only when this launcher
-   * watched it while open — restart-proof, mirroring `Ticket.pullRequests`
-   * for tickets. Pruned by `lastSeenAt` to a bounded length on write.
-   */
-  pullRequestLinks: PullRequestLink[];
-
-  /**
    * Linked GitHub account (display metadata only — the OAuth token lives in the
    * `SecretStore` as the `github.com` credential). Drives the "Connect GitHub"
    * state and repo discovery. Undefined when no account is linked.
@@ -698,52 +138,9 @@ export type StoreData = {
   githubAccount?: GithubAccount;
 
   /**
-   * Agent model providers — the source of truth for what the desktop wrote to
-   * `models.json`. Materialized to `<configDir>/models.json` at agent launch.
-   * In cloud, provider/model `api_key` values are rewritten to `${OMNI_SECRET_*}`
-   * refs on disk and the real values injected into the agent env, so secrets
-   * never touch the (shared, ephemeral) container disk. See `config-materializer.ts`.
-   */
-  modelsConfig: ModelsConfig;
-  /** Agent MCP servers (`mcp.json`). Same materialization + secret handling as `modelsConfig`. */
-  mcpConfig: McpConfig;
-  /** Sandbox network egress policy (`network.json`). Non-secret; materialized verbatim. */
-  networkConfig: NetworkConfig;
-  /**
-   * Raw `.env` contents for the agent. On desktop, materialized to a real
-   * `.env` file. In cloud, parsed and injected directly into the agent process
-   * env (a `.env` *is* the env — no file is written).
+   * Raw `.env` contents for the agent, materialized to a real `.env` file.
    */
   envVars: string;
-  /**
-   * One-shot guard for the v23 migration that imported pre-existing on-disk
-   * `models.json`/`mcp.json`/`network.json`/`.env` into the store keys above.
-   * Set once the import runs (desktop + local single-tenant server only — cloud
-   * tenants start empty so a shared file never leaks across tenants).
-   */
-  agentConfigMigratedFromFiles?: boolean;
-
-  /**
-   * Set only after the local Electron AgentHost proves structural parity with
-   * Desktop's materialized mcp.json and attests durable host-scoped MCP config
-   * and OAuth stores. Once set, Desktop must never materialize mcp.json again;
-   * canonical Omniagents CRUD/auth RPCs are its sole writer.
-   *
-   * Server and multi-user deployments ignore this host-local marker.
-   */
-  mcpConfigOwnership?: 'omniagents';
-
-  /**
-   * Set only after the local Electron AgentHost proves that its canonical
-   * account RPCs persist Codex OAuth credentials durably in the product's host
-   * config directory. Before this marker, the legacy Desktop OAuth handlers
-   * remain available as a migration fallback. After it, account mutations fail
-   * closed instead of writing/removing `codex.json` behind Omniagents' back.
-   *
-   * Server and multi-user deployments never read or write this host-local
-   * marker; they retain their per-principal secret-store ownership.
-   */
-  codexAccountOwnership?: 'omniagents';
 
   /** Voice mode audio device + processing preferences. */
   audioSettings: AudioSettings;
@@ -760,36 +157,6 @@ export type StoreData = {
   browserHistory: BrowserHistoryEntry[];
   /** User-curated bookmarks. */
   browserBookmarks: BrowserBookmark[];
-
-  /**
-   * One-shot notice surfaced after the v18 pages-relocation migration
-   * (Task #18). Present only when (a) the migration found legacy files
-   * that still exist on disk and (b) the user hasn't dismissed the
-   * notice yet. Cleared when the user clicks dismiss or runs cleanup.
-   */
-  pagesMigration?: PagesMigrationState;
-};
-
-/**
- * Persisted state for the post-migration notice. The summary is captured
- * once on the boot the migration ran and replayed to the renderer until
- * the user acknowledges it.
- */
-export type PagesMigrationState = {
-  /** Counts of files copied per source bucket. */
-  summary: {
-    perProjectPagesCopied: number;
-    rootPagesFromContextMd: number;
-    mcpPagesCopied: number;
-    skippedAlreadyMigrated: number;
-  };
-  /**
-   * Legacy directories/files still on disk that the user can safely delete
-   * to reclaim space. Absolute paths, sorted.
-   */
-  legacyPaths: string[];
-  /** True once the user dismissed the notice or ran cleanup. */
-  acknowledged: boolean;
 };
 
 export type ScheduledTaskSchedule =
@@ -831,7 +198,6 @@ export type ScheduledTask = {
   permissionMode: ScheduledTaskPermissionMode;
   enabled: boolean;
   projectId?: ProjectId;
-  profileName?: string;
   createdAt: number;
   updatedAt: number;
   nextRunAt: number | null;
@@ -843,81 +209,6 @@ export type ScheduledTask = {
   history: ScheduledTaskRun[];
 };
 
-/**
- * One entry in Home's "While you were away" feed: something a background
- * actor (routine run, ticket agent) finished without the user watching.
- * Outcomes only — transient attention states (approvals, gates) live in the
- * Needs-you rollup, never here, so the feed can't go stale.
- */
-export type ActivityEvent = {
-  id: string;
-  /** When the event happened (ms). */
-  at: number;
-  kind: 'routine_run_finished' | 'agent_run_finished' | 'run_failed';
-  /** What ran — the routine's name or the ticket's title. */
-  title: string;
-  /** One-line result summary, when the actor reported one. */
-  outcome?: string;
-  projectId?: ProjectId;
-  /** Exactly one deep-link target. */
-  link: { type: 'ticket'; ticketId: TicketId } | { type: 'routine'; taskId: string };
-};
-
-// #region Automations
-
-/** The pull-request watcher's event vocabulary (see src/lib/pull-request-watch.ts). */
-export type PullRequestEventKind = 'merged' | 'closed' | 'approved' | 'changes_requested' | 'ci_failed' | 'ci_green';
-
-/**
- * What makes an automation fire. Three sources:
- *  - `pr_event`: a watched pull request changed. Optional filters: only these
- *    event kinds; only PRs whose `owner/repo` label contains `repo`.
- *  - `channel_message`: a HUMAN posted in a chat channel (agent posts never
- *    trigger — the loop guard), optionally only when the text contains a
- *    substring. Rate-limited by a per-automation cooldown.
- *  - `schedule`: the routines schedule vocabulary, reused verbatim.
- */
-export type AutomationTrigger =
-  | { kind: 'pr_event'; events?: PullRequestEventKind[]; repo?: string }
-  | { kind: 'channel_message'; channel: string; contains?: string }
-  | { kind: 'schedule'; schedule: ScheduledTaskSchedule };
-
-/**
- * One event-driven rule: when the trigger fires, wake a resident agent with
- * an instruction. Deliberately NOT a step engine — the woken resident is the
- * workflow engine, and its day session is the run trace.
- */
-export type Automation = {
-  id: string;
-  name: string;
-  enabled: boolean;
-  trigger: AutomationTrigger;
-  /** Resident roster id (`res_*`) to wake. */
-  agentId: string;
-  /** What the woken agent is told to do, verbatim in its wakeup ping. */
-  instruction: string;
-  createdAt: number;
-  updatedAt: number;
-  /** Schedule triggers only: next due time (ms), null = never (manual). */
-  nextRunAt?: number | null;
-  lastFiredAt?: number;
-  /** One-line cause of the last firing, for the card. */
-  lastFiredSummary?: string;
-  fireCount?: number;
-};
-
-export type AutomationInput = {
-  name: string;
-  trigger: AutomationTrigger;
-  agentId: string;
-  instruction: string;
-  enabled?: boolean;
-};
-
-export type AutomationUpdate = Partial<AutomationInput>;
-
-// #endregion Automations
-
 export type ScheduledTaskInput = {
   name: string;
   description?: string;
@@ -926,7 +217,6 @@ export type ScheduledTaskInput = {
   permissionMode?: ScheduledTaskPermissionMode;
   enabled?: boolean;
   projectId?: ProjectId;
-  profileName?: string;
 };
 
 export type ScheduledTaskUpdate = Partial<ScheduledTaskInput> & { enabled?: boolean };
@@ -1033,66 +323,11 @@ const winSizePropsSchema = {
  * JSON schema for the store data.
  */
 export const schema: Schema<StoreData> = {
-  userIdeas: { type: 'array', default: [], items: { type: 'object' } },
-  userGoals: { type: 'array', default: [], items: { type: 'object' } },
-  primaryAgentId: { type: ['string', 'null'], default: null },
-  userProfile: { type: 'object' },
   workspaceDir: {
     type: 'string',
   },
-  // Resident durable data moved to projects-db (docs/residents-in-projects-db-plan.md).
-  // The store schema keeps loose entries for the legacy keys so a pre-fold
-  // store loads cleanly for the one-shot migration; after it runs they hold
-  // empty defaults.
-  residentAgents: {
-    type: 'array',
-    default: [],
-  },
-  residentMemories: {
-    type: 'object',
-    default: {},
-  },
-  residentChannels: {
-    type: 'array',
-    default: [],
-  },
-  residentChannelDefs: {
-    type: 'array',
-    default: [],
-    items: {
-      type: 'object',
-      properties: {
-        id: { type: 'string' },
-        description: { type: 'string' },
-        members: { type: 'array', items: { type: 'string' } },
-        createdAt: { type: 'number' },
-      },
-      required: ['id', 'createdAt'],
-    },
-  },
-  residentAlarms: {
-    type: 'object',
-    default: {},
-  },
-  residentMorningBeats: {
-    type: 'object',
-    default: {},
-  },
-  residentChannelSeen: {
-    type: 'object',
-    default: {},
-  },
-  defaultProfileName: {
-    type: 'string',
-    default: 'host',
-  },
   launcherWindowProps: winSizePropsSchema,
-  appWindowProps: winSizePropsSchema,
   optInToLauncherPrereleases: {
-    type: 'boolean',
-    default: false,
-  },
-  previewFeatures: {
     type: 'boolean',
     default: false,
   },
@@ -1132,36 +367,11 @@ export const schema: Schema<StoreData> = {
     type: ['string', 'null'],
     default: null,
   },
-  globalVoiceToggleHotkey: {
-    type: ['string', 'null'],
-    default: null,
-  },
 
   layoutMode: {
+    // No enum: an unknown stored value must not fail store validation at boot;
+    // the renderer's normalizeLayoutMode resets it.
     type: 'string',
-    // 'code' and 'os' are pre-v20 names for 'spaces'; 'more' is the retired
-    // mobile overflow page; 'projects' is the pre-split container tab;
-    // 'inbox' folded into Work, 'routines' into Agents, and 'home' retired
-    // with the unified sidebar. Kept so existing stores load before the
-    // renderer's migrateLayoutMode pass converts them.
-    enum: [
-      'home',
-      'inbox',
-      'work',
-      'chat',
-      'spaces',
-      'os',
-      'code',
-      'projects',
-      'dashboards',
-      'routines',
-      'agents',
-      'plugins',
-      'sandboxes',
-      'settings',
-      'more',
-      'gallery',
-    ],
     default: 'chat',
   },
   theme: {
@@ -1177,37 +387,13 @@ export const schema: Schema<StoreData> = {
     type: 'boolean',
     default: false,
   },
-  cliCardDismissed: {
-    type: 'boolean',
-    default: false,
-  },
   remoteBackend: {
-    // Discriminated union — see RemoteBackend. Persisted `cloudMode` values
-    // from older builds fail validation here and are wiped by
-    // `clearInvalidConfig: true` (intentional: cloud users relink once).
+    // Discriminated union — see RemoteBackend. Persisted values of removed
+    // kinds fail validation here and are wiped by `clearInvalidConfig: true`.
     type: ['object', 'null'],
     default: null,
     anyOf: [
       { type: 'null' },
-      {
-        type: 'object',
-        properties: {
-          kind: { const: 'cloud' },
-          url: { type: 'string' },
-          tenantId: { type: 'string' },
-          clientId: { type: 'string' },
-          account: {
-            type: 'object',
-            properties: {
-              name: { type: 'string' },
-              email: { type: 'string' },
-              oid: { type: 'string' },
-            },
-            required: ['oid'],
-          },
-        },
-        required: ['kind', 'url', 'tenantId', 'clientId', 'account'],
-      },
       {
         type: 'object',
         properties: {
@@ -1228,15 +414,6 @@ export const schema: Schema<StoreData> = {
       },
     ],
   },
-  wipLimit: {
-    type: 'number',
-    default: 3,
-  },
-  automations: {
-    type: 'array',
-    default: [],
-    items: { type: 'object' },
-  },
   scheduledTasks: {
     type: 'array',
     default: [],
@@ -1251,7 +428,6 @@ export const schema: Schema<StoreData> = {
         permissionMode: { type: 'string', enum: ['ask'], default: 'ask' },
         enabled: { type: 'boolean' },
         projectId: { type: 'string' },
-        profileName: { type: 'string' },
         createdAt: { type: 'number' },
         updatedAt: { type: 'number' },
         nextRunAt: { type: ['number', 'null'] },
@@ -1287,32 +463,6 @@ export const schema: Schema<StoreData> = {
       ],
     },
   },
-  activityLog: {
-    type: 'array',
-    default: [],
-    items: {
-      type: 'object',
-      properties: {
-        id: { type: 'string' },
-        at: { type: 'number' },
-        kind: { type: 'string', enum: ['routine_run_finished', 'agent_run_finished', 'run_failed'] },
-        title: { type: 'string' },
-        outcome: { type: 'string' },
-        projectId: { type: 'string' },
-        link: { type: 'object' },
-      },
-      required: ['id', 'at', 'kind', 'title', 'link'],
-    },
-  },
-  dismissedHomeHints: {
-    type: 'array',
-    default: [],
-    items: { type: 'string' },
-  },
-  schemaVersion: {
-    type: 'number',
-    default: 0,
-  },
   codeTabs: {
     type: 'array',
     default: [],
@@ -1321,31 +471,18 @@ export const schema: Schema<StoreData> = {
       properties: {
         id: { type: 'string' },
         projectId: { type: ['string', 'null'] },
-        ticketId: { type: 'string' },
         sessionId: { type: 'string' },
-        ticketTitle: { type: 'string' },
         routineId: { type: 'string' },
         routineName: { type: 'string' },
         routineSchedule: { type: 'string' },
-        workspaceDir: { type: 'string' },
-        profileName: { type: 'string' },
         sidecarOpen: { type: 'boolean' },
         sidecarAppIds: { type: 'array', items: { type: 'string' } },
         activeSidecarAppId: { type: 'string' },
-        spacesWidth: { type: 'number' },
-        spacesExpanded: { type: 'boolean' },
-        spacesSidecarWidth: { type: 'number' },
-        spacesSidecarExpanded: { type: 'boolean' },
         createdAt: { type: 'number' },
         activatedAt: { type: 'number' },
       },
       required: ['id', 'createdAt'],
     },
-  },
-  chatCleanupJobs: {
-    type: 'array',
-    default: [],
-    items: { type: 'object' },
   },
   chatConversations: {
     type: 'array',
@@ -1356,30 +493,13 @@ export const schema: Schema<StoreData> = {
         sessionId: { type: 'string' },
         title: { type: 'string' },
         lastActiveAt: { type: 'number' },
-        profileName: { type: 'string' },
         projectId: { type: 'string' },
-        ticketId: { type: 'string' },
-        ticketTitle: { type: 'string' },
         archivedAt: { type: 'number' },
       },
       required: ['sessionId', 'title', 'lastActiveAt'],
     },
   },
   activeCodeTabId: {
-    type: ['string', 'null'],
-    default: null,
-  },
-  codeLayoutMode: {
-    type: 'string',
-    // 'deck' and 'spaces' are pre-v20 names for 'tile'; kept so existing
-    // stores load before the v19→v20 migration runs. Migration converts them.
-    enum: ['tile', 'spaces', 'deck', 'focus'],
-    // Still 'tile' so a migrated store's absent key keeps meaning the old
-    // default; the v27 migration stamps 'focus' explicitly for installs
-    // without deck columns (and fresh stores hit that path on first boot).
-    default: 'tile',
-  },
-  activeTicketId: {
     type: ['string', 'null'],
     default: null,
   },
@@ -1395,164 +515,10 @@ export const schema: Schema<StoreData> = {
         isPersonal: { type: 'boolean' },
         sources: { type: 'array', default: [] },
         createdAt: { type: 'number' },
-        pipeline: { type: 'object' },
-        sandboxProfile: { type: ['string', 'null'] },
-        dueDate: { type: 'number' },
         pinnedAt: { type: ['number', 'null'] },
-        seedKey: { type: 'string' },
       },
       required: ['id', 'label', 'slug', 'createdAt'],
     },
-  },
-  milestones: {
-    type: 'array',
-    default: [],
-    items: {
-      type: 'object',
-      properties: {
-        id: { type: 'string' },
-        projectId: { type: 'string' },
-        title: { type: 'string' },
-        description: { type: 'string' },
-        branch: { type: 'string' },
-        brief: { type: 'string' },
-        status: { type: 'string', enum: ['active', 'completed', 'archived'] },
-        dueDate: { type: 'number' },
-        completedAt: { type: 'number' },
-        pinnedAt: { type: ['number', 'null'] },
-        createdAt: { type: 'number' },
-        updatedAt: { type: 'number' },
-        seedKey: { type: 'string' },
-      },
-      required: ['id', 'projectId', 'title', 'description', 'status', 'createdAt', 'updatedAt'],
-    },
-  },
-  pages: {
-    type: 'array',
-    default: [],
-    items: {
-      type: 'object',
-      properties: {
-        id: { type: 'string' },
-        projectId: { type: 'string' },
-        parentId: { type: ['string', 'null'] },
-        title: { type: 'string' },
-        icon: { type: 'string' },
-        sortOrder: { type: 'number' },
-        isRoot: { type: 'boolean' },
-        kind: { type: 'string', enum: ['doc', 'notebook'] },
-        createdAt: { type: 'number' },
-        updatedAt: { type: 'number' },
-        seedKey: { type: 'string' },
-      },
-      required: ['id', 'projectId', 'title', 'sortOrder', 'createdAt', 'updatedAt'],
-    },
-  },
-  inboxItems: {
-    type: 'array',
-    default: [],
-    items: {
-      type: 'object',
-      properties: {
-        id: { type: 'string' },
-        title: { type: 'string' },
-        note: { type: 'string' },
-        attachments: { type: 'array', items: { type: 'string' } },
-        projectId: { type: ['string', 'null'] },
-        status: { type: 'string', enum: ['new', 'later'] },
-        laterAt: { type: 'number' },
-        promotedTo: {
-          type: 'object',
-          properties: {
-            kind: { type: 'string', enum: ['ticket', 'project'] },
-            id: { type: 'string' },
-            at: { type: 'number' },
-          },
-          required: ['kind', 'id', 'at'],
-        },
-        createdAt: { type: 'number' },
-        updatedAt: { type: 'number' },
-        seedKey: { type: 'string' },
-      },
-      required: ['id', 'title', 'status', 'createdAt', 'updatedAt'],
-    },
-  },
-  tasks: {
-    type: 'array',
-    default: [],
-    items: {
-      type: 'object',
-      properties: {
-        id: { type: 'string' },
-        projectId: { type: 'string' },
-        taskDescription: { type: 'string' },
-        status: { type: 'object' },
-        createdAt: { type: 'number' },
-        branch: { type: 'string' },
-        worktreePath: { type: 'string' },
-        worktreeName: { type: 'string' },
-        sessionId: { type: 'string' },
-        ticketId: { type: 'string' },
-        phaseId: { type: 'string' },
-        columnId: { type: 'string' },
-        iteration: { type: 'number' },
-      },
-      required: ['id', 'projectId', 'taskDescription', 'status', 'createdAt'],
-    },
-  },
-  tickets: {
-    type: 'array',
-    default: [],
-    items: {
-      type: 'object',
-      properties: {
-        id: { type: 'string' },
-        projectId: { type: 'string' },
-        milestoneId: { type: 'string' },
-        title: { type: 'string' },
-        description: { type: 'string' },
-        priority: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] },
-        blockedBy: { type: 'array', items: { type: 'string' } },
-        createdAt: { type: 'number' },
-        updatedAt: { type: 'number' },
-        phaseChangedAt: { type: 'number' },
-        columnChangedAt: { type: 'number' },
-        completedAt: { type: 'number' },
-        archivedAt: { type: 'number' },
-        cleanupPending: { type: 'boolean' },
-        // Per-source map keyed by ProjectSource.id (last sync-to-host timestamps).
-        prMergedAt: { type: 'object' },
-        assignee: { type: 'string' },
-        // Kanban fields
-        columnId: { type: 'string' },
-        currentPhaseId: { type: ['string', 'null'] },
-        phases: { type: 'array', default: [] },
-        // Legacy fields (kept for migration)
-        taskId: { type: 'string' },
-        loopEnabled: { type: 'boolean' },
-        loopMaxIterations: { type: 'number' },
-        loopIteration: { type: 'number' },
-        loopStatus: { type: 'string', enum: ['running', 'completed', 'stopped', 'error'] },
-        seedKey: { type: 'string' },
-      },
-      required: ['id', 'projectId', 'title', 'description', 'priority', 'blockedBy', 'createdAt', 'updatedAt'],
-    },
-  },
-  platform: {
-    type: 'object',
-    properties: {
-      accessToken: { type: 'string' },
-      refreshToken: { type: 'string' },
-      userEmail: { type: 'string' },
-      userName: { type: 'string' },
-      userRole: { type: 'string' },
-      domains: { type: 'array', items: { type: 'object' } },
-    },
-  },
-  enabledExtensions: {
-    type: 'object',
-    additionalProperties: { type: 'boolean' },
-    default: {},
   },
   skillSources: {
     type: 'object',
@@ -1563,22 +529,6 @@ export const schema: Schema<StoreData> = {
     type: 'object',
     additionalProperties: { type: 'object' },
     default: {},
-  },
-  customApps: {
-    type: 'array',
-    default: [],
-    items: {
-      type: 'object',
-      properties: {
-        id: { type: 'string' },
-        label: { type: 'string' },
-        icon: { type: 'string' },
-        url: { type: 'string' },
-        order: { type: 'number' },
-        columnScoped: { type: 'boolean' },
-      },
-      required: ['id', 'label', 'icon', 'url', 'order'],
-    },
   },
   gitCredentials: {
     type: 'array',
@@ -1596,48 +546,7 @@ export const schema: Schema<StoreData> = {
       required: ['id', 'host', 'username', 'last4', 'createdAt'],
     },
   },
-  pullRequestLinks: {
-    type: 'array',
-    default: [],
-    items: {
-      type: 'object',
-      properties: {
-        url: { type: 'string' },
-        number: { type: 'number' },
-        state: { type: 'string' },
-        projectId: { type: 'string' },
-        sourceId: { type: 'string' },
-        sourceMountName: { type: 'string' },
-        provider: { type: 'string' },
-        branch: { type: 'string' },
-        title: { type: 'string' },
-        ticketId: { type: 'string' },
-        codeTabId: { type: 'string' },
-        sessionId: { type: 'string' },
-        workspaceDir: { type: 'string' },
-        createdAt: { type: 'number' },
-        lastSeenAt: { type: 'number' },
-      },
-      required: ['url', 'number', 'state', 'createdAt', 'lastSeenAt'],
-    },
-  },
-  modelsConfig: {
-    type: 'object',
-    default: { version: 3, default: null, voice_default: null, providers: {} },
-  },
-  mcpConfig: { type: 'object', default: { mcpServers: {} } },
-  networkConfig: {
-    type: 'object',
-    default: {
-      enabled: false,
-      presets: [],
-      allowlist: [],
-    },
-  },
   envVars: { type: 'string', default: '' },
-  agentConfigMigratedFromFiles: { type: 'boolean', default: false },
-  mcpConfigOwnership: { type: 'string', enum: ['omniagents'] },
-  codexAccountOwnership: { type: 'string', enum: ['omniagents'] },
   audioSettings: {
     type: 'object',
     default: {
@@ -1737,23 +646,6 @@ export const schema: Schema<StoreData> = {
 };
 
 /**
- * The type of GPU in the system. This and the operating system are used to determine:
- * - Whether to install xformers - torch's own SDP is faster for 30xx + series GPUs, otherwise xformers is faster.
- * - Which pypi indices to use for torch.
- */
-export type GpuType = 'nvidia<30xx' | 'nvidia>=30xx' | 'amd' | 'nogpu';
-
-/**
- * A map of GPU types to human-readable names.
- */
-export const GPU_TYPE_MAP: Record<GpuType, string> = {
-  'nvidia<30xx': 'Nvidia (20xx and below)',
-  'nvidia>=30xx': 'Nvidia (30xx and above)',
-  amd: 'AMD',
-  nogpu: 'No dedicated GPU',
-};
-
-/**
  * Supported operating systems.
  */
 export type OperatingSystem = 'Windows' | 'macOS' | 'Linux';
@@ -1779,26 +671,11 @@ type OkStatus<StatusType extends string, Data = void> = Data extends void
 
 /**
  * A status object that contains an error message and optionally some context. It represents an ERROR/bad status.
- *
- * `kind` is an optional discriminant the renderer reads to render specialised
- * banners (e.g. `'host-offline'` triggers the "your laptop is offline" banner
- * with the machine label; `'machine-at-capacity'` triggers the "stop a
- * session or switch to cloud" banner). Absent `kind` ⇒ generic "something
- * went wrong" surface with `message`.
  */
 type ErrorStatus = {
   type: 'error';
   error: {
     message: string;
-    kind?: 'host-offline' | 'machine-at-capacity' | 'message';
-    /** Populated when `kind === 'host-offline' | 'machine-at-capacity'`. */
-    machineId?: string;
-    /** Populated when `kind === 'host-offline' | 'machine-at-capacity'`. */
-    machineLabel?: string;
-    /** Populated when `kind === 'machine-at-capacity'`. */
-    maxSessions?: number;
-    /** Populated when `kind === 'machine-at-capacity'`. */
-    currentSessions?: number;
     context?: Record<string, unknown>;
   };
 };
@@ -1824,34 +701,9 @@ export type AgentRuntimeConnection = {
   authToken?: string;
 };
 
-/** Mutation availability reported by main's privileged management broker.
- * This contains capability booleans only; the admin credential never crosses
- * the IPC boundary. */
-export type ManagementMutationCapabilities = {
-  validateConfig: boolean;
-  writeConfig: boolean;
-};
-
-export type ManagementRuntimeConnection = AgentRuntimeConnection & {
-  mutationCapabilities: ManagementMutationCapabilities;
-};
-
-/**
- * Complete address of a materialized AgentHost execution environment.
- *
- * The generation is part of the address: re-materializing an environment can
- * reuse its id with a newer generation, and Omniagents rejects stale callers
- * when this value is supplied. Workspace RPCs must carry all three fields.
- */
-export type ExecutionTarget = {
-  workspaceId: string;
-  environmentId: string;
-  environmentGeneration: number;
-};
-
 /** Result of retiring one execution environment or its owning AgentHost. */
 export type AgentProcessStopResult = {
-  scope: 'environment' | 'host' | 'compute' | 'none';
+  scope: 'environment' | 'host' | 'none';
   /** Host-process termination mode. Environment-only stops do not terminate it. */
   shutdown: 'graceful' | 'forced' | 'not-applicable';
 };
@@ -1883,14 +735,6 @@ export type AgentProcessData = {
   environmentId?: string;
   /** Generation paired with ``environmentId`` by AgentHost materialization. */
   environmentGeneration?: number;
-  /**
-   * Capability names from the materialized environment descriptor
-   * (`pty`, `network`, `contained`, ...). The renderer gates
-   * capability-dependent surfaces on these affirmatively — the Terminal
-   * app renders only when `pty` is present, so no attached environment
-   * (or a wasm sandbox, which has no PTY) shows no Terminal at all.
-   */
-  environmentCapabilities?: string[];
   /** Authoritative root returned by the materialized execution environment. */
   workspaceRoot?: string;
   /** Environment-selected initial cwd for terminals and agent commands. */
@@ -1911,53 +755,8 @@ export type AgentProcessData = {
    * Unset when the server runs unauthenticated (local `omni serve`).
    */
   authToken?: string;
-  /** Same shape as uiUrl today — kept for status/debug surfaces. */
-  sandboxUrl?: string;
-  /**
-   * Named services running inside the sandbox session, keyed by profile
-   * service name (`code_server`, `vnc`, ...). Each value is a host URL the
-   * renderer can iframe directly. Empty when the profile defines no services.
-   */
-  services?: Record<string, string>;
-  /** Container id when the backend is docker; absent for unix_local/platform. */
-  containerId?: string;
-  /** Container name when the backend is docker. */
-  containerName?: string;
   /** Host port the agent's WS/HTTP server is bound to. */
   port?: number;
-  /**
-   * True when the sandbox container is currently frozen via docker pause
-   * (cgroup freezer). RAM is held; CPU is zero; tool calls into the
-   * container hang until unpause. The renderer uses this to show a
-   * "paused" badge and to trigger ``sandbox.unpause`` on activity.
-   * Unset / false when the backend doesn't support pause or when we
-   * never asked.
-   */
-  paused?: boolean;
-  /**
-   * Transitional UI state while a profile replacement is being prepared.
-   */
-  switching?: boolean;
-  /**
-   * Computer-as-sandbox: true while the laptop hosting this session's sandbox
-   * (`local:<machineId>`) is offline (its WS to the cloud dropped). The agent
-   * itself keeps running in the cloud — chat history + the conversation UI stay
-   * up — but its tools (exec/file/PTY) are unreachable. The renderer overlays a
-   * non-destructive "Your laptop is offline" banner over the still-running
-   * session rather than tearing it down. Cleared (and the sandbox re-established)
-   * when the laptop reconnects.
-   */
-  hostOffline?: boolean;
-  /** Friendly label of the offline host, for the banner. */
-  hostOfflineMachineLabel?: string;
-  /**
-   * Where this agent process is anchored — `'cloud'` for ACI/platform/local-
-   * laptop-running-omni-serve, `{kind: 'local', machineId}` for sessions the
-   * cloud dispatched to a registered Electron via reverse-RPC. Used by
-   * Settings → Machines and (Phase 7) the developer logs to associate
-   * activity with the right machine.
-   */
-  computeLocation?: 'cloud' | { kind: 'local'; machineId: string };
 };
 
 export type AgentProcessStatus =
@@ -1971,49 +770,12 @@ export type AgentProcessStatus =
 export type AgentProcessStartOptions = {
   workspaceDir: string;
   /**
-   * Explicit replacement for the project's primary local source (for example
-   * a ticket worktree). Unlike ``workspaceDir`` this changes the registered
-   * Workspace source set; it is never just a renderer cwd hint.
-   */
-  sourceOverrideDir?: string;
-  /**
    * Project id, when this consumer belongs to a project. AgentHost uses it
    * while registering the consumer's default profile definition.
    */
   projectId?: string;
-  /**
-   * Multi-project scope (resident agents): the union of every listed
-   * project's declared sources is resolved into mounts, with mount-name
-   * collisions numerically suffixed and git credentials resolved per
-   * source. Mutually exclusive with `projectId` in practice — a start
-   * with `projectIds` deliberately does NOT set `projectId`, so
-   * single-project profile lookup and PR container matching skip these
-   * consumers. Source-less projects contribute no
-   * mounts.
-   */
-  projectIds?: string[];
-  /**
-   * Per-launch profile override. Wins over per-project ``sandboxProfile``
-   * and the user's ``defaultProfileName``. Set by the pre-launch sandbox
-   * picker; not persisted — a follow-up launch without this set falls
-   * back through the normal resolution chain.
-   */
-  profileNameOverride?: string;
-  /**
-   * Conversation session id used for delegated-compute session ownership.
-   * Local AgentHost Workspace identity is deliberately independent.
-   */
+  /** Conversation session id; becomes the AgentHost thread id. */
   sessionId?: string;
-  /** Durable Workspace snapshot reference, independent of conversation id. */
-  snapshotRef?: string;
-  /**
-   * Additional host directories to mount alongside the resolved project
-   * sources (resident agents mount their private home as `home` next to
-   * their assigned project's sources). Deduped against the resolved
-   * sources by directory; git-detection and launcher-owned auto-mirror
-   * apply the same as any synthesized source.
-   */
-  extraSources?: Array<{ mountName: string; workspaceDir: string }>;
 };
 
 /**
@@ -2051,51 +813,24 @@ export type OmniRuntimeInfo =
 
 export type CodeTabId = string;
 
-export type CodeLayoutMode = 'tile' | 'focus';
-
 export type CodeTab = {
-  /** Backend-owned runtime launcher identity; retained by removal jobs. */
-  runtimeOwner?: string;
   id: CodeTabId;
   projectId: ProjectId | null;
-  ticketId?: TicketId;
   sessionId?: string;
-  /** Durable Workspace snapshot identity; never used for chat/RPC routing. */
-  snapshotRef?: string;
-  ticketTitle?: string;
   routineId?: string;
   routineName?: string;
   routineSchedule?: string;
-  workspaceDir?: string;
-  /** When set, this tab renders as a global app column (webview) instead of an agent session. */
-  customAppId?: string;
   /** Whether this session's right sidecar is visible. Open tabs remain mounted while hidden. */
   sidecarOpen?: boolean;
   /** Column-scoped apps currently open as tabs in this session's right sidecar. */
   sidecarAppIds?: string[];
   /** Selected app in the right sidecar. Must also be present in `sidecarAppIds`. */
   activeSidecarAppId?: string;
-  /** User-selected width for this column in Spaces. */
-  spacesWidth?: number;
-  /** Whether this column uses the expanded Spaces width preset. */
-  spacesExpanded?: boolean;
-  /** User-selected width for this session's sidecar column in Spaces. */
-  spacesSidecarWidth?: number;
-  /** Whether this session's sidecar uses the expanded Spaces width preset. */
-  spacesSidecarExpanded?: boolean;
-  /**
-   * Sticky profile binding for this tab. Snapshotted from the resolution chain
-   * (per-project ``sandboxProfile`` → user default) when the tab is created,
-   * then persisted so a later default change doesn't silently drift the
-   * workspace into another sandbox.
-   */
-  profileName?: string;
-  profileNameExplicit?: boolean;
   createdAt: number;
   /**
    * When the user first expressed intent in this column (first message sent
    * or project attached). Chat-mode columns (projectless, no routine, no
-   * custom app) don't launch their sandbox until this is set — creating a
+   * custom app) don't launch their agent until this is set — creating a
    * column is free; the boot happens on intent. Project/routine columns
    * ignore it (they launch eagerly, as before).
    */
@@ -2108,8 +843,8 @@ export type CodeTab = {
  * with ``surface: 'chat'`` variables. Purely derived — any tab the user
  * hasn't bound to a project, routine, or app is a chat column.
  */
-export const isChatColumn = (tab: Pick<CodeTab, 'projectId' | 'routineId' | 'customAppId'>): boolean =>
-  !tab.projectId && !tab.routineId && !tab.customAppId;
+export const isChatColumn = (tab: Pick<CodeTab, 'projectId' | 'routineId'>): boolean =>
+  !tab.projectId && !tab.routineId;
 
 /** An indexed agent conversation, resumable from the sidebar. */
 export type ChatConversation = {
@@ -2118,102 +853,19 @@ export type ChatConversation = {
   /** First user message (truncated) — display label in the sidebar. */
   title: string;
   lastActiveAt: number;
-  /** Sticky profile of the column that owned it, for faithful resume. */
-  profileName?: string;
   /** Project grouping retained independently of an active column. */
   projectId?: ProjectId;
-  /** Ticket context retained when the session originated from a ticket. */
-  ticketId?: TicketId;
-  ticketTitle?: string;
   /** Hidden from normal history until restored. */
   archivedAt?: number;
 };
 
 // #endregion
 
-// #region Project & Ticket types
+// #region Project types
 
 // --- ID types ---
 
 export type ProjectId = string;
-
-/**
- * Minimal pointer the launcher persists so it knows where each project's
- * file-backed data lives. All other project attributes are loaded from
- * `<dir>/.omni/project.yml` at runtime.
- */
-export type ProjectIndexEntry = { id: ProjectId; dir: string };
-
-export type MilestoneId = string;
-export type PageId = string;
-export type InboxItemId = string;
-export type TaskId = string;
-export type TicketId = string;
-export type TicketCommentId = string;
-export type ColumnId = string;
-
-// --- Enums ---
-
-export type TicketPriority = 'low' | 'medium' | 'high' | 'critical';
-export type MilestoneStatus = 'active' | 'completed' | 'archived';
-
-/** Re-export TicketPhase so renderer can import from shared/types. */
-export type { TicketPhase } from '@/shared/ticket-phase';
-
-/** Accumulated token usage for a supervisor session. */
-export type TokenUsage = {
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-};
-
-// --- Pipeline & columns ---
-
-/**
- * Human-facing workflow status. The column graph stays the agent's custom
- * state machine; the category is the universal state global views group by.
- * Valid pipelines read `todo* doing* done` in column order.
- */
-export type ColumnCategory = 'todo' | 'doing' | 'done';
-
-/**
- * A single column in the kanban pipeline. Visual milestones for the supervisor.
- */
-export type Column = {
-  id: ColumnId;
-  label: string;
-  /** Human-readable description of what this column represents. */
-  description?: string;
-  /** Max concurrent supervisors allowed in this column. Unlimited if undefined. */
-  maxConcurrent?: number;
-  /** When true, the supervisor is stopped on entry and only a human can move the ticket out. */
-  gate?: boolean;
-  /** DB-backed workflow metadata used by humans, agents, and project tools. */
-  workflow?: ColumnWorkflowContract;
-  /**
-   * Status category. Optional only because legacy in-store pipelines predate
-   * it — readers resolve through `categoryOf()` in `@/lib/pipeline-category`,
-   * which falls back to the positional rule (first=todo, last=done).
-   */
-  category?: ColumnCategory;
-};
-
-export type ColumnWorkflowContract = {
-  purpose?: string;
-  entryCriteria?: string[];
-  definitionOfDone?: string[];
-  agentInstructions?: string;
-  recommendedSkills?: string[];
-  allowedTransitions?: ColumnId[];
-  autoDispatch?: boolean;
-};
-
-/**
- * The pipeline definition for a project. Ordered list of columns.
- */
-export type Pipeline = {
-  columns: Column[];
-};
 
 // --- Core entities ---
 
@@ -2289,18 +941,18 @@ export type GithubDeviceCode = { userCode: string; verificationUri: string; expi
 
 /**
  * One repo/directory attached to a project. Projects can have any number
- * of sources (zero, one, or many) — a cross-cutting ticket like "ship a
- * change across launcher + omni-code + omniagents" attaches three sources
- * to one project so the agent sees all three at once in /workspace.
+ * of sources (zero, one, or many) — a change spanning launcher + omni-code +
+ * omniagents attaches three sources to one project so the agent sees all
+ * three at once under its workspace root.
  *
  * - `id`: stable identifier (nanoid). Session sync and optional PR links key
  *   off this so renaming the user-facing ``mountName`` doesn't orphan
  *   per-source state.
- * - `mountName`: subdirectory under ``/workspace/`` inside the container
+ * - `mountName`: subdirectory under the agent's workspace root
  *   (e.g. ``launcher``). Defaults to a slug derived from path or repo
  *   name; must be unique within a project.
- * - `kind`: `local` (host directory) or `git-remote` (URL the container
- *   clones; private repos authenticate with the host-matched
+ * - `kind`: `local` (host directory) or `git-remote` (URL cloned during
+ *   materialization; private repos authenticate with the host-matched
  *   [[GitCredential]], resolved at clone time — never stored on the source).
  */
 export type ProjectSource = (
@@ -2319,8 +971,7 @@ export type ProjectSource = (
  * project's repo" — the launcher's legacy code paths and the MCP API
  * (which doesn't model multi-source).
  *
- * Multi-source-aware callers (PR UI, container seeding, per-source merge)
- * iterate ``project.sources`` directly.
+ * Multi-source-aware callers iterate ``project.sources`` directly.
  */
 export const firstSource = (project: { sources?: ProjectSource[] } | undefined | null): ProjectSource | undefined =>
   project?.sources?.[0];
@@ -2333,14 +984,6 @@ export const firstSource = (project: { sources?: ProjectSource[] } | undefined |
 export const isRepoSource = (s: ProjectSource): boolean =>
   s.kind === 'git-remote' || (s.kind === 'local' && s.gitDetected === true);
 
-/**
- * True when any of the project's sources is version-controlled. Gates the
- * developer-only output surfaces (Artifacts panel, PR affordances) — plain
- * folder projects have exactly one output concept: the folder itself.
- */
-export const projectHasRepoSource = (project: { sources?: ProjectSource[] } | undefined | null): boolean =>
-  (project?.sources ?? []).some(isRepoSource);
-
 export type Project = {
   id: ProjectId;
   label: string;
@@ -2350,362 +993,16 @@ export type Project = {
   isPersonal?: boolean;
   /**
    * Repos/directories attached to this project. Empty array = no source.
-   * The container exposes each source under ``/workspace/<mountName>``.
+   * The agent sees each source under ``<workspace root>/<mountName>``.
    */
   sources: ProjectSource[];
   createdAt: number;
-  /** Pipeline configuration. If undefined, DEFAULT_PIPELINE is used. */
-  pipeline?: Pipeline;
-  /** When true, automatically dispatch tickets from backlog in priority order. */
-  autoDispatch?: boolean;
-  /**
-   * Per-project sandbox profile name. Overrides ``defaultProfileName`` for
-   * this project. ``null``/missing inherits the user-default.
-   */
-  sandboxProfile?: string | null;
-  /** Optional target date (epoch ms). Drives deadline-pressure risk signals. */
-  dueDate?: number;
   /** Timestamp of the most recent pin action. Set = pinned to Home; undefined = not pinned. */
   /** Pinned to This Week. `null` = explicit unpin (undefined doesn't survive the WS JSON transport). */
   pinnedAt?: number | null;
-  /** Populated by the seed script; tracked in seed-manifest for reset. */
-  seedKey?: string;
-};
-
-export type Milestone = {
-  id: MilestoneId;
-  projectId: ProjectId;
-  title: string;
-  description: string;
-  /** Optional feature branch. Tickets inherit this unless they override with their own branch. */
-  branch?: string;
-  /** Milestone brief — describes the deliverable, goals, and scope. */
-  brief?: string;
-  status: MilestoneStatus;
-  /** Optional target date (epoch ms). Drives deadline-pressure risk signals. */
-  dueDate?: number;
-  /** Stamped when status transitions to 'completed'. */
-  completedAt?: number;
-  /** Timestamp of the most recent pin action. Set = pinned to Home; undefined = not pinned. */
-  /** Pinned to This Week. `null` = explicit unpin (undefined doesn't survive the WS JSON transport). */
-  pinnedAt?: number | null;
-  createdAt: number;
-  updatedAt: number;
-  /** Populated by the seed script; tracked in seed-manifest for reset. */
-  seedKey?: string;
-};
-
-/**
- * A knowledge-base page. Notion-style: hierarchical doc with a title, icon,
- * and markdown body (stored on disk, not in the store). Pages have no
- * lifecycle status — they are docs, not work items. Work happens on tickets.
- */
-export type PageKind = 'doc' | 'notebook';
-
-export type PageProperties = {
-  status?: string;
-  size?: string;
-  projectId?: ProjectId;
-  milestoneId?: MilestoneId;
-  outcome?: string;
-  notDoing?: string;
-  laterAt?: number;
-};
-
-export type Page = {
-  id: PageId;
-  projectId: ProjectId;
-  /** Null for root-level pages in the project. */
-  parentId: PageId | null;
-  title: string;
-  /** Emoji for sidebar display. */
-  icon?: string;
-  /** Sort position among siblings. Lower = first. */
-  sortOrder: number;
-  /** True for the auto-created root page. Cannot be deleted. */
-  isRoot?: boolean;
-  /**
-   * Content kind. 'doc' (default) is a Yoopta markdown page stored as `.md`.
-   * 'notebook' is a marimo notebook stored as `.py`, edited via the marimo
-   * extension's webview surface. Root pages are always 'doc'.
-   */
-  kind?: PageKind;
-  /** Structured metadata fields (status, size, outcome, etc.) for this page. */
-  properties?: PageProperties;
-  createdAt: number;
-  updatedAt: number;
-  /** Populated by the seed script; tracked in seed-manifest for reset. */
-  seedKey?: string;
-};
-
-// --- Inbox ---
-
-/**
- * Inbox lifecycle:
- * - new:   captured, waiting to be promoted or deferred
- * - later: deferred; `laterAt` drives stale-item reminders
- *
- * Terminal transition is promotion: the item is stamped with `promotedTo`
- * pointing at the ticket or project it became, and is filtered out of the
- * active inbox view. Promoted items stay as tombstones for undo + audit
- * (GC'd after 30d by the inbox manager).
- *
- * (A legacy 'shaped' status existed before v25 — migrated to 'new' on boot,
- * with its structured shaping block folded into the item note.)
- */
-export type InboxItemStatus = 'new' | 'later';
-
-export type InboxPromotion = {
-  kind: 'ticket' | 'project';
-  /** ID of the ticket or project this inbox item became. */
-  id: string;
-  /** Timestamp of promotion, used for tombstone GC. */
-  at: number;
-};
-
-export type InboxItem = {
-  id: InboxItemId;
-  title: string;
-  /** Free-form capture body. */
-  note?: string;
-  attachments?: string[];
-  /** Optional project context at capture time. Null = loose / global. */
-  projectId?: ProjectId | null;
-  status: InboxItemStatus;
-  /** Stamped when moved to `later`. Drives the stale-items reminder. */
-  laterAt?: number;
-  /** Stamped on promotion. Presence hides the item from the active view. */
-  promotedTo?: InboxPromotion;
-  createdAt: number;
-  updatedAt: number;
-  /** Populated by the seed script; tracked in seed-manifest for reset. */
-  seedKey?: string;
-};
-
-export type TicketComment = {
-  id: TicketCommentId;
-  author: 'agent' | 'human';
-  content: string;
-  createdAt: number;
-};
-
-export type TicketRun = {
-  id: string;
-  startedAt: number;
-  endedAt: number;
-  endReason: string;
-  tokenUsage?: TokenUsage;
-};
-
-/**
- * One detected pull request, remembered so the UI can tell "we watched this PR
- * while it was open" from "historical PR detection re-reports forever". Two
- * homes: ticket-backed links live on `Ticket.pullRequests` (DB `pr_review`
- * column); links for ticket-less scopes (chat conversations, un-ticketed code
- * tabs) live in the global `StoreData.pullRequestLinks` list, scoped by
- * `sessionId`/`codeTabId`. Project/source fields are absent for chat-scratch
- * links — a chat conversation has no project or `ProjectSource`.
- */
-export type PullRequestLink = {
-  url: string;
-  number: number;
-  state: string;
-  projectId?: ProjectId;
-  sourceId?: string;
-  sourceMountName?: string;
-  provider?: 'github' | 'azure';
-  branch?: string;
-  title?: string;
-  ticketId?: TicketId;
-  codeTabId?: CodeTabId;
-  sessionId?: string;
-  workspaceDir?: string;
-  createdAt: number;
-  lastSeenAt: number;
-  /** Newest review timestamp already delivered (or covered at first sight) by
-   *  the pull-request watcher — its durable review cursor, so reviews are
-   *  never re-announced across restarts. */
-  reviewWatermarkAt?: number;
-  /** The watcher's CI announce cursor: the last settled check verdict and the
-   *  head commit it was computed from (always persisted together — `failing`
-   *  is meaningless without knowing for which commit). */
-  ciState?: 'failing' | 'green';
-  ciSha?: string;
-};
-
-/**
- * One step of an omniagents plan snapshot — the `tasks_snapshot` summary
- * shape (`to_summaries()` in omniagents' plans.py). Persisted per ticket as
- * `last_plan_snapshot` so a relaunched session can be prompted to recreate
- * its plan (docs/agentic-workflow-enforcement-plan.md §F). The renderer's
- * `TaskSummary` (omniagents-ui/canonical-plan-tasks.ts) is the same wire
- * shape minus the review fields.
- */
-export type PlanSnapshotEntry = {
-  id: string;
-  subject: string;
-  activeForm?: string;
-  status: 'pending' | 'in_progress' | 'completed' | 'blocked';
-  /** Owning principal ('agent:<id>' for agents; anything else is a human gate). */
-  owner?: string;
-  blockedBy?: string[];
-  /** Checkable definition-of-done. Empty/absent = no semantic review. */
-  exitCriteria?: string;
-  /** Completion review: true verified, false unverified, null/absent unreviewed. */
-  verified?: boolean | null;
-  /** True when the criteria were edited while the step was in progress (ratchet stamp). */
-  criteriaEdited?: boolean;
-};
-
-export type Ticket = {
-  id: TicketId;
-  projectId: ProjectId;
-  milestoneId?: MilestoneId;
-  title: string;
-  description: string;
-  priority: TicketPriority;
-  blockedBy: TicketId[];
-  createdAt: number;
-  updatedAt: number;
-
-  // Kanban state
-  /** Current column in the kanban pipeline. */
-  columnId: ColumnId;
-
-  // Git settings
-  /** Git branch to work on. If set with useWorktree, a worktree is created from this branch. */
-  branch?: string;
-  /** Whether to create an isolated git worktree for this ticket's sandbox. */
-  useWorktree?: boolean;
-
-  // Worktree state (persisted so worktrees survive server restarts)
-  /** Path to the git worktree on disk. */
-  worktreePath?: string;
-  /** Name of the git worktree (used for branch naming). */
-  worktreeName?: string;
-  /**
-   * Set when the ticket was moved to the terminal column but the worktree
-   * had uncommitted changes, so cleanup was deferred. The worktree + sandbox
-   * stay alive until the user explicitly finalizes via `project:finalize-ticket-cleanup`.
-   */
-  cleanupPending?: boolean;
-
-  // --- Sync to host (per source) ---
-  /**
-   * Stamped per source when that source's container changes were last applied
-   * to its host working copy ("synced"). Keyed by ``ProjectSource.id``.
-   * (Legacy DB column name: ``pr_merged_at``.)
-   */
-  prMergedAt?: Record<string, number>;
-
-  // Supervisor state
-  /** True when autopilot is driving this ticket. Flipped by start/stopSupervisor. */
-  autopilot?: boolean;
-  /** Current supervisor lifecycle phase. */
-  phase?: import('@/shared/ticket-phase').TicketPhase;
-  /** Stamped whenever `phase` transitions. Drives stalled-ticket risk. */
-  phaseChangedAt?: number;
-  /** Stamped whenever `columnId` changes. Drives aging-in-column risk. */
-  columnChangedAt?: number;
-  /** Stamped when the task enters a Done-category column; cleared when reopened. */
-  completedAt?: number;
-  /** Task ID for the supervisor's sandbox. */
-  supervisorTaskId?: TaskId;
-  /** Accumulated token usage across all supervisor runs. */
-  tokenUsage?: TokenUsage;
-  /** Timestamp when the ticket was archived from active views. */
-  archivedAt?: number;
-  /** Agent/human comments — serves as persistent memory across runs. */
-  comments?: TicketComment[];
-  /**
-   * Assigned member's principal id (cloud/teams). Drives per-user WIP and the
-   * weekly review ("my work"). Undefined = unassigned; single-user (Electron/
-   * local) installs leave it unset.
-   */
-  assignee?: string;
-  /** History of supervisor runs on this ticket. */
-  runs?: TicketRun[];
-  /**
-   * Latest plan snapshot from the ticket's agent session (`tasks_snapshot`).
-   * Seeds the supervisor prompt's "Prior plan" section on relaunch and the
-   * kanban card's step fraction; cleared when the ticket settles into a
-   * Done-category column. Absent = no prior plan.
-   */
-  lastPlanSnapshot?: PlanSnapshotEntry[];
-  pullRequests?: PullRequestLink[];
-  /** Populated by the seed script; tracked in seed-manifest for reset. */
-  seedKey?: string;
-};
-
-export type Task = {
-  id: TaskId;
-  projectId: ProjectId;
-  taskDescription: string;
-  status: WithTimestamp<AgentProcessStatus>;
-  createdAt: number;
-  branch?: string;
-  worktreePath?: string;
-  worktreeName?: string;
-  sessionId?: string;
-  ticketId?: TicketId;
-  /** Snapshot of sandbox URLs from the last 'running' state, for replaying past sessions. */
-  lastUrls?: {
-    uiUrl: string;
-    codeServerUrl?: string;
-    noVncUrl?: string;
-  };
-};
-
-export type ArtifactFileEntry = {
-  relativePath: string;
-  name: string;
-  isDirectory: boolean;
-  size: number;
-  modifiedAt: number;
-};
-
-export type ArtifactFileContent = {
-  relativePath: string;
-  mimeType: string;
-  textContent: string | null;
-  size: number;
-};
-
-export type SessionMessage = {
-  id: number;
-  role: 'user' | 'assistant' | 'tool_call' | 'tool_result';
-  content: string;
-  toolName?: string;
-  createdAt: string;
 };
 
 export type GitRepoInfo = { isGitRepo: true; branches: string[]; currentBranch: string } | { isGitRepo: false };
-
-export type PrMergeResult = { ok: true; mergeCommitSha: string } | { ok: false; error: string };
-
-/**
- * A GitHub pull request detected for one source's branch by running
- * ``gh pr view`` inside the running container (where the agent pushed the
- * branch and ``gh`` is authenticated). Absent (null) when the source has no
- * open PR — e.g. a plain local directory, a git repo with no remote, or a
- * branch the agent hasn't opened a PR for yet.
- */
-export interface ContainerPullRequest {
-  number: number;
-  url: string;
-  /** Normalized across providers: Azure `active` → OPEN, `completed` → MERGED. */
-  state: 'OPEN' | 'MERGED';
-  title?: string;
-  sourceId?: string;
-  sourceMountName?: string;
-  projectId?: ProjectId;
-  ticketId?: TicketId;
-  codeTabId?: CodeTabId;
-  sessionId?: string;
-  workspaceDir?: string;
-  provider?: 'github' | 'azure';
-  branch?: string;
-}
 
 // #endregion
 
@@ -2725,87 +1022,12 @@ type StoreIpcEvents = Namespaced<
 >;
 
 /**
- * chat-v1's internal binding: the wire method names ARE the IPC channel
- * names, each taking the single params object (docs/chat-v1-plan.md).
- * Messaging traffic (post, channels, wake, presence) lives here; roster
- * CRUD and memory/handbook editing stay on `resident:*` (admin surface).
- */
-type ChatIpcEvents = {
-  [K in keyof ChatMethodMap]: (params: ChatMethodMap[K]['params']) => ChatMethodMap[K]['result'];
-};
-
-type ResidentIpcEvents = Namespaced<
-  'resident',
-  {
-    /** Roster CRUD. Create derives the id slug from the name. */
-    create: (input: ResidentAgentInput) => ResidentAgent;
-    update: (agentId: string, patch: ResidentAgentUpdate) => ResidentAgent;
-    delete: (agentId: string) => void;
-    /** Live runtime snapshot for every roster member. */
-    'get-status': () => Record<string, ResidentAgentRuntime>;
-    /**
-     * Wake the agent's process (if parked) and return the handles the
-     * renderer needs to mount the REAL session UI (OmniAgentsApp) on it:
-     * the current day-session id and runtime connection. Main attaches its
-     * watcher first, so thinking-state tracking covers user-driven runs.
-     */
-    'ensure-session': (agentId: string) => { sessionId: string; connection: AgentRuntimeConnection };
-    /** Replace an agent's durable memory list (UI edits/removals). */
-    'set-memories': (agentId: string, memories: ResidentMemoryEntry[]) => void;
-    /** Shared team handbook (rendered into every agent's identity on wake). */
-    'get-handbook': () => { body: string; updatedAt: number; updatedBy: string | null } | null;
-    'set-handbook': (body: string) => void;
-    /**
-     * Renderer's answer to a `resident:workspace-tool` request — the inner
-     * result object of the superuser client-tool handler. Main resolves the
-     * pending watcher call by `requestId` (late/duplicate answers are
-     * dropped).
-     */
-    'workspace-tool-result': (requestId: string, result: Record<string, unknown>) => void;
-    /**
-     * A column run dispatched by a superuser resident (`column_send`) ended —
-     * the renderer's run-watch reports it so main wakes the dispatcher with
-     * a `column_done` event.
-     */
-    'column-done': (agentId: string, tabId: string, reason: string) => void;
-  }
->;
-
-type AutomationIpcEvents = Namespaced<
-  'automation',
-  {
-    list: () => Automation[];
-    create: (input: AutomationInput) => Automation;
-    update: (automationId: string, patch: AutomationUpdate) => Automation;
-    delete: (automationId: string) => void;
-    /** Manual fire, for testing a rule from the card. */
-    'run-now': (automationId: string) => Automation;
-  }
->;
-
-type ScheduledTaskIpcEvents = Namespaced<
-  'scheduled-task',
-  {
-    list: () => ScheduledTask[];
-    create: (input: ScheduledTaskInput) => ScheduledTask;
-    update: (taskId: string, patch: ScheduledTaskUpdate) => ScheduledTask;
-    delete: (taskId: string) => void;
-    'run-now': (taskId: string) => ScheduledTask;
-    'allow-tool': (taskId: string, toolName: string) => ScheduledTask;
-    'revoke-tool': (taskId: string, toolName: string) => ScheduledTask;
-    'allow-mcp-tool': (taskId: string, tool: ScheduledTaskAllowedMcpTool) => ScheduledTask;
-    'revoke-mcp-tool': (taskId: string, tool: ScheduledTaskAllowedMcpTool) => ScheduledTask;
-  }
->;
-
-/**
  * Main Process API. Main process handles these events, renderer process invokes them.
  */
 type MainProcessIpcEvents = Namespaced<
   'main-process',
   {
     'get-status': () => WithTimestamp<MainProcessStatus>;
-    exit: () => void;
   }
 >;
 
@@ -2852,21 +1074,6 @@ type VoiceIpcEvents = Namespaced<
 >;
 
 /**
- * Options for ``agent-process:stop``.
- */
-export type AgentProcessStopOptions = {
-  /**
-   * Skip persisting the workspace snapshot during serve's SIGTERM teardown.
-   * Set when a non-chat code column is removed and its terminal exits, where
-   * the caller deletes the snapshot tar right after the stop — persisting it
-   * (fingerprint pass + full workspace tar export) would be wasted work.
-   * Best-effort: an older omni-code without the ``sandbox.discard_snapshot``
-   * server function just persists as before.
-   */
-  discardSnapshot?: boolean;
-};
-
-/**
  * Unified agent process API. Main process handles these events, renderer process invokes them.
  * All operations are keyed by a processId — "chat" for the chat tab, CodeTabId for code tabs.
  */
@@ -2874,25 +1081,8 @@ type AgentProcessIpcEvents = Namespaced<
   'agent-process',
   {
     start: (processId: string, arg: AgentProcessStartOptions) => void;
-    stop: (processId: string, opts?: AgentProcessStopOptions) => AgentProcessStopResult;
-    rebuild: (processId: string, arg: AgentProcessStartOptions) => void;
-    resize: (processId: string, cols: number, rows: number) => void;
+    stop: (processId: string) => AgentProcessStopResult;
     'get-status': (processId: string) => WithTimestamp<AgentProcessStatus>;
-    /**
-     * Freeze the sandbox container via ``docker pause``. Returns an
-     * envelope that distinguishes "ok" from "backend doesn't support
-     * pause" so callers can decide between updating UI state, falling
-     * through to stop/shutdown, or surfacing an error.
-     */
-    pause: (processId: string) => SandboxPauseResult;
-    /** Thaw a previously-paused container. Same envelope shape as ``pause``. */
-    unpause: (processId: string) => SandboxPauseResult;
-    /**
-     * Materialize the selected profile as an environment and atomically rebind
-     * this tab. The shared AgentHost and conversation remain alive when the
-     * profile stays within the same security domain.
-     */
-    'switch-sandbox': (processId: string, profileName: string) => SandboxSwitchResult;
   }
 >;
 
@@ -2901,54 +1091,10 @@ type AgentProcessIpcEvents = Namespaced<
 type ManagementRuntimeIpcEvents = Namespaced<
   'management-runtime',
   {
-    ensure: () => ManagementRuntimeConnection;
+    ensure: () => AgentRuntimeConnection;
     /** Closed main-process broker. The control/admin credential never appears
      * in this request or response and arbitrary RPC methods are rejected. */
     mutate: (request: ManagementAdminRequest) => ManagementAdminResult;
-  }
->;
-
-/** Result envelope returned by ``agent-process:pause`` / ``:unpause``.
- *  Mirrors the omni-code server-function schema. */
-export type SandboxPauseResult = {
-  ok: boolean;
-  supported: boolean;
-  paused?: boolean;
-  reason?: string;
-  /** Raw server-function result, when a caller needs fields beyond the envelope. */
-  data?: Record<string, unknown>;
-};
-
-/** Result of an AgentHost environment profile rebind. */
-export type SandboxSwitchResult = {
-  ok: boolean;
-  /** New profile name once switched (display label). */
-  profile?: string;
-  /** New backend client type (`docker` / `host_bridge` / …). */
-  backend?: string;
-  /** New container id (docker); absent for unix_local. */
-  containerId?: string;
-  /** New in-sandbox service URLs (code_server / vnc / …). */
-  services?: Record<string, string>;
-  /** Failure detail; present when `ok` is false. */
-  reason?: string;
-  /**
-   * When `ok` is false: whether the selected profile crosses an AgentHost
-   * security boundary and therefore requires a full stop+relaunch.
-   */
-  fallback?: boolean;
-};
-
-type SnapshotIpcEvents = Namespaced<
-  'snapshot',
-  {
-    /**
-     * Cascade-delete the snapshot tar for *snapshotRef*. Called by the
-     * renderer when a code tab is removed — the tab is gone for good,
-     * its workspace pickle is dead weight. Idempotent (missing file is
-     * not an error).
-     */
-    delete: (snapshotRef: string) => void;
   }
 >;
 
@@ -2962,10 +1108,7 @@ type UtilIpcEvents = Namespaced<
     'select-file': (path?: string, filters?: Array<{ name: string; extensions: string[] }>) => string | null;
     'get-home-directory': () => string;
     'get-is-directory': (path: string) => boolean;
-    'get-is-file': (path: string) => boolean;
-    'get-path-exists': (path: string) => boolean;
     'get-os': () => OperatingSystem;
-    'get-default-install-dir': () => string;
     'get-default-workspace-dir': () => string;
     'ensure-directory': (path: string) => boolean;
     /**
@@ -2980,11 +1123,8 @@ type UtilIpcEvents = Namespaced<
     'open-external': (url: string) => void;
     'get-launcher-version': () => string;
     'get-omni-runtime-info': () => OmniRuntimeInfo;
-    'check-url': (url: string) => boolean;
-    'check-ws': (url: string) => boolean;
     'install-cli-to-path': () => { success: true; symlinkPath: string } | { success: false; error: string };
     'get-cli-in-path-status': () => { installed: boolean; symlinkPath: string };
-    'check-models-configured': () => boolean;
     'test-model-connection': (modelRef?: string) => { success: boolean; output: string };
     /** Validate provider credentials with a free GET against the provider's
      *  model-listing endpoint. Runtime-independent (works before the omni
@@ -2994,7 +1134,6 @@ type UtilIpcEvents = Namespaced<
     /** Live merged model list from `omni model list --json` (includes discovered models). */
     'list-models': () => RuntimeModelList;
     'list-directory': (path: string) => { name: string; path: string; isDirectory: boolean }[];
-    'rebuild-sandbox-image': () => { success: boolean; error?: string };
   }
 >;
 
@@ -3009,7 +1148,6 @@ type TerminalIpcEvents = Namespaced<
     write: (id: string, data: string) => void;
     resize: (id: string, cols: number, rows: number) => void;
     dispose: (id: string) => void;
-    'dispose-all-for-tab': (tabId: string) => void;
   }
 >;
 
@@ -3035,16 +1173,11 @@ type ConfigIpcEvents = Namespaced<
 type CodexIpcEvents = Namespaced<
   'codex',
   {
-    /** Open the consent page, await the loopback callback, persist tokens.
-     *  Electron-only: requires browser open + loopback :1455. */
-    login: () => CodexAuthStatus;
     /** Device-flow sign-in (server/headless). Surfaces user code + URL via
      *  `codex:device-code` then polls until authorized. Works everywhere. */
     link: () => CodexAuthStatus;
     /** Remove the stored tokens. */
     logout: () => void;
-    /** Current sign-in status, read from the token store. */
-    status: () => CodexAuthStatus;
   }
 >;
 
@@ -3059,57 +1192,6 @@ export type CodexAuthStatus = {
 /** Device-flow code surface for the renderer to display while `codex:link` polls. */
 export type CodexDeviceCode = { userCode: string; verificationUri: string };
 
-/**
- * Cloud-link API. ``cloud:link`` opens the AAD device-code flow against the
- * launcher discovered via *url*, surfaces the user code through
- * ``cloud:device-code``, polls until approved, then persists the tokens +
- * the ``remoteBackend`` flag in the store. The renderer is expected to reload
- * after a successful link so the transport switches to the cloud variant
- * at boot. ``cloud:unlink`` clears both. ``cloud:get-access-token`` is the
- * renderer's hook for fetching a fresh Bearer (refreshes via the stored
- * refresh token when near-expiry).
- */
-type CloudIpcEvents = Namespaced<
-  'cloud',
-  {
-    status: () => CloudStatus;
-    link: (url: string) => CloudStatus;
-    unlink: () => void;
-    'get-access-token': () => string;
-    /**
-     * Fetch a fresh WS auth token from the linked cloud's ``/api/ws-token``.
-     * Runs in main so the request escapes the renderer's CORS sandbox — the
-     * Bearer header would otherwise trigger a CORS preflight that EasyAuth's
-     * 302-to-AAD-login can't satisfy. Returns the opaque token the renderer
-     * passes in the WebSocket upgrade URL.
-     */
-    'get-ws-token': () => string;
-    /**
-     * Local Electron's persisted machine identity (id + editable label +
-     * platform). Used by the renderer's Settings → Cloud card to render the
-     * "this is what the cloud sees you as" chip and to compare against the
-     * cloud-side machines list to mark the calling row as `isSelf`.
-     */
-    'get-machine-identity': () => MachineIdentity;
-    /**
-     * Rename the local Electron's machine label. Persisted to
-     * `<configDir>/machine.json` and (when cloud-linked) replayed to the cloud
-     * via `machine:register` so the new label flows through.
-     */
-    'set-machine-label': (label: string) => MachineIdentity;
-  }
->;
-
-export type CloudStatus =
-  | { connected: false }
-  | {
-      connected: true;
-      url: string;
-      tenantId: string;
-      clientId: string;
-      account: CloudAccount;
-    };
-
 /** One installed WSL distro, from `wsl.exe -l -q` (+ default marker). */
 export type WslDistro = { name: string; isDefault: boolean };
 
@@ -3121,7 +1203,6 @@ export type WslBackendStatus = {
   state: 'idle' | 'provisioning' | 'starting' | 'running' | 'error';
   distro?: string;
   port?: number;
-  docker: 'ok' | 'missing' | 'daemon-down' | 'unknown';
   /** Mirrors WslBackend.persistent so the settings card renders the toggle
    *  from status alone. */
   persistent?: boolean;
@@ -3134,8 +1215,8 @@ export type WslBackendStatus = {
  * main via `localEmitter`). ``wsl:detect`` probes `wsl.exe` and lists
  * distros. ``wsl:link`` provisions the daemon payload into *distro*,
  * persists the ``remoteBackend`` flag, and relaunches the app so the
- * renderer boots on the WS transport. Disconnecting reuses ``cloud:unlink``
- * (the shared disconnect + relaunch path for both kinds).
+ * renderer boots on the WS transport. Disconnecting is
+ * ``remote-backend:unlink``.
  * ``wsl:get-ws-token`` mints a WS auth token signed with the daemon's
  * shared secret (per-boot, or durable in persistent mode) — no HTTP fetch.
  * ``wsl:set-persistent`` flips persistent daemon mode, restarting the daemon
@@ -3154,16 +1235,6 @@ type WslIpcEvents = Namespaced<
     status: () => WslBackendStatus;
     'set-persistent': (persistent: boolean) => void;
     install: (mode: 'platform' | 'distro') => void;
-    /**
-     * Install docker-ce inside the linked distro (get.docker.com script run
-     * as root via `wsl -u root` — no sudo password needed) and add the
-     * default user to the docker group. Long-running; rejects with decoded
-     * stderr on failure.
-     */
-    'install-docker': () => void;
-    /** Start dockerd in the linked distro (`service docker start` as root) —
-     *  the daemon-down remedy on distros where it isn't auto-started. */
-    'start-docker': () => void;
   }
 >;
 
@@ -3171,12 +1242,11 @@ type WslIpcEvents = Namespaced<
  * Self-hosted-server link API (all channels resolve in LOCAL Electron main
  * via `localEmitter`). ``server:link`` validates *url* (``/api/health`` +
  * ``/api/ws-token`` must answer), persists the ``remoteBackend`` flag, and
- * relaunches the app so the renderer boots on the WS transport. No Entra,
- * no wsl.exe — auth is the server's own ``/api/ws-token``, which the server
+ * relaunches the app so the renderer boots on the WS transport. No
+ * wsl.exe — auth is the server's own ``/api/ws-token``, which the server
  * gates to loopback + ``OMNI_TRUSTED_CIDRS``. ``server:get-ws-token`` runs
- * the fetch in main (Node fetch, no CORS), like the cloud variant.
- * Disconnecting reuses ``cloud:unlink`` (the shared disconnect + relaunch
- * path for all kinds).
+ * the fetch in main (Node fetch, no CORS). Disconnecting is
+ * ``remote-backend:unlink``.
  */
 type ServerIpcEvents = Namespaced<
   'server',
@@ -3186,84 +1256,14 @@ type ServerIpcEvents = Namespaced<
   }
 >;
 
-/** Stable identity persisted in `<configDir>/machine.json`. */
-export type MachineIdentity = {
-  machineId: string;
-  label: string;
-  platform: string;
-};
-
-/**
- * Per-(principal) summary of a machine the cloud has seen. Used by the
- * Settings → Machines card and the SandboxPicker. `online` reflects whether
- * the cloud currently holds a live WS for that id; `isSelf` is `true` when
- * `machineId` matches the calling Electron's own identity.
- */
-export type MachineSummary = {
-  machineId: string;
-  label: string;
-  platform: string;
-  online: boolean;
-  isSelf: boolean;
-  registeredAt: string;
-  lastSeenAt: string;
-};
-
-/**
- * Per-principal machine registry — the cloud-side view of every Electron the
- * user has signed in from. Powers the SandboxPicker's "My computers" group
- * and the Settings → Machines card. No-op in single-user/local mode (returns
- * an empty list).
- *
- * `register` is invoked by the cloud-linked Electron over its existing WS at
- * boot; the cloud upserts the row scoped to the authenticated principal.
- * Removing a machine is explicit and severs its right to receive reverse-RPC
- * dispatches even if it later reconnects with the same id.
- */
-type MachineIpcEvents = Namespaced<
-  'machine',
-  {
-    register: (info: MachineIdentity) => { accepted: boolean };
-    list: () => MachineSummary[];
-    rename: (machineId: string, label: string) => MachineSummary[];
-    remove: (machineId: string) => MachineSummary[];
-  }
->;
-
-/**
- * Renderer→main bridge for cloud reverse-RPC dispatch. The renderer owns the
- * cloud WS (in cloud-linked Electron) but compute lives in main; when the
- * cloud sends a `reverse-invoke`, the renderer forwards it through this one
- * channel and main resolves it against a per-channel registry.
- *
- * NOT user-callable — internal plumbing. Carries arbitrary (channel, args).
- */
-type ReverseRpcIpcEvents = {
-  'reverse-rpc:dispatch': (channel: string, args: unknown[]) => unknown;
-  /**
-   * Laptop → cloud: a WS frame inbound from the local omni-serve that the
-   * cloud should forward to the renderer end of the tunnel. The cloud's
-   * local-tunnel-proxy registers a per-tunnel routing entry keyed by
-   * `tunnelId` and pipes the bytes onto the awaiting client WebSocket.
-   *
-   * Sent via `localEmitter.invoke` from renderer→main path: main pushes a
-   * `tunnel:emit-incoming` event the renderer translates into this WS-invoke.
-   * Returns `void` (fire-and-forget; we ignore the ack).
-   */
-  'tunnel:incoming': (event: { tunnelId: string; dataBase64: string; binary: boolean; close?: boolean }) => void;
-};
-
-/** Device-code payload for the renderer to display while `cloud:link` polls. */
-export type CloudDeviceCode = {
-  userCode: string;
-  verificationUri: string;
-  verificationUriComplete?: string;
-};
+/** Shared disconnect for every remote-backend kind: clears the
+ *  ``remoteBackend`` flag and relaunches into standalone-local mode. */
+type RemoteBackendIpcEvents = Namespaced<'remote-backend', { unlink: () => void }>;
 
 /**
  * Typed agent-config API. Replaces the path-based `config:*` file I/O for the
- * four Settings configs whose source of truth is the (per-tenant, in cloud)
- * store rather than a file: model providers, MCP servers, network policy, and
+ * four Settings configs whose source of truth is the store rather than a
+ * file: model providers, MCP servers, network policy, and
  * `.env`. The backend persists them as store keys and re-materializes the
  * agent's on-disk config; the renderer never names a file path.
  */
@@ -3271,11 +1271,10 @@ type SettingsConfigIpcEvents = Namespaced<
   'settings',
   {
     'get-models-config': () => ModelsConfig;
-    'set-models-config': (config: ModelsConfig) => void;
-    'get-mcp-config': () => McpConfig;
-    'set-mcp-config': (config: McpConfig) => void;
-    'get-network-config': () => NetworkConfig;
-    'set-network-config': (config: NetworkConfig) => void;
+    'set-models-config': (
+      config: ModelsConfig,
+      options?: { expectedProvider: string | null; confirmProviderChange?: boolean }
+    ) => void;
     'get-env': () => string;
     'set-env': (content: string) => void;
   }
@@ -3301,89 +1300,8 @@ export type GitCredentialInput = {
 type GitCredentialIpcEvents = Namespaced<
   'git-cred',
   {
-    list: () => GitCredential[];
     set: (input: GitCredentialInput) => GitCredential[];
     delete: (id: string) => GitCredential[];
-  }
->;
-
-/** Team role within a team (cloud/teams mode). */
-export type TeamRole = 'owner' | 'admin' | 'member';
-
-/** A team the current user belongs to, with their role. */
-export type TeamSummary = {
-  id: string;
-  label: string;
-  kind: 'personal' | 'shared';
-  role: TeamRole;
-};
-
-/** A member of a team (admin views). */
-export type TeamMember = {
-  userId: string;
-  email: string | null;
-  displayName: string | null;
-  role: TeamRole;
-};
-
-/** A pending invitation to a team. */
-export type TeamInvitation = {
-  id: string;
-  email: string;
-  role: 'admin' | 'member';
-  token: string;
-};
-
-/**
- * Teams control plane (cloud only). Membership reads are scoped to the caller;
- * mutations are role-gated server-side. Switching the active team is a
- * client-side reconnect with `?team=<id>`, not a channel here. No-op in
- * single-user/local mode (returns empty / the implicit personal team).
- */
-type TeamIpcEvents = Namespaced<
-  'team',
-  {
-    list: () => TeamSummary[];
-    'get-my-role': () => TeamRole | null;
-    /** The caller's principal id in teams/cloud mode; null in single-user/local (drives "my work" filters). */
-    whoami: () => string | null;
-    create: (label: string) => TeamSummary[];
-    /** Leave the active team. Owners must transfer ownership first. */
-    leave: () => TeamSummary[];
-    rename: (label: string) => TeamSummary[];
-    /** Delete the active team (owner only; non-personal, no projects). */
-    delete: () => TeamSummary[];
-    'transfer-ownership': (userId: string) => TeamMember[];
-    invite: (email: string, role: 'admin' | 'member') => TeamInvitation[];
-    'accept-invite': (token: string) => TeamSummary[];
-    'revoke-invite': (id: string) => TeamInvitation[];
-    'list-members': () => TeamMember[];
-    'remove-member': (userId: string) => TeamMember[];
-    'set-role': (userId: string, role: TeamRole) => TeamMember[];
-    'list-invites': () => TeamInvitation[];
-  }
->;
-
-/** Which parts of the team-base agent config are currently set. */
-export type TeamDefaultsStatus = {
-  hasModels: boolean;
-  hasMcp: boolean;
-  hasEnv: boolean;
-  hasNetwork: boolean;
-};
-
-/**
- * Team-base (shared) agent config editing. Admin-gated server-side.
- * `publish-from-mine` adopts the caller's effective models/mcp/env/network as the
- * team default for everyone; `clear` removes the team base (members fall back to
- * their own overlay). No-op (all false) in single-user/local mode.
- */
-type TeamSettingsIpcEvents = Namespaced<
-  'team-settings',
-  {
-    status: () => TeamDefaultsStatus;
-    'publish-from-mine': () => TeamDefaultsStatus;
-    clear: () => TeamDefaultsStatus;
   }
 >;
 
@@ -3445,19 +1363,6 @@ export type MarketplacePlugin = {
 };
 
 /**
- * Shape of a `.claude-plugin/marketplace.json` file as published by
- * Anthropic's skills repo and other Claude Code plugin marketplaces.
- */
-export type MarketplaceApp = {
-  id: string;
-  label: string;
-  icon: string;
-  url: string;
-  /** When true, install the app as column-scoped (visible in each session's dock). */
-  columnScoped?: boolean;
-};
-
-/**
  * One entry in a marketplace.json connectors[] array — a pre-configured MCP
  * server the user can install with one click. `server` is the exact entry
  * merged into `McpConfig.mcpServers` under key `id`.
@@ -3472,12 +1377,15 @@ export type MarketplaceConnector = {
   server: McpServerEntry;
 };
 
+/**
+ * Shape of a `.claude-plugin/marketplace.json` file as published by
+ * Anthropic's skills repo and other Claude Code plugin marketplaces.
+ */
 export type MarketplaceManifest = {
   name: string;
   owner?: { name?: string; email?: string };
   metadata?: { description?: string; version?: string };
   plugins: MarketplacePlugin[];
-  apps?: MarketplaceApp[];
   connectors?: MarketplaceConnector[];
 };
 
@@ -3570,7 +1478,7 @@ type SkillsIpcEvents = Namespaced<
 >;
 
 /**
- * Project & Ticket API. Main process handles these events, renderer process invokes them.
+ * Project API. Main process handles these events, renderer process invokes them.
  */
 type ProjectIpcEvents = Namespaced<
   'project',
@@ -3581,199 +1489,17 @@ type ProjectIpcEvents = Namespaced<
     /** Resolved project directory — `Projects/<slug>/` or the default workspace root for Personal. Null if the project is unknown. */
     'get-dir': (projectId: ProjectId) => string | null;
     'check-git-repo': (workspaceDir: string) => GitRepoInfo;
-    'add-ticket': (ticket: Omit<Ticket, 'id' | 'createdAt' | 'updatedAt' | 'columnId'>) => Ticket;
-    'update-ticket': (id: TicketId, patch: Partial<Omit<Ticket, 'id' | 'projectId' | 'createdAt'>>) => void;
-    'get-tickets': (projectId: ProjectId) => Ticket[];
-    'get-ticket-workspace': (ticketId: TicketId) => string;
-    'get-tasks': () => Task[];
-    'get-next-ticket': (projectId: ProjectId) => Ticket | null;
-    'move-ticket-to-column': (ticketId: TicketId, columnId: ColumnId) => void;
-    'get-pipeline': (projectId: ProjectId) => Pipeline;
-    'list-artifacts': (ticketId: TicketId, dirPath?: string) => ArtifactFileEntry[];
-    'read-artifact': (ticketId: TicketId, relativePath: string) => ArtifactFileContent;
-    'open-artifact-external': (ticketId: TicketId, relativePath: string) => void;
-    'apply-code-tab-source-changes': (tabId: CodeTabId, sourceId: string) => PrMergeResult;
-    /**
-     * Detect open PRs across a code tab's sources (deck banner). For
-     * projectless (chat) columns the tab's live process workspace dir is the
-     * single implicit source, so this returns 0 or 1 entries.
-     */
-    'detect-code-tab-pull-requests': (tabId: CodeTabId) => ContainerPullRequest[];
-    // Supervisor operations
-    'ensure-supervisor-infra': (ticketId: TicketId) => void;
-    'start-supervisor': (ticketId: TicketId, profileName?: string) => void;
-    'stop-supervisor': (ticketId: TicketId) => void;
-    'send-supervisor-message': (ticketId: TicketId, message: string) => void;
-    'reset-supervisor-session': (ticketId: TicketId) => void;
-    /** Assign (string principal id) or unassign (null) a ticket. Team ownership is unaffected; any member may call. */
-    'assign-ticket': (ticketId: TicketId, assignee: string | null) => void;
-    /**
-     * Retry the deferred cleanup for a completed ticket whose worktree was
-     * dirty. Returns true when cleanup succeeded, false when the worktree
-     * still has uncommitted changes (cleanupPending stays set).
-     */
-    'finalize-ticket-cleanup': (ticketId: TicketId) => boolean;
-    'set-auto-dispatch': (projectId: ProjectId, enabled: boolean) => void;
-    // Context file operations (replaces project.brief)
-    'read-context': (projectId: ProjectId) => string;
-    'write-context': (projectId: ProjectId, content: string) => void;
     // Project file listing
-    'list-project-files': (projectId: ProjectId) => ArtifactFileEntry[];
-    'get-context-preview': (projectId: ProjectId) => string;
-    'open-project-file': (projectId: ProjectId, relativePath: string) => void;
   }
 >;
 
 /**
- * Supervisor bridge. The Code column owns the session, the WebSocket, and the
- * run lifecycle. Main only orchestrates — decides *when* to submit a prompt
- * and reacts to forwarded events. No main-process session id; no prepare step;
- * no client-request round trip (tool calls are handled entirely in the
- * renderer's `buildClientToolHandler`).
- */
-/**
- * Per-dispatch run intent. The orchestrator composes this from its own state
- * (autopilot mode, supervisor framing, retry context, etc.) and ships it with
- * the `bridge.run` dispatch. The column merges it onto its locally owned
- * variables. Fields here are the subset that need to differ between
- * orchestrator-driven and user-driven submits.
- */
-export type RunOverrides = {
-  /** Prepended to the column's existing additional_instructions. */
-  additionalInstructions?: string;
-  /** Session approval reviewer: 'auto' routes approvals to the guardian. */
-  approvalsReviewer?: 'user' | 'auto';
-  /** Approval policy override; replaces the column's default. */
-  safeToolOverrides?: {
-    safe_tool_names?: string[];
-    safe_tool_patterns?: string[];
-    safe_mcp_tools?: { server_label: string; tool_name: string }[];
-  };
-};
-
-export type SupervisorBridgeRequest =
-  | {
-      /**
-       * Make sure a Code tab exists for this ticket. Creates one if needed,
-       * switches the layout to code. Resolves after the actor registers.
-       */
-      kind: 'ensure-column';
-      ticketId: TicketId;
-      workspaceDir?: string;
-      profileName?: string;
-    }
-  | {
-      /**
-       * Start a run. Routes through the same handleSubmit path the user's
-       * keyboard uses. `runOverrides` carries the orchestrator's intent for
-       * THIS run (supervisor prompt to inject, approval policy) atomically
-       * with the dispatch — the column merges these on top of its locally
-       * owned variables (`client_tools`, `workspace_root`) without having to
-       * read steady-state autopilot mode (which would race with the dispatch).
-       *
-       * For user-initiated submits, `runOverrides` is undefined and the
-       * column derives variables from steady-state `ticket.autopilot`.
-       */
-      kind: 'run';
-      ticketId: TicketId;
-      prompt: string;
-      runOverrides?: RunOverrides;
-    }
-  | {
-      /**
-       * Start an autopilot ``/goal`` loop on this ticket's session. The
-       * agent-side ``goal`` server function (in omni-code) owns the loop:
-       * it installs the periodic tick, drives continuation prompts, and
-       * stops when the agent calls ``goal_complete`` or when the launcher
-       * issues a ``goal-stop``. Launcher subscribes to ``goal-update``
-       * events to mirror snapshot state into the ticket record.
-       */
-      kind: 'goal-start';
-      ticketId: TicketId;
-      prompt: string;
-      maxTurns?: number;
-      tickInterval?: number;
-      runOverrides?: RunOverrides;
-    }
-  | {
-      /** Cancel the running ``/goal`` loop on this ticket's session. */
-      kind: 'goal-stop';
-      ticketId: TicketId;
-    }
-  | { kind: 'send'; ticketId: TicketId; message: string }
-  | { kind: 'stop'; ticketId: TicketId }
-  | {
-      /** Stop current run and mint a fresh session id on the column. */
-      kind: 'reset';
-      ticketId: TicketId;
-    }
-  | { kind: 'dispose'; ticketId: TicketId };
-
-export type GoalSnapshotPayload = {
-  goal: string;
-  turn: number;
-  max_turns: number;
-  tick_interval?: number;
-  last_reason: string | null;
-  status: 'active' | 'completed' | 'cancelled';
-  started_at: number;
-  completion_reason: string | null;
-};
-
-export type SupervisorBridgeEvent =
-  | { kind: 'run-started'; ticketId: TicketId; runId: string }
-  | { kind: 'run-end'; ticketId: TicketId; reason: string }
-  | {
-      kind: 'message';
-      ticketId: TicketId;
-      content: string;
-      role?: 'user' | 'assistant';
-      toolName?: string;
-    }
-  | { kind: 'token-usage'; ticketId: TicketId; usage: TokenUsage }
-  | { kind: 'disconnected'; ticketId: TicketId }
-  | {
-      /**
-       * Forwarded ``ui.goal.update`` snapshot from the omniagents ``/goal``
-       * loop. ``snapshot`` is null when no goal is set on the session
-       * (terminal cleanup). The orchestrator maps this onto ticket phase.
-       */
-      kind: 'goal-update';
-      ticketId: TicketId;
-      snapshot: GoalSnapshotPayload | null;
-    }
-  | {
-      /**
-       * Forwarded plan (`tasks_snapshot`) update from the column's session.
-       * The orchestrator persists non-empty snapshots to the ticket's
-       * `lastPlanSnapshot`. `null` means the session currently has no
-       * canonical plan — which every fresh session reports before the agent
-       * (re)creates its plan — so it carries no information and is ignored;
-       * clearing happens at ticket settlement instead.
-       */
-      kind: 'plan-update';
-      ticketId: TicketId;
-      snapshot: PlanSnapshotEntry[] | null;
-    };
-
-type SupervisorIpcEvents = Namespaced<
-  'supervisor',
-  {
-    /** Renderer reports the result of a bridge request issued by main. */
-    'dispatch-result': (requestId: string, ok: boolean, result?: { runId?: string }, error?: string) => void;
-    /** Renderer forwards a sandbox run event so main's orchestrator can react. */
-    event: (event: SupervisorBridgeEvent) => void;
-  }
->;
-
-/**
- * Routine bridge — same column-ownership model as the supervisor bridge, but
- * for scheduled tasks (Routines). When a routine fires, main asks the renderer
+ * Routine bridge for scheduled tasks (Routines). When a routine fires, main asks the renderer
  * to ensure a Code column exists for the run and to start a single run on that
  * column's live session, so the conversation streams into the visible UI
  * exactly like a user-driven session. Main only orchestrates (history, status,
  * toasts) by observing the forwarded run/approval events — it never opens its
- * own socket into the sandbox.
+ * own socket into omni serve.
  */
 export type RoutineBridgeRequest =
   | {
@@ -3802,26 +1528,13 @@ export type RoutineBridgeRequest =
   | { kind: 'stop'; taskId: string }
   | { kind: 'dispose'; taskId: string };
 
-export type RoutineApprovalRequest = {
-  kind: 'function' | 'mcp';
-  toolName?: string;
-  serverLabel?: string;
-};
-
-export type RoutineBridgeEvent =
-  | { kind: 'run-started'; taskId: string; runId: string }
-  | { kind: 'run-end'; taskId: string; reason: string }
-  | { kind: 'approval-requested'; taskId: string; approval: RoutineApprovalRequest }
-  | { kind: 'approval-resolved'; taskId: string }
-  | { kind: 'disconnected'; taskId: string };
-
 type RoutineIpcEvents = Namespaced<
   'routine',
   {
     /** Renderer reports the result of a routine bridge request issued by main. */
     'dispatch-result': (requestId: string, ok: boolean, result?: { runId?: string }, error?: string) => void;
     /** Renderer forwards a routine run/approval event so main can update history. */
-    event: (event: RoutineBridgeEvent) => void;
+    event: (event: RoutineEvent) => void;
     /**
      * Renderer announces its dispatch listener is wired. Main queues
      * `routine:dispatch` sends until this arrives — at boot the manager can
@@ -3840,217 +1553,6 @@ type RoutineIpcEvents = Namespaced<
 >;
 
 /**
- * Platform API. Main process handles these events, renderer process invokes them.
- * Only functional in enterprise builds (OMNI_PLATFORM_URL set at build time).
- */
-export type PlatformDashboard = {
-  resource_id: number;
-  name: string;
-  dashboard_id: string;
-  workspace_url: string;
-  widget_count: number;
-  embed_url: string;
-};
-
-type PlatformIpcEvents = Namespaced<
-  'platform',
-  {
-    /** Returns true if this is an enterprise build with a baked-in platform URL. */
-    'is-enterprise': () => boolean;
-    /** Returns current auth state. */
-    'get-auth': () => PlatformCredentials | null;
-    /** Initiates device code flow. Returns user_code + verification_uri for user to open. */
-    'sign-in': () => { userCode: string; verificationUri: string; message: string };
-    /** Signs out — clears stored credentials. */
-    'sign-out': () => void;
-    /** Fetch entitled dashboards from platform policy. */
-    'get-dashboards': () => PlatformDashboard[];
-  }
->;
-
-/**
- * Milestone API. Main process handles these events, renderer process invokes them.
- */
-type MilestoneIpcEvents = Namespaced<
-  'milestone',
-  {
-    'get-items': (projectId: ProjectId) => Milestone[];
-    'add-item': (item: Omit<Milestone, 'id' | 'createdAt' | 'updatedAt'>) => Milestone;
-    'update-item': (id: MilestoneId, patch: Partial<Omit<Milestone, 'id' | 'projectId' | 'createdAt'>>) => void;
-    'remove-item': (id: MilestoneId) => void;
-  }
->;
-
-/**
- * Page API. Main process handles these events, renderer process invokes them.
- */
-type PageIpcEvents = Namespaced<
-  'page',
-  {
-    'get-items': (projectId: ProjectId) => Page[];
-    /** All pages across all projects. Used by the global Inbox view. */
-    'get-all': () => Page[];
-    /** Create a new page. Optional `template` seeds the body with starter content. */
-    'add-item': (
-      item: Omit<Page, 'id' | 'createdAt' | 'updatedAt'>,
-      template?: import('@/lib/page-templates').TemplateKey
-    ) => Page;
-    'update-item': (id: PageId, patch: Partial<Omit<Page, 'id' | 'projectId' | 'createdAt'>>) => void;
-    'remove-item': (id: PageId) => void;
-    'read-content': (pageId: PageId) => string;
-    'write-content': (pageId: PageId, content: string) => void;
-    reorder: (pageId: PageId, newParentId: PageId | null, newSortOrder: number) => void;
-    /** Subscribe to external-edit notifications for a page's file. Returns the current on-disk content. */
-    watch: (pageId: PageId) => { content: string } | null;
-    /** Unsubscribe from external-edit notifications. */
-    unwatch: (pageId: PageId) => void;
-    /**
-     * Resolve a notebook page to its on-disk `.py` absolute path and the
-     * containing project directory (used as the cwd for the marimo extension
-     * instance). Returns null if the page isn't a notebook.
-     */
-    'get-notebook-paths': (pageId: PageId) => { filePath: string; projectDir: string } | null;
-    /** Prepare the notebook's marimo configuration before launch. */
-    'prepare-notebook': (pageId: PageId) => void;
-  }
->;
-
-/**
- * One-shot migration notice IPC. The Task #18 pages-relocation migration
- * records its summary into the store on boot; the renderer reads it to
- * show a dismissible notice, then either acknowledges or runs cleanup
- * (which `rm -rf`s the legacy paths and clears the notice in one step).
- */
-type MigrationIpcEvents = Namespaced<
-  'migration',
-  {
-    /** Read the current notice state. Null = nothing to show. */
-    'get-pages-state': () => PagesMigrationState | null;
-    /** Mark the notice dismissed without touching legacy files. */
-    'acknowledge-pages': () => void;
-    /**
-     * Delete the recorded legacy directories/files and clear the notice.
-     * Returns the count actually removed (paths that no longer exist are
-     * skipped silently). Idempotent.
-     */
-    'cleanup-legacy-pages': () => { removed: number };
-  }
->;
-
-/**
- * Inbox API. Renderer invokes, main handles. The inbox is a global capture
- * surface (items can be projectless) backed by electron-store. Its lifecycle
- * is: new → promoted (to ticket/project) or deferred.
- */
-type InboxIpcEvents = Namespaced<
-  'inbox',
-  {
-    /** All inbox items including promoted tombstones. */
-    'get-all': () => InboxItem[];
-    /** Active view: status !== 'later' and not promoted. */
-    'get-active': () => InboxItem[];
-    /** Create a new item. Defaults status to 'new'. */
-    add: (input: { title: string; note?: string; projectId?: ProjectId | null; attachments?: string[] }) => InboxItem;
-    /** Patch basic fields. Status transitions use the dedicated verbs below. */
-    update: (id: InboxItemId, patch: Partial<Pick<InboxItem, 'title' | 'note' | 'projectId' | 'attachments'>>) => void;
-    /** Hard delete. Use sparingly — prefer defer/promote for audit trail. */
-    remove: (id: InboxItemId) => void;
-    /** Move to 'later'. Stamps `laterAt`. */
-    defer: (id: InboxItemId) => void;
-    /** Move out of 'later' back to 'new'. Clears `laterAt`. */
-    reactivate: (id: InboxItemId) => void;
-    /**
-     * Promote to a ticket. Requires projectId. Seeds the ticket's title and
-     * description from the inbox item. Stamps `promotedTo` on the inbox item
-     * so it disappears from active views but stays as a tombstone for
-     * undo/audit.
-     */
-    'promote-to-ticket': (
-      id: InboxItemId,
-      opts: { projectId: ProjectId; milestoneId?: MilestoneId; columnId?: ColumnId }
-    ) => Ticket;
-    /**
-     * Promote to a new project. Seeds the project's label. Stamps
-     * `promotedTo`.
-     */
-    'promote-to-project': (id: InboxItemId, opts: { label: string }) => Project;
-    /** Manually trigger the expiry sweep. Returns number of items flipped to later. */
-    sweep: () => number;
-    /**
-     * GC promoted tombstones older than 30d. Returns number removed.
-     * Called on a schedule; exposed for manual triggering in tests/tools.
-     */
-    'gc-promoted': () => number;
-  }
->;
-
-// ---------------------------------------------------------------------------
-// Workspace sync types
-// ---------------------------------------------------------------------------
-
-export type WorkspaceSyncState = 'stopped' | 'starting' | 'syncing' | 'watching' | 'error';
-
-export type WorkspaceSyncStatus = {
-  state: WorkspaceSyncState;
-  /** Files uploaded since sync started. */
-  filesUploaded: number;
-  /** Files downloaded since sync started. */
-  filesDownloaded: number;
-  /** Timestamp of the last completed sync operation. */
-  lastSyncAt: number | null;
-  /** Human-readable error (only when state === 'error'). */
-  error?: string;
-  /** Progress of the current batch operation (if any). */
-  progress?: {
-    /** What we're doing right now. */
-    phase: 'uploading' | 'downloading' | 'reconciling';
-    /** Total files in the current batch. */
-    totalFiles: number;
-    /** Files completed so far. */
-    completedFiles: number;
-    /** Observed bytes per second (smoothed). */
-    bytesPerSecond: number;
-    /** Estimated seconds remaining (null if unknown). */
-    etaSeconds: number | null;
-    /** Timestamp when this batch started. */
-    startedAt: number;
-  };
-};
-
-/**
- * Extension API. Built-in (and eventually user-managed) external tools the
- * launcher orchestrates as local subprocesses. Marimo is the seed consumer.
- *
- * Instances are scoped to a working directory (typically a project folder)
- * and refcounted — multiple webview surfaces sharing the same cwd reuse a
- * single subprocess. See `src/main/extension-manager.ts` for the lifecycle.
- */
-type ExtensionIpcEvents = Namespaced<
-  'extension',
-  {
-    'list-descriptors': () => ExtensionDescriptor[];
-    'set-enabled': (id: string, enabled: boolean) => void;
-    'get-instance-status': (id: string, cwd: string) => ExtensionInstanceState;
-    'ensure-instance': (id: string, cwd: string) => ExtensionEnsureResult;
-    'release-instance': (id: string, cwd: string) => void;
-    'get-logs': (id: string, cwd: string) => string;
-  }
->;
-
-/**
- * Workspace sync IPC events. Renderer invokes, main handles.
- */
-type WorkspaceSyncIpcEvents = Namespaced<
-  'workspace-sync',
-  {
-    start: (projectId: string, workspaceDir: string) => void;
-    stop: (projectId: string) => void;
-    'get-status': (projectId: string) => WorkspaceSyncStatus;
-    'get-share-name': (projectId: string) => string | null;
-  }
->;
-
-/**
  * App-control events. Renderer registers every live `<Webview>` with main so
  * agents can drive them via client tools (list_apps, app_click, app_snapshot,
  * ...). See `src/shared/app-control-types.ts` for payload shapes.
@@ -4064,16 +1566,12 @@ type AppControlIpcEvents = Namespaced<
       patch: Partial<import('@/shared/app-control-types').AppRegistrationPayload>
     ) => void;
     unregister: (handleId: import('@/shared/app-control-types').AppHandleId) => void;
-    list: () => import('@/shared/app-control-types').LiveAppSnapshot[];
     navigate: (handleId: import('@/shared/app-control-types').AppHandleId, url: string) => void;
     reload: (handleId: import('@/shared/app-control-types').AppHandleId) => void;
     back: (handleId: import('@/shared/app-control-types').AppHandleId) => void;
     forward: (handleId: import('@/shared/app-control-types').AppHandleId) => void;
     eval: (handleId: import('@/shared/app-control-types').AppHandleId, code: string) => unknown;
-    screenshot: (
-      handleId: import('@/shared/app-control-types').AppHandleId,
-      options?: import('@/shared/app-control-types').AppScreenshotOptions
-    ) => string;
+    screenshot: (handleId: import('@/shared/app-control-types').AppHandleId) => string;
     console: (
       handleId: import('@/shared/app-control-types').AppHandleId,
       options?: { minLevel?: import('@/shared/app-control-types').AppConsoleLevel; clear?: boolean }
@@ -4103,7 +1601,6 @@ type AppControlIpcEvents = Namespaced<
       query: string,
       options?: { caseSensitive?: boolean; forward?: boolean; findNext?: boolean }
     ) => { matches: number; activeOrdinal: number };
-    'stop-find': (handleId: import('@/shared/app-control-types').AppHandleId) => void;
     'wait-for': (
       handleId: import('@/shared/app-control-types').AppHandleId,
       options: { selector?: string; urlIncludes?: string; networkIdle?: boolean; timeoutMs?: number }
@@ -4115,17 +1612,10 @@ type AppControlIpcEvents = Namespaced<
     ) => import('@/main/app-control-cdp').NetworkLogEntry[];
     pdf: (
       handleId: import('@/shared/app-control-types').AppHandleId,
-      options?: { artifactsSubdir?: string; landscape?: boolean; printBackground?: boolean }
+      options?: { landscape?: boolean; printBackground?: boolean }
     ) => string;
-    'full-screenshot': (
-      handleId: import('@/shared/app-control-types').AppHandleId,
-      options?: import('@/shared/app-control-types').AppScreenshotOptions
-    ) => string;
-    'element-screenshot': (
-      handleId: import('@/shared/app-control-types').AppHandleId,
-      ref: string,
-      options?: import('@/shared/app-control-types').AppScreenshotOptions
-    ) => string;
+    'full-screenshot': (handleId: import('@/shared/app-control-types').AppHandleId) => string;
+    'element-screenshot': (handleId: import('@/shared/app-control-types').AppHandleId, ref: string) => string;
     'set-viewport': (
       handleId: import('@/shared/app-control-types').AppHandleId,
       options: { width: number; height: number; deviceScaleFactor?: number; mobile?: boolean } | { clear: true }
@@ -4262,148 +1752,46 @@ export type BrowserDownloadEntry = {
 };
 
 /**
- * Sandbox management IPC (Sandboxes tab). Profile discovery reads bundled +
- * user YAMLs from disk; container channels shell out to docker with the same
- * env resolution as the orphan sweep. Registered in both shells
- * (`src/main/index.ts` and `src/server/managers.ts` wireGlobalHandlers).
- */
-type SandboxIpcEvents = Namespaced<
-  'sandbox',
-  {
-    'list-profiles': () => ProfileSummary[];
-    /** Raw YAML for the read-only detail view; null for the implicit host profile (no file). */
-    'read-profile': (name: string) => { yaml: string } | null;
-    /** Copy the resolved bundled YAML to `<config>/sandbox/<name>.yml`. Throws if the override exists or the profile is implicit. */
-    'create-override': (name: string) => { path: string };
-    'list-containers': () => SandboxContainerSummary[];
-    /** Force-remove a container. Throws (with the owner label) when the id is protected. */
-    'remove-container': (id: string) => void;
-    /** Run the orphan cleanup pass on demand. */
-    'sweep-orphans': () => { removed: string[] };
-    'substrate-status': () => SandboxSubstrateStatus;
-    /**
-     * Overwrite a profile YAML. Only file-backed profiles are writable
-     * (`origin: 'user-override'` or user-created — never the implicit host);
-     * builtin-origin profiles must go through `create-override` first. The
-     * YAML is parse-validated (and must contain a `client.type` string)
-     * before the write; invalid input throws without touching the file.
-     */
-    'write-profile': (name: string, yaml: string) => void;
-    /** Workspace snapshot tars (`<config>/snapshots/*.tar`) for the browser UI. */
-    'list-snapshots': () => SandboxSnapshotSummary[];
-    /** Tail of `docker logs` for one labeled container (both streams, capped). */
-    'container-logs': (id: string, tailLines: number) => { logs: string };
-    /** Presence/size of the devbox (or given) image on the backend's dockerd. */
-    'image-status': (image: string) => SandboxImageStatus;
-    /** `docker pull <image>` — resolves when the pull completes (may take minutes). */
-    'pull-image': (image: string) => void;
-    /** `docker image prune -f` (dangling only). Returns reclaimed byte count when docker reports it. */
-    'prune-images': () => { reclaimedBytes: number | null };
-  }
->;
-
-/** One workspace snapshot tar under `<config>/snapshots/`. */
-export type SandboxSnapshotSummary = {
-  /** Workspace snapshot reference — the tar's filename stem. */
-  snapshotRef: string;
-  sizeBytes: number;
-  /** mtime, epoch ms. */
-  modifiedAt: number;
-  /** True when an open code tab still claims this Workspace snapshot. */
-  inUse: boolean;
-  /** Human label when the owning tab (or an archived conversation's title)
-   *  is known; else null. */
-  label: string | null;
-};
-
-export type SandboxImageStatus = {
-  /** Image reference that was queried (as passed in). */
-  image: string;
-  present: boolean;
-  /** Local image size in bytes when present. */
-  sizeBytes: number | null;
-};
-
-/**
  * Intersection of all the events that the renderer can invoke and main process can handle.
  */
-type UserGoalsIpcEvents = Namespaced<
-  'user_goals',
+type ScheduledTaskIpcEvents = Namespaced<
+  'scheduled-task',
   {
-    list: () => import('./user-goals').UserGoal[];
-    command: (command: import('./user-goals').UserGoalCommand) => import('./user-goals').UserGoal;
+    list: () => ScheduledTask[];
+    create: (input: ScheduledTaskInput) => ScheduledTask;
+    update: (taskId: string, patch: ScheduledTaskUpdate) => ScheduledTask;
+    delete: (taskId: string) => void;
+    'run-now': (taskId: string) => ScheduledTask;
+    'allow-tool': (taskId: string, toolName: string) => ScheduledTask;
+    'revoke-tool': (taskId: string, toolName: string) => ScheduledTask;
+    'allow-mcp-tool': (taskId: string, tool: ScheduledTaskAllowedMcpTool) => ScheduledTask;
+    'revoke-mcp-tool': (taskId: string, tool: ScheduledTaskAllowedMcpTool) => ScheduledTask;
   }
 >;
 
-type UserProfileIpcEvents = Namespaced<
-  'user_profile',
-  {
-    get: () => import('./user-profile').UserProfile;
-    set: (profile: { roles: string[]; roleNote?: string }) => import('./user-profile').UserProfile;
-  }
->;
-
-type UserPrimaryAgentIpcEvents = Namespaced<
-  'user_primary_agent',
-  {
-    get: () => string | null;
-    /** Pins `agentId` (a roster id) or clears with null. Returns what is now pinned. */
-    set: (agentId: string | null) => string | null;
-  }
->;
-
-type UserIdeasIpcEvents = Namespaced<
-  'user_ideas',
-  {
-    list: () => import('./user-ideas').UserIdea[];
-    command: (command: import('./user-ideas').UserIdeaCommand) => import('./user-ideas').UserIdea;
-  }
->;
-
-export type IpcEvents = UserProfileIpcEvents &
-  UserPrimaryAgentIpcEvents &
-  UserIdeasIpcEvents &
-  UserGoalsIpcEvents &
-  MainProcessIpcEvents &
+export type IpcEvents = MainProcessIpcEvents &
   OmniInstallProcessIpcEvents &
   VoiceIpcEvents &
   AgentProcessIpcEvents &
   ManagementRuntimeIpcEvents &
-  SnapshotIpcEvents &
   UtilIpcEvents &
   TerminalIpcEvents &
   StoreIpcEvents &
   ScheduledTaskIpcEvents &
-  AutomationIpcEvents &
   ConfigIpcEvents &
   CodexIpcEvents &
-  CloudIpcEvents &
   WslIpcEvents &
   ServerIpcEvents &
-  MachineIpcEvents &
-  ReverseRpcIpcEvents &
+  RemoteBackendIpcEvents &
   SettingsConfigIpcEvents &
   GitCredentialIpcEvents &
-  TeamIpcEvents &
-  TeamSettingsIpcEvents &
   GithubIpcEvents &
   AzureIpcEvents &
   SkillsIpcEvents &
   ProjectIpcEvents &
-  MilestoneIpcEvents &
-  PageIpcEvents &
-  InboxIpcEvents &
-  MigrationIpcEvents &
-  PlatformIpcEvents &
-  ExtensionIpcEvents &
-  WorkspaceSyncIpcEvents &
   AppControlIpcEvents &
   BrowserIpcEvents &
-  SupervisorIpcEvents &
-  RoutineIpcEvents &
-  ResidentIpcEvents &
-  ChatIpcEvents &
-  SandboxIpcEvents;
+  RoutineIpcEvents;
 
 /**
  * Store events. Main process emits these events, renderer process listens to them.
@@ -4440,7 +1828,6 @@ type OmniInstallProcessIpcRendererEvents = Namespaced<
   'omni-install-process',
   {
     status: [WithTimestamp<OmniInstallProcessStatus>];
-    log: [WithTimestamp<LogEntry>];
     'raw-output': [string];
   }
 >;
@@ -4468,16 +1855,6 @@ type AgentProcessIpcRendererEvents = Namespaced<
 >;
 
 /**
- * Dev events. Main process emits these events, renderer process listens to them.
- */
-type DevIpcRendererEvents = Namespaced<
-  'dev',
-  {
-    'console-log': [unknown];
-  }
->;
-
-/**
  * Toast notification level and payload pushed from main to renderer.
  */
 export type ToastPayload = {
@@ -4497,80 +1874,8 @@ type ToastIpcRendererEvents = Namespaced<
 >;
 
 /**
- * Project events. Main process emits these events, renderer process listens to them.
- */
-type ProjectIpcRendererEvents = Namespaced<
-  'project',
-  {
-    'task-status': [TaskId, WithTimestamp<AgentProcessStatus>];
-    'task-session': [TaskId, string];
-    phase: [TicketId, import('@/shared/ticket-phase').TicketPhase];
-    'supervisor-message': [TicketId, SessionMessage];
-    'token-usage': [TicketId, TokenUsage];
-  }
->;
-
-/**
- * Platform events. Main process emits these events, renderer process listens to them.
- */
-/**
- * Page content events. Main process emits when a watched page file changes on
- * disk due to an external edit (e.g. the user edited a page in their IDE, or
- * an MCP client like Claude Desktop wrote into `<config>/pages/<projectId>/`).
- */
-type PageIpcRendererEvents = Namespaced<
-  'page',
-  {
-    'content-changed': [PageId, string];
-    'content-deleted': [PageId];
-  }
->;
-
-type PlatformIpcRendererEvents = Namespaced<
-  'platform',
-  {
-    /** Emitted when auth state changes (sign in / sign out / token refresh). */
-    'auth-changed': [PlatformCredentials | null];
-  }
->;
-
-/**
- * Extension events. Main process emits these, renderer listens. Status
- * updates fire on every state transition (idle → starting → running → idle/error)
- * for a given (extensionId, cwd) instance.
- */
-type ExtensionIpcRendererEvents = Namespaced<
-  'extension',
-  {
-    'status-changed': [string, string, ExtensionInstanceState];
-  }
->;
-
-/**
- * Workspace sync events. Main process emits these, renderer listens.
- */
-type WorkspaceSyncIpcRendererEvents = Namespaced<
-  'workspace-sync',
-  {
-    'status-changed': [string, WorkspaceSyncStatus];
-  }
->;
-
-/**
- * Supervisor bridge — main → renderer. Main issues commands to the column
- * actor. Tool calls / approvals never round-trip through main; the column's
- * `buildClientToolHandler` handles them directly.
- */
-type SupervisorIpcRendererEvents = Namespaced<
-  'supervisor',
-  {
-    dispatch: [string, SupervisorBridgeRequest];
-  }
->;
-
-/**
  * Routine bridge — main → renderer. Main issues commands to the routine column
- * actor (ensure the column, start a run). Mirrors the supervisor bridge: tool
+ * actor (ensure the column, start a run). Tool
  * calls / approvals are handled by the column itself, never round-tripped
  * through main.
  */
@@ -4580,36 +1885,6 @@ type RoutineIpcRendererEvents = Namespaced<
     dispatch: [string, RoutineBridgeRequest];
   }
 >;
-
-/**
- * Resident-agent events. Main broadcasts the full runtime snapshot on any
- * change (roster scale is small); `attention` surfaces headless-run
- * incidents (declined approvals, failed deliveries) as one-line notices.
- */
-type ResidentIpcRendererEvents = Namespaced<
-  'resident',
-  {
-    status: [Record<string, ResidentAgentRuntime>];
-    attention: [{ agentId: string; message: string; at: number }];
-    /**
-     * A superuser resident called a workspace/column client tool. The
-     * renderer runs it through the superuser tool handler and answers on
-     * `resident:workspace-tool-result` with the same `requestId`.
-     */
-    'workspace-tool': [{ requestId: string; agentId: string; tool: string; args: Record<string, unknown> }];
-  }
->;
-
-/**
- * chat-v1 notifications on the internal binding — only the two the renderer
- * needs now that chat data left the store snapshot. Presence, attention, and
- * roster changes keep their `resident:*` / `store:changed` events internally;
- * the /ws/chat endpoint maps all five from the manager's chat-event stream.
- */
-type ChatIpcRendererEvents = {
-  'chat.message_added': [ChatNotificationMap['chat.message_added']];
-  'chat.channel_changed': [ChatNotificationMap['chat.channel_changed']];
-};
 
 /**
  * Browser events. Main process emits a full-state snapshot whenever any
@@ -4640,59 +1915,17 @@ type GithubIpcRendererEvents = Namespaced<'github', { 'device-code': [GithubDevi
 /** Main→renderer: the device-flow user code to display while `codex:link` polls. */
 type CodexIpcRendererEvents = Namespaced<'codex', { 'device-code': [CodexDeviceCode] }>;
 
-/** Main→renderer: the AAD device-code to display while `cloud:link` polls. */
-type CloudIpcRendererEvents = Namespaced<'cloud', { 'device-code': [CloudDeviceCode] }>;
-
-/** Main→renderer: WslBackendManager status pushes (Windows only). Broadcast
- *  on every state transition so the settings card tracks the daemon live. */
-type WslIpcRendererEvents = Namespaced<'wsl', { 'status-changed': [WslBackendStatus] }>;
-
-/**
- * Main→renderer: pushed by the cloud whenever a principal's machine list
- * changes (registration, label edit, removal, online/offline). The renderer
- * mirrors it into a nanostore so the picker and Settings card refresh in
- * place without polling.
- */
-type MachineIpcRendererEvents = Namespaced<'machine', { 'list-changed': [MachineSummary[]] }>;
-
-/**
- * Main → renderer (cloud-linked Electron only): an inbound tunnel frame from
- * local omni-serve that the cloud expects on its `tunnel:incoming` WS
- * channel. The renderer's tunnel bridge re-emits it onto the cloud WS via
- * `emitter.invoke('tunnel:incoming', event)`. No-op outside cloud-linked
- * mode (the listener is never attached).
- */
-type TunnelIpcRendererEvents = Namespaced<
-  'tunnel',
-  {
-    'emit-incoming': [{ tunnelId: string; dataBase64: string; binary: boolean; close?: boolean }];
-  }
->;
-
 export type IpcRendererEvents = TerminalIpcRendererEvents &
   GithubIpcRendererEvents &
   CodexIpcRendererEvents &
-  CloudIpcRendererEvents &
-  WslIpcRendererEvents &
-  MachineIpcRendererEvents &
-  TunnelIpcRendererEvents &
   MainProcessIpcRendererEvents &
   OmniInstallProcessIpcRendererEvents &
   VoiceIpcRendererEvents &
   AgentProcessIpcRendererEvents &
-  DevIpcRendererEvents &
   StoreIpcRendererEvents &
-  ProjectIpcRendererEvents &
-  PageIpcRendererEvents &
   ToastIpcRendererEvents &
-  PlatformIpcRendererEvents &
-  ExtensionIpcRendererEvents &
-  WorkspaceSyncIpcRendererEvents &
   BrowserIpcRendererEvents &
-  SupervisorIpcRendererEvents &
-  RoutineIpcRendererEvents &
-  ResidentIpcRendererEvents &
-  ChatIpcRendererEvents;
+  RoutineIpcRendererEvents;
 
 // #region Config file types
 
@@ -4705,7 +1938,6 @@ export type ModelEntry = {
   reasoning?: ReasoningEffort;
   max_input_tokens?: number;
   max_output_tokens?: number;
-  api_key?: string;
   model_settings?: Record<string, unknown>;
 };
 
@@ -4732,6 +1964,7 @@ export type ProviderEntry = {
   api_key?: string;
   base_url?: string;
   api_version?: string;
+  routing_prefix?: string;
   use_responses?: boolean;
   use_responses_websocket?: boolean;
   models: Record<string, ModelEntry>;
@@ -4739,6 +1972,7 @@ export type ProviderEntry = {
 
 export type ModelsConfig = {
   version: 3;
+  provider_scope_version?: 1;
   default: string | null;
   voice_default: string | null;
   providers: Record<string, ProviderEntry>;
@@ -4773,18 +2007,6 @@ export type McpServerEntry = {
 
 export type McpConfig = {
   mcpServers: Record<string, McpServerEntry>;
-};
-
-/**
- * Sandbox egress policy (`network.json`). `enabled` turns the iptables
- * allowlist on; `allowlist` is the host/CIDR list (presets expand into it).
- * Enforced by omni serve at container bring-up — these two fields are the
- * entire consumed surface.
- */
-export type NetworkConfig = {
-  enabled: boolean;
-  presets: string[];
-  allowlist: string[];
 };
 
 // #endregion

@@ -5,26 +5,20 @@ import { BlockList, isIPv4, isIPv6 } from 'node:net';
 import fastifyStatic from '@fastify/static';
 import fastifyWebsocket from '@fastify/websocket';
 import Fastify from 'fastify';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 
 // Server mode always runs as "development" so util.ts resolves paths from project root
 process.env.NODE_ENV = process.env.NODE_ENV || 'development';
 
-import type { IncomingHttpHeaders } from 'node:http';
+import { uuidv4 } from '@omniagents/client/util/uuid';
 
-import { uuidv4 } from '@/lib/uuid';
-import { isEnterpriseBuild } from '@/main/platform-mode';
-import { registerChatWsRoute } from '@/server/chat-ws';
-import { CODEX_REFRESH_PATH, registerCodexRefreshRoute } from '@/server/codex-refresh-http';
-import { setupLocalTunnelProxy } from '@/server/local-tunnel-proxy';
 import { wireClientManagers, wireGlobalHandlers } from '@/server/managers';
-import { MCP_PROJECTS_PATH, registerMcpHttpRoute } from '@/server/mcp-http';
 import { redactProxyUrlForLog, setupProxyRewriter } from '@/server/proxy-rewriter';
-import { resolveRuntimeTokenSecret, signRuntimeToken, verifyRuntimeToken } from '@/server/runtime-token';
 import { ServerStore } from '@/server/store';
 import { registerVoiceRoutes, VOICE_HTTP_PREFIX } from '@/server/voice-http';
-import { DEFAULT_TENANT, WsHandler } from '@/server/ws-handler';
+import { WsHandler } from '@/server/ws-handler';
+import { resolveWsTokenSecret, signWsToken, verifyWsToken } from '@/server/ws-token';
 
 // Process-level crash visibility. Log only — do not exit. The server
 // process is typically managed externally (systemd, pm2, docker), so
@@ -39,60 +33,6 @@ process.on('uncaughtException', (err) => {
 
 const PORT = parseInt(process.env['PORT'] ?? '3001', 10);
 const HOST = process.env['HOST'] ?? '0.0.0.0';
-
-/**
- * When OMNI_AUTH_MODE=easyauth, the server runs behind Azure App Service
- * EasyAuth, which terminates authentication at the platform edge and injects
- * `X-MS-Client-Principal-*` headers it strips from inbound spoofing attempts.
- * In that mode we trust the principal id as the tenant. In every other mode
- * (loopback / Tailscale / dev) the server is single-tenant and the principal
- * headers are ignored — a client could otherwise forge them.
- */
-const IS_EASYAUTH = (process.env['OMNI_AUTH_MODE'] ?? '') === 'easyauth';
-
-/**
- * Resolve the authenticated tenant for a request. Returns null only in
- * easyauth mode when the principal header is missing (misconfiguration or an
- * unauthenticated request that slipped past the edge) — callers reject those.
- */
-function resolveTenantId(headers: IncomingHttpHeaders): string | null {
-  if (!IS_EASYAUTH) {
-    return DEFAULT_TENANT;
-  }
-  const principalId = headers['x-ms-client-principal-id'];
-  if (typeof principalId === 'string' && principalId.trim()) {
-    return principalId.trim();
-  }
-  return null;
-}
-
-/**
- * Best-effort profile claims for the `users` table, from the EasyAuth headers
- * the edge injects: `x-ms-client-principal-name` (UPN/email), `-idp`, and the
- * base64 `x-ms-client-principal` claims blob (parsed for a display name).
- */
-function principalClaims(headers: IncomingHttpHeaders): { email?: string; displayName?: string; idp?: string } {
-  const str = (v: string | string[] | undefined): string | undefined =>
-    typeof v === 'string' && v.trim() ? v.trim() : undefined;
-  const email = str(headers['x-ms-client-principal-name']);
-  const idp = str(headers['x-ms-client-principal-idp']);
-  let displayName: string | undefined;
-  const blob = str(headers['x-ms-client-principal']);
-  if (blob) {
-    try {
-      const decoded = JSON.parse(Buffer.from(blob, 'base64').toString('utf-8')) as {
-        claims?: Array<{ typ?: string; val?: string }>;
-      };
-      const nameClaim = decoded.claims?.find(
-        (c) => c.typ === 'name' || c.typ === 'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name'
-      );
-      displayName = nameClaim?.val;
-    } catch {
-      // malformed blob — fall back to email-derived name
-    }
-  }
-  return { email, idp, displayName: displayName ?? email };
-}
 
 /**
  * Build the allowlist for /api/ws-token. Loopback is always trusted; additional
@@ -156,25 +96,15 @@ const main = async () => {
     },
   });
 
-  // Hoisted from wireGlobalHandlers so /api/ws-token + /ws can both reach it.
   // Tokens minted at /api/ws-token are signed with this secret and verified
-  // at /ws (which is excluded from EasyAuth, so the token IS the credential).
-  const runtimeTokenSecret = resolveRuntimeTokenSecret();
+  // at /ws and /ws/chat.
+  const wsTokenSecret = resolveWsTokenSecret();
 
   const tokenAllowList = buildTokenAllowList();
   console.log(`[auth] /api/ws-token trusted networks: ${tokenAllowList.describe()}`);
 
   // WebSocket plugin
   await fastify.register(fastifyWebsocket);
-
-  // Liveness probe — unauthenticated, no I/O. App Service pings this
-  // (healthCheckPath=/healthz, excluded from EasyAuth in main.bicep). Kept a
-  // pure liveness check on purpose: a readiness probe that touched Postgres
-  // would flap the instance out of rotation on a transient DB blip. /api and
-  // /ws gate themselves.
-  fastify.get('/healthz', (_req, reply) => {
-    reply.send({ status: 'ok' });
-  });
 
   // Readiness + version probe for locally-spawned daemons (WSL backend mode).
   // The Windows shell polls this after spawning the daemon and before creating
@@ -193,147 +123,36 @@ const main = async () => {
     reply.send({ ok: true, version });
   });
 
-  // Cloud-discovery endpoint — Electron clients fetch this after the user
-  // enters the launcher URL, then run the AAD device-code flow against the
-  // returned tenant + client id. Public on purpose (no secrets here; the
-  // values themselves are needed for sign-in to even start). ``name`` is a
-  // display string for the UI.
-  fastify.get('/.well-known/omni-cloud', (_req, reply) => {
-    const tenantId =
-      process.env['OMNI_AAD_TENANT_ID'] ??
-      // Fall back to parsing it out of the EasyAuth-injected issuer URL
-      // (``https://login.microsoftonline.com/<tenant>/v2.0``) if set.
-      process.env['OMNI_AAD_ISSUER']?.match(/microsoftonline\.com\/([^/]+)/)?.[1] ??
-      '';
-    const clientId = process.env['OMNI_AAD_CLIENT_ID'] ?? '';
-    if (!tenantId || !clientId) {
-      reply.code(503).send({ error: 'Cloud sign-in not configured on this launcher' });
-      return;
-    }
-    reply.send({
-      tenantId,
-      clientId,
-      name: process.env['OMNI_CLOUD_NAME'] ?? 'Omni Cloud',
-    });
-  });
-
   // Token endpoint — restricted to trusted networks (loopback by default;
   // extend via OMNI_TRUSTED_CIDRS, e.g. "100.64.0.0/10" for Tailscale).
-  // The returned token is signed (HMAC) and includes the caller's identity
-  // (from EasyAuth when present, else DEFAULT_TENANT). /ws bypasses EasyAuth
-  // and verifies this signature instead — see the wsRoutes registration.
+  // The returned token is signed (HMAC); /ws verifies the signature.
   fastify.get('/api/ws-token', (request, reply) => {
     const addr = request.socket.remoteAddress ?? '';
-    const principalId = resolveTenantId(request.headers);
-    const easyauthOk = IS_EASYAUTH && typeof request.headers['x-ms-client-principal-id'] === 'string';
-    if (!easyauthOk && !tokenAllowList.check(addr)) {
+    if (!tokenAllowList.check(addr)) {
       reply.code(403).send({ error: 'Forbidden' });
-      return;
-    }
-    if (principalId === null) {
-      reply.code(401).send({ error: 'Unauthorized' });
       return;
     }
     // Short TTL (5 min) — the renderer fetches a fresh one on each connect/
     // reconnect, so we don't need long-lived tokens floating around.
-    reply.send({
-      token: signRuntimeToken(
-        runtimeTokenSecret,
-        { purpose: 'launcher', tenantId: principalId, principalId, sessionId: uuidv4() },
-        5 * 60
-      ),
-    });
+    reply.send({ token: signWsToken(wsTokenSecret, { sessionId: uuidv4() }, 5 * 60) });
   });
 
   // WebSocket handler
   const wsHandler = new WsHandler();
   const store = new ServerStore();
 
-  // Set up reverse proxy URL rewriting for internal services (chat, sandbox, etc.).
-  // Share the ws-token allowlist so /proxy/_register honors OMNI_TRUSTED_CIDRS too.
-
   // Wire global (shared) IPC handlers — store, util, config, project, code, chat, sandbox, install
-  const {
-    cleanupGlobalManagers,
-    getProcessManager,
-    ensureTenantReady,
-    getTenantRepo,
-    getMcpContext,
-    teamsEnabled,
-    controlPlane,
-    ensureUserBootstrapped,
-    resolveActiveTeam,
-    pgSecret,
-    machineRegistry,
-    getResidentManager,
-  } = await wireGlobalHandlers({
+  const { cleanupGlobalManagers, processManager, clientConsoles } = await wireGlobalHandlers({
     wsHandler,
     store,
-    runtimeTokenSecret,
   });
-  setupProxyRewriter(
-    fastify,
-    wsHandler,
-    tokenAllowList.check,
-    teamsEnabled
-      ? async (scope) =>
-          Boolean(scope.principalId && (await controlPlane?.getMembershipRole(scope.tenantId, scope.principalId)))
-      : undefined
-  );
+  // Reverse proxy URL rewriting for internal services (chat, sandbox, etc.).
+  // Share the ws-token allowlist so /proxy/_register honors OMNI_TRUSTED_CIDRS too.
+  setupProxyRewriter(fastify, wsHandler, tokenAllowList.check);
 
-  // Cloud-relayed tunnel routes for computer-as-sandbox (Phase 3). The route
-  // is `/proxy/local/:machineId/:sessionId/*` and bytes flow over the
-  // already-authenticated WS via `compute:tunnel-*` reverse-RPCs. No-op
-  // when no machine registry exists (e.g. SQLite single-tenant mode).
-  if (machineRegistry) {
-    setupLocalTunnelProxy(fastify, wsHandler, machineRegistry);
-  }
-
-  // HTTP MCP route — remote agent sandboxes reach their tenant's project data
-  // here (authenticated by the signed runtime token). Local Electron/stdio
-  // doesn't use it; it's harmless when no sandbox calls it.
-  registerMcpHttpRoute(fastify, {
-    runtimeTokenSecret,
-    authorize: async (claims) => {
-      if (!teamsEnabled) {
-        return true;
-      }
-      // Residents act as team-owned agents, not as the human who launched them.
-      if (claims.agentId) {
-        const residents = await getTenantRepo(claims.tenantId).listResidents();
-        return residents.some((resident) => resident.id === claims.agentId && resident.enabled === 1);
-      }
-      return Boolean(
-        claims.principalId && (await controlPlane?.getMembershipRole(claims.tenantId, claims.principalId))
-      );
-    },
-    getTenantRepo,
-    getContext: (claims) => getMcpContext(claims.tenantId, claims.principalId ?? claims.tenantId, claims.agentId),
-  });
-  console.log(`[mcp-http] omni-projects MCP available at ${MCP_PROJECTS_PATH}`);
-
-  // Local voice (Option A) — self-hosted only. STT/TTS run on this host, so it
-  // must not be a managed/cloud deployment. The renderer gates on the same
-  // condition (isLocalVoiceCapable → not cloud-linked); this is the server-side guard.
-  if (!isEnterpriseBuild()) {
-    registerVoiceRoutes(fastify);
-    console.log(`[voice] local voice routes registered at ${VOICE_HTTP_PREFIX}`);
-  }
-
-  // Codex token-refresh callback — cloud only. The runtime POSTs refreshed
-  // OAuth tokens here after rotation so PgSecretStore stays current and the
-  // next spawn pre-materializes a non-stale refresh token.
-  if (pgSecret) {
-    registerCodexRefreshRoute(fastify, {
-      runtimeTokenSecret,
-      pgSecret,
-      // This route writes a HUMAN credential, even for a resident runtime.
-      authorize: async (claims) =>
-        !teamsEnabled ||
-        Boolean(claims.principalId && (await controlPlane?.getMembershipRole(claims.tenantId, claims.principalId))),
-    });
-    console.log(`[codex-refresh] callback registered at ${CODEX_REFRESH_PATH}`);
-  }
+  // Local voice: STT/TTS run on this host.
+  registerVoiceRoutes(fastify);
+  console.log(`[voice] local voice routes registered at ${VOICE_HTTP_PREFIX}`);
 
   // WebSocket route — each new connection gets its own manager instances.
   // Clients send a sessionId query param; if the server has an existing session
@@ -342,129 +161,27 @@ const main = async () => {
     f.get('/ws', { websocket: true }, (socket, request) => {
       const url = new URL(request.url, `http://${request.hostname}`);
       const token = url.searchParams.get('token');
-      // /ws is excluded from EasyAuth (browser WebSocket API can't send
-      // Bearer headers on the upgrade). Auth is the signed token from
-      // /api/ws-token, which embeds the EasyAuth-derived identity. A
-      // forged/expired token fails verification.
-      const claims = token ? verifyRuntimeToken(runtimeTokenSecret, token) : null;
-      if (!claims || claims.purpose !== 'launcher') {
+      // Auth is the signed token from /api/ws-token (the browser WebSocket
+      // API can't send Bearer headers on the upgrade).
+      if (!token || !verifyWsToken(wsTokenSecret, token)) {
         socket.close(4401, 'Unauthorized');
         return;
       }
-      const principal = claims.principalId ?? claims.tenantId;
       const sessionId = url.searchParams.get('sessionId') ?? undefined;
-      const requestedTeam = url.searchParams.get('team') ?? undefined;
-
-      // Release the WS binding from the machine registry when this socket
-      // closes — same hook for single-user and teams modes; the registry is a
-      // no-op when not in cloud (machinesRepo undefined). The host-offline
-      // banner is driven by the poll-based `data.hostOffline` overlay in
-      // ProcessManager.getStatus (which keeps the cloud session running and
-      // overlays a non-destructive banner) — NOT a one-shot error status here,
-      // which would unmount the still-running cloud chat UI.
-      socket.on('close', () => {
-        machineRegistry?.releaseWs(socket);
-      });
-
-      // In single-user/local mode the data scope IS the principal — bind
-      // synchronously (no control plane). In teams/cloud mode we must first
-      // bootstrap the user + resolve/verify their active team, which is async;
-      // buffer any early frames and replay them so nothing is dropped.
-      if (!teamsEnabled) {
-        const ready = ensureTenantReady(principal);
-        wsHandler.addClient(
-          socket,
-          (session) => {
-            const cleanup = wireClientManagers({
-              handle: session.handle,
-              sendToWindow: session.sendToWindow,
-              store,
-              processManager: getProcessManager(principal),
-            });
-            session.setCleanup(cleanup);
-          },
-          sessionId,
-          principal,
-          ready,
-          principal
-        );
-        return;
-      }
-
-      // Teams mode: buffer frames until (team, principal) is resolved.
-      const buffered: unknown[] = [];
-      let bufferedBytes = 0;
-      const buffer = (raw: unknown): void => {
-        bufferedBytes += Buffer.byteLength(String(raw));
-        if (buffered.length >= 128 || bufferedBytes > 1024 * 1024) {
-          socket.close(1009, 'Startup buffer exceeded');
-          return;
-        }
-        buffered.push(raw);
-      };
-      socket.on('message', buffer);
-      socket.once('close', () => {
-        socket.off('message', buffer);
-        buffered.length = 0;
-      });
-      void (async () => {
-        try {
-          const claims = principalClaims(request.headers);
-          await ensureUserBootstrapped(principal, claims);
-          const teamId = await resolveActiveTeam(principal, requestedTeam);
-          if (socket.readyState !== 1) {
-            return;
-          }
-          if (teamId === null) {
-            socket.close(4403, 'Forbidden: not a member of the requested team');
-            return;
-          }
-          const ready = ensureTenantReady(teamId, principal);
-          socket.off('message', buffer);
-          wsHandler.addClient(
-            socket,
-            (session) => {
-              const cleanup = wireClientManagers({
-                handle: session.handle,
-                sendToWindow: session.sendToWindow,
-                store,
-                processManager: getProcessManager(teamId, principal),
-              });
-              session.setCleanup(cleanup);
-            },
-            sessionId,
-            teamId,
-            ready,
-            principal,
-            // Display name rides the session so chat-v1 posts from this
-            // connection sign as the person, not a bare principal id.
-            claims.displayName ?? null
-          );
-          // Replay frames that arrived during async resolution.
-          for (const raw of buffered) {
-            socket.emit('message', raw);
-          }
-        } catch (err) {
-          console.error('[ws] team resolution failed:', err);
-          socket.close(4500, 'Server error during team resolution');
-        }
-      })();
-    });
-
-    // chat-v1's public binding (docs/chat-v1-plan.md): JSON-RPC over WS for
-    // external clients (mobile apps, network bridges). Same token auth as
-    // /ws, plus raw bridge keys from OMNI_CHAT_BRIDGE_KEYS.
-    registerChatWsRoute(f, {
-      runtimeTokenSecret,
-      getResidentManager,
-      teamsEnabled,
-      ensureUserBootstrapped,
-      resolveActiveTeam,
-      principalClaims,
-      bridgeKeys: (process.env['OMNI_CHAT_BRIDGE_KEYS'] ?? '')
-        .split(',')
-        .map((k) => k.trim())
-        .filter((k) => k.length > 0),
+      wsHandler.addClient(
+        socket,
+        (session) => {
+          const cleanup = wireClientManagers({
+            handle: session.handle,
+            sendToWindow: session.sendToWindow,
+            store,
+            processManager,
+            clientConsoles,
+          });
+          session.setCleanup(cleanup);
+        },
+        sessionId
+      );
     });
   });
 
@@ -550,7 +267,17 @@ const main = async () => {
 
   // Start
   await fastify.listen({ port: PORT, host: HOST });
-  fastify.log.info(`Server listening on http://${HOST}:${PORT}`);
+  const address = fastify.server.address();
+  const port = typeof address === 'object' && address !== null ? address.port : PORT;
+  fastify.log.info(`Server listening on http://${HOST}:${port}`);
+  // A supervisor that starts the server on PORT=0 reads the bound port back
+  // from here (the WSL backend, through wsl.exe). Written once listening, and
+  // renamed into place so a reader never sees a partial number.
+  const portFile = process.env['OMNI_PORT_FILE'];
+  if (portFile) {
+    writeFileSync(`${portFile}.tmp`, `${port}\n`);
+    renameSync(`${portFile}.tmp`, portFile);
+  }
 };
 
 main().catch((err) => {

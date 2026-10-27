@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 async function loadResolver() {
   vi.resetModules();
   vi.doMock('@/renderer/services/ipc', () => ({
-    isCloudLinked: false,
     isElectron: false,
     serverOrigin: () => window.location.origin,
   }));

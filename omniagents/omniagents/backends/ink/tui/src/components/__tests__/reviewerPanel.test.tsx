@@ -1,53 +1,13 @@
 import React from "react";
-import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
 import stripAnsi from "strip-ansi";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { KeypressProvider } from "../../contexts/KeypressContext.js";
-import type { RPCClient } from "../../rpc/client.js";
+import type { RPCClient } from "@omniagents/client/rpc/client";
 import type { ReviewerKind } from "../ReviewerPanel.js";
+import { cleanup, render } from "ink-testing-library";
 
-class TestStdout extends PassThrough {
-  frames: string[] = [];
-  isTTY = true;
-  columns = 120;
-  rows = 40;
-
-  constructor() {
-    super();
-    this.setEncoding("utf8");
-    this.on("data", (chunk) => {
-      if (typeof chunk === "string") this.frames.push(chunk);
-    });
-  }
-
-  lastFrame(): string {
-    for (let index = this.frames.length - 1; index >= 0; index -= 1) {
-      const frame = stripAnsi(this.frames[index] ?? "");
-      if (frame.trim()) return frame;
-    }
-    return "";
-  }
-}
-
-class FakeStdin extends EventEmitter {
-  isTTY = true;
-  private queue: string[] = [];
-  setRawMode() {}
-  setEncoding() {}
-  resume() {}
-  pause() {}
-  read() {
-    return this.queue.shift() ?? null;
-  }
-  unref() {}
-  ref() {}
-  press(sequence: string) {
-    this.queue.push(sequence);
-    this.emit("readable");
-  }
-}
+const plain = (frame?: string) => stripAnsi(frame ?? "");
 
 const KEY = { down: "[B", enter: "\r", escape: "" } as const;
 const settle = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -59,7 +19,7 @@ function makeClient(
     configFields?: Array<Record<string, unknown>>;
   } = {},
 ) {
-  return {
+  const stub = {
     listModels: vi.fn(async () => ({
       models: [],
       default_model: null,
@@ -77,33 +37,33 @@ function makeClient(
     getConfig: vi.fn(async () => ({ fields: opts.configFields ?? [] })),
     // Typed as the wrapper's own return so a test can mock the
     // `{ok: false, reason}` rejection the server really sends.
-    setSessionApprovals: vi.fn(
-      async (): Promise<Record<string, unknown>> => ({ ok: true }),
-    ),
-    setSessionWorkflow: vi.fn(
-      async (): Promise<Record<string, unknown>> => ({ ok: true }),
-    ),
+    setSessionApprovals: vi.fn(async (): Promise<Record<string, unknown>> => ({
+      ok: true,
+    })),
+    setSessionWorkflow: vi.fn(async (): Promise<Record<string, unknown>> => ({
+      ok: true,
+    })),
   };
+  return Object.assign(stub, {
+    request: (method: string) =>
+      method === "list_models"
+        ? stub.listModels()
+        : method === "get_config"
+          ? stub.getConfig()
+          : Promise.reject(new Error(`unexpected ${method}`)),
+  });
 }
 
 type ClientStub = ReturnType<typeof makeClient>;
 
-type Render = (typeof import("ink"))["render"];
-const instances: Array<ReturnType<Render>> = [];
-let inkRender: Render;
 let ReviewerPanel: (typeof import("../ReviewerPanel.js"))["ReviewerPanel"];
 
 beforeAll(async () => {
-  inkRender = (await import("ink")).render;
   ({ ReviewerPanel } = await import("../ReviewerPanel.js"));
 });
 
 afterEach(() => {
-  while (instances.length) {
-    const instance = instances.pop();
-    instance?.unmount();
-    instance?.cleanup();
-  }
+  cleanup();
 });
 
 async function mount(
@@ -114,10 +74,8 @@ async function mount(
   // have silently mounted with "s-1" and asserted nothing.
   sessionId: string | null = "s-1",
 ) {
-  const stdout = new TestStdout();
-  const stdin = new FakeStdin();
   const onClose = vi.fn();
-  const instance = inkRender(
+  const instance = render(
     <KeypressProvider>
       <ReviewerPanel
         kind={kind}
@@ -127,23 +85,15 @@ async function mount(
         sessionId={sessionId ?? undefined}
       />
     </KeypressProvider>,
-    {
-      stdout: stdout as unknown as NodeJS.WriteStream,
-      stdin: stdin as unknown as NodeJS.ReadStream,
-      debug: true,
-      exitOnCtrlC: false,
-      patchConsole: false,
-    },
   );
-  instances.push(instance);
   await settle(40);
-  return { stdout, stdin, onClose };
+  return { ...instance, onClose };
 }
 
 describe("ReviewerPanel resolves its own position", () => {
   it("shows the built-in default when nothing is set", async () => {
-    const { stdout } = await mount("approvals", makeClient());
-    const frame = stdout.lastFrame();
+    const { lastFrame } = await mount("approvals", makeClient());
+    const frame = plain(lastFrame());
     expect(frame).toContain("Ask me first");
     expect(frame).toContain("default");
   });
@@ -152,7 +102,7 @@ describe("ReviewerPanel resolves its own position", () => {
     // The case a hardcoded initial state gets wrong: config says auto,
     // so the guardian is answering, and rendering "Ask me first" would
     // be a switch lying about its own position.
-    const { stdout } = await mount(
+    const { lastFrame } = await mount(
       "approvals",
       makeClient({
         configFields: [
@@ -160,13 +110,13 @@ describe("ReviewerPanel resolves its own position", () => {
         ],
       }),
     );
-    const frame = stdout.lastFrame();
+    const frame = plain(lastFrame());
     expect(frame).toContain("Approve for me");
     expect(frame).toContain("from your configuration");
   });
 
   it("lets a session override beat the config", async () => {
-    const { stdout } = await mount(
+    const { lastFrame } = await mount(
       "approvals",
       makeClient({
         approvalsOverride: "user",
@@ -175,14 +125,14 @@ describe("ReviewerPanel resolves its own position", () => {
         ],
       }),
     );
-    expect(stdout.lastFrame()).toContain("set for this conversation");
+    expect(plain(lastFrame())).toContain("set for this conversation");
   });
 
   it("defaults task checks to ON, matching the server", async () => {
     // workflow.completion_reviewer defaults to guardian, so a panel
     // that showed "Checks off" would misreport reviews already running.
-    const { stdout } = await mount("checks", makeClient());
-    const frame = stdout.lastFrame();
+    const { lastFrame } = await mount("checks", makeClient());
+    const frame = plain(lastFrame());
     expect(frame).toContain("Task checks on");
     expect(frame).toContain("default");
   });
@@ -190,8 +140,8 @@ describe("ReviewerPanel resolves its own position", () => {
   it("still renders when get_config is unavailable", async () => {
     const stub = makeClient();
     stub.getConfig.mockRejectedValueOnce(new Error("not granted"));
-    const { stdout } = await mount("approvals", stub);
-    expect(stdout.lastFrame()).toContain("Ask me first");
+    const { lastFrame } = await mount("approvals", stub);
+    expect(plain(lastFrame())).toContain("Ask me first");
   });
 });
 
@@ -199,9 +149,9 @@ describe("ReviewerPanel writes", () => {
   it("sets the approvals reviewer and closes", async () => {
     const stub = makeClient();
     const { stdin, onClose } = await mount("approvals", stub);
-    stdin.press(KEY.down);
+    stdin.write(KEY.down);
     await settle();
-    stdin.press(KEY.enter);
+    stdin.write(KEY.enter);
     await settle(40);
     expect(stub.setSessionApprovals).toHaveBeenCalledWith("s-1", "auto");
     expect(onClose).toHaveBeenCalled();
@@ -210,9 +160,9 @@ describe("ReviewerPanel writes", () => {
   it("sets the workflow reviewer through its own RPC", async () => {
     const stub = makeClient();
     const { stdin } = await mount("checks", stub);
-    stdin.press(KEY.down);
+    stdin.write(KEY.down);
     await settle();
-    stdin.press(KEY.enter);
+    stdin.write(KEY.enter);
     await settle(40);
     expect(stub.setSessionWorkflow).toHaveBeenCalledWith("s-1", "off");
     expect(stub.setSessionApprovals).not.toHaveBeenCalled();
@@ -224,30 +174,30 @@ describe("ReviewerPanel writes", () => {
       ok: false,
       reason: "unknown reviewer",
     });
-    const { stdin, stdout, onClose } = await mount("approvals", stub);
-    stdin.press(KEY.down);
+    const { stdin, lastFrame, onClose } = await mount("approvals", stub);
+    stdin.write(KEY.down);
     await settle();
-    stdin.press(KEY.enter);
+    stdin.write(KEY.enter);
     await settle(40);
-    expect(stdout.lastFrame()).toContain("unknown reviewer");
+    expect(plain(lastFrame())).toContain("unknown reviewer");
     expect(onClose).not.toHaveBeenCalled();
   });
 
   it("explains that the switch needs a session before it can be set", async () => {
     const stub = makeClient();
-    const { stdin, stdout } = await mount("approvals", stub, null);
-    stdin.press(KEY.down);
+    const { stdin, lastFrame } = await mount("approvals", stub, null);
+    stdin.write(KEY.down);
     await settle();
-    stdin.press(KEY.enter);
+    stdin.write(KEY.enter);
     await settle(40);
     expect(stub.setSessionApprovals).not.toHaveBeenCalled();
-    expect(stdout.lastFrame()).toContain("send a message first");
+    expect(plain(lastFrame())).toContain("send a message first");
   });
 
   it("closes on escape without writing", async () => {
     const stub = makeClient();
     const { stdin, onClose } = await mount("approvals", stub);
-    stdin.press(KEY.escape);
+    stdin.write(KEY.escape);
     await new Promise((resolve) => setTimeout(resolve, 60));
     await settle();
     expect(onClose).toHaveBeenCalled();

@@ -1,6 +1,6 @@
 # Tracing Configuration in OmniAgents
 
-OmniAgents supports configurable tracing providers to help you monitor and debug your agents. **By default, OmniAgents uses Studio tracing** which stores traces locally and never sends data to external servers. Users must explicitly opt-in to OpenAI tracing via `provider: openai`.
+OmniAgents supports configurable tracing providers to help you monitor and debug your agents. **Tracing is off by default.** The `studio` provider stores traces locally and never sends data to external servers. Users must explicitly opt-in to OpenAI tracing via `provider: openai`.
 
 ## Configuration
 
@@ -8,7 +8,7 @@ Add a `tracing` section to your agent's YAML configuration:
 
 ```yaml
 tracing:
-  provider: studio  # Options: default, studio, none
+  provider: studio  # Options: none (default), studio, openai
   project: my_project
   name: my_trace
   settings:
@@ -28,27 +28,22 @@ tracing:
 **Note:** You must explicitly opt-in to OpenAI tracing by specifying `provider: openai`.
 
 ### `studio` (Local Trace Storage)
-Uses the built-in OmniAgents Studio tracing module to store traces locally and provide a web UI for visualization.
+Records traces locally through `omniagents.core.tracing.local` into
+`~/.omniagents/traces/<project>.db`, the store OmniAgents Studio reads.
 
 ```yaml
 tracing:
   provider: studio
   project: my_project     # Project name for grouping traces
   name: my_agent_trace    # Optional: specific trace name
-  settings:               # Optional: additional Studio settings
+  settings:               # Optional: recorder settings
     resume: allow         # Options: must, allow, never
     db_path: /custom/path/traces.db  # Optional: custom database path
 ```
 
-**Requirements:**
-- Install Studio extras: `pip install omniagents[studio]`
-- View traces: `omniagents studio serve --project my_project`
-
-**Benefits:**
-- Traces stored locally (no data sent to OpenAI)
-- Web UI for visualization
-- Export capabilities (JSON, CSV, Parquet)
-- Multi-project support
+Recording is built into `omniagents`. To browse traces, install the separate
+`omniagents-studio` package and run `omniagents-studio serve --project my_project`
+(it also exports traces as JSON, CSV or Parquet).
 
 ### `none` (Disable Tracing)
 Completely disables all tracing.
@@ -120,16 +115,16 @@ tracing:
 
 1. When OmniAgents loads your YAML configuration, it reads the `tracing` section
 2. During Runner initialization, before creating the agent, it configures the tracing provider
-3. **No config or `default`**: Uses Studio tracing (local storage, no external data)
-4. For `studio`: Uses OmniAgents Studio for local trace storage
-   - If Studio is not installed, tracing is disabled (no fallback to OpenAI)
+3. **No config or `default`**: Same as `studio`
+4. For `studio`: Records traces locally (no external data)
 5. For `openai`: Enables OpenAI's default tracing behavior (explicit opt-in required)
 6. For `none`: Disables all tracing
 
 ## Fallback Behavior
 
-- If `studio` is configured but dependencies are not installed, OmniAgents will:
-  - Print a warning message
+- If the local recorder fails to start (e.g. `resume: must` naming a trace
+  that does not exist), OmniAgents will:
+  - Print an error message
   - Disable tracing (no data sent to OpenAI)
   - Continue running normally
 
@@ -149,14 +144,14 @@ runner = Runner(config_path="agent.yaml")
 runner.run(mode="cli")
 ```
 
-For Python-based agents without YAML, you can use OmniAgents Studio directly:
+For Python-based agents without YAML, start the local recorder directly:
 
 ```python
-from omniagents.studio import tracing as studio_tracing
+from omniagents.core.tracing import local as studio_tracing
 from agents import Agent
 from omniagents import Runner
 
-# Initialize Studio tracing before creating the agent
+# Start local trace recording before creating the agent
 studio_tracing.init(project="my_project", name="my_trace")
 
 agent = Agent(

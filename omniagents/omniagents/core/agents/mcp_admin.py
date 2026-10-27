@@ -46,7 +46,6 @@ from omniagents.core.agents.specs import MCPServerConfig
 
 __all__ = [
     "MCP_SERVER_TYPES",
-    "MCP_STORE_DURABILITY_ENV",
     "MANAGED_MCP_SERVERS_ENV",
     "McpAuthFailed",
     "McpAuthStateInvalid",
@@ -91,7 +90,6 @@ SOURCE_HOST_MANAGED = "host_managed"
 #: Host attestations for the product-scoped MCP configuration and OAuth
 #: stores.  Durability is never inferred from writability, and server names
 #: are deliberately the only managed-store metadata exposed to clients.
-MCP_STORE_DURABILITY_ENV = "OMNIAGENTS_MCP_STORE_DURABILITY"
 MANAGED_MCP_SERVERS_ENV = "OMNIAGENTS_MANAGED_MCP_SERVERS"
 _MANAGED_SERVER_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
@@ -407,12 +405,6 @@ class _UserMcpFileStore:
         if not isinstance(servers, dict):
             return []
         return [str(name) for name in servers]
-
-    def get_entry(self, name: str) -> Dict[str, Any] | None:
-        servers = self.read_raw().get("mcpServers")
-        if isinstance(servers, dict) and isinstance(servers.get(name), dict):
-            return dict(servers[name])
-        return None
 
     def upsert(self, name: str, entry: Dict[str, Any]) -> None:
         doc = self.read_raw()
@@ -1044,6 +1036,20 @@ class McpServerManager:
         if source in (SOURCE_USER, SOURCE_PROJECT_LOCAL):
             if not self.user_mcp_allowed():
                 return False, "user_mcp_disabled"
+        config = self._find_config(server_name)
+        if config is not None and (config.options or {}).get("optional"):
+            import copy as _copy
+
+            from omniagents.core.agents.mcp import (
+                _resolve_setting_placeholders,
+                is_absent_optional,
+            )
+
+            resolved = _resolve_setting_placeholders(
+                _copy.deepcopy(config.params), dict(self._settings_provider())
+            )
+            if is_absent_optional(config, resolved):
+                return False, "not_configured"
         return True, None
 
     # -- snapshots -------------------------------------------------------
@@ -1114,17 +1120,6 @@ class McpServerManager:
             "servers": servers,
             "user_mcp_allowed": self.user_mcp_allowed(),
             "write_target": str(self._user_mcp_path()),
-            "mutation_persistence": self.mutation_persistence(),
-        }
-
-    def mutation_persistence(self) -> Dict[str, Any]:
-        """Redacted deployment guarantees for Desktop-owned mutations."""
-        durable = os.getenv(MCP_STORE_DURABILITY_ENV) == "host"
-        host_scope = "host" if durable else None
-        return {
-            "user_config": {"durable": durable, "scope": host_scope},
-            "oauth_tokens": {"durable": durable, "scope": host_scope},
-            "pending_auth": {"durable": False, "scope": "process"},
             "managed_servers": sorted(_managed_server_names()),
         }
 
@@ -1283,7 +1278,7 @@ class McpServerManager:
         self.oauth.forget(server_name)
         return {"ok": True, "server_name": server_name}
 
-    # -- probe (management-plane discovery) ------------------------------
+    # -- probe (out-of-session discovery) --------------------------------
 
     async def probe_server(self, server_name: str) -> Dict[str, Any]:
         """Connect once out-of-session and capture the full snapshot.

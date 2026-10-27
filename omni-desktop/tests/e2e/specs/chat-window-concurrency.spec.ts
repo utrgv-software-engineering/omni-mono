@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from 'tests/e2e/fixtures/test';
+import { newDeckChat } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -33,33 +34,21 @@ async function releaseCommand(page: Page) {
     delete target.releaseChatCommand;
   });
 }
-async function newTile(page: Page) {
-  await page.getByRole('button', { name: 'New', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Chat', exact: true }).click();
-}
-
-test('concurrent windows retain new tiles and a stale reorder cannot restore an archived tile', async ({
-  app,
-  mode,
-}, testInfo) => {
-  test.skip(
-    mode !== 'server-local',
-    'Two browser windows share the launcher authority; Electron tile behavior has separate coverage.'
-  );
+test('concurrent windows retain both new chats', async ({ app, mode }, testInfo) => {
+  test.skip(mode !== 'server-local', 'Two browser windows share the launcher authority; Electron has a single window.');
   const a = app.page;
   await expect(a.getByRole('textbox', { name: 'How can I help you today?' })).toBeVisible({ timeout: 90_000 });
   const b = await a.context().newPage();
   try {
     await b.goto(a.url());
     await expect(b.getByRole('textbox', { name: 'How can I help you today?' })).toBeVisible({ timeout: 90_000 });
-    await a.getByRole('radio', { name: 'Spaces', exact: true }).click();
     const columnsA = a.locator('[data-deck-column]');
     const columnsB = b.locator('[data-deck-column]');
     await expect(columnsA).toHaveCount(1);
     await expect(columnsB).toHaveCount(1);
     await holdCommand(b, 'addTab');
-    await newTile(b);
-    await newTile(a);
+    await newDeckChat(b);
+    await newDeckChat(a);
     await expect(columnsA).toHaveCount(2);
     await releaseCommand(b);
     await expect(columnsA).toHaveCount(3);
@@ -73,21 +62,7 @@ test('concurrent windows retain new tiles and a stale reorder cannot restore an 
         columnsB.evaluateAll((elements) => elements.map((element) => element.getAttribute('data-deck-column')))
       )
       .toEqual(ids);
-    await attachProofPng(testInfo, 'both concurrent tile additions survive', await a.screenshot());
-
-    await holdCommand(b, 'reorderTabs');
-    await columnsB.nth(0).getByRole('button', { name: 'Reorder New chat', exact: true }).focus();
-    await b.keyboard.press('Space');
-    await b.keyboard.press('ArrowRight');
-    await b.keyboard.press('Space');
-    await columnsA.nth(0).getByRole('button', { name: 'Session menu', exact: true }).click();
-    await a.getByRole('menuitem', { name: 'Archive session', exact: true }).click();
-    await expect(columnsA).toHaveCount(2);
-    await releaseCommand(b);
-    await expect(columnsB).toHaveCount(2);
-    await expect(a.locator(`[data-deck-column="${ids[0]}"]`)).toHaveCount(0);
-    await expect(b.locator(`[data-deck-column="${ids[0]}"]`)).toHaveCount(0);
-    await attachProofPng(testInfo, 'stale reorder does not restore archived tile', await b.screenshot());
+    await attachProofPng(testInfo, 'both concurrent chat additions survive', await a.screenshot());
   } finally {
     await b.close();
   }

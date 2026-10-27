@@ -1,5 +1,6 @@
 import React from "react";
-import { Box, Text, useStdout } from "ink";
+import { Box, Text } from "ink";
+import { useTerminalSize } from "../hooks/useTerminalSize.js";
 import {
   useAppStore,
   useBashJobs,
@@ -20,7 +21,7 @@ import { buildStripTokens, type StripTone } from "./strip-model.js";
 import { Theme, roleMap } from "../theme.js";
 import { themedMemo } from "../theme/themed-memo.js";
 
-export type Screen = "chat" | "review" | "agents" | "files";
+export type Screen = "chat" | "agents";
 
 // The status bar: ONE background-filled row at the very bottom of the
 // screen, tmux-style — what's HAPPENING. Mission tokens on the left
@@ -37,8 +38,7 @@ const TONE_FG: Record<StripTone, string> = roleMap({
 export const StatusBar = themedMemo<{
   waitingForSecondCtrlC: boolean;
 }>(({ waitingForSecondCtrlC }) => {
-  const { stdout } = useStdout();
-  const width = stdout?.columns ?? 80;
+  const { columns: width } = useTerminalSize();
 
   const tasks = useTasks();
   const workers = useSubagents();

@@ -70,39 +70,8 @@ export class AgentHostManager<THost extends object> {
     return { host: entry.host, lastConsumer };
   }
 
-  hostForConsumer(consumerId: string): THost | undefined {
-    return this.entryByConsumer.get(consumerId)?.host;
-  }
-
   consumersForHost(host: THost): string[] {
     return [...(this.entryByHost.get(host)?.consumers ?? [])];
-  }
-
-  consumerCount(host: THost): number {
-    return this.entryByHost.get(host)?.consumers.size ?? 0;
-  }
-
-  canRekey(consumerId: string, newKey: string): boolean {
-    const current = this.entryByConsumer.get(consumerId);
-    if (!current || current.consumers.size !== 1) {
-      return false;
-    }
-    const target = this.hostsByKey.get(newKey);
-    return !target || target === current;
-  }
-
-  rekey(consumerId: string, newKey: string): boolean {
-    if (!this.canRekey(consumerId, newKey)) {
-      return false;
-    }
-    const entry = this.entryByConsumer.get(consumerId)!;
-    if (entry.key === newKey) {
-      return true;
-    }
-    this.hostsByKey.delete(entry.key);
-    entry.key = newKey;
-    this.hostsByKey.set(newKey, entry);
-    return true;
   }
 
   hosts(): THost[] {

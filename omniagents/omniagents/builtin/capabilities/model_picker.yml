@@ -8,3 +8,5 @@ server_functions:
   - reasoning
   - voice-models
   - voice-model
+  - model_providers
+  - switch_provider

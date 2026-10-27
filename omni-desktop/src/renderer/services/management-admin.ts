@@ -1,7 +1,7 @@
-import type { RpcMethodMap } from '@/generated/omniagents-gui-v2/gui-v2';
-import { AccountManagementClient } from '@/renderer/omniagents-ui/rpc/account-management';
-import { LayeredConfigClient } from '@/renderer/omniagents-ui/rpc/layered-config';
-import { McpManagementClient } from '@/renderer/omniagents-ui/rpc/mcp-management';
+import type { RpcMethodMap } from '@omniagents/client/protocol/gui-v2';
+import { AccountManagementClient } from '@omniagents/client/rpc/account-management';
+import { McpManagementClient } from '@omniagents/client/rpc/mcp-management';
+
 import { emitter } from '@/renderer/services/ipc';
 import { isManagementAdminMethod, type ManagementAdminRequest } from '@/shared/management-admin';
 
@@ -26,15 +26,8 @@ class AdminTransport {
 const transport = new AdminTransport();
 const accounts = new AccountManagementClient(transport);
 const mcp = new McpManagementClient(transport);
-const config = new LayeredConfigClient(
-  transport,
-  (operation) => operation === 'validate_config' || operation === 'write_config'
-);
 
 export const managementAdminApi = {
-  validateConfig: (updates: Record<string, unknown>) => config.validate(updates),
-  writeConfig: (updates: Record<string, unknown>) => config.write(updates),
-
   startAccountLogin: (
     provider: string,
     mode: 'device_code' | 'browser' | 'api_key',

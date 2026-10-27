@@ -1,6 +1,5 @@
+import { Spinner } from '@omniagents/ui/spinner';
 import { memo } from 'react';
-
-import { Spinner } from '@/renderer/ds/ui/spinner';
 
 export const LoaderFullScreen = memo(() => {
   return (

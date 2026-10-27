@@ -7,11 +7,11 @@
  * from the main-process `PermissionsManager`.
  */
 import { useStore } from '@nanostores/react';
+import { Alert, AlertDescription } from '@omniagents/ui/alert';
+import { Button } from '@omniagents/ui/button';
 import { atom } from 'nanostores';
 import { memo, useCallback } from 'react';
 
-import { Alert, AlertDescription } from '@/renderer/ds/ui/alert';
-import { Button } from '@/renderer/ds/ui/button';
 import { emitter, ipc } from '@/renderer/services/ipc';
 import type { PermissionRequest } from '@/shared/permissions-types';
 

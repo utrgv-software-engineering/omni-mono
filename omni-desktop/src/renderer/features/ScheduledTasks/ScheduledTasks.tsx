@@ -1,13 +1,6 @@
 import { useStore } from '@nanostores/react';
-import { Edit, Ellipsis, ExternalLink, Play, Plus, Trash2 } from 'lucide-react';
-import type { ComponentProps } from 'react';
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
-
-import { formatDuration, formatTimestamp } from '@/lib/format-time';
-import { useIsDesktop } from '@/renderer/common/use-is-desktop';
-import { cn } from '@/renderer/ds/cn';
-import { TopAppBar } from '@/renderer/ds/TopAppBar';
-import { Alert, AlertDescription } from '@/renderer/ds/ui/alert';
+import { formatDuration, formatTimestamp } from '@omniagents/chat-ui/lib/format-time';
+import { Alert, AlertDescription } from '@omniagents/ui/alert';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -17,27 +10,29 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/renderer/ds/ui/alert-dialog';
-import { Badge } from '@/renderer/ds/ui/badge';
-import { Button } from '@/renderer/ds/ui/button';
+} from '@omniagents/ui/alert-dialog';
+import { Badge } from '@omniagents/ui/badge';
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/renderer/ds/ui/dropdown-menu';
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@/renderer/ds/ui/empty';
-import { Field, FieldDescription, FieldLabel } from '@/renderer/ds/ui/field';
-import { Input } from '@/renderer/ds/ui/input';
-import { NativeSelect as Select } from '@/renderer/ds/ui/native-select';
-import { Switch } from '@/renderer/ds/ui/switch';
-import { Textarea } from '@/renderer/ds/ui/textarea';
-import { getProfileMenuLabel } from '@/renderer/features/SandboxProfile/profile-list';
-import { SandboxPicker } from '@/renderer/features/SandboxProfile/SandboxPicker';
+} from '@omniagents/ui/dropdown-menu';
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@omniagents/ui/empty';
+import { Field, FieldDescription, FieldLabel } from '@omniagents/ui/field';
+import { Input } from '@omniagents/ui/input';
+import { NativeSelect as Select } from '@omniagents/ui/native-select';
+import { Switch } from '@omniagents/ui/switch';
+import { Textarea } from '@omniagents/ui/textarea';
+import { Edit, Ellipsis, ExternalLink, Play, Plus, Trash2 } from 'lucide-react';
+import { memo, useCallback, useId, useMemo, useState } from 'react';
+
+import { useIsDesktop } from '@/renderer/common/use-is-desktop';
+import { TopAppBar } from '@/renderer/ds/TopAppBar';
 import { toast } from '@/renderer/features/Toast/state';
-import { emitter } from '@/renderer/services/ipc';
-import { $machines } from '@/renderer/services/machines';
 import { scheduledTaskApi } from '@/renderer/services/scheduled-tasks';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type {
@@ -50,7 +45,6 @@ import type {
   ScheduledTaskSchedule,
 } from '@/shared/types';
 
-import { AutomationsSection } from './AutomationsSection';
 import { ensureRoutineSessionTab, formatDayOfWeek } from './routine-session';
 import { $routinesView } from './state';
 
@@ -138,19 +132,17 @@ type RoutineFormState = {
   time: string;
   dayOfWeek: string;
   projectId: string;
-  profileName: string;
   permissionMode: ScheduledTaskPermissionMode;
   enabled: boolean;
 };
 
-const createEmptyFormState = (defaultProfileName: string | undefined): RoutineFormState => ({
+const createEmptyFormState = (): RoutineFormState => ({
   name: '',
   instructions: '',
   scheduleKind: 'daily',
   time: DEFAULT_TIME,
   dayOfWeek: '1',
   projectId: '',
-  profileName: defaultProfileName ?? 'host',
   permissionMode: 'ask',
   enabled: true,
 });
@@ -171,11 +163,9 @@ const createEmptyFormState = (defaultProfileName: string | undefined): RoutineFo
  */
 export const ScheduledTasks = memo(() => {
   const store = useStore(persistedStoreApi.$atom);
-  const machines = useStore($machines);
   const isDesktop = useIsDesktop();
 
-  const [isEnterprise, setIsEnterprise] = useState(false);
-  const [createForm, setCreateForm] = useState<RoutineFormState>(() => createEmptyFormState(store.defaultProfileName));
+  const [createForm, setCreateForm] = useState<RoutineFormState>(() => createEmptyFormState());
   // Selection lives in `$routinesView` (like the Inbox tab's `$inboxView`),
   // so cross-tab jumps can land on a specific routine.
   const view = useStore($routinesView);
@@ -188,13 +178,6 @@ export const ScheduledTasks = memo(() => {
   const [error, setError] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ScheduledTask | null>(null);
-
-  useEffect(() => {
-    emitter
-      .invoke('platform:is-enterprise')
-      .then(setIsEnterprise)
-      .catch(() => setIsEnterprise(false));
-  }, []);
 
   const sorted = useMemo(
     () =>
@@ -211,12 +194,6 @@ export const ScheduledTasks = memo(() => {
     [selectedTaskId, sorted]
   );
   const isEditing = selectedTask !== null && editingTaskId === selectedTask.id && editForm !== null;
-
-  const sandboxContext: ComponentProps<typeof SandboxPicker>['context'] = {
-    isEnterprise,
-    available: store.availableSandboxProfiles,
-    machines,
-  };
 
   // ----- handlers -----
 
@@ -257,9 +234,8 @@ export const ScheduledTasks = memo(() => {
     try {
       const task = await scheduledTaskApi.create(toScheduledTaskInput(createForm));
       setCreateForm((current) => ({
-        ...createEmptyFormState(store.defaultProfileName),
+        ...createEmptyFormState(),
         projectId: current.projectId,
-        profileName: current.profileName,
       }));
       setCreating(false);
       $routinesView.set({ selectedTaskId: task.id });
@@ -268,16 +244,13 @@ export const ScheduledTasks = memo(() => {
     }
   };
 
-  const startEdit = useCallback(
-    (task: ScheduledTask) => {
-      setEditError(null);
-      setCreating(false);
-      $routinesView.set({ selectedTaskId: task.id });
-      setEditingTaskId(task.id);
-      setEditForm(toFormState(task, store.defaultProfileName));
-    },
-    [store.defaultProfileName]
-  );
+  const startEdit = useCallback((task: ScheduledTask) => {
+    setEditError(null);
+    setCreating(false);
+    $routinesView.set({ selectedTaskId: task.id });
+    setEditingTaskId(task.id);
+    setEditForm(toFormState(task));
+  }, []);
 
   const saveEdit = async (task: ScheduledTask) => {
     if (!editForm) {
@@ -376,7 +349,6 @@ export const ScheduledTasks = memo(() => {
             />
           ))
         )}
-        <AutomationsSection />
       </div>
     </>
   );
@@ -397,8 +369,6 @@ export const ScheduledTasks = memo(() => {
           <RoutineForm
             value={createForm}
             projects={store.projects}
-            sandboxContext={sandboxContext}
-            machines={machines}
             submitLabel="Create routine"
             error={error}
             onChange={setCreateForm}
@@ -424,8 +394,6 @@ export const ScheduledTasks = memo(() => {
           <RoutineForm
             value={editForm}
             projects={store.projects}
-            sandboxContext={sandboxContext}
-            machines={machines}
             submitLabel="Save changes"
             error={editError}
             showEnabled
@@ -441,7 +409,6 @@ export const ScheduledTasks = memo(() => {
     <RoutineDetail
       task={selectedTask}
       projects={store.projects}
-      machines={machines}
       busy={busyTaskId === selectedTask.id}
       onRunNow={runNow}
       onStartEdit={startEdit}
@@ -594,7 +561,6 @@ RoutineRow.displayName = 'RoutineRow';
 type RoutineDetailProps = {
   task: ScheduledTask;
   projects: Project[];
-  machines: Parameters<typeof getProfileMenuLabel>[1];
   busy: boolean;
   onRunNow: (task: ScheduledTask) => Promise<void>;
   onStartEdit: (task: ScheduledTask) => void;
@@ -606,7 +572,6 @@ type RoutineDetailProps = {
 const RoutineDetail = ({
   task,
   projects,
-  machines,
   busy,
   onRunNow,
   onStartEdit,
@@ -615,7 +580,6 @@ const RoutineDetail = ({
   onOpenSession,
 }: RoutineDetailProps) => {
   const project = projectLabel(task, projects);
-  const sandbox = task.profileName ? getProfileMenuLabel(task.profileName, machines) : 'Default sandbox';
   const allowedToolNames = task.allowedToolNames ?? [];
   const allowedMcpTools = task.allowedMcpTools ?? [];
   const runs = (task.history ?? []).slice(0, 5);
@@ -703,13 +667,6 @@ const RoutineDetail = ({
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Project</span>
                 <div className="flex flex-col gap-y-0.5 text-xs text-muted-foreground">
                   <span>{project ?? 'No project'}</span>
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Sandbox</span>
-                <div className="flex flex-col gap-y-0.5 text-xs text-muted-foreground">
-                  <span>{sandbox}</span>
                 </div>
               </div>
 
@@ -834,8 +791,6 @@ RunItem.displayName = 'RunItem';
 type RoutineFormProps = {
   value: RoutineFormState;
   projects: Project[];
-  sandboxContext: ComponentProps<typeof SandboxPicker>['context'];
-  machines: Parameters<typeof getProfileMenuLabel>[1];
   submitLabel: string;
   error?: string | null;
   showEnabled?: boolean;
@@ -848,8 +803,6 @@ type RoutineFormProps = {
 const RoutineForm = ({
   value,
   projects,
-  sandboxContext,
-  machines,
   submitLabel,
   error,
   showEnabled = false,
@@ -861,20 +814,23 @@ const RoutineForm = ({
   const setField = <K extends keyof RoutineFormState>(field: K, fieldValue: RoutineFormState[K]) => {
     onChange({ ...value, [field]: fieldValue });
   };
+  const id = useId();
 
   return (
     <div className="grid gap-4">
       <Field>
-        <FieldLabel>Name</FieldLabel>
+        <FieldLabel htmlFor={`${id}-name`}>Name</FieldLabel>
         <Input
+          id={`${id}-name`}
           value={value.name}
           onChange={(e) => setField('name', e.target.value)}
           placeholder="Morning code review"
         />
       </Field>
       <Field>
-        <FieldLabel>Instructions</FieldLabel>
+        <FieldLabel htmlFor={`${id}-instructions`}>Instructions</FieldLabel>
         <Textarea
+          id={`${id}-instructions`}
           value={value.instructions}
           onChange={(e) => setField('instructions', e.target.value)}
           placeholder="Review yesterday's changes and summarize any risks."
@@ -882,8 +838,12 @@ const RoutineForm = ({
         />
       </Field>
       <Field>
-        <FieldLabel>Project</FieldLabel>
-        <Select value={value.projectId} onChange={(e) => setField('projectId', e.currentTarget.value)}>
+        <FieldLabel htmlFor={`${id}-project`}>Project</FieldLabel>
+        <Select
+          id={`${id}-project`}
+          value={value.projectId}
+          onChange={(e) => setField('projectId', e.currentTarget.value)}
+        >
           <option value="">No project</option>
           {projects.map((project) => (
             <option key={project.id} value={project.id}>
@@ -894,22 +854,9 @@ const RoutineForm = ({
         <FieldDescription>Without a project, each run gets a fresh session workspace.</FieldDescription>
       </Field>
       <Field>
-        <FieldLabel>Sandbox</FieldLabel>
-        <div className="flex items-center justify-between gap-4">
-          <SandboxPicker
-            value={value.profileName}
-            onChange={(profileName) => setField('profileName', profileName)}
-            context={sandboxContext}
-          />
-
-          <span className="text-muted-foreground text-xs leading-5">
-            {getProfileMenuLabel(value.profileName, machines)}
-          </span>
-        </div>
-      </Field>
-      <Field>
-        <FieldLabel>Schedule</FieldLabel>
+        <FieldLabel htmlFor={`${id}-schedule`}>Schedule</FieldLabel>
         <Select
+          id={`${id}-schedule`}
           value={value.scheduleKind}
           onChange={(e) => setField('scheduleKind', e.currentTarget.value as ScheduleKind)}
         >
@@ -922,14 +869,18 @@ const RoutineForm = ({
       </Field>
       {value.scheduleKind !== 'manual' && value.scheduleKind !== 'hourly' && (
         <Field>
-          <FieldLabel>Time</FieldLabel>
-          <Input type="time" value={value.time} onChange={(e) => setField('time', e.target.value)} />
+          <FieldLabel htmlFor={`${id}-time`}>Time</FieldLabel>
+          <Input id={`${id}-time`} type="time" value={value.time} onChange={(e) => setField('time', e.target.value)} />
         </Field>
       )}
       {value.scheduleKind === 'weekly' && (
         <Field>
-          <FieldLabel>Day</FieldLabel>
-          <Select value={value.dayOfWeek} onChange={(e) => setField('dayOfWeek', e.currentTarget.value)}>
+          <FieldLabel htmlFor={`${id}-day`}>Day</FieldLabel>
+          <Select
+            id={`${id}-day`}
+            value={value.dayOfWeek}
+            onChange={(e) => setField('dayOfWeek', e.currentTarget.value)}
+          >
             <option value="1">Monday</option>
             <option value="2">Tuesday</option>
             <option value="3">Wednesday</option>
@@ -998,7 +949,6 @@ function toScheduledTaskInput(form: RoutineFormState): ScheduledTaskInput {
     permissionMode: form.permissionMode,
     enabled: form.enabled,
     ...(form.projectId ? { projectId: form.projectId } : {}),
-    ...(form.profileName ? { profileName: form.profileName } : {}),
   };
 }
 
@@ -1011,13 +961,12 @@ function toScheduledTaskUpdate(form: RoutineFormState): ScheduledTaskInput {
     permissionMode: form.permissionMode,
     enabled: form.enabled,
     projectId: form.projectId,
-    profileName: form.profileName,
   };
 }
 
-function toFormState(task: ScheduledTask, defaultProfileName: string | undefined): RoutineFormState {
+function toFormState(task: ScheduledTask): RoutineFormState {
   const schedule = task.schedule;
-  const fallback = createEmptyFormState(defaultProfileName);
+  const fallback = createEmptyFormState();
   if (schedule.kind === 'manual') {
     return { ...fallback, ...baseFormState(task), scheduleKind: 'manual' };
   }
@@ -1043,12 +992,11 @@ function toFormState(task: ScheduledTask, defaultProfileName: string | undefined
 
 function baseFormState(
   task: ScheduledTask
-): Pick<RoutineFormState, 'name' | 'instructions' | 'projectId' | 'profileName' | 'permissionMode' | 'enabled'> {
+): Pick<RoutineFormState, 'name' | 'instructions' | 'projectId' | 'permissionMode' | 'enabled'> {
   return {
     name: task.name,
     instructions: task.instructions,
     projectId: task.projectId ?? '',
-    profileName: task.profileName ?? 'host',
     permissionMode: task.permissionMode ?? 'ask',
     enabled: task.enabled,
   };

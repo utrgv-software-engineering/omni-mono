@@ -28,23 +28,12 @@ vi.mock('@/main/util', () => ({
   getBundledBinPath: vi.fn(() => '/fake/bundled/bin'),
   getOmniCliPath: vi.fn(() => '/fake/bin/omni'),
   getOmniConfigDir: vi.fn(() => '/fake/config'),
+  // Windows spawns read the provisioned Git Bash under the runtime dir.
+  getOmniRuntimeDir: vi.fn(() => '/fake/runtime'),
   isDevelopment: vi.fn(() => false),
   isDirectory: vi.fn(async () => true),
   isFile: vi.fn(async () => false),
   pathExists: vi.fn(async () => true),
-}));
-
-vi.mock('@/main/profile-resolver', () => ({
-  HOST_PROFILE_NAME: 'host',
-  resolveProfile: vi.fn((name: string) => {
-    if (name === 'host') {
-      return { kind: 'builtin-default' };
-    }
-    if (name === 'missing') {
-      return { kind: 'missing', expected: '/fake/config/sandbox/missing.yml' };
-    }
-    return { kind: 'file', path: `/fake/config/sandbox/${name}.yml` };
-  }),
 }));
 
 vi.mock('@/main/product-runtime', () => ({
@@ -71,7 +60,6 @@ vi.mock('@/main/agent-host-control-client', () => ({
           workspaces: workspaceCalls.map((call) => ({
             workspace_id: call.params.workspace_id,
             owner_user_id: call.params.owner_user_id,
-            snapshot_ref: call.params.snapshot_ref,
             sources: call.params.sources,
           })),
           profiles: Object.fromEntries(
@@ -98,8 +86,6 @@ vi.mock('@/main/agent-host-control-client', () => ({
           generation: 3,
           workspace_root: '/workspace',
           default_cwd: '/workspace',
-          services: { code_server: 'http://service' },
-          container_id: 'container-materialized',
         };
       }
       return {};
@@ -110,10 +96,6 @@ vi.mock('@/main/agent-host-control-client', () => ({
 
 vi.mock('shell-env', () => ({ shellEnvSync: () => ({}) }));
 vi.mock('@/lib/pty-utils', () => ({ DEFAULT_ENV: {} }));
-vi.mock('@/main/workspace-sync', () => ({
-  uploadWorkspace: vi.fn(async () => {}),
-  downloadWorkspace: vi.fn(async () => {}),
-}));
 vi.mock('@/lib/simple-logger', () => ({
   SimpleLogger: class {
     constructor(_handler: unknown) {}
@@ -144,7 +126,6 @@ import { EventEmitter } from 'node:events';
 import path from 'node:path';
 
 import { AgentProcess, type AgentProcessStartArg } from '@/main/agent-process';
-import type { IComputeClient, PlatformSession } from '@/main/platform-client';
 import type { AgentProcessStatus, WithTimestamp } from '@/shared/types';
 
 // ---------------------------------------------------------------------------
@@ -206,7 +187,6 @@ const makeHarness = (
   });
 
   const proc = new AgentProcess({
-    mode: 'serve',
     ipcRawOutput: () => {},
     onStatusChange: (s) => statuses.push(s),
     fetchFn: fetchFn as unknown as typeof globalThis.fetch,
@@ -259,7 +239,7 @@ describe('AgentProcess (serve mode)', () => {
     workspaceDir,
   });
   const remoteSource = (repoUrl = 'https://github.com/foo/bar.git', mountName = 'bar', ref?: string): Source => {
-    const s: Source = { mountName, kind: 'git-remote', repoUrl };
+    const s: Source = { mountName, kind: 'git-remote', repoUrl, checkoutPath: `/checkouts/${mountName}` };
     if (ref) {
       s.ref = ref;
     }
@@ -269,7 +249,6 @@ describe('AgentProcess (serve mode)', () => {
   it('spawns a targetless AgentHost without consumer placement flags', async () => {
     const h = makeHarness();
     await h.proc.start({
-      profileName: 'devbox',
       sources: [localGitSource('/test/workspace', 'launcher')],
     });
 
@@ -279,8 +258,9 @@ describe('AgentProcess (serve mode)', () => {
     expect(args).toContain('serve');
     expect(args).toContain('--output');
     expect(args).toContain('json');
-    expect(args).toContain('--snapshot-dir');
     for (const placementFlag of [
+      '--snapshot-dir',
+      '--credential',
       '--source',
       '--profile',
       '--project',
@@ -294,7 +274,7 @@ describe('AgentProcess (serve mode)', () => {
 
   it('spawns with distinct renderer and main-process control credentials', async () => {
     const h = makeHarness();
-    await h.proc.start({ profileName: 'host', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
 
     const [, args] = spawnCall(0);
     const clientToken = args[args.indexOf('--auth-token') + 1];
@@ -304,47 +284,9 @@ describe('AgentProcess (serve mode)', () => {
     expect(controlToken).not.toBe(clientToken);
   });
 
-  it('binds resident day threads to the same environment and rejects stale generations', async () => {
-    const h = makeHarness();
-    const arg: AgentProcessStartArg = { profileName: 'devbox', sources: [] };
-    await h.proc.start(arg);
-    (h.proc as any).status = {
-      type: 'running',
-      timestamp: Date.now(),
-      data: { uiUrl: 'http://127.0.0.1:9000', wsUrl: 'ws://127.0.0.1:9000/ws' },
-    };
-    const runtime = await h.proc.configureConsumer('agent:a', 'workspace-a', arg);
-    const materializations = hoisted.controlCalls.filter(
-      (c) => c.method === 'agent_host_materialize_environment'
-    ).length;
-    for (const day of ['2026-09-12', '2026-09-13']) {
-      await h.proc.bindSession('agent:a', `resident-a-${day}`, runtime);
-      expect(hoisted.controlCalls.at(-1)?.params).toEqual({
-        thread_id: `resident-a-${day}`,
-        binding: {
-          workspace_id: runtime.workspaceId,
-          environment_selection: {
-            mode: 'existing',
-            environment_id: runtime.environmentId,
-            environment_generation: runtime.environmentGeneration,
-          },
-        },
-      });
-    }
-    expect(hoisted.controlCalls.filter((c) => c.method === 'agent_host_materialize_environment')).toHaveLength(
-      materializations
-    );
-    await expect(
-      h.proc.bindSession('agent:a', 'resident-a-next', { ...runtime, environmentGeneration: 999 })
-    ).rejects.toThrow('changed');
-    hoisted.controlFailureMethod = 'agent_host_bind_thread';
-    await expect(h.proc.bindSession('agent:a', 'resident-a-next', runtime)).rejects.toThrow('failed');
-  });
-
   it('registers, materializes, and binds a second consumer through the control plane', async () => {
     const h = makeHarness();
     const arg: AgentProcessStartArg = {
-      profileName: 'devbox',
       sources: [{ ...localGitSource('/repos/second', 'second'), id: 'source-second' }],
       projectId: 'project-2',
     };
@@ -367,8 +309,6 @@ describe('AgentProcess (serve mode)', () => {
       environmentGeneration: 3,
       workspaceRoot: '/workspace',
       defaultCwd: '/workspace',
-      services: { code_server: 'http://service' },
-      containerId: 'container-materialized',
     });
     expect(hoisted.controlCalls.map((call) => call.method)).toEqual([
       'agent_host_list_resources',
@@ -380,7 +320,6 @@ describe('AgentProcess (serve mode)', () => {
     expect(hoisted.controlCalls[1]!.params).toMatchObject({
       workspace_id: 'workspace-2',
       materialization_path: '/repos/second',
-      snapshot_ref: 'workspace-2',
       owner_user_id: 'token_user',
     });
     expect(hoisted.controlCalls[4]!.params).toMatchObject({
@@ -404,7 +343,6 @@ describe('AgentProcess (serve mode)', () => {
   it('adopts an authoritative ready environment after a control/renderer reconnect', async () => {
     const h = makeHarness();
     const arg: AgentProcessStartArg = {
-      profileName: 'host',
       sources: [localSource('/repos/reconnect', 'reconnect')],
       sessionId: 'conversation-reconnect',
     };
@@ -433,7 +371,7 @@ describe('AgentProcess (serve mode)', () => {
 
   it('fails closed when reconciliation reaches a different AgentHost', async () => {
     const h = makeHarness();
-    const arg: AgentProcessStartArg = { profileName: 'host', sources: [localSource('/repos/mismatch')] };
+    const arg: AgentProcessStartArg = { sources: [localSource('/repos/mismatch')] };
     await h.proc.start(arg);
     const mutable = h.proc as unknown as { status: WithTimestamp<AgentProcessStatus> };
     mutable.status = {
@@ -458,7 +396,7 @@ describe('AgentProcess (serve mode)', () => {
 
   it('refuses to stop a newer environment generation through a stale target', async () => {
     const h = makeHarness();
-    await h.proc.start({ profileName: 'host', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
     const mutable = h.proc as unknown as { status: WithTimestamp<AgentProcessStatus> };
     mutable.status = {
       type: 'running',
@@ -466,7 +404,6 @@ describe('AgentProcess (serve mode)', () => {
       data: { uiUrl: 'http://127.0.0.1:9000', wsUrl: 'ws://127.0.0.1:9000/ws' },
     };
     const runtime = await h.proc.configureConsumer('thread', 'workspace', {
-      profileName: 'host',
       sources: [localSource('/ws')],
     });
     hoisted.resourceSnapshot = {
@@ -489,7 +426,7 @@ describe('AgentProcess (serve mode)', () => {
 
   it('reconciles a lost stop response instead of retrying blindly', async () => {
     const h = makeHarness();
-    await h.proc.start({ profileName: 'host', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
     const mutable = h.proc as unknown as { status: WithTimestamp<AgentProcessStatus> };
     mutable.status = {
       type: 'running',
@@ -497,9 +434,7 @@ describe('AgentProcess (serve mode)', () => {
       data: { uiUrl: 'http://127.0.0.1:9000', wsUrl: 'ws://127.0.0.1:9000/ws' },
     };
     const runtime = await h.proc.configureConsumer('thread', 'workspace', {
-      profileName: 'host',
       sources: [localSource('/ws')],
-      snapshotRef: 'snapshot-reconcile',
     });
     hoisted.controlFailureMethod = 'agent_host_stop_environment';
 
@@ -513,7 +448,7 @@ describe('AgentProcess (serve mode)', () => {
 
   it('waits for an already-committed stopping environment instead of retrying the mutation', async () => {
     const h = makeHarness({ stopReconcilePollMs: 1, stopReconcileTimeoutMs: 100 });
-    await h.proc.start({ profileName: 'host', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
     const mutable = h.proc as unknown as { status: WithTimestamp<AgentProcessStatus> };
     mutable.status = {
       type: 'running',
@@ -521,9 +456,7 @@ describe('AgentProcess (serve mode)', () => {
       data: { uiUrl: 'http://127.0.0.1:9000', wsUrl: 'ws://127.0.0.1:9000/ws' },
     };
     const runtime = await h.proc.configureConsumer('thread-stopping', 'workspace-stopping', {
-      profileName: 'host',
       sources: [localSource('/ws')],
-      snapshotRef: 'snapshot-stopping',
     });
     const resources = (state: 'stopping' | 'stopped'): Record<string, unknown> => ({
       agent_host_id: 'agent-host-test',
@@ -552,7 +485,6 @@ describe('AgentProcess (serve mode)', () => {
   it('binds the conversation session rather than the launcher consumer', async () => {
     const h = makeHarness();
     const arg: AgentProcessStartArg = {
-      profileName: 'host',
       sources: [localSource('/repos/second', 'second')],
       sessionId: 'conversation-session',
     };
@@ -581,7 +513,7 @@ describe('AgentProcess (serve mode)', () => {
       }
       return true;
     });
-    await h.proc.start({ profileName: 'host', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
     const mutable = h.proc as unknown as { status: WithTimestamp<AgentProcessStatus> };
     mutable.status = {
       type: 'running',
@@ -589,9 +521,7 @@ describe('AgentProcess (serve mode)', () => {
       data: { uiUrl: 'http://127.0.0.1:9000', wsUrl: 'ws://127.0.0.1:9000/ws' },
     };
     await h.proc.configureConsumer('thread-forced', 'workspace-forced', {
-      profileName: 'host',
       sources: [localSource('/ws')],
-      snapshotRef: 'snapshot-forced',
     });
 
     await expect(h.proc.stop()).resolves.toEqual({
@@ -604,7 +534,7 @@ describe('AgentProcess (serve mode)', () => {
   it('retains an unconfirmed killed child for a real shutdown retry', async () => {
     const h = makeHarness({ processStopTimeoutMs: 5 });
     h.child.kill.mockImplementation(() => false);
-    await h.proc.start({ profileName: 'host', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
     await expect(h.proc.stop()).rejects.toThrow('exit was not confirmed');
     h.child.kill.mockImplementation((signal) => {
       setImmediate(() => h.child.emitClose(0, signal));
@@ -617,7 +547,6 @@ describe('AgentProcess (serve mode)', () => {
   it('stops a newly materialized environment when thread binding fails', async () => {
     const h = makeHarness();
     const arg: AgentProcessStartArg = {
-      profileName: 'devbox',
       sources: [localGitSource('/repos/second', 'second')],
     };
     await h.proc.start(arg);
@@ -645,7 +574,6 @@ describe('AgentProcess (serve mode)', () => {
   it('registers all project sources through the consumer workspace', async () => {
     const h = makeHarness();
     await h.proc.start({
-      profileName: 'host',
       sources: [
         localGitSource('/repos/launcher', 'launcher'),
         localGitSource('/repos/omni-code', 'omni-code'),
@@ -659,7 +587,6 @@ describe('AgentProcess (serve mode)', () => {
       data: { uiUrl: 'http://127.0.0.1:9000', wsUrl: 'ws://127.0.0.1:9000/ws' },
     };
     await h.proc.configureConsumer('thread-1', 'workspace-1', {
-      profileName: 'host',
       sources: [
         localGitSource('/repos/launcher', 'launcher'),
         localGitSource('/repos/omni-code', 'omni-code'),
@@ -677,6 +604,7 @@ describe('AgentProcess (serve mode)', () => {
         mountName: 'omniagents',
         writable: true,
         repoUrl: 'https://github.com/me/omniagents.git',
+        checkoutPath: '/checkouts/omniagents',
         ref: 'main',
       },
     ]);
@@ -685,7 +613,6 @@ describe('AgentProcess (serve mode)', () => {
   it('keeps project selection off AgentHost argv', async () => {
     const h = makeHarness();
     await h.proc.start({
-      profileName: 'host',
       sources: [localSource('/ws')],
       projectId: 'proj_abc',
     });
@@ -693,21 +620,17 @@ describe('AgentProcess (serve mode)', () => {
     const [, args] = spawnCall(0);
     expect(args).not.toContain('--project');
     expect(args).not.toContain('proj_abc');
-    expect(args).toContain('--snapshot-dir');
-    expect(args).toContain(path.join('/fake/config', 'snapshots'));
   });
 
-  it('always passes --snapshot-dir but keeps session identity off AgentHost argv', async () => {
+  it('keeps session identity off AgentHost argv', async () => {
     const h = makeHarness();
-    await h.proc.start({ profileName: 'host', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
     const [, args1] = spawnCall(0);
-    expect(args1).toContain('--snapshot-dir');
     expect(args1).not.toContain('--session-id');
 
     await h.proc.stop();
     hoisted.spawnCalls.length = 0;
     await h.proc.start({
-      profileName: 'host',
       sources: [localSource('/ws')],
       sessionId: 'sess_xyz',
     });
@@ -716,26 +639,9 @@ describe('AgentProcess (serve mode)', () => {
     expect(args2).not.toContain('sess_xyz');
   });
 
-  it('resolves a consumer profile during materialization, not host startup', async () => {
-    const h = makeHarness();
-    const arg = { profileName: 'missing', sources: [localSource('/ws')] };
-    await h.proc.start(arg);
-    const mutable = h.proc as unknown as { status: WithTimestamp<AgentProcessStatus> };
-    mutable.status = {
-      type: 'running',
-      timestamp: Date.now(),
-      data: { uiUrl: 'http://127.0.0.1:9000', wsUrl: 'ws://127.0.0.1:9000/ws' },
-    };
-
-    expect(spawnCallCount()).toBe(1);
-    await expect(h.proc.configureConsumer('thread-1', 'workspace-1', arg)).rejects.toThrow(
-      'Profile "missing" is no longer available'
-    );
-  });
-
   it('parses targetless JSON readiness without consumer runtime data', async () => {
     const h = makeHarness();
-    await h.proc.start({ profileName: 'devbox', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
     h.child.emitStdout(`${SERVE_PAYLOAD}\n`);
 
     const connecting = h.statuses.find((s) => s.type === 'connecting');
@@ -746,30 +652,13 @@ describe('AgentProcess (serve mode)', () => {
       expect(connecting.data.agentHostId).toBe('agent-host-test');
       expect(connecting.data.workspaceId).toBeUndefined();
       expect(connecting.data.environmentId).toBeUndefined();
-      expect(connecting.data.services).toEqual({});
       expect(connecting.data.port).toBe(9000);
     }
   });
 
-  it('does not issue sandbox lifecycle RPCs without an execution environment', async () => {
-    const h = makeHarness();
-    const mutable = h.proc as unknown as { status: WithTimestamp<AgentProcessStatus> };
-    mutable.status = {
-      type: 'running',
-      timestamp: Date.now(),
-      data: { uiUrl: 'http://127.0.0.1:9000', wsUrl: 'ws://127.0.0.1:9000/ws' },
-    };
-
-    await expect(h.proc.pause()).resolves.toMatchObject({
-      ok: false,
-      supported: false,
-      reason: expect.stringContaining('execution environment'),
-    });
-  });
-
   it('rejects readiness without an AgentHost identity', async () => {
     const h = makeHarness();
-    await h.proc.start({ profileName: 'host', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
     const payload = JSON.parse(SERVE_PAYLOAD) as Record<string, unknown>;
     delete payload.agent_host_id;
 
@@ -779,7 +668,7 @@ describe('AgentProcess (serve mode)', () => {
 
   it('handles split-buffer payloads (line not complete in first write)', async () => {
     const h = makeHarness();
-    await h.proc.start({ profileName: 'host', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
 
     const mid = Math.floor(SERVE_PAYLOAD.length / 2);
     h.child.emitStdout(SERVE_PAYLOAD.slice(0, mid));
@@ -790,7 +679,7 @@ describe('AgentProcess (serve mode)', () => {
 
   it('ignores duplicate JSON payloads after the first', async () => {
     const h = makeHarness();
-    await h.proc.start({ profileName: 'host', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
 
     h.child.emitStdout(`${SERVE_PAYLOAD}\n`);
     h.child.emitStdout(`${SERVE_PAYLOAD}\n`);
@@ -801,7 +690,7 @@ describe('AgentProcess (serve mode)', () => {
 
   it('transitions to error on non-zero exit when not stopping', async () => {
     const h = makeHarness();
-    await h.proc.start({ profileName: 'host', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
     h.child.emitStderr('boom\n');
     h.child.emitClose(2);
 
@@ -814,7 +703,7 @@ describe('AgentProcess (serve mode)', () => {
 
   it('transitions to exited on close after stop()', async () => {
     const h = makeHarness();
-    await h.proc.start({ profileName: 'host', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
     await h.proc.stop();
 
     const last = h.statuses.at(-1);
@@ -826,7 +715,7 @@ describe('AgentProcess (serve mode)', () => {
     (utilMock.isDirectory as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false).mockResolvedValueOnce(false);
 
     const h = makeHarness();
-    const arg = { profileName: 'host', sources: [localSource('/missing')] };
+    const arg = { sources: [localSource('/missing')] };
     await h.proc.start(arg);
     await expect(h.proc.configureConsumer('thread-1', 'workspace-1', arg)).rejects.toThrow(
       'Workspace directory not found'
@@ -841,7 +730,6 @@ describe('AgentProcess (serve mode)', () => {
 
     const h = makeHarness();
     await h.proc.start({
-      profileName: 'host',
       sources: [remoteSource('https://github.com/foo/bar.git')],
     });
     const mutable = h.proc as unknown as { status: WithTimestamp<AgentProcessStatus> };
@@ -851,89 +739,9 @@ describe('AgentProcess (serve mode)', () => {
       data: { uiUrl: 'http://127.0.0.1:9000', wsUrl: 'ws://127.0.0.1:9000/ws' },
     };
     await h.proc.configureConsumer('thread-1', 'workspace-1', {
-      profileName: 'host',
       sources: [remoteSource('https://github.com/foo/bar.git')],
     });
     expect(isDirSpy).not.toHaveBeenCalled();
     expect(spawnCallCount()).toBe(1);
-  });
-});
-
-describe('AgentProcess (platform compute mode)', () => {
-  it('publishes complete routed AgentHost data with only the ordinary consumer credential', async () => {
-    const ready: PlatformSession = {
-      sessionId: 'platform-session-1',
-      status: 'active',
-      agentHostId: 'remote-agent-host-1',
-      workspaceId: 'remote-workspace-1',
-      environmentId: 'remote-environment-1',
-      environmentGeneration: 7,
-      workspaceRoot: '/workspace/project',
-      defaultCwd: '/workspace/project',
-      services: { code_server: 'https://code.example.test' },
-      consumerCredential: { token: 'ordinary-consumer-token', scope: 'consumer', kind: 'ordinary' },
-      websocketUrl: 'wss://runtime.example.test/ws',
-      containerId: 'remote-container-1',
-    };
-    const computeClient: IComputeClient = {
-      confirmsReadiness: true,
-      startSession: vi.fn(
-        async (): Promise<PlatformSession> => ({ ...ready, status: 'pending', websocketUrl: undefined })
-      ),
-      waitForSession: vi.fn(async () => ready),
-      stopSession: vi.fn(async () => {}),
-      finalizeWorkspace: vi.fn(async () => ({ downloadSasUrl: 'https://download.example.test' })),
-    };
-    const statuses: WithTimestamp<AgentProcessStatus>[] = [];
-    const proc = new AgentProcess({
-      mode: 'compute',
-      computeClient,
-      ipcRawOutput: () => {},
-      onStatusChange: (status) => statuses.push(status),
-    });
-
-    await proc.start({ profileName: 'platform', sources: [], sessionId: 'conversation-1' });
-
-    const running = statuses.at(-1);
-    expect(running).toMatchObject({
-      type: 'running',
-      data: {
-        uiUrl: 'https://runtime.example.test',
-        wsUrl: 'wss://runtime.example.test/ws',
-        agentHostId: 'remote-agent-host-1',
-        workspaceId: 'remote-workspace-1',
-        environmentId: 'remote-environment-1',
-        environmentGeneration: 7,
-        workspaceRoot: '/workspace/project',
-        defaultCwd: '/workspace/project',
-        services: { code_server: 'https://code.example.test' },
-        authToken: 'ordinary-consumer-token',
-        containerId: 'remote-container-1',
-      },
-    });
-    if (running?.type === 'running') {
-      expect(running.data.uiUrl).not.toContain('token');
-      expect(JSON.stringify(running.data)).not.toContain('admin');
-    }
-    await proc.bindSession('agent:remote', 'resident-remote-2026-09-13');
-    expect(hoisted.controlCalls.at(-1)).toMatchObject({
-      method: 'agent_host_bind_thread',
-      params: {
-        thread_id: 'resident-remote-2026-09-13',
-        binding: {
-          workspace_id: 'remote-workspace-1',
-          environment_selection: {
-            mode: 'existing',
-            environment_id: 'remote-environment-1',
-            environment_generation: 7,
-          },
-        },
-      },
-    });
-    vi.mocked(computeClient.stopSession).mockRejectedValueOnce(new Error('remote stop unavailable'));
-    await expect(proc.stop()).rejects.toThrow('remote stop unavailable');
-    await expect(proc.stop()).resolves.toMatchObject({ scope: 'compute', shutdown: 'graceful' });
-    expect(computeClient.stopSession).toHaveBeenNthCalledWith(1, 'platform-session-1');
-    expect(computeClient.stopSession).toHaveBeenNthCalledWith(2, 'platform-session-1');
   });
 });

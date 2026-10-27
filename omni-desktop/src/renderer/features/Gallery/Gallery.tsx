@@ -1,9 +1,4 @@
-import { BookmarkIcon, CodeIcon, FileTextIcon, GlobeIcon, SendHorizontalIcon } from 'lucide-react';
-import { memo, useState } from 'react';
-
-import { Button } from '@/renderer/ds/ui/button';
-import { TooltipProvider } from '@/renderer/ds/ui/tooltip';
-import type { ToolState } from '@/renderer/omniagents-ui/ai-types';
+import type { ToolState } from '@omniagents/chat-ui/ai-types';
 import {
   Artifact,
   ArtifactAction,
@@ -12,16 +7,6 @@ import {
   ArtifactDescription,
   ArtifactHeader,
   ArtifactTitle,
-  Checkpoint,
-  CheckpointIcon,
-  CheckpointTrigger,
-  Confirmation,
-  ConfirmationAccepted,
-  ConfirmationAction,
-  ConfirmationActions,
-  ConfirmationRejected,
-  ConfirmationRequest,
-  ConfirmationTitle,
   Message,
   MessageAction,
   MessageActions,
@@ -35,35 +20,25 @@ import {
   PlanHeader,
   PlanTitle,
   PlanTrigger,
-  Reasoning,
-  ReasoningContent,
-  ReasoningTrigger,
   Shimmer,
-  Source,
-  Sources,
-  SourcesContent,
-  SourcesTrigger,
-  Suggestion,
-  Suggestions,
-  Task,
-  TaskContent,
-  TaskItem,
-  TaskItemFile,
-  TaskTrigger,
   Tool,
   ToolContent,
   ToolHeader,
   ToolInput,
   ToolOutput,
-} from '@/renderer/omniagents-ui/components/ai';
-import { ToolCard } from '@/renderer/omniagents-ui/components/MessageList';
-import { Markdown } from '@/renderer/omniagents-ui/components/promptkit/markdown';
+} from '@omniagents/chat-ui/components/ai';
+import { ToolCard } from '@omniagents/chat-ui/components/MessageList';
+import { Markdown } from '@omniagents/chat-ui/components/promptkit/markdown';
 import {
   PromptInput,
   PromptInputActions,
   PromptInputTextarea,
-} from '@/renderer/omniagents-ui/components/promptkit/PromptInput';
-import type { ToolItem } from '@/shared/chat-types';
+} from '@omniagents/chat-ui/components/promptkit/PromptInput';
+import type { ToolItem } from '@omniagents/client/transcript/chat-types';
+import { Button } from '@omniagents/ui/button';
+import { TooltipProvider } from '@omniagents/ui/tooltip';
+import { CodeIcon, FileTextIcon, GlobeIcon, SendHorizontalIcon } from 'lucide-react';
+import { memo, useState } from 'react';
 
 const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
   <section className="mb-12">
@@ -373,21 +348,21 @@ export const auth = () => {
     item: {
       type: 'tool',
       call_id: 'gallery-mcp-labels',
-      tool: 'mcp_omni-projects__list_tickets',
-      server_label: 'omni-projects',
-      tool_label: 'list_tickets',
+      tool: 'mcp_github__list_issues',
+      server_label: 'github',
+      tool_label: 'list_issues',
       status: 'result',
-      input: JSON.stringify({ project_id: 'proj-1', column: 'In Progress' }),
-      output: '3 tickets',
+      input: JSON.stringify({ repo: 'acme/web', state: 'open' }),
+      output: '3 issues',
       metadata: {
         display_type: 'table',
-        summary: '3 tickets in "In Progress"',
+        summary: '3 open issues in acme/web',
         table: {
           columns: [{ title: 'id' }, { title: 'title' }],
           rows: [
-            ['t-11', 'Fix login redirect'],
-            ['t-12', 'Add CSV export'],
-            ['t-13', 'Migrate components to shadcn'],
+            ['#11', 'Fix login redirect'],
+            ['#12', 'Add CSV export'],
+            ['#13', 'Migrate components to shadcn'],
           ],
         },
       },
@@ -462,25 +437,6 @@ export const Gallery = memo(() => {
             </Variant>
           </Section>
 
-          <Section title="Reasoning">
-            <Variant label="Streaming">
-              <Reasoning isStreaming defaultOpen>
-                <ReasoningTrigger />
-                <ReasoningContent>
-                  {`Let me think about the migration path...\n\n- option A keeps the old middleware\n- option B swaps it out entirely`}
-                </ReasoningContent>
-              </Reasoning>
-            </Variant>
-            <Variant label="Completed (duration: 4s)">
-              <Reasoning duration={4} defaultOpen>
-                <ReasoningTrigger />
-                <ReasoningContent>
-                  I chose option B because it removes the dual-write path and simplifies the compliance story.
-                </ReasoningContent>
-              </Reasoning>
-            </Variant>
-          </Section>
-
           <Section title="Plan">
             <Variant label="Static">
               <Plan defaultOpen>
@@ -519,19 +475,6 @@ export const Gallery = memo(() => {
                 </PlanHeader>
               </Plan>
             </Variant>
-          </Section>
-
-          <Section title="Task">
-            <Task defaultOpen>
-              <TaskTrigger title="Searched for session-related files" />
-              <TaskContent>
-                <TaskItem>
-                  Looked through <TaskItemFile>src/main/auth.ts</TaskItemFile> and{' '}
-                  <TaskItemFile>src/shared/session.ts</TaskItemFile>
-                </TaskItem>
-                <TaskItem>Matched 14 call sites</TaskItem>
-              </TaskContent>
-            </Task>
           </Section>
 
           <Section title="Tool (one per state)">
@@ -596,34 +539,6 @@ export const Gallery = memo(() => {
             ))}
           </Section>
 
-          <Section title="Confirmation">
-            <Variant label="Pending approval">
-              <Confirmation state="approval-requested" approval={{ id: 'c1' }}>
-                <ConfirmationRequest>
-                  <ConfirmationTitle>Allow running `rm -rf dist/` in the workspace?</ConfirmationTitle>
-                </ConfirmationRequest>
-                <ConfirmationActions>
-                  <ConfirmationAction variant="secondary">Deny</ConfirmationAction>
-                  <ConfirmationAction>Approve</ConfirmationAction>
-                </ConfirmationActions>
-              </Confirmation>
-            </Variant>
-            <Variant label="Approved">
-              <Confirmation state="output-available" approval={{ id: 'c2', approved: true }}>
-                <ConfirmationAccepted>
-                  <ConfirmationTitle>You approved this action.</ConfirmationTitle>
-                </ConfirmationAccepted>
-              </Confirmation>
-            </Variant>
-            <Variant label="Rejected">
-              <Confirmation state="output-denied" approval={{ id: 'c3', approved: false, reason: 'too risky' }}>
-                <ConfirmationRejected>
-                  <ConfirmationTitle>You denied this action (reason: too risky).</ConfirmationTitle>
-                </ConfirmationRejected>
-              </Confirmation>
-            </Variant>
-          </Section>
-
           <Section title="Artifact">
             <Artifact>
               <ArtifactHeader>
@@ -640,35 +555,6 @@ export const Gallery = memo(() => {
                 <MessageResponse>{SAMPLE_MD}</MessageResponse>
               </ArtifactContent>
             </Artifact>
-          </Section>
-
-          <Section title="Checkpoint">
-            <Checkpoint>
-              <CheckpointIcon />
-              <CheckpointTrigger tooltip="Restore to this checkpoint">
-                <BookmarkIcon className="size-4" />
-                Checkpoint · before auth refactor
-              </CheckpointTrigger>
-            </Checkpoint>
-          </Section>
-
-          <Section title="Sources">
-            <Sources>
-              <SourcesTrigger count={2} />
-              <SourcesContent>
-                <Source href="https://example.com/rfc-7519" title="RFC 7519 — JWT" />
-                <Source href="https://example.com/session-docs" title="Session API docs" />
-              </SourcesContent>
-            </Sources>
-          </Section>
-
-          <Section title="Suggestions">
-            <Suggestions>
-              <Suggestion suggestion="Summarize this ticket" />
-              <Suggestion suggestion="Run the failing test" />
-              <Suggestion suggestion="Open the latest PR" />
-              <Suggestion suggestion="Explain this stack trace" />
-            </Suggestions>
           </Section>
 
           <Section title="Shimmer">

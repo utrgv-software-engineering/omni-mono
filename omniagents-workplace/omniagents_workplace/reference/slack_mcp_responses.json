@@ -1,0 +1,372 @@
+{
+  "note": "Real responses from the hosted Slack MCP server (mcp.slack.com, 'Slack MCP' 1.0.0, protocol 2025-06-18), captured 2026-10-23 in a private test channel. Personal values are placeholders.",
+  "calls": [
+    {
+      "tool": "slack_create_conversation",
+      "arguments": {
+        "channel_name": "omni-mcp-probe",
+        "is_private": true
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"result\":\"Channel created successfully.\\n\\nChannel ID: C0CBVBM6REV\\nType: Private Channel\\nName: omni-mcp-probe\\nMembers invited: 1\\nYou can now use `slack_send_message` with this channel_id.\",\"channel_id\":\"C0CBVBM6REV\"}"
+            }
+          ]
+        },
+        "id": 2
+      }
+    },
+    {
+      "tool": "slack_send_message",
+      "arguments": {
+        "channel_id": "C0CBVBM6REV",
+        "message": "Probe: can the factory add *pagination* to `GET /tasks`?"
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"message_link\":\"https:\\/\\/{{team_domain}}.slack.com\\/archives\\/C0CBVBM6REV\\/p1792806056439609\",\"message_context\":{\"message_ts\":\"1792806056.439609\",\"channel_id\":\"C0CBVBM6REV\"}}"
+            }
+          ]
+        },
+        "id": 3
+      }
+    },
+    {
+      "tool": "slack_send_message",
+      "arguments": {
+        "channel_id": "C0CBVBM6REV",
+        "message": "Reply in thread: yes, issue #12.",
+        "thread_ts": "1792806056.439609"
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"message_link\":\"https:\\/\\/{{team_domain}}.slack.com\\/archives\\/C0CBVBM6REV\\/p1792806056777319?thread_ts=1792806056.439609&cid=C0CBVBM6REV\",\"message_context\":{\"message_ts\":\"1792806056.777319\",\"channel_id\":\"C0CBVBM6REV\"}}"
+            }
+          ]
+        },
+        "id": 4
+      }
+    },
+    {
+      "tool": "slack_add_reaction",
+      "arguments": {
+        "channel_id": "C0CBVBM6REV",
+        "message_ts": "1792806056.439609",
+        "emoji": "eyes"
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"result\":\"Successfully added :eyes: reaction to the message.\"}"
+            }
+          ]
+        },
+        "id": 5
+      }
+    },
+    {
+      "tool": "slack_get_reactions",
+      "arguments": {
+        "channel_id": "C0CBVBM6REV",
+        "message_ts": "1792806056.439609"
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"result\":\"Reactions on message:\\n\\n:eyes: \\u00d7 1 \\u2014 {{current_user_name}} ({{current_user_id}})\"}"
+            }
+          ]
+        },
+        "id": 6
+      }
+    },
+    {
+      "tool": "slack_read_channel",
+      "arguments": {
+        "channel_id": "C0CBVBM6REV"
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"messages\":\"Channel: #omni-mcp-probe (C0CBVBM6REV)\\n\\n=== Message from {{current_user_name}} <{{current_user_email}}> ({{current_user_id}}) at 2026-10-23 20:40:56 {{tz_abbrev}} === \\nMessage TS: 1792806056.439609\\nProbe: can the factory add _pagination_ to `GET \\/tasks`?\\n*Sent using* Omni MCP probe\\nThread: 1 replies (latest: 2026-10-23 20:40:56 {{tz_abbrev}})\\nReactions: eyes (1)\\n\\n=== Message from {{current_user_name}} <{{current_user_email}}> ({{current_user_id}}) at 2026-10-23 20:40:56 {{tz_abbrev}} === \\nMessage TS: 1792806056.250839\\n<@{{current_user_id}}|{{current_user_name}}> has joined the channel\",\"pagination_info\":\"There are no more messages available.\\n\"}"
+            }
+          ]
+        },
+        "id": 7
+      }
+    },
+    {
+      "tool": "slack_read_channel",
+      "arguments": {
+        "channel_id": "C0CBVBM6REV",
+        "response_format": "concise"
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"messages\":\"Channel: #omni-mcp-probe (C0CBVBM6REV)\\n\\neric <{{current_user_email}}>: Probe: can the factory add _pagination_ to `GET \\/tasks`?\\n*Sent using* Omni MCP probe [2026-10-23 20:40:56 {{tz_abbrev}}]\\n\\neric <{{current_user_email}}>: <@{{current_user_id}}|{{current_user_name}}> has joined the channel [2026-10-23 20:40:56 {{tz_abbrev}}]\",\"pagination_info\":\"There are no more messages available.\\n\"}"
+            }
+          ]
+        },
+        "id": 8
+      }
+    },
+    {
+      "tool": "slack_read_thread",
+      "arguments": {
+        "channel_id": "C0CBVBM6REV",
+        "message_ts": "1792806056.439609"
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"messages\":\"=== THREAD PARENT MESSAGE ===\\nFrom: {{current_user_name}} <{{current_user_email}}> ({{current_user_id}})\\nTime: 2026-10-23 20:40:56 {{tz_abbrev}}\\nMessage TS: 1792806056.439609\\nProbe: can the factory add _pagination_ to `GET \\/tasks`?\\n*Sent using* Omni MCP probe\\nReactions: eyes (1)\\n\\n=== THREAD REPLIES (1 total) ===\\n\\n--- Reply 1 of 1 ---\\nFrom: {{current_user_name}} <{{current_user_email}}> ({{current_user_id}})\\nTime: 2026-10-23 20:40:56 {{tz_abbrev}}\\nMessage TS: 1792806056.777319\\nReply in thread: yes, issue #12.\\n*Sent using* Omni MCP probe\\n\",\"pagination_info\":\"There are no more messages in this thread.\\n\"}"
+            }
+          ]
+        },
+        "id": 9
+      }
+    },
+    {
+      "tool": "slack_read_thread",
+      "arguments": {
+        "channel_id": "C0CBVBM6REV",
+        "message_ts": "1792806056.439609",
+        "response_format": "concise"
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"messages\":\"THREAD: Probe: can the factory add _pagination_ to `GET \\/tasks`?\\n*Sent using* Omni MCP probe [{{current_user_name}} <{{current_user_email}}>]\\n\\n> {{current_user_name}} <{{current_user_email}}>: Reply in thread: yes, issue #12.\\n*Sent using* Omni MCP probe\\n\",\"pagination_info\":\"There are no more messages in this thread.\\n\"}"
+            }
+          ]
+        },
+        "id": 10
+      }
+    },
+    {
+      "tool": "slack_list_channel_members",
+      "arguments": {
+        "channel_id": "C0CBVBM6REV"
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"members\":\"# Channel Members (1)\\n\\n## Member 1\\nUser ID: {{current_user_id}}\\nUsername: @{{current_user_name}}\\nDisplay Name: \\nReal Name: {{current_user_name}}\\nEmail: {{current_user_email}}\\n\\n\",\"pagination_info\":\"No more members available.\\n\"}"
+            }
+          ]
+        },
+        "id": 15
+      }
+    },
+    {
+      "tool": "slack_list_user_channels",
+      "arguments": {
+        "name_prefix": "omni-mcp-probe",
+        "types": "private_channel"
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"result\":\"## My Channels (showing 1 of 1 total)\\n\\n### #omni-mcp-probe\\n- **ID:** C0CBVBM6REV\\n- **Type:** Private Channel\\n- **Archived:** No\\n\\n\"}"
+            }
+          ]
+        },
+        "id": 16
+      }
+    },
+    {
+      "tool": "slack_read_user_profile",
+      "arguments": {},
+      "response": {
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"result\":\"User ID: {{current_user_id}}\\nUsername: {{current_user_name}}\\nDisplay Name: \\nReal Name: {{current_user_name}}\\nPronouns: \\nTitle: \\nEmail: {{current_user_email}}\\nOrganization Name: {{team_name}}\\nPhone: \\nStatus:  \\nTimezone: {{timezone}}\\nAdmin: Yes\\nOwner: Yes\\nBot: No\\nRestricted: No\\n\"}"
+            }
+          ]
+        },
+        "id": 17
+      }
+    },
+    {
+      "tool": "slack_read_user_profile",
+      "arguments": {
+        "response_format": "concise"
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"result\":\"{{current_user_name}} ()\\n{{team_name}}\\n\\n{{current_user_email}}\\nStatus:  \\n\"}"
+            }
+          ]
+        },
+        "id": 18
+      }
+    },
+    {
+      "tool": "slack_read_thread",
+      "arguments": {
+        "channel_id": "C0CBVBM6REV",
+        "message_ts": "1000000000.000001"
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "execution_failed: thread_not_found"
+            }
+          ],
+          "isError": true
+        },
+        "id": 19
+      }
+    },
+    {
+      "tool": "slack_search_public_and_private",
+      "arguments": {
+        "keywords": [
+          "pagination"
+        ],
+        "filters": "in:<#C0CBVBM6REV>"
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"results\":\"# Search Results for: \\n\\n## Messages (1 results)\\n### Result 1 of 1\\nChannel: #omni-mcp-probe (ID: C0CBVBM6REV)\\nFrom: {{current_user_name}} <{{current_user_email}}> (ID: {{current_user_id}}) \\nTime: 2026-10-23 20:40:56 {{tz_abbrev}}\\nMessage_ts: 1792806056.439609\\nReply count: 1\\nPermalink: [link](https:\\/\\/{{team_domain}}.slack.com\\/archives\\/C0CBVBM6REV\\/p1792806056439609?thread_ts=1792806056.439609&cid=C0CBVBM6REV)\\nText: \\nProbe: can the factory add pagination to GET \\/tasks?\\nContext after: \\n- From: {{current_user_name}} <{{current_user_email}}> (ID: {{current_user_id}}) \\n  Message_ts: 1792806056.777319\\n  Reply in thread: yes, issue #12. *Sent using* Omni MCP probe\\n\\n---\\n\\n\",\"pagination_info\":\"End of results - No more pages available.\\\\n\"}"
+            }
+          ]
+        },
+        "id": 2
+      }
+    },
+    {
+      "tool": "slack_search_public_and_private",
+      "arguments": {
+        "keywords": [
+          "pagination"
+        ],
+        "filters": "in:<#C0CBVBM6REV>",
+        "response_format": "concise"
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"results\":\"# Search Results for: \\n\\n## Messages (1 results)\\n(1 results)\\n1. #omni-mcp-probe - {{current_user_name}}: Probe: can the factory add pagination to GET \\/tasks? 2026-10-23 20:40:56 {{tz_abbrev}}\\n\",\"pagination_info\":\"End of results - No more pages available.\\\\n\"}"
+            }
+          ]
+        },
+        "id": 3
+      }
+    },
+    {
+      "tool": "slack_search_public_and_private",
+      "arguments": {
+        "natural_language_query": "pagination probe in omni-mcp-probe",
+        "filters": "in:<#C0CBVBM6REV>"
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"results\":\"# Search Results for: \\n\\n## Messages (3 results)\\n### Result 1 of 3\\nChannel: #omni-mcp-probe (ID: C0CBVBM6REV)\\nFrom:  (ID: U00) \\nTime: 2026-10-23 20:40:59 {{tz_abbrev}}\\nMessage_ts: 1792806059.981909\\nPermalink: [link](https:\\/\\/{{team_domain}}.slack.com\\/archives\\/C0CBVBM6REV\\/p1792806059981909)\\nText: \\narchived the channel\\nContext before: \\n- From:  (ID: U00) \\n  Message_ts: 1792806056.250839\\n  <@{{current_user_id}}|{{current_user_name}}> has joined the channel\\n\\n---\\n\\n### Result 2 of 3\\nChannel: #omni-mcp-probe (ID: C0CBVBM6REV)\\nFrom: {{current_user_name}} <{{current_user_email}}> (ID: {{current_user_id}}) \\nTime: 2026-10-23 20:40:56 {{tz_abbrev}}\\nMessage_ts: 1792806056.777319\\nPermalink: [link](https:\\/\\/{{team_domain}}.slack.com\\/archives\\/C0CBVBM6REV\\/p1792806056777319?thread_ts=1792806056.439609&cid=C0CBVBM6REV)\\nText: \\nReply in thread: yes, issue #12.\\nContext before: \\n- [See result above] From: {{current_user_name}} <{{current_user_email}}> (ID: {{current_user_id}}) Message_ts: 1792806056.439609\\n\\n---\\n\\n### Result 3 of 3\\nChannel: #omni-mcp-probe (ID: C0CBVBM6REV)\\nFrom: {{current_user_name}} <{{current_user_email}}> (ID: {{current_user_id}}) \\nTime: 2026-10-23 20:40:56 {{tz_abbrev}}\\nMessage_ts: 1792806056.439609\\nReply count: 1\\nPermalink: [link](https:\\/\\/{{team_domain}}.slack.com\\/archives\\/C0CBVBM6REV\\/p1792806056439609?thread_ts=1792806056.439609&cid=C0CBVBM6REV)\\nText: \\nProbe: can the factory add pagination to GET \\/tasks?\\nContext after: \\n- [See result above] From: {{current_user_name}} <{{current_user_email}}> (ID: {{current_user_id}}) Message_ts: 1792806056.777319\\n\\n---\\n\\n\",\"pagination_info\":\"End of results - No more pages available.\\\\n\"}"
+            }
+          ]
+        },
+        "id": 4
+      }
+    },
+    {
+      "tool": "slack_search_channels",
+      "arguments": {
+        "keywords": [
+          "omni-mcp-probe"
+        ],
+        "include_archived": true
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"results\":\"# Search Results for: \\n\\nNo results found.\\n\",\"pagination_info\":\"End of results - No more pages available.\\\\n\"}"
+            }
+          ]
+        },
+        "id": 5
+      }
+    },
+    {
+      "tool": "slack_search_users",
+      "arguments": {
+        "keywords": [
+          "zzqqxx-no-such-user"
+        ]
+      },
+      "response": {
+        "jsonrpc": "2.0",
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"results\":\"# Search Results for: \\n\\nNo results found.\\n\",\"pagination_info\":\"End of results - No more pages available.\\\\n\"}"
+            }
+          ]
+        },
+        "id": 14
+      }
+    }
+  ]
+}

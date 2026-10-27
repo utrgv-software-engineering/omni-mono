@@ -18,14 +18,18 @@ instead of leaking an SDK transport exception to callers.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import io
+import os
 import posixpath
 import shlex
+import tarfile
 import time
 import uuid
-from datetime import datetime
-from pathlib import PurePosixPath
-from typing import Any, Dict, List, Literal, Optional, Sequence, Union
+from datetime import datetime, timezone
+from pathlib import Path, PurePosixPath
+from typing import Any, Dict, List, Literal, Optional
 
 from ._entries import entry_basename, log_skipped_entry, make_entry, sort_entries
 from .base import CommandLike, ProcessHandle, Workspace
@@ -36,6 +40,16 @@ from .types import (
     WorkspaceEscapeError,
     WorkspaceFeatureUnavailable,
 )
+
+#: Where the host's read-only copies live in a sandbox (an agent's skill
+#: folders, for one): outside the workspace, so they never show up in the
+#: repository the agent changes. File tools read them; nothing writes them
+#: but :meth:`SandboxWorkspace.provide`.
+PROVIDED_ROOT = "/opt/omniagents"
+
+#: base64 text sent per ``exec`` while copying, well under Linux's
+#: 128 KiB limit on one argument.
+_COPY_CHUNK = 64 * 1024
 
 #: The SDK's stable ``ErrorCode`` values (``SandboxError.error_code``),
 #: mapped onto the workspace layer's error types. ``invalid_manifest_path``
@@ -198,6 +212,37 @@ def _translate_session_error(error: BaseException, path: str) -> BaseException:
     return OSError(f"{path}: {error}")
 
 
+def _provided(absolute: str) -> bool:
+    """Whether a normalized container path is under :data:`PROVIDED_ROOT`."""
+    return absolute.startswith(PROVIDED_ROOT + "/")
+
+
+def _refuse_provided(absolute: str) -> None:
+    if _provided(absolute):
+        raise PermissionError(
+            f"{absolute}: read-only (a copy of host files in the sandbox; "
+            "change the original instead)"
+        )
+
+
+def _dir_fingerprint(host_dir: Path) -> str:
+    """Changes whenever a file under *host_dir* is added, removed or edited."""
+    digest = hashlib.sha256()
+    for dirpath, dirnames, filenames in os.walk(host_dir):
+        dirnames.sort()
+        for filename in sorted(filenames):
+            path = os.path.join(dirpath, filename)
+            try:
+                stat = os.stat(path)
+            except OSError:
+                continue
+            digest.update(
+                f"{os.path.relpath(path, host_dir)}\0{stat.st_size}\0"
+                f"{stat.st_mtime_ns}\n".encode()
+            )
+    return digest.hexdigest()
+
+
 class SandboxWorkspace(Workspace):
     """Workspace backed by an SDK sandbox session.
 
@@ -245,6 +290,9 @@ class SandboxWorkspace(Workspace):
         # remapped non-privileged user (e.g. ``"user"`` or ``"1000:1000"``)
         # to constrain the agent to its uid mapping.
         self._default_user = default_user
+        # Fingerprint of each host directory copied under PROVIDED_ROOT, by
+        # destination, so an unchanged directory is not copied again.
+        self._provided: Dict[str, str] = {}
 
     @property
     def session(self) -> Any:
@@ -283,7 +331,7 @@ class SandboxWorkspace(Workspace):
             candidate = root / candidate
         # posixpath.normpath collapses "." and ".." without touching disk.
         full = PurePosixPath(posixpath.normpath(str(candidate)))
-        if full != root and root not in full.parents:
+        if full != root and root not in full.parents and not _provided(str(full)):
             raise WorkspaceEscapeError(
                 f"Path {path!r} resolves to {str(full)!r}, outside workspace "
                 f"root {self.root!r}"
@@ -298,6 +346,8 @@ class SandboxWorkspace(Workspace):
 
     async def read_bytes(self, path: str) -> bytes:
         absolute = self.resolve(path)
+        if _provided(absolute):
+            return await self._read_provided(absolute)
         try:
             stream = await self._session.read(
                 PurePosixPath(absolute), user=self._default_user
@@ -336,6 +386,7 @@ class SandboxWorkspace(Workspace):
         create_dirs: bool = True,
     ) -> None:
         absolute = self.resolve(path)
+        _refuse_provided(absolute)
         if append:
             # session.write is whole-file replace; emulate append by
             # reading + concat. Race-prone if another writer is active,
@@ -392,9 +443,10 @@ class SandboxWorkspace(Workspace):
             return False
         target = shlex.quote(absolute)
         root = shlex.quote(self.root)
+        provided = shlex.quote(PROVIDED_ROOT)
         script = (
             f"real=$(readlink -f -- {target} 2>/dev/null) || exit 1; "
-            f'case "$real" in {root}|{root}/*) ;; *) exit 1 ;; esac; '
+            f'case "$real" in {root}|{root}/*|{provided}/*) ;; *) exit 1 ;; esac; '
             f"test -{flag} {target}"
         )
         result = await self._session.exec(
@@ -411,6 +463,19 @@ class SandboxWorkspace(Workspace):
     async def is_dir(self, path: str) -> bool:
         return await self._test("d", path)
 
+    async def is_exec_dir(self, path: str) -> bool:
+        # Shell cwd may be outside the file-tool root (for example /tmp).
+        # Probe through the same session/user as exec, without file-policy fencing.
+        absolute = posixpath.normpath(posixpath.join(self.root, path))
+        result = await self._session.exec(
+            "sh",
+            "-lc",
+            f"test -d {shlex.quote(absolute)}",
+            shell=False,
+            user=self._default_user,
+        )
+        return result.exit_code == 0
+
     async def mkdir(
         self,
         path: str,
@@ -419,6 +484,7 @@ class SandboxWorkspace(Workspace):
         exist_ok: bool = True,
     ) -> None:
         absolute = self.resolve(path)
+        _refuse_provided(absolute)
         try:
             await self._session.mkdir(
                 PurePosixPath(absolute), parents=parents, user=self._default_user
@@ -430,9 +496,122 @@ class SandboxWorkspace(Workspace):
 
     async def remove(self, path: str, *, recursive: bool = False) -> None:
         absolute = self.resolve(path)
+        _refuse_provided(absolute)
         await self._session.rm(
             PurePosixPath(absolute), recursive=recursive, user=self._default_user
         )
+
+    # ------------------------ read-only copies ------------------------ #
+
+    async def provide(self, host_dir: Path, name: str) -> str:
+        """Copy *host_dir* into the sandbox, read-only, at ``PROVIDED_ROOT/name``.
+
+        Returns the container path. The copy is made again only when the
+        host directory changed since the last call, so callers can provide
+        on every use and the sandbox follows edits made on the host. The
+        files belong to the container's default user and are readable, not
+        writable, by everyone else; the workspace's own write methods refuse
+        them for every user.
+        """
+        dest = posixpath.normpath(posixpath.join(PROVIDED_ROOT, name))
+        if not _provided(dest):
+            raise ValueError(f"{name!r} is not a path under {PROVIDED_ROOT}")
+        host_dir = Path(host_dir)
+        fingerprint = _dir_fingerprint(host_dir)
+        if self._provided.get(dest) == fingerprint:
+            return dest
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+            archive.add(str(host_dir), arcname=".")
+        payload = base64.b64encode(buffer.getvalue()).decode("ascii")
+        staging = f"/tmp/omniagents-provide-{uuid.uuid4().hex}.b64"
+        for start in range(0, len(payload), _COPY_CHUNK):
+            await self._exec_checked(
+                'printf %s "$1" >> "$2"',
+                payload[start : start + _COPY_CHUNK],
+                staging,
+                what=f"copying {host_dir}",
+            )
+        await self._exec_checked(
+            'rm -rf "$2" && mkdir -p "$2" && base64 -d "$1" | tar -xzf - -C "$2"'
+            ' --no-same-owner && chmod -R a+rX,go-w "$2"; status=$?; rm -f "$1";'
+            " exit $status",
+            staging,
+            dest,
+            what=f"copying {host_dir}",
+        )
+        self._provided[dest] = fingerprint
+        return dest
+
+    async def _exec_checked(self, script: str, *args: str, what: str) -> Any:
+        # The container's default user (root in most images), not the
+        # agent's: the copies are the host's, and the agent may only read.
+        result = await self._session.exec("sh", "-c", script, "sh", *args, shell=False)
+        if result.exit_code != 0:
+            err = (result.stderr or b"").decode("utf-8", errors="replace").strip()
+            raise OSError(f"{what} into the sandbox failed: {err}")
+        return result
+
+    async def _read_provided(self, absolute: str) -> bytes:
+        # The SDK's path policy confines its file API to the manifest root;
+        # read-only copies are read through the shell instead.
+        result = await self._session.exec(
+            "sh",
+            "-c",
+            'test -f "$1" || { echo "$1: No such file or directory" >&2; exit 2; };'
+            ' base64 < "$1"',
+            "sh",
+            absolute,
+            shell=False,
+            user=self._default_user,
+        )
+        if result.exit_code != 0:
+            err = (result.stderr or b"").decode("utf-8", errors="replace")
+            raise FileNotFoundError(err.strip() or f"{absolute}: not readable")
+        return base64.b64decode(result.stdout or b"")
+
+    async def _list_provided(
+        self, absolute: str, include_hidden: bool
+    ) -> List[FileEntry]:
+        result = await self._session.exec(
+            "find",
+            absolute,
+            "-mindepth",
+            "1",
+            "-maxdepth",
+            "1",
+            "-printf",
+            "%y\\t%s\\t%T@\\t%p\\n",
+            shell=False,
+            user=self._default_user,
+        )
+        if result.exit_code != 0:
+            raise FileNotFoundError(f"{absolute}: not a readable directory")
+        out: List[FileEntry] = []
+        for line in (result.stdout or b"").decode("utf-8", "replace").splitlines():
+            kind, size, mtime, child = (line.split("\t", 3) + ["", "", ""])[:4]
+            name = entry_basename(child)
+            if not child or (not include_hidden and name.startswith(".")):
+                continue
+            try:
+                out.append(
+                    make_entry(
+                        name=name,
+                        path=child,
+                        is_dir=kind == "d",
+                        size=int(size) if size.isdigit() else None,
+                        mtime=(
+                            datetime.fromtimestamp(float(mtime), tz=timezone.utc)
+                            if mtime
+                            else None
+                        ),
+                        is_symlink=kind == "l",
+                        allow_absolute=True,
+                    )
+                )
+            except ValueError as error:
+                log_skipped_entry("SandboxWorkspace", absolute, error)
+        return out
 
     # ---------------------------- discovery ---------------------------- #
 
@@ -468,6 +647,10 @@ class SandboxWorkspace(Workspace):
         # as HostWorkspace when no git binary is available.
         _ = respect_gitignore
         absolute = self.resolve(path)
+        if _provided(absolute):
+            return sort_entries(
+                await self._list_provided(absolute, include_hidden), sort_by
+            )
         try:
             sdk_entries = await self._session.ls(
                 PurePosixPath(absolute), user=self._default_user

@@ -200,7 +200,12 @@ def _resolve_judge_model(service: Any, session: Any) -> tuple[Optional[str], Any
         resolve_service_model_runtime,
     )
 
+    from omniagents.core.models import model_store
+
+    store = model_store()
     configured = workflow_guardian_model_ref(service)
+    if store is not None and store.single_provider:
+        configured = None
     if configured:
         model_name, runtime = resolve_model_runtime(configured)
     else:
@@ -223,6 +228,20 @@ async def _review(
         logger.warning("plan-review: no resolvable model; accepting unverified")
         return None
 
+    from omniagents.core.models import (
+        model_store,
+        resolve_model_runtime,
+        resolve_service_model_runtime,
+    )
+    from omniagents.core.agents.workflow_policy import workflow_guardian_model_ref
+
+    store = model_store()
+    configured = workflow_guardian_model_ref(service)
+    if configured and not (store is not None and store.single_provider):
+        _, runtime = resolve_model_runtime(configured)
+    else:
+        _, runtime = resolve_service_model_runtime(service, session)
+
     prompt = await _build_prompt(service, session, request)
     # Bounded agentic run when the doer's environment is reachable:
     # read-only tools execute through the inherited workspace contextvar,
@@ -241,6 +260,7 @@ async def _review(
         prompt,
         model=model_name,
         model_provider=model_provider,
+        resolved_model_config=runtime if runtime else None,
         env_overrides=env_overrides,
         session=session,
         workspace_root=workspace_root,

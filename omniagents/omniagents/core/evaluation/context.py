@@ -106,9 +106,25 @@ class JudgeResult:
     def passed(self) -> bool:
         return self.answer.lower() == "pass"
 
+    @property
+    def reason(self) -> Optional[str]:
+        """Why the judge failed the run, when its config declares ``fail_reasons``.
+
+        ``run_judge`` has already checked the judge's ``reason`` against the
+        declared list (an unlisted or missing one becomes ``unspecified``).
+        ``None`` on a pass, and for judges that declare no reasons.
+        """
+        value = self.raw.get("reason")
+        if self.passed or not isinstance(value, str):
+            return None
+        value = value.strip()
+        return value if value and value != "none" else None
+
     def to_result(self) -> Dict[str, Any]:
         if self.passed:
             return pass_reason(reason=self.reasoning)
+        if self.reason:
+            return fail_reason(self.reason, reasoning=self.reasoning)
         return fail_reason(self.reasoning)
 
 

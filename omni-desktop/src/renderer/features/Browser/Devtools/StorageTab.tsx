@@ -3,9 +3,6 @@
  * origin. Read-only for now beyond per-key delete + per-section clear-all;
  * full edit-cell UX is cheap to add later but not needed v1.
  */
-import { RefreshCw, Trash2 } from 'lucide-react';
-import { memo, useCallback, useEffect, useState } from 'react';
-
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,9 +12,12 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/renderer/ds/ui/alert-dialog';
-import { Button } from '@/renderer/ds/ui/button';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/renderer/ds/ui/table';
+} from '@omniagents/ui/alert-dialog';
+import { Button } from '@omniagents/ui/button';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@omniagents/ui/table';
+import { RefreshCw, Trash2 } from 'lucide-react';
+import { memo, useCallback, useEffect, useState } from 'react';
+
 import { emitter } from '@/renderer/services/ipc';
 import type { AppHandleId } from '@/shared/app-control-types';
 

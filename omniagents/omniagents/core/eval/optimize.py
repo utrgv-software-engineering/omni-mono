@@ -2,13 +2,47 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import re
 import threading
 import time
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 import yaml
 from omniagents.core.eval.stratified_sampler import StratifiedBatchSampler
+
+
+def _optimization_dir(
+    eval_config: Any, kind: str, subject: str, output_dir: str | None, resume: bool
+) -> Path:
+    """Where an optimization writes: a new ``optimizations/<id>_<kind>_<subject>/``,
+    or ``output_dir``. ``resume`` continues the optimization in
+    ``output_dir``, which must exist."""
+    from omniagents.core.eval.layout import EvalLayout
+    from omniagents.core.eval.results import generate_run_id
+
+    if output_dir:
+        run_dir = Path(output_dir)
+        if not run_dir.is_absolute():
+            run_dir = (eval_config.project_root / run_dir).resolve()
+    elif resume:
+        raise SystemExit("Name the optimization to resume with --output <its folder>")
+    else:
+        layout = EvalLayout(eval_config.eval_dir, eval_config.project_root)
+        run_dir = layout.optimizations_dir / f"{generate_run_id()}_{kind}_{subject}"
+    if resume and not run_dir.is_dir():
+        raise SystemExit(f"No optimization to resume at {run_dir}")
+    if not resume and run_dir.is_dir() and any(run_dir.iterdir()):
+        raise SystemExit(
+            f"{run_dir} holds an optimization; resume it with --resume or name another"
+        )
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir
+
+
+def _dataset_split(eval_config: Any, category: str, which: str) -> Path:
+    from omniagents.core.eval.layout import EvalLayout
+
+    layout = EvalLayout(eval_config.eval_dir, eval_config.project_root)
+    return layout.judge_dataset_dir(category) / f"{which}.yml"
 
 
 def optimize_agent_from_project(
@@ -18,7 +52,6 @@ def optimize_agent_from_project(
     train_file: str | None,
     dev_file: str | None,
     test_file: str | None,
-    name: str | None,
     positives_only: bool,
     max_turns: int | None,
     max_metric_calls: int,
@@ -42,7 +75,7 @@ def optimize_agent_from_project(
         )
     from omniagents.core.eval.gepa_agent_adapter import OmniAgentsAgentAdapter
     from omniagents.core.eval.loader import load_eval_config, filter_scenarios
-    from omniagents.core.project.apply import apply_agent_instructions
+    from omniagents.core.project.agent_files import update_agent
 
     _eval_config = load_eval_config(
         str(proj_path),
@@ -85,12 +118,7 @@ def optimize_agent_from_project(
             return p if p.is_absolute() else (base / p).resolve()
         if not cat:
             return None
-        name_arg = (name or "").strip()
-        if not name_arg:
-            return None
-        candidate = (
-            base / "artifacts" / "eval" / name_arg / "splits" / cat / f"{which}.yml"
-        ).resolve()
+        candidate = _dataset_split(_eval_config, cat, which)
         return candidate if candidate.exists() else None
 
     # Resolve file paths only for roles not covered by a selector.
@@ -137,33 +165,15 @@ def optimize_agent_from_project(
     # Only raise the "missing splits" error when NO selector was used at all
     # AND no file path resolved successfully.
     if not using_any_selector and not any([tr_path, dv_path, ts_path]):
-        if not any([train_file, dev_file, test_file]) and not ((name or "").strip()):
+        if cat:
             raise SystemExit(
-                "Could not locate scenario splits for category '{cat}'. Provide --name <scenario_set>, explicit split files, or --train-select/--dev-select/--test-select.".format(
-                    cat=cat or "<unknown>"
-                )
-            )
-        expected_dir = None
-        if (name or "").strip() and (cat or "").strip():
-            expected_dir = (
-                base
-                / "artifacts"
-                / "eval"
-                / (name or "").strip()
-                / "splits"
-                / (cat or "").strip()
-            ).resolve()
-        if expected_dir is not None:
-            raise SystemExit(
-                "Could not locate scenario splits for category '{cat}' under {path}. Verify --name or provide explicit split files.".format(
-                    cat=cat or "<unknown>", path=expected_dir
-                )
+                f"No judge dataset for category '{cat}' at "
+                f"{_dataset_split(_eval_config, cat, 'dev').parent}. Build one with "
+                "`omniagents judge dataset`, or pass split files or selectors."
             )
         raise SystemExit(
-            "Could not locate scenario splits. Provide --name <scenario_set>, explicit split files, or --train-select/--dev-select/--test-select."
+            "Could not locate scenario splits. Provide --category, explicit split files, or --train-select/--dev-select/--test-select."
         )
-
-    reference_split_path = dv_path or tr_path or ts_path
 
     def _read_scenarios(p: _P) -> List[Dict[str, Any]]:
         y = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
@@ -265,12 +275,7 @@ def optimize_agent_from_project(
         tracing = _eval_config.tracing_config or {}
         if str(tracing.get("provider", "")).lower() == "studio":
             base_name = tracing.get("name") or _P(compiled_cfg_path).stem
-            if reference_split_path is not None:
-                ts = reference_split_path.parents[2].name
-            else:
-                ts = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-            if not re.fullmatch(r"\d{4}_\d{2}_\d{2}_\d{2}_\d{2}_\d{2}", ts):
-                ts = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+            ts = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
             workflow_name = f"{base_name}_studio_optimize_{cat}_{ts}"
     except Exception:
         workflow_name = None
@@ -283,37 +288,13 @@ def optimize_agent_from_project(
         workflow_name=workflow_name,
         eval_config=_eval_config,
     )
-    out_dir = output_dir or ""
-    if out_dir:
-        outp = _P(out_dir)
-        base_run = outp if outp.is_absolute() else (base / outp).resolve()
-    elif reference_split_path is not None:
-        base_run = (
-            reference_split_path.parents[2] / "agent_optimize" / (cat or "category")
-        )
-    else:
-        # Selector-based flow: no split files exist on disk. Land artifacts
-        # under the project's evaluations dir by default.
-        base_run = (
-            _eval_config.eval_dir / "agent_optimize" / (cat or "category")
-        ).resolve()
-    if resume:
-        run_dir = base_run
-    else:
-        from datetime import datetime as _dt
-
-        run_dir = base_run / _dt.now().strftime("%Y%m%d%H%M%S")
-    run_dir.mkdir(parents=True, exist_ok=True)
+    run_dir = _optimization_dir(_eval_config, "agent", cat, output_dir, resume)
     try:
         cfg_tr = yaml.safe_load(_P(compiled_cfg_path).read_text(encoding="utf-8")) or {}
         tracing = cfg_tr.get("tracing") or {}
         if str(tracing.get("provider", "")).lower() == "studio" and workflow_name:
-            try:
-                from omniagents.studio import tracing as tracing_module
-            except ImportError:
-                tracing_module = None
-            if tracing_module is None:
-                raise ImportError("omniagents.studio.tracing not available")
+            from omniagents.core.tracing import local as tracing_module
+
             project = tracing.get("project") or "default"
             resume_tr = (tracing.get("settings") or {}).get("resume", "never")
             tracing_module.init(
@@ -330,9 +311,13 @@ def optimize_agent_from_project(
         from gepa.core.data_loader import ensure_loader  # type: ignore
         from gepa.logging.experiment_tracker import create_experiment_tracker  # type: ignore
         from gepa.strategies.candidate_selector import ParetoCandidateSelector  # type: ignore
-        from gepa.strategies.component_selector import RoundRobinReflectionComponentSelector  # type: ignore
+        from gepa.strategies.component_selector import (
+            RoundRobinReflectionComponentSelector,
+        )  # type: ignore
         from gepa.utils import FileStopper, CompositeStopper, MaxMetricCallsStopper  # type: ignore
-        from gepa.proposer.reflective_mutation.reflective_mutation import ReflectiveMutationProposer  # type: ignore
+        from gepa.proposer.reflective_mutation.reflective_mutation import (
+            ReflectiveMutationProposer,
+        )  # type: ignore
     except Exception as e:
         raise SystemExit(f"Could not import GEPA components: {e}")
 
@@ -526,30 +511,29 @@ def optimize_agent_from_project(
         encoding="utf-8",
     )
     print(f"Agent override written: {out_yml}")
-    if bool(apply):
+    best_instructions = (
+        best.get("instructions") if isinstance(best.get("instructions"), str) else None
+    )
+    applied = False
+    apply_error = None
+    if bool(apply) and best_instructions is not None:
+        # The evaluated agent is agents/<key>/agent.yml.
+        key = agent_key or _eval_config.agent_path.parent.name
         try:
-            apply_agent_instructions(
-                proj_path,
-                agent_key,
-                (
-                    best.get("instructions")
-                    if isinstance(best.get("instructions"), str)
-                    else None
-                ),
-            )
-        except Exception:
-            pass
+            update_agent(proj_path, key, instructions=best_instructions)
+            applied = True
+        except Exception as exc:  # noqa: BLE001 - reported, the run's results stand
+            apply_error = str(exc)
+            logger.log(f"Could not apply the optimized instructions: {apply_error}")
     return {
         "run_dir": str(run_dir),
         "out_json": str(out_json),
         "dev_score": dev_acc,
         "test_score": test_acc,
         "category": cat,
-        "instructions": (
-            best.get("instructions")
-            if isinstance(best.get("instructions"), str)
-            else None
-        ),
+        "instructions": best_instructions,
+        "applied": applied,
+        "apply_error": apply_error,
         "log_file": str(log_path),
     }
 
@@ -561,9 +545,7 @@ def optimize_judge_from_project(
     train_file: str | None,
     dev_file: str | None,
     test_file: str | None,
-    name: str | None,
     judge_key: str | None,
-    runs_file: str | None,
     source: str,
     max_turns: int,
     max_metric_calls: int,
@@ -584,7 +566,7 @@ def optimize_judge_from_project(
     from omniagents.core.eval.gepa_judge_adapter import OmniAgentsJudgeAdapter
     from omniagents.core.eval.stratified_sampler import StratifiedBatchSampler
     from omniagents.core.eval.loader import load_eval_config
-    from omniagents.core.project.apply import apply_judge_updates
+    from omniagents.core.eval.workspace import EvalWorkspace
 
     _eval_config = load_eval_config(
         str(proj_path),
@@ -603,18 +585,14 @@ def optimize_judge_from_project(
         if explicit:
             p = _P(explicit)
             return p if p.is_absolute() else (base / p).resolve()
-        name_arg = (name or "").strip()
-        if not name_arg:
-            raise SystemExit(
-                "Provide --name <scenario_set> to locate splits or pass explicit split files."
-            )
-        candidate = (
-            base / "artifacts" / "eval" / name_arg / "splits" / cat / f"{which}.yml"
-        ).resolve()
+        if not cat:
+            raise SystemExit("Provide --category or explicit split files.")
+        candidate = _dataset_split(_eval_config, cat, which)
         if candidate.exists():
             return candidate
         raise SystemExit(
-            f"Could not find split for category '{cat}' ({which}) at {candidate}."
+            f"No judge dataset split for category '{cat}' ({which}) at {candidate}. "
+            "Build one with `omniagents judge dataset`."
         )
 
     tr_path = (
@@ -681,17 +659,28 @@ def optimize_judge_from_project(
     except Exception:
         pass
 
-    def _default_runs_path(sp: _P) -> _P:
-        return sp.parents[2] / "generated_runs.json"
+    from omniagents.core.eval.reviews import dataset_conversations
 
-    if runs_file:
-        rf = _P(runs_file)
-        runs_path = rf if rf.is_absolute() else (base / rf).resolve()
-    else:
-        runs_path = _default_runs_path(dv_path)
-    if not runs_path.exists():
+    # What the judge reads: each example's answer as it was reviewed.
+    conversations = dataset_conversations(
+        [
+            item
+            for path in (tr_path, dv_path, ts_path)
+            for item in (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get(
+                "scenarios"
+            )
+            or []
+        ]
+    )
+    wanted = {
+        item["id"] if item.get("id") not in (None, "None") else str(item.get("name"))
+        for item in trainset + devset + testset
+    }
+    missing = sorted(wanted - set(conversations))
+    if missing:
         raise SystemExit(
-            f"Missing generated runs fixtures: {runs_path}. Generate scenarios, then run with 'omniagents eval scenarios run'."
+            f"{len(missing)} example(s) in the judge dataset carry no reviewed "
+            f"answer (e.g. {missing[0]}); build the judge dataset from reviews"
         )
 
     jkey = judge_key
@@ -702,11 +691,7 @@ def optimize_judge_from_project(
                 _derive_judge_keys_from_measures as _derive_j,
             )
 
-            cfg_detect = (
-                yaml.safe_load(_P(compiled_cfg_path).read_text(encoding="utf-8")) or {}
-            )
-            ev = cfg_detect.get("evaluation") or {}
-            measures = list((_fcmap(ev) or {}).get(cat) or [])
+            measures = list((_fcmap(_eval_config.config) or {}).get(cat) or [])
             candidates = _derive_j(measures)
             uniq = sorted(set(candidates))
             if len(uniq) == 1:
@@ -722,31 +707,20 @@ def optimize_judge_from_project(
         except Exception:
             raise SystemExit("Provide --judge <key>.")
 
-    cfg = yaml.safe_load(_P(compiled_cfg_path).read_text(encoding="utf-8")) or {}
-    jcfg = ((cfg.get("evaluation") or {}).get("judges") or {}).get(jkey) or {}
-
-    def _read_text_file(base_dir: _P, rel: str) -> str:
-        p = _P(rel)
-        if not p.is_absolute():
-            p = (base_dir / p).resolve()
-        try:
-            return p.read_text(encoding="utf-8")
-        except Exception:
-            return ""
-
+    # The judge as the project defines it; the loader resolved its files.
+    jcfg = (_eval_config.config.get("judges") or {}).get(jkey)
+    if not isinstance(jcfg, dict):
+        raise SystemExit(f"Judge not found: {jkey}")
     agent_cfg = jcfg.get("agent") or {}
     input_cfg = jcfg.get("input") or {}
     seed_instructions = agent_cfg.get("instructions") or ""
     if (not seed_instructions) and agent_cfg.get("instructions_file"):
-        seed_instructions = _read_text_file(
-            _P(compiled_cfg_path).resolve().parent,
-            str(agent_cfg.get("instructions_file")),
+        seed_instructions = _P(agent_cfg["instructions_file"]).read_text(
+            encoding="utf-8"
         )
     seed_template = input_cfg.get("template") or ""
     if (not seed_template) and input_cfg.get("template_file"):
-        seed_template = _read_text_file(
-            _P(compiled_cfg_path).resolve().parent, str(input_cfg.get("template_file"))
-        )
+        seed_template = _P(input_cfg["template_file"]).read_text(encoding="utf-8")
     if not seed_template:
         seed_template = "{{ text }}"
     if not seed_instructions:
@@ -765,36 +739,15 @@ def optimize_judge_from_project(
     try:
         tracing = _eval_config.tracing_config or {}
         if str(tracing.get("provider", "")).lower() == "studio":
-            import json as _json
-
             base_name = tracing.get("name") or _P(compiled_cfg_path).stem
-            set_dir = dv_path.parents[2] if dv_path is not None else None
-            ts = None
-            sc_name = None
-            try:
-                if set_dir is not None:
-                    mf = set_dir / "manifest.json"
-                    if mf.exists():
-                        md = _json.loads(mf.read_text(encoding="utf-8"))
-                        ts = md.get("timestamp")
-                        sc_name = md.get("name")
-            except Exception:
-                ts = None
-                sc_name = None
-            if not ts:
-                ts = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-            if not sc_name:
-                try:
-                    sc_name = set_dir.name if set_dir is not None else "scenarios"
-                except Exception:
-                    sc_name = "scenarios"
-            workflow_name = f"{base_name}_judge_optimize_{jkey}_{sc_name}_{ts}"
+            ts = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+            workflow_name = f"{base_name}_judge_optimize_{jkey}_{cat}_{ts}"
     except Exception:
         workflow_name = None
     adapter = OmniAgentsJudgeAdapter(
         _P(compiled_cfg_path),
         jkey,
-        runs_path,
+        conversations,
         category=(str(cat) if cat else None),
         source=str(source or "final_assistant_text"),
         judge_max_turns=int(max_turns or 1),
@@ -802,19 +755,7 @@ def optimize_judge_from_project(
         workflow_name=workflow_name,
         eval_config=_eval_config,
     )
-    out_dir = output_dir or ""
-    if out_dir:
-        outp = _P(out_dir)
-        base_run = outp if outp.is_absolute() else (base / outp).resolve()
-    else:
-        base_run = dv_path.parents[2] / "judge_optimize" / jkey
-    if resume:
-        run_dir = base_run
-    else:
-        from datetime import datetime as _dt
-
-        run_dir = base_run / _dt.now().strftime("%Y%m%d%H%M%S")
-    run_dir.mkdir(parents=True, exist_ok=True)
+    run_dir = _optimization_dir(_eval_config, "judge", str(jkey), output_dir, resume)
     try:
         adapter.debug_dir = run_dir / "debug"
     except Exception:
@@ -823,7 +764,7 @@ def optimize_judge_from_project(
         cfg_tr = yaml.safe_load(_P(compiled_cfg_path).read_text(encoding="utf-8")) or {}
         tracing = cfg_tr.get("tracing") or {}
         if str(tracing.get("provider", "")).lower() == "studio" and workflow_name:
-            from omniagents.studio import tracing as tracing_module
+            from omniagents.core.tracing import local as tracing_module
 
             project = tracing.get("project") or "default"
             resume_tr = (tracing.get("settings") or {}).get("resume", "never")
@@ -938,37 +879,20 @@ def optimize_judge_from_project(
     best = result.best_candidate
 
     def _judge_metrics(ds, cand):
+        from omniagents.core.eval.judge_validation import confusion
+
         ev = adapter.evaluate(ds, cand, capture_traces=False)
-        tp = tn = fp = fn = 0
-        total = len(ds)
+        pairs = []
         for i, item in enumerate(ds):
-            try:
-                label = bool(item.get("label"))
-            except Exception:
-                label = False
-            pred = None
-            try:
-                pred = ev.outputs[i].get("pred")
-            except Exception:
-                pred = None
-            if pred is True and label is True:
-                tp += 1
-            elif pred is False and label is False:
-                tn += 1
-            elif pred is True and label is False:
-                fp += 1
-            elif pred is False and label is True:
-                fn += 1
-        denom_acc = max(1, total)
-        acc = (tp + tn) / denom_acc
-        tpr = (tp / (tp + fn)) if (tp + fn) > 0 else None
-        tnr = (tn / (tn + fp)) if (tn + fp) > 0 else None
-        return {
-            "accuracy": acc,
-            "counts": {"TP": tp, "TN": tn, "FP": fp, "FN": fn},
-            "tpr": tpr,
-            "tnr": tnr,
-        }
+            pred = ev.outputs[i].get("pred") if i < len(ev.outputs) else None
+            # A label (and a True prediction) marks the failure present;
+            # Pass is the positive class.
+            pairs.append(
+                (not bool(item.get("label")), None if pred is None else not pred)
+            )
+        counts = confusion(pairs)
+        counts["accuracy"] = (counts["tp"] + counts["tn"]) / max(1, len(ds))
+        return counts
 
     dev_metrics = _judge_metrics(devset, best)
     test_metrics = _judge_metrics(testset, best)
@@ -982,11 +906,11 @@ def optimize_judge_from_project(
         },
         "metrics": {
             "dev_accuracy": dev_acc,
-            "dev_counts": dev_metrics.get("counts"),
+            "dev_counts": {k: dev_metrics[k] for k in ("tp", "fn", "tn", "fp")},
             "dev_tpr": dev_metrics.get("tpr"),
             "dev_tnr": dev_metrics.get("tnr"),
             "test_accuracy": test_acc,
-            "test_counts": test_metrics.get("counts"),
+            "test_counts": {k: test_metrics[k] for k in ("tp", "fn", "tn", "fp")},
             "test_tpr": test_metrics.get("tpr"),
             "test_tnr": test_metrics.get("tnr"),
         },
@@ -1001,10 +925,10 @@ def optimize_judge_from_project(
     d = dev_metrics
     t = test_metrics
     print(
-        f"Dev: TPR={_fmt(d['tpr'])} TNR={_fmt(d['tnr'])} Counts: TP={d['counts']['TP']} TN={d['counts']['TN']} FP={d['counts']['FP']} FN={d['counts']['FN']}"
+        f"Dev: TPR={_fmt(d['tpr'])} TNR={_fmt(d['tnr'])} (Pass positive) Counts: TP={d['tp']} TN={d['tn']} FP={d['fp']} FN={d['fn']}"
     )
     print(
-        f"Test: TPR={_fmt(t['tpr'])} TNR={_fmt(t['tnr'])} Counts: TP={t['counts']['TP']} TN={t['counts']['TN']} FP={t['counts']['FP']} FN={t['counts']['FN']}"
+        f"Test: TPR={_fmt(t['tpr'])} TNR={_fmt(t['tnr'])} (Pass positive) Counts: TP={t['tp']} TN={t['tn']} FP={t['fp']} FN={t['fn']}"
     )
     print(f"Wrote: {out_json}")
 
@@ -1038,20 +962,44 @@ def optimize_judge_from_project(
         encoding="utf-8",
     )
     print(f"Judge override written: {out_yml}")
+    applied = False
+    apply_error = None
     if bool(apply):
         try:
-            apply_judge_updates(
-                proj_path,
+            EvalWorkspace(proj_path).update_judge(
                 jkey,
-                (
+                instructions=(
                     best.get("instructions")
                     if isinstance(best.get("instructions"), str)
                     else None
                 ),
-                best.get("template") if isinstance(best.get("template"), str) else None,
+                template=(
+                    best.get("template")
+                    if isinstance(best.get("template"), str)
+                    else None
+                ),
             )
-        except Exception:
-            pass
+            applied = True
+        except Exception as exc:  # noqa: BLE001 - reported, the run's results stand
+            apply_error = str(exc)
+            print(f"Could not apply the optimized judge: {apply_error}")
+    if applied:
+        # The applied judge was measured once on the test split, above: that
+        # is its validation.
+        from omniagents.core.eval.judge_validation import record_validation
+        from omniagents.core.eval.layout import EvalLayout
+
+        applied_cfg = load_eval_config(
+            str(proj_path), agent_key=(str(agent_key or "") or None)
+        ).config["judges"][jkey]
+        record_validation(
+            EvalLayout(_eval_config.eval_dir, _eval_config.project_root),
+            jkey,
+            applied_cfg,
+            ts_path,
+            test_metrics,
+            source="judge optimize",
+        )
     return {
         "run_dir": str(run_dir),
         "out_json": str(out_json),
@@ -1066,4 +1014,6 @@ def optimize_judge_from_project(
         "template": (
             best.get("template") if isinstance(best.get("template"), str) else None
         ),
+        "applied": applied,
+        "apply_error": apply_error,
     }

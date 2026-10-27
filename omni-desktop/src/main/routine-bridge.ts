@@ -1,17 +1,20 @@
+import type { RoutineEvent } from '@omniagents/chat-ui/host';
+import type { RunOverrides } from '@omniagents/client/rpc/execution';
+
 import type { IIpcListener } from '@/shared/ipc-listener';
-import type { IpcRendererEvents, RoutineBridgeEvent, RoutineBridgeRequest, RunOverrides } from '@/shared/types';
+import type { IpcRendererEvents, RoutineBridgeRequest } from '@/shared/types';
 
 // Inlined to avoid a type-level cycle (deps → bridge → deps). Matches the
 // `IWindowSender` exported by the manager deps exactly.
 type IWindowSender = <T extends keyof IpcRendererEvents>(channel: T, ...args: IpcRendererEvents[T]) => void;
 
-export type RoutineBridgeEventHandler = (event: RoutineBridgeEvent) => void;
+export type RoutineEventHandler = (event: RoutineEvent) => void;
 
 /**
  * Thin main→renderer bridge for Routines (scheduled tasks).
  *
- * Same ownership model as `SupervisorBridge`: the Code column owns the session
- * id, the sandbox WebSocket, and all tool / approval handling. Main only issues
+ * The Code column owns the session
+ * id, the omni serve WebSocket, and all tool / approval handling. Main only issues
  * commands ("ensure a column exists", "start this run", "stop") and observes a
  * narrow set of forwarded events (run-started, run-end, approval-requested,
  * approval-resolved, disconnected) to drive routine history / status / toasts.
@@ -29,7 +32,7 @@ export class RoutineBridge {
       timer: ReturnType<typeof setTimeout>;
     }
   >();
-  private eventHandlers = new Set<RoutineBridgeEventHandler>();
+  private eventHandlers = new Set<RoutineEventHandler>();
   private nextRequestId = 0;
   /**
    * Flipped by `routine:renderer-ready`. Until then dispatches queue instead
@@ -49,8 +52,7 @@ export class RoutineBridge {
 
   /**
    * Register the bridge IPC handlers. `resolve(event)` picks the bridge
-   * instance to act on — defaults to `this` (single-manager Electron app); the
-   * per-tenant server passes a resolver that selects the caller's tenant bridge.
+   * instance to act on — defaults to `this`.
    */
   registerIpc(ipc: IIpcListener, resolve: (event: unknown) => RoutineBridge = () => this): string[] {
     ipc.handle(
@@ -71,7 +73,7 @@ export class RoutineBridge {
         }
       }
     );
-    ipc.handle('routine:event', (event: unknown, payload: RoutineBridgeEvent) => {
+    ipc.handle('routine:event', (event: unknown, payload: RoutineEvent) => {
       for (const handler of resolve(event).eventHandlers) {
         try {
           handler(payload);
@@ -100,7 +102,7 @@ export class RoutineBridge {
     return ['routine:dispatch-result', 'routine:event', 'routine:renderer-ready', 'routine:claim-dispatch'];
   }
 
-  onEvent(handler: RoutineBridgeEventHandler): () => void {
+  onEvent(handler: RoutineEventHandler): () => void {
     this.eventHandlers.add(handler);
     return () => {
       this.eventHandlers.delete(handler);

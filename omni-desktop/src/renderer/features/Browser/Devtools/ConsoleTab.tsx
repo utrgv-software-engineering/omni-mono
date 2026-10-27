@@ -2,13 +2,13 @@
  * Console tab — displays messages captured from the webview's
  * `onConsoleMessage` callback. BrowserView buffers entries and passes them in.
  */
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
+import { ToggleGroup, ToggleGroupItem } from '@omniagents/ui/toggle-group';
 import { Trash2 } from 'lucide-react';
 import { memo, useEffect, useRef, useState } from 'react';
 
 import type { ConsoleMessage } from '@/renderer/common/Webview';
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
-import { ToggleGroup, ToggleGroupItem } from '@/renderer/ds/ui/toggle-group';
 
 type Entry = ConsoleMessage & { timestamp: number };
 type LevelFilter = 'all' | 'log' | 'warn' | 'error';

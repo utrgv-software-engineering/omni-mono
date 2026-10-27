@@ -1,4 +1,5 @@
-import { formatTimestamp } from '@/lib/format-time';
+import { formatTimestamp } from '@omniagents/chat-ui/lib/format-time';
+
 import { emitter } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { CodeTab, ScheduledTask } from '@/shared/types';
@@ -44,8 +45,6 @@ export async function ensureRoutineSessionTab(
     routineId: task.id,
     routineName: task.name,
     routineSchedule: formatSchedule(task),
-    profileName: task.profileName ?? store.defaultProfileName ?? 'host',
-    profileNameExplicit: Boolean(task.profileName),
     createdAt: Date.now(),
     ...(workspaceDir ? { workspaceDir } : {}),
   };

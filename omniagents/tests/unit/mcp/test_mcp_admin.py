@@ -19,7 +19,6 @@ import pytest
 
 from omniagents.core.agents.mcp_admin import (
     MANAGED_MCP_SERVERS_ENV,
-    MCP_STORE_DURABILITY_ENV,
     McpConfigInvalid,
     McpServerManager,
     McpServerNotFound,
@@ -43,7 +42,6 @@ def env(tmp_path, monkeypatch):
     config_home = tmp_path / "xdg"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
     monkeypatch.setenv("APPDATA", str(config_home))  # Windows config root
-    monkeypatch.delenv(MCP_STORE_DURABILITY_ENV, raising=False)
     monkeypatch.delenv(MANAGED_MCP_SERVERS_ENV, raising=False)
     project_root = tmp_path / "project"
     project_root.mkdir()
@@ -155,39 +153,14 @@ def test_sources_and_read_only_rules(env):
     _assert_no_secret(listing, HEADER_SECRET, ENV_SECRET)
 
 
-def test_mutation_persistence_is_fail_closed_and_redacted(env, monkeypatch):
+def test_list_servers_reports_valid_managed_server_names(env, monkeypatch):
     manager = _manager(env)
-    persistence = manager.list_servers()["mutation_persistence"]
-    assert persistence == {
-        "user_config": {"durable": False, "scope": None},
-        "oauth_tokens": {"durable": False, "scope": None},
-        "pending_auth": {"durable": False, "scope": "process"},
-        "managed_servers": [],
-    }
-    assert "path" not in json.dumps(persistence)
-
-    monkeypatch.setenv(MCP_STORE_DURABILITY_ENV, "host")
+    assert manager.list_servers()["managed_servers"] == []
     monkeypatch.setenv(
         MANAGED_MCP_SERVERS_ENV,
         "omni-projects,valid_2, spaced,bad/name,,omni-projects",
     )
-    persistence = manager.list_servers()["mutation_persistence"]
-    assert persistence == {
-        "user_config": {"durable": True, "scope": "host"},
-        "oauth_tokens": {"durable": True, "scope": "host"},
-        "pending_auth": {"durable": False, "scope": "process"},
-        "managed_servers": ["omni-projects", "valid_2"],
-    }
-
-
-@pytest.mark.parametrize("value", ["HOST", " host", "host ", "volume", "1"])
-def test_mutation_persistence_rejects_unknown_durability_values(
-    env, monkeypatch, value
-):
-    monkeypatch.setenv(MCP_STORE_DURABILITY_ENV, value)
-    persistence = _manager(env).list_servers()["mutation_persistence"]
-    assert persistence["user_config"] == {"durable": False, "scope": None}
-    assert persistence["oauth_tokens"] == {"durable": False, "scope": None}
+    assert manager.list_servers()["managed_servers"] == ["omni-projects", "valid_2"]
 
 
 def test_host_managed_user_server_is_active_read_only_and_unshadowed(env, monkeypatch):
@@ -392,7 +365,6 @@ def test_create_get_delete_roundtrip_with_secret_writeonly(env):
 
 
 def test_user_crud_survives_manager_reconstruction(env, monkeypatch):
-    monkeypatch.setenv(MCP_STORE_DURABILITY_ENV, "host")
     first = _manager(env)
     first.create_server(
         "durable",
@@ -428,11 +400,9 @@ def test_user_crud_survives_manager_reconstruction(env, monkeypatch):
 
 
 def test_runtime_disable_is_explicitly_not_durable(env, monkeypatch):
-    monkeypatch.setenv(MCP_STORE_DURABILITY_ENV, "host")
     first = _manager(env, _spec(env, [_project_server()]))
     first.mark_disabled("proj-http")
     assert first.get_server("proj-http")["enabled"] is False
-    assert "disable" not in json.dumps(first.mutation_persistence())
 
     restarted = _manager(env, _spec(env, [_project_server()]))
     assert restarted.get_server("proj-http")["enabled"] is True

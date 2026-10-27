@@ -14,7 +14,6 @@ import { ipcMain, shell, webContents as webContentsNS } from 'electron';
 import fs from 'fs/promises';
 import path from 'path';
 
-import { getArtifactsDir } from '@/lib/artifacts';
 import { normalizeAddress } from '@/lib/url';
 import { isAbortError } from '@/lib/webview-navigation';
 import {
@@ -41,9 +40,7 @@ import type {
   AppConsoleLevel,
   AppHandleId,
   AppRegistrationPayload,
-  AppScreenshotOptions,
   AxNode,
-  LiveAppSnapshot,
 } from '@/shared/app-control-types';
 import { isControllableKind } from '@/shared/app-control-types';
 import type { IIpcListener } from '@/shared/ipc-listener';
@@ -133,20 +130,6 @@ export class AppControlManager {
     this.entries.delete(handleId);
   }
 
-  list(): LiveAppSnapshot[] {
-    return [...this.entries.values()].map((e) => ({
-      handleId: e.handleId,
-      appId: e.registration.appId,
-      kind: e.registration.kind,
-      scope: e.registration.scope,
-      tabId: e.registration.tabId,
-      label: e.registration.label,
-      url: e.registration.url,
-      title: e.registration.title,
-      controllable: e.registration.controllable,
-    }));
-  }
-
   // -- resolution ---------------------------------------------------------
 
   private requireWebContents(handleId: AppHandleId) {
@@ -206,7 +189,7 @@ export class AppControlManager {
       return;
     }
     const tabsetId = entry.registration.browserTabsetId;
-    if (!tabsetId && entry.registration.kind !== 'webview') {
+    if (!tabsetId) {
       return;
     }
     const onPopup = this.onBrowserPopup;
@@ -307,16 +290,14 @@ export class AppControlManager {
     return wc.executeJavaScript(code, true);
   }
 
-  async screenshot(handleId: AppHandleId, options: AppScreenshotOptions = {}): Promise<string> {
+  async screenshot(handleId: AppHandleId): Promise<string> {
     const { entry, wc } = this.requireWebContents(handleId);
     // `capturePage()` with no rect grabs the full visible viewport. For
     // `fullPage: true` we'd need to scroll-and-stitch via CDP; skip for v1.
     const image = await wc.capturePage();
     const buffer = image.toPNG();
 
-    const rootDir = options.artifactsSubdir
-      ? getArtifactsDir(getOmniConfigDir(), options.artifactsSubdir)
-      : path.join(getOmniConfigDir(), 'app-control-screenshots');
+    const rootDir = path.join(getOmniConfigDir(), 'app-control-screenshots');
     await fs.mkdir(rootDir, { recursive: true });
     const filename = `${entry.registration.appId}-${Date.now()}.png`;
     const filepath = path.join(rootDir, filename);
@@ -475,11 +456,6 @@ export class AppControlManager {
     });
   }
 
-  async stopFindInPage(handleId: AppHandleId): Promise<void> {
-    const { wc } = this.requireWebContents(handleId);
-    wc.stopFindInPage('clearSelection');
-  }
-
   /**
    * Wait for a condition. Supports (in priority order):
    *   - `selector`: poll `document.querySelector(selector)` every 100ms.
@@ -516,19 +492,14 @@ export class AppControlManager {
     return entries;
   }
 
-  /** Save the active tab as PDF to the ticket artifacts dir; returns path. */
-  async pdf(
-    handleId: AppHandleId,
-    options: { artifactsSubdir?: string; landscape?: boolean; printBackground?: boolean } = {}
-  ): Promise<string> {
+  /** Save the active tab as PDF to the captures dir; returns path. */
+  async pdf(handleId: AppHandleId, options: { landscape?: boolean; printBackground?: boolean } = {}): Promise<string> {
     const { entry, wc } = this.requireWebContents(handleId);
     const buffer = await wc.printToPDF({
       landscape: options.landscape ?? false,
       printBackground: options.printBackground ?? true,
     });
-    const rootDir = options.artifactsSubdir
-      ? getArtifactsDir(getOmniConfigDir(), options.artifactsSubdir)
-      : path.join(getOmniConfigDir(), 'app-control-pdfs');
+    const rootDir = path.join(getOmniConfigDir(), 'app-control-pdfs');
     await fs.mkdir(rootDir, { recursive: true });
     const filename = `${entry.registration.appId}-${Date.now()}.pdf`;
     const filepath = path.join(rootDir, filename);
@@ -537,13 +508,11 @@ export class AppControlManager {
   }
 
   /** Per-element screenshot. `ref` comes from the most recent snapshot. */
-  async elementScreenshot(handleId: AppHandleId, ref: string, options: AppScreenshotOptions = {}): Promise<string> {
+  async elementScreenshot(handleId: AppHandleId, ref: string): Promise<string> {
     const { entry, wc } = this.requireWebContents(handleId);
     ensureAttached(wc);
     const buffer = await elementScreenshot(wc, ref);
-    const rootDir = options.artifactsSubdir
-      ? getArtifactsDir(getOmniConfigDir(), options.artifactsSubdir)
-      : path.join(getOmniConfigDir(), 'app-control-screenshots');
+    const rootDir = path.join(getOmniConfigDir(), 'app-control-screenshots');
     await fs.mkdir(rootDir, { recursive: true });
     const filename = `${entry.registration.appId}-element-${Date.now()}.png`;
     const filepath = path.join(rootDir, filename);
@@ -552,12 +521,10 @@ export class AppControlManager {
   }
 
   /** Full-page (scroll-and-stitch equivalent) screenshot via CDP. */
-  async fullPageScreenshot(handleId: AppHandleId, options: AppScreenshotOptions = {}): Promise<string> {
+  async fullPageScreenshot(handleId: AppHandleId): Promise<string> {
     const { entry, wc } = this.requireWebContents(handleId);
     const buffer = await fullPageScreenshot(wc);
-    const rootDir = options.artifactsSubdir
-      ? getArtifactsDir(getOmniConfigDir(), options.artifactsSubdir)
-      : path.join(getOmniConfigDir(), 'app-control-screenshots');
+    const rootDir = path.join(getOmniConfigDir(), 'app-control-screenshots');
     await fs.mkdir(rootDir, { recursive: true });
     const filename = `${entry.registration.appId}-full-${Date.now()}.png`;
     const filepath = path.join(rootDir, filename);
@@ -752,14 +719,13 @@ export const createAppControlManager = (arg: {
   ipc.handle('app:register', (_, payload) => manager.register(payload));
   ipc.handle('app:update', (_, handleId, patch) => manager.update(handleId, patch));
   ipc.handle('app:unregister', (_, handleId) => manager.unregister(handleId));
-  ipc.handle('app:list', () => manager.list());
 
   ipc.handle('app:navigate', (_, handleId, url) => manager.navigate(handleId, url));
   ipc.handle('app:reload', (_, handleId) => manager.reload(handleId));
   ipc.handle('app:back', (_, handleId) => manager.back(handleId));
   ipc.handle('app:forward', (_, handleId) => manager.forward(handleId));
   ipc.handle('app:eval', (_, handleId, code) => manager.eval(handleId, code));
-  ipc.handle('app:screenshot', (_, handleId, options) => manager.screenshot(handleId, options));
+  ipc.handle('app:screenshot', (_, handleId) => manager.screenshot(handleId));
   ipc.handle('app:console', (_, handleId, options) => manager.console(handleId, options));
   ipc.handle('app:snapshot', (_, handleId) => manager.snapshot(handleId));
   ipc.handle('app:snapshot-diff', (_, handleId) => manager.snapshotDiff(handleId));
@@ -773,13 +739,10 @@ export const createAppControlManager = (arg: {
   ipc.handle('app:inject-css', (_, handleId, css) => manager.injectCss(handleId, css));
   ipc.handle('app:remove-inserted-css', (_, handleId, key) => manager.removeInsertedCss(handleId, key));
   ipc.handle('app:find', (_, handleId, query, options) => manager.findInPage(handleId, query, options));
-  ipc.handle('app:stop-find', (_, handleId) => manager.stopFindInPage(handleId));
   ipc.handle('app:wait-for', (_, handleId, options) => manager.waitFor(handleId, options));
   ipc.handle('app:pdf', (_, handleId, options) => manager.pdf(handleId, options));
-  ipc.handle('app:full-screenshot', (_, handleId, options) => manager.fullPageScreenshot(handleId, options));
-  ipc.handle('app:element-screenshot', (_, handleId, ref, options) =>
-    manager.elementScreenshot(handleId, ref, options)
-  );
+  ipc.handle('app:full-screenshot', (_, handleId) => manager.fullPageScreenshot(handleId));
+  ipc.handle('app:element-screenshot', (_, handleId, ref) => manager.elementScreenshot(handleId, ref));
   ipc.handle('app:set-viewport', (_, handleId, options) => manager.setViewport(handleId, options));
   ipc.handle('app:set-user-agent', (_, handleId, ua) => manager.setUserAgent(handleId, ua));
   ipc.handle('app:set-zoom', (_, handleId, factor) => manager.setZoom(handleId, factor));
@@ -796,7 +759,6 @@ export const createAppControlManager = (arg: {
       'app:register',
       'app:update',
       'app:unregister',
-      'app:list',
       'app:navigate',
       'app:reload',
       'app:back',
@@ -816,7 +778,6 @@ export const createAppControlManager = (arg: {
       'app:inject-css',
       'app:remove-inserted-css',
       'app:find',
-      'app:stop-find',
       'app:wait-for',
       'app:pdf',
       'app:full-screenshot',

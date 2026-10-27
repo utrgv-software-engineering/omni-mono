@@ -4,8 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const hoisted = vi.hoisted(() => ({
   cliExists: true,
   execResult: { kind: 'success', stdout: '' } as
-    | { kind: 'success'; stdout: string }
-    | { kind: 'error'; error: NodeJS.ErrnoException },
+    { kind: 'success'; stdout: string } | { kind: 'error'; error: NodeJS.ErrnoException },
 }));
 
 vi.mock('node:child_process', () => {
@@ -61,7 +60,7 @@ const describePayload = (serveProtocol: number): string =>
 
 beforeEach(() => {
   hoisted.cliExists = true;
-  hoisted.execResult = { kind: 'success', stdout: describePayload(2) };
+  hoisted.execResult = { kind: 'success', stdout: describePayload(3) };
   setCachedProductRuntimeInfo(null);
 });
 
@@ -72,16 +71,16 @@ afterEach(async () => {
   vi.clearAllMocks();
 });
 
-describe('Serve Protocol v2 runtime preflight', () => {
-  it('accepts an installed protocol v2 runtime', async () => {
+describe('Serve Protocol v3 runtime preflight', () => {
+  it('accepts an installed protocol v3 runtime', async () => {
     await expect(assertServeProtocolSupported()).resolves.toBeUndefined();
   });
 
-  it('rejects an installed protocol v1 runtime with update guidance', async () => {
-    hoisted.execResult = { kind: 'success', stdout: describePayload(1) };
+  it('rejects an installed protocol v2 runtime with update guidance', async () => {
+    hoisted.execResult = { kind: 'success', stdout: describePayload(2) };
 
     await expect(assertServeProtocolSupported()).rejects.toThrow(
-      /speaks serve protocol v1, but this launcher requires v2.*Update Omni Code/s
+      /speaks serve protocol v2, but this launcher requires v3.*Update Omni Code/s
     );
   });
 
@@ -95,18 +94,18 @@ describe('Serve Protocol v2 runtime preflight', () => {
     hoisted.execResult = { kind: 'success', stdout: '{not-json' };
 
     await expect(assertServeProtocolSupported()).rejects.toThrow(
-      /Installed omni-code cannot be started because `\/runtime\/bin\/omni describe --json` failed:.*requires a runtime that reports Serve Protocol v2.*Reinstall or update omni-code/s
+      /Installed omni-code cannot be started because `\/runtime\/bin\/omni describe --json` failed:.*requires a runtime that reports Serve Protocol v3.*Reinstall or update omni-code/s
     );
   });
 
   it('fails closed when describe returns a malformed payload', async () => {
-    hoisted.execResult = { kind: 'success', stdout: JSON.stringify({ serve_protocol: 2 }) };
+    hoisted.execResult = { kind: 'success', stdout: JSON.stringify({ serve_protocol: 3 }) };
 
     await expect(assertServeProtocolSupported()).rejects.toThrow(/payload is missing "name"/);
   });
 
   it('fails closed when describe cannot execute, even after a successful cached result', async () => {
-    await expect(refreshProductRuntimeInfo()).resolves.toMatchObject({ serveProtocol: 2 });
+    await expect(refreshProductRuntimeInfo()).resolves.toMatchObject({ serveProtocol: 3 });
     hoisted.execResult = { kind: 'error', error: Object.assign(new Error('EACCES'), { code: 'EACCES' }) };
 
     await expect(assertServeProtocolSupported()).rejects.toThrow(/describe --json` failed: EACCES/);

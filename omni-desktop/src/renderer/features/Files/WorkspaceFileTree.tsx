@@ -1,9 +1,6 @@
-import { EllipsisIcon, File, FilePlus, Folder, FolderOpen, FolderPlus, RefreshCw } from 'lucide-react';
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
-
-import { cn } from '@/renderer/ds/cn';
-import type { TreeItemOpenChangeData } from '@/renderer/ds/Tree';
-import { Tree, TreeItem, TreeItemLayout } from '@/renderer/ds/Tree';
+import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
+import type { FsClient, FsEntry, FsListResult, WatchCallbacks } from '@omniagents/client/rpc/fs';
+import { WatchRegistry } from '@omniagents/client/rpc/fs';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,9 +10,10 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/renderer/ds/ui/alert-dialog';
-import { Badge } from '@/renderer/ds/ui/badge';
-import { Button } from '@/renderer/ds/ui/button';
+} from '@omniagents/ui/alert-dialog';
+import { Badge } from '@omniagents/ui/badge';
+import { Button } from '@omniagents/ui/button';
+import { cn } from '@omniagents/ui/cn';
 import {
   Dialog,
   DialogContent,
@@ -23,19 +21,22 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/renderer/ds/ui/dialog';
+} from '@omniagents/ui/dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/renderer/ds/ui/dropdown-menu';
-import { Input } from '@/renderer/ds/ui/input';
-import { Spinner } from '@/renderer/ds/ui/spinner';
-import type { FsClient, FsEntry, FsListResult, WatchCallbacks } from '@/renderer/omniagents-ui/rpc/fs';
-import { WatchRegistry } from '@/renderer/omniagents-ui/rpc/fs';
-import type { ExecutionTarget, WorkspaceMountDescriptor } from '@/shared/types';
+} from '@omniagents/ui/dropdown-menu';
+import { Input } from '@omniagents/ui/input';
+import { Spinner } from '@omniagents/ui/spinner';
+import { EllipsisIcon, File, FilePlus, Folder, FolderOpen, FolderPlus, RefreshCw } from 'lucide-react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
+
+import type { TreeItemOpenChangeData } from '@/renderer/ds/Tree';
+import { Tree, TreeItem, TreeItemLayout } from '@/renderer/ds/Tree';
+import type { WorkspaceMountDescriptor } from '@/shared/types';
 
 export interface WorkspaceTreeWatchRegistry {
   subscribe(path: string, callbacks: WatchCallbacks): Promise<() => Promise<void>>;
@@ -217,10 +218,7 @@ const WorkspaceTreeNode = memo(
           aside={
             <>
               {mount && !mount.writable ? (
-                <Badge
-                  variant="outline"
-                  className="ml-1 shrink-0 px-1 py-0 text-[10px] font-normal text-muted-foreground"
-                >
+                <Badge variant="outline" className="ml-1 shrink-0 px-1 py-0 text-3xs font-normal text-muted-foreground">
                   read-only
                 </Badge>
               ) : null}

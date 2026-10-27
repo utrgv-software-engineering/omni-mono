@@ -1,0 +1,62 @@
+name: Deploy documentation
+
+# One Pages site for the repository:
+#   /omniagents/    the omniagents MkDocs site (omniagents/mkdocs.yml)
+#   /omni-desktop/  omni-desktop/docs, published as-is
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'omniagents/docs/**'
+      - 'omniagents/mkdocs.yml'
+      - 'omni-desktop/docs/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build site
+        run: |
+          pip install mkdocs-material
+          mkdocs build --config-file omniagents/mkdocs.yml --site-dir "$PWD/_site/omniagents"
+          cp -R omni-desktop/docs _site/omni-desktop
+          cat > _site/index.html <<'HTML'
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>Omni documentation</title>
+          <h1>Omni documentation</h1>
+          <ul>
+            <li><a href="omniagents/">omniagents</a></li>
+            <li><a href="omni-desktop/">Omni Desktop</a></li>
+          </ul>
+          HTML
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

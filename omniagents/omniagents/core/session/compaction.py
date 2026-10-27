@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import json
 import asyncio
+import base64
 import hashlib
 import math
+import struct
 from contextvars import ContextVar
 import logging
 from typing import Any, Callable, Dict, List, Optional
@@ -53,6 +55,75 @@ _LOCAL_KNOBS = frozenset(
 _FALLBACK_THRESHOLD_TOKENS = 100_000
 
 
+# Inline images are priced by pixel area, not by their base64 length (an
+# 8.5M-character photo costs ~14k tokens, not ~2M). Unreadable dimensions
+# fall back to a typical screenshot's cost.
+_IMAGE_PATCH_PX = 32
+_IMAGE_MIN_TOKENS = 85
+_IMAGE_MAX_TOKENS = 20_000
+_IMAGE_FALLBACK_TOKENS = 1_500
+# Enough base64 to reach a JPEG frame header past a large EXIF block.
+_IMAGE_HEADER_CHARS = 256 * 1024
+
+
+def _image_dimensions(data: bytes) -> Optional[tuple[int, int]]:
+    """Width and height from a PNG, GIF or JPEG header, else None."""
+    if data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) >= 24:
+        return struct.unpack(">II", data[16:24])
+    if data[:6] in (b"GIF87a", b"GIF89a") and len(data) >= 10:
+        return struct.unpack("<HH", data[6:10])
+    if data[:2] == b"\xff\xd8":
+        i = 2
+        while i + 9 <= len(data):
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            marker = data[i + 1]
+            if marker == 0xFF:
+                i += 1
+                continue
+            if marker in (0x01, 0xD8) or 0xD0 <= marker <= 0xD7:
+                i += 2
+                continue
+            if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+                height, width = struct.unpack(">HH", data[i + 5 : i + 9])
+                return width, height
+            i += 2 + int.from_bytes(data[i + 2 : i + 4], "big")
+    return None
+
+
+def _image_token_estimate(data_url: str) -> int:
+    header, _, payload = data_url.partition(",")
+    if ";base64" not in header:
+        return _IMAGE_FALLBACK_TOKENS
+    chunk = payload[:_IMAGE_HEADER_CHARS]
+    try:
+        size = _image_dimensions(base64.b64decode(chunk[: len(chunk) // 4 * 4]))
+    except Exception:
+        size = None
+    if size is None:
+        return _IMAGE_FALLBACK_TOKENS
+    width, height = size
+    patches = math.ceil(width / _IMAGE_PATCH_PX) * math.ceil(height / _IMAGE_PATCH_PX)
+    return min(_IMAGE_MAX_TOKENS, max(_IMAGE_MIN_TOKENS, patches))
+
+
+def _without_inline_images(value: Any, costs: List[int]) -> Any:
+    """*value* with inline image data URLs emptied; their costs go to *costs*."""
+    if isinstance(value, str):
+        if value.startswith("data:image/"):
+            costs.append(_image_token_estimate(value))
+            return ""
+        return value
+    if isinstance(value, dict):
+        return {
+            key: _without_inline_images(inner, costs) for key, inner in value.items()
+        }
+    if isinstance(value, list):
+        return [_without_inline_images(inner, costs) for inner in value]
+    return value
+
+
 def _candidate_token_estimate(items: List[Any]) -> int:
     """Rough token estimate for ``compaction_candidate_items``.
 
@@ -61,19 +132,25 @@ def _candidate_token_estimate(items: List[Any]) -> int:
     approximation. Sum the JSON-serialized character length of each
     candidate and divide by 4, which tracks BPE token counts within ~20%
     for English text and is well within "is this turn big" territory.
+    Inline images are priced separately (see ``_image_token_estimate``):
+    compaction keeps the user's messages, so an image counted by its base64
+    length would re-trigger compaction after every turn.
     """
     total_chars = 0
+    image_tokens: List[int] = []
     for item in items:
         try:
             if isinstance(item, str):
                 total_chars += len(item)
             else:
-                total_chars += len(json.dumps(item, default=str))
+                total_chars += len(
+                    json.dumps(_without_inline_images(item, image_tokens), default=str)
+                )
         except Exception:
             # Defensive: never let an estimate failure block compaction
             # entirely — fall back to a per-item nominal cost.
             total_chars += 200
-    return total_chars // 4
+    return total_chars // 4 + sum(image_tokens)
 
 
 def _has_unresolved_function_call(items: List[Any]) -> bool:
@@ -270,6 +347,18 @@ def _atomic_compaction_session_cls(base: type) -> type:
                     raise RuntimeError(
                         "Native compaction returned empty context; history was preserved."
                     )
+                memory_config = getattr(self.underlying_session, "_memory_config", None)
+                if memory_config and "compaction" in (
+                    memory_config.get("extraction") or {}
+                ).get("triggers", []):
+                    from omniagents.core.memory.extract import schedule
+
+                    schedule(
+                        memory_config,
+                        previous_items,
+                        {"session_id": getattr(self.underlying_session, "id", None)},
+                        "compaction",
+                    )
                 replace = getattr(self.underlying_session, "replace_sdk_items", None)
                 if callable(replace):
                     await replace(output_items)
@@ -398,7 +487,12 @@ def wrap_with_compaction(
     # must match that endpoint — a hardcoded name from a different provider
     # makes every compact call fail (and the failure is swallowed, so the
     # session grows unbounded until the next turn overflows the window).
-    if not kwargs.get("model") and parent_model:
+    from omniagents.core.models import model_store
+
+    store = model_store()
+    if parent_model and (
+        not kwargs.get("model") or (store is not None and store.single_provider)
+    ):
         kwargs["model"] = parent_model
 
     # Build a sensible ``should_trigger_compaction`` predicate unless the

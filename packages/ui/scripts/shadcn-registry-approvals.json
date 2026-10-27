@@ -1,0 +1,36 @@
+{
+  "$schema": "./shadcn-registry-approvals.schema.json",
+  "version": 1,
+  "approvals": [
+    {
+      "component": "dropdown-menu.tsx",
+      "upstreamSha256": "98f0dcdae38225b73734aceeb9213dd751fea2c72ea520df31003cd133deac8a",
+      "localSemanticSha256": "609fc37b02e548087bce8b14bc159de4d7d86966e10297fcb08172980231be8a",
+      "reason": "Radio items take an `indicator` option: 'check' (default) draws a trailing check, macOS-menu style, with the slot reserved on every row so widths do not shift with selection; 'none' lets rich multi-line items such as SandboxPicker place their own check on the title row."
+    },
+    {
+      "component": "scroll-area.tsx",
+      "upstreamSha256": "8bd9d986b2844c9a87de825c6de4787b6739b36c3dc9a05ccf3eb107160e4043",
+      "localSemanticSha256": "57ff65f277d91f08c4f5a34f882304d249b2f8aef0d5da93a656f984a6126a23",
+      "reason": "Radix wraps scroll content in a display:table element that sizes to its widest child and defeats text truncation; forcing it to block keeps content at the viewport width."
+    },
+    {
+      "component": "sidebar.tsx",
+      "upstreamSha256": "78dd9a5c50628d7bc8d5c637fdbfe613e49f4174fd3d525c9cc0be2152e67994",
+      "localSemanticSha256": "7546364fdbb8bcf032009fa294693027ae34e3cdeeb72e27a76da0ca645352a2",
+      "reason": "The mobile Sheet path returns before desktop sidebar markup renders, so the stock responsive display gates are redundant; removing them prevents Electron's generated responsive CSS from hiding the desktop sidebar. The fixed container takes the shell's --app-height and pads for the bottom safe area, the iOS standalone viewport recipe the rest of the shell uses, and SIDEBAR_WIDTH is exported for the shell's width variable."
+    },
+    {
+      "component": "sonner.tsx",
+      "upstreamSha256": "13ccc9b0fe4248e622f83a1d3b2f0566b72b5e04162d7d0c8db8945ecc71b55f",
+      "localSemanticSha256": "7e9cd94fce859d4604cbd4cb8c27b324708d7683e13114a99275e54bf815a975",
+      "reason": "The host passes its light/dark mode as the `theme` prop (the desktop maps its persisted named theme), instead of the stock next-themes hook; no visual drift or second theme authority."
+    },
+    {
+      "component": "tooltip.tsx",
+      "upstreamSha256": "a0784eb77831a799fad7991df4f1b666f876201565a80175e1aa68733574a2e4",
+      "localSemanticSha256": "3d1e7019903dcf7d70f63b919ede53f4d11672872b2679324d10ac63e40e551d",
+      "reason": "Tooltips use the semantic popover surface with a border and shadow, and omit the malformed rotated Radix arrow so the shared component remains opaque and legible across themes."
+    }
+  ]
+}

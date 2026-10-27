@@ -11,7 +11,6 @@ import {
   assertProductServeProtocol,
   BUNDLED_PRODUCT,
   getActiveProduct,
-  getProductSlug,
   parseProductDescribePayload,
   setCachedProductRuntimeInfo,
   SUPPORTED_SERVE_PROTOCOL,
@@ -33,7 +32,7 @@ const OMNI_CODE_DESCRIBE = {
     index_url: 'https://pypi.fury.io/ericmichael/omni-code/',
     command_hint: 'omni update',
   },
-  serve_protocol: 2,
+  serve_protocol: 3,
 };
 
 afterEach(() => {
@@ -54,11 +53,6 @@ describe('bundled ProductDefinition (omni-code parity)', () => {
   it('OMNI_CODE_VERSION is sourced from the definition pin', () => {
     expect(OMNI_CODE_VERSION).toBe(BUNDLED_PRODUCT.pinnedVersion);
   });
-
-  it('pre-describe slug fallback resolves to the omni_code literal', () => {
-    setCachedProductRuntimeInfo(null);
-    expect(getProductSlug()).toBe('omni_code');
-  });
 });
 
 describe('describe --json payload parsing', () => {
@@ -76,7 +70,7 @@ describe('describe --json payload parsing', () => {
         indexUrl: 'https://pypi.fury.io/ericmichael/omni-code/',
         commandHint: 'omni update',
       },
-      serveProtocol: 2,
+      serveProtocol: 3,
     });
     expect(info.serveProtocol).toBe(SUPPORTED_SERVE_PROTOCOL);
   });
@@ -88,11 +82,6 @@ describe('describe --json payload parsing', () => {
     expect(info.version).toBe(BUNDLED_PRODUCT.pinnedVersion);
     // The fallback slug derivation and the product-reported slug agree.
     expect(info.slug).toBe(BUNDLED_PRODUCT.packageName.replace(/-/g, '_'));
-  });
-
-  it('cached describe slug drives getProductSlug', () => {
-    setCachedProductRuntimeInfo(parseProductDescribePayload(OMNI_CODE_DESCRIBE));
-    expect(getProductSlug()).toBe('omni_code');
   });
 
   it('handles a null update channel', () => {
@@ -122,6 +111,6 @@ describe('serve protocol assertion', () => {
 
   it('throws a clear error on mismatch', () => {
     const info = parseProductDescribePayload({ ...OMNI_CODE_DESCRIBE, serve_protocol: 1 });
-    expect(() => assertProductServeProtocol(info)).toThrow(/speaks serve protocol v1, but this launcher requires v2/);
+    expect(() => assertProductServeProtocol(info)).toThrow(/speaks serve protocol v1, but this launcher requires v3/);
   });
 });

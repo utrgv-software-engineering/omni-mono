@@ -8,8 +8,6 @@ Pins the launcher wire contract documented in docs/serve-protocol.md
   lists here are constructed literally from that code;
 - the readiness payload is field-for-field the launcher's
   SandboxJsonPayload shape, including key order;
-- the sandbox-host first-stdout-line handshake is ``{"exec_port": N,
-  "host": ...}``;
 - ``<prog> describe --json`` reports identity + serve_protocol.
 
 Any change that breaks these tests is a serve-protocol revision: update
@@ -28,7 +26,6 @@ from omniagents.product_serve import (
     SERVE_PROTOCOL_VERSION,
     build_readiness_payload,
     build_serve_parser,
-    exec_port_payload,
 )
 
 
@@ -46,9 +43,9 @@ def _fresh_identity():
 
 
 def _launcher_argv_full() -> list[str]:
-    """The launcher's argv, every optional branch taken, in the launcher's
-    append order. The leading 'serve' word is consumed by product_cli
-    dispatch; the parser sees everything after it."""
+    """The launcher's argv plus the optional container-profile flags. The
+    leading 'serve' word is consumed by product_cli dispatch; the parser sees
+    everything after it."""
     args: list[str] = [
         "--output",
         "json",
@@ -56,8 +53,9 @@ def _launcher_argv_full() -> list[str]:
         "client-secret",
         "--agent-host-control-token",
         "control-secret",
+        "--exit-on-stdin-close",
     ]
-    # for (const cred of arg.credentials) → one --credential per host
+    # Container profiles: one --credential per linked host
     args += [
         "--credential",
         json.dumps(
@@ -68,7 +66,7 @@ def _launcher_argv_full() -> list[str]:
             }
         ),
     ]
-    args += ["--snapshot-dir", "/home/u/.config/omni/snapshots"]  # unconditional
+    args += ["--snapshot-dir", "/home/u/.config/omni/snapshots"]
     return args
 
 
@@ -79,6 +77,7 @@ def test_serve_parser_accepts_launcher_argv_full():
     assert ns.output == "json"
     assert ns.auth_token == "client-secret"
     assert ns.agent_host_control_token == "control-secret"
+    assert ns.exit_on_stdin_close is True
     assert len(ns.credentials) == 1
     assert json.loads(ns.credentials[0])["tokenEnv"] == "GIT_TOKEN_0"
     assert ns.snapshot_dir == Path("/home/u/.config/omni/snapshots")
@@ -95,15 +94,37 @@ def test_serve_parser_accepts_launcher_argv_minimal():
             "client-secret",
             "--agent-host-control-token",
             "control-secret",
-            "--snapshot-dir",
-            "/home/u/.config/omni/snapshots",
         ]
     )
     assert ns.credentials == []
+    assert ns.snapshot_dir is None
+    assert ns.exit_on_stdin_close is False
     # Serve picks its own port — the launcher passes no port flag.
     assert ns.port == 0
     assert ns.auth_token == "client-secret"
     assert ns.agent_host_control_token == "control-secret"
+
+
+def test_stdin_eof_watch_fires_once_stdin_closes():
+    import os
+    import threading
+
+    from omniagents import product_serve
+
+    read_end, write_end = os.pipe()
+    try:
+        fired = threading.Event()
+        product_serve._watch_stdin_eof(fired.set, fd=read_end)
+        # Children inherit an empty stdin, not the launcher pipe.
+        assert os.read(read_end, 1) == b""
+        assert not fired.is_set()
+        os.close(write_end)
+        write_end = -1
+        assert fired.wait(timeout=5)
+    finally:
+        os.close(read_end)
+        if write_end != -1:
+            os.close(write_end)
 
 
 def test_serve_parser_accepts_private_agent_host_control_token():
@@ -180,21 +201,6 @@ def test_readiness_payload_auth_token(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# sandbox-host handshake
-# ---------------------------------------------------------------------------
-
-
-def test_sandbox_host_exec_port_line_format():
-    payload = exec_port_payload(43999, "127.0.0.1")
-    line = json.dumps(payload) + "\n"
-    parsed = json.loads(line)
-    assert parsed == {"exec_port": 43999, "host": "127.0.0.1"}
-    assert isinstance(parsed["exec_port"], int)
-    # The launcher parses the FIRST stdout line — one line, newline-terminated.
-    assert line.endswith("\n") and line.count("\n") == 1
-
-
-# ---------------------------------------------------------------------------
 # describe
 # ---------------------------------------------------------------------------
 
@@ -233,7 +239,7 @@ def test_describe_reports_identity_and_protocol(tmp_path, capsys, monkeypatch):
         "index_url": "https://pypi.example.test/acme/acme-code/",
         "command_hint": "acme update",
     }
-    assert out["serve_protocol"] == SERVE_PROTOCOL_VERSION == 2
+    assert out["serve_protocol"] == SERVE_PROTOCOL_VERSION == 3
 
 
 def test_describe_null_update_block(tmp_path, capsys):
@@ -304,12 +310,10 @@ def test_product_default_profile_none_without_manifest():
 # ---------------------------------------------------------------------------
 
 
-def test_serve_and_sandbox_host_are_reserved():
+def test_serve_and_describe_are_reserved():
     from omniagents.product_cli import RESERVED_COMMANDS, dispatches_to_command
 
     assert "serve" in RESERVED_COMMANDS
-    assert "sandbox-host" in RESERVED_COMMANDS
     assert "describe" in RESERVED_COMMANDS
     assert dispatches_to_command(["serve", "--output", "json"])
-    assert dispatches_to_command(["sandbox-host", "--port", "0"])
     assert dispatches_to_command(["describe", "--json"])

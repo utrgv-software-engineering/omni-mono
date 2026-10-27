@@ -56,6 +56,7 @@ def seed_items(store, count, *, thread_id=THREAD, turn_id="run1"):
 
 
 class TestPagination:
+    @pytest.mark.timeout(300)  # thousands of durable commits; slow on Windows
     def test_walks_a_large_history_exactly_once(self, store, service):
         """5,000 items — the case pagination exists for. Every item is seen
         exactly once, in ascending seq order, with no gaps and no repeats."""

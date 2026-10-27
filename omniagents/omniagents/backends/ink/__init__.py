@@ -1,24 +1,19 @@
 """React Ink TUI backend for OmniAgents.
 
-This backend can auto-build the omni-ink-tui binary on first run when the
-binary is not found and Node.js/npm is available. If Node.js is not installed,
-it will instruct the user how to install it.
+The TUI is a prebuilt bundle (``tui/dist/index.js``) shipped in the wheel and
+run with Node.js 22 or newer. A source checkout builds it from the monorepo
+root: ``npm ci && npm run build -w omni-ink-tui``.
 
 Environment variables:
-- OMNI_INK_AUTO_BUILD: if set to "0" or "false", disables auto-build.
+- OMNI_INK_TUI_PATH: a prebuilt ``dist/index.js`` to run instead.
 - OMNI_DEBUG: if set, enables additional debug logging.
 """
 
 import os
 import sys
 import subprocess
-import socket
-import time
 from pathlib import Path
-import platform
-import errno
 import shutil
-from threading import Thread
 from typing import Callable, Optional
 import logging
 
@@ -102,6 +97,7 @@ class InkBackend:
         # Import server dependencies
         try:
             from omniagents.backends.server.app import build_app
+            from omniagents.core.utils.serving import BackgroundServer, bind_socket
             import uvicorn
         except ImportError as e:
             print(
@@ -109,11 +105,6 @@ class InkBackend:
             )
             print(f"Details: {e}")
             sys.exit(1)
-
-        # Find an available port
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("", 0))
-            port = s.getsockname()[1]
 
         args = kwargs.get("args")
         apply_cli_overrides(spec, args)
@@ -147,88 +138,49 @@ class InkBackend:
             default_host_workspace_root=os.getcwd(),
         )
 
-        # Start server in background thread
-        def run_server():
-            """Run the FastAPI server in a background thread."""
-            # Silence noisy third-party loggers
-            for name in (
-                "agents",
-                "openai",
-                "httpx",
-                "urllib3",
-                "anthropic",
-                "litellm",
-            ):
-                try:
-                    lg = logging.getLogger(name)
-                    lg.handlers.clear()
-                    lg.addHandler(logging.NullHandler())
-                    lg.setLevel(logging.CRITICAL)
-                    lg.propagate = False
-                except Exception:
-                    pass
-            uvicorn.run(
-                app,
-                host="127.0.0.1",
-                port=port,
-                log_level="error",
-                access_log=False,
-            )
-
-        server_thread = Thread(target=run_server, daemon=True)
-        server_thread.start()
-
-        # Give server time to start up and verify it's running
-        max_retries = 10
-        for i in range(max_retries):
-            time.sleep(0.5)
+        # Silence noisy third-party loggers
+        for name in (
+            "agents",
+            "openai",
+            "httpx",
+            "urllib3",
+            "anthropic",
+            "litellm",
+        ):
             try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.settimeout(1)
-                    s.connect(("127.0.0.1", port))
-                    s.close()
-                    if debug:
-                        print(f"[DEBUG] Server started successfully on port {port}")
-                    break
-            except (socket.timeout, ConnectionRefusedError):
-                if i == max_retries - 1:
-                    print(
-                        f"Error: Failed to start server on port {port} after {max_retries} attempts"
-                    )
-                    sys.exit(1)
-                if debug:
-                    print(
-                        f"[DEBUG] Waiting for server to start... attempt {i+1}/{max_retries}"
-                    )
+                lg = logging.getLogger(name)
+                lg.handlers.clear()
+                lg.addHandler(logging.NullHandler())
+                lg.setLevel(logging.CRITICAL)
+                lg.propagate = False
+            except Exception:
+                pass
 
-        env_override = os.environ.get("OMNI_INK_TUI_PATH")
-        binary_path = self._find_binary(env_override=env_override)
-        if not binary_path:
-            # Attempt auto-build if allowed
-            auto_build = os.environ.get("OMNI_INK_AUTO_BUILD", "1").lower() not in {
-                "0",
-                "false",
-                "no",
-            }
-            if auto_build:
-                try:
-                    binary_path = self._build_binary(debug=debug)
-                except SystemExit:
-                    raise
-                except Exception as e:
-                    print(f"Error: Failed to build omni-ink-tui: {e}")
-                    sys.exit(1)
+        # The server binds its own port-0 socket; the TUI is pointed at the
+        # port it actually listens on once startup has finished.
+        try:
+            server = BackgroundServer(
+                uvicorn.Config(app, log_level="error", access_log=False),
+                bind_socket("127.0.0.1", 0),
+            ).start()
+        except (OSError, RuntimeError) as e:
+            print(f"Error: Failed to start server: {e}")
+            sys.exit(1)
+        port = server.port
+        if debug:
+            print(f"[DEBUG] Server started successfully on port {port}")
 
-        if not binary_path or not binary_path.exists():
-            print("Error: omni-ink-tui not found.")
-            print("We tried to auto-build it but failed or auto-build is disabled.")
-            print("\nManual build instructions:")
-            print("  cd omniagents/backends/ink/tui")
-            print("  npm install")
-            print("  npm run build")
-            print(
-                "\nIf you don't have Node.js installed, download it from https://nodejs.org/"
-            )
+        binary_path = self._find_binary(
+            env_override=os.environ.get("OMNI_INK_TUI_PATH")
+        )
+        if binary_path is None:
+            print("Error: the Ink TUI bundle (omni-ink-tui) is missing.")
+            print("In a source checkout, build it from the monorepo root:")
+            print("  npm ci && npm run build -w omni-ink-tui")
+            sys.exit(1)
+        node_problem = self._node_problem()
+        if node_problem:
+            print(f"Error: {node_problem}")
             sys.exit(1)
 
         # Prepare environment
@@ -326,197 +278,26 @@ class InkBackend:
     def _find_binary(self, env_override: Optional[str] = None) -> Optional[Path]:
         if env_override:
             p = Path(env_override).expanduser()
-            if p.exists() and p.is_file():
+            if p.is_file():
                 return p
-        # Check source directory first (for development)
-        base = Path(__file__).parent
-        dist_path = base / "tui" / "dist" / "index.js"
-        if dist_path.exists() and dist_path.is_file():
-            return dist_path
-        # Fall back to cache directory (for installed packages)
-        cache_dir = self._cache_dir()
-        if cache_dir is not None:
-            dist_path = cache_dir / "dist" / "index.js"
-            if dist_path.exists() and dist_path.is_file():
-                return dist_path
+        packaged = Path(__file__).parent / "tui" / "dist" / "index.js"
+        return packaged if packaged.is_file() else None
+
+    def _node_problem(self) -> Optional[str]:
+        """Why Node.js cannot run the TUI, or None when it can. The bundle
+        relies on Node 22's built-in WebSocket."""
+        if shutil.which("node") is None:
+            return (
+                "Node.js 22 or newer is required. Install it from https://nodejs.org/"
+            )
+        try:
+            version = subprocess.check_output(["node", "-v"], text=True).strip()
+        except (OSError, subprocess.SubprocessError) as e:
+            return f"could not run node: {e}"
+        major = version.lstrip("v").split(".")[0]
+        if not major.isdigit() or int(major) < 22:
+            return f"Node.js 22 or newer is required (found {version})."
         return None
-
-    def _build_binary(self, debug: bool = False) -> Path:
-        if shutil.which("npm") is None or shutil.which("node") is None:
-            print(
-                "Error: Node.js/npm not found. Install Node.js from https://nodejs.org/ and retry."
-            )
-            raise SystemExit(1)
-        try:
-            v = subprocess.check_output(["node", "-v"], text=True).strip()
-            if v.startswith("v"):
-                v = v[1:]
-            parts = v.split(".")
-            major = int(parts[0]) if parts and parts[0].isdigit() else 0
-            if major < 18:
-                print("Error: Node.js >= 18 is required. Please upgrade.")
-                raise SystemExit(1)
-        except Exception:
-            pass
-
-        src_base = Path(__file__).parent / "tui"
-        if not src_base.exists():
-            print("Error: Source directory for omni-ink-tui not found.")
-            raise SystemExit(1)
-
-        cache_dir = self._cache_dir()
-        if cache_dir is None:
-            cache_dir = src_base
-
-        src_hash = self._compute_source_hash(src_base)
-        stamp = self._stamp_path(cache_dir)
-        need_sync = True
-        try:
-            if stamp.exists():
-                prev = stamp.read_text(encoding="utf-8").strip()
-                if src_hash and prev and prev == src_hash:
-                    need_sync = False
-        except Exception:
-            need_sync = True
-
-        if need_sync and cache_dir != src_base:
-            if cache_dir.exists():
-                try:
-                    shutil.rmtree(cache_dir)
-                except Exception:
-                    pass
-            try:
-                shutil.copytree(src_base, cache_dir)
-            except Exception as e:
-                print(f"Error: Failed to prepare cache directory: {e}")
-                raise SystemExit(1)
-
-        env = os.environ.copy()
-        env.setdefault("NPM_CONFIG_AUDIT", "false")
-        env.setdefault("NPM_CONFIG_FUND", "false")
-        if debug:
-            print(f"[DEBUG] Building omni-ink-tui in {cache_dir}")
-
-        install_cmd = ["npm", "install"]
-        lockfile = cache_dir / "package-lock.json"
-        if lockfile.exists():
-            install_cmd = ["npm", "ci"]
-
-        try:
-            if debug:
-                print("[DEBUG] Running " + " ".join(install_cmd))
-            proc = subprocess.run(
-                install_cmd,
-                cwd=str(cache_dir),
-                check=True,
-                env=env,
-                stdout=None if debug else subprocess.PIPE,
-                stderr=None if debug else subprocess.PIPE,
-                text=True,
-            )
-        except subprocess.CalledProcessError as e:
-            msg = f"Error: {' '.join(install_cmd)} failed with exit code {e.returncode}"
-            try:
-                out = e.stdout or ""
-                err = e.stderr or ""
-                tail = (out + "\n" + err).splitlines()[-50:]
-                if tail:
-                    print(msg)
-                    print("\n".join(tail))
-                else:
-                    print(msg)
-            except Exception:
-                print(msg)
-            raise SystemExit(e.returncode)
-
-        try:
-            if debug:
-                print("[DEBUG] Running npm run build...")
-            proc2 = subprocess.run(
-                ["npm", "run", "build"],
-                cwd=str(cache_dir),
-                check=True,
-                env=env,
-                stdout=None if debug else subprocess.PIPE,
-                stderr=None if debug else subprocess.PIPE,
-                text=True,
-            )
-        except subprocess.CalledProcessError as e:
-            msg = f"Error: npm run build failed with exit code {e.returncode}"
-            try:
-                out = e.stdout or ""
-                err = e.stderr or ""
-                tail = (out + "\n" + err).splitlines()[-50:]
-                if tail:
-                    print(msg)
-                    print("\n".join(tail))
-                else:
-                    print(msg)
-            except Exception:
-                print(msg)
-            raise SystemExit(e.returncode)
-
-        out_path = cache_dir / "dist" / "index.js"
-        if not out_path.exists():
-            print("Error: Build succeeded but output file not found.")
-            raise SystemExit(1)
-        try:
-            if src_hash:
-                stamp.write_text(src_hash + "\n", encoding="utf-8")
-        except Exception:
-            pass
-        return out_path
-
-    def _cache_dir(self) -> Optional[Path]:
-        base = self._user_cache_dir()
-        if base is None:
-            return None
-        dest = base / "ink" / "tui"
-        dest.mkdir(parents=True, exist_ok=True)
-        return dest
-
-    def _user_cache_dir(self) -> Optional[Path]:
-        home = Path.home()
-        system = platform.system().lower()
-        if system == "windows":
-            base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
-            if not base:
-                return None
-            return Path(base) / "OmniAgents"
-        elif system == "darwin":
-            return home / "Library" / "Caches" / "OmniAgents"
-        else:
-            xdg = os.environ.get("XDG_CACHE_HOME")
-            if xdg:
-                return Path(xdg) / "omniagents"
-            return home / ".cache" / "omniagents"
-
-    def _stamp_path(self, cache_dir: Path) -> Path:
-        return cache_dir / "omni-ink-tui.hash"
-
-    def _compute_source_hash(self, src_base: Path) -> Optional[str]:
-        try:
-            files = []
-            for root, _dirs, names in os.walk(src_base / "src"):
-                for n in names:
-                    if n.endswith(".ts") or n.endswith(".tsx"):
-                        files.append(str(Path(root) / n))
-            files.append(str(src_base / "package.json"))
-            files.append(str(src_base / "tsconfig.json"))
-            tsx_cfg = src_base / "tsconfig.tsx.json"
-            if tsx_cfg.exists():
-                files.append(str(tsx_cfg))
-            files = [f for f in files if os.path.isfile(f)]
-            files.sort()
-            import hashlib as _hashlib
-
-            digest = _hashlib.sha256()
-            for f in files:
-                with open(f, "rb") as fh:
-                    digest.update(fh.read())
-            return digest.hexdigest()
-        except Exception:
-            return None
 
 
 __all__ = ["InkBackend"]

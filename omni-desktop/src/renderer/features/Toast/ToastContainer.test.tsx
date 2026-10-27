@@ -15,7 +15,7 @@ const sonnerMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('sonner', () => ({ toast: sonnerMocks }));
-vi.mock('@/renderer/ds/ui/sonner', () => ({ Toaster: () => React.createElement('div', { 'data-testid': 'toaster' }) }));
+vi.mock('@omniagents/ui/sonner', () => ({ Toaster: () => React.createElement('div', { 'data-testid': 'toaster' }) }));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 

@@ -1,0 +1,156 @@
+/* The chat UI's Tailwind classes live in this package's components. */
+@source "../";
+
+/* Markdown typography follows the active shadcn semantic theme. */
+.prose-invert {
+  --tw-prose-body: var(--foreground);
+  --tw-prose-headings: var(--foreground);
+  --tw-prose-bold: var(--foreground);
+  --tw-prose-links: var(--primary);
+  --tw-prose-code: var(--foreground);
+  --tw-prose-pre-code: var(--foreground);
+  --tw-prose-counters: var(--muted-foreground);
+  --tw-prose-bullets: var(--muted-foreground);
+  --tw-prose-hr: var(--border);
+  --tw-prose-quotes: var(--foreground);
+  --tw-prose-quote-borders: var(--border);
+  --tw-prose-captions: var(--muted-foreground);
+  --tw-prose-th-borders: var(--border);
+  --tw-prose-td-borders: var(--border);
+}
+
+/* Default border color for bare `border` utilities (shadcn convention) */
+*,
+::before,
+::after {
+  border-color: var(--color-border, currentColor);
+}
+
+/* Basic layout */
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+.app {
+  height: 100%;
+  display: flex;
+}
+
+.container-chat {
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.max-h-dialog {
+  max-height: 80vh;
+}
+
+.image-lightbox-media {
+  max-width: 90vw;
+  max-height: 90vh;
+}
+
+.terminal-panel-height {
+  height: 50vh;
+}
+
+@media (min-width: 40rem) {
+  .terminal-panel-height {
+    height: 70vh;
+  }
+}
+
+.mcp-app-frame {
+  height: 70vh;
+  min-height: 20rem;
+}
+
+.approval-rich-body-collapsed {
+  max-height: 40vh;
+}
+
+.markdown-overflow-wrap :where(a, code) {
+  overflow-wrap: anywhere;
+}
+
+.code-block-lines {
+  counter-increment: line 0;
+  counter-reset: line;
+}
+
+.code-block-line-number::before {
+  content: counter(line);
+  counter-increment: line;
+}
+
+.optimize-offscreen-content {
+  contain-intrinsic-size: auto 200px;
+  content-visibility: auto;
+}
+
+@keyframes slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(1rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 300ms ease-out;
+}
+
+body.resizing {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+.prose pre code {
+  background: transparent;
+}
+
+/* Streamdown wraps code blocks in a bordered card (data-streamdown="code-block")
+   whose inner <pre> (data-streamdown="code-block-body") also carries its own
+   border, producing a double outline. The outer card is the container; drop
+   the inner border so the content reads as one surface. */
+[data-streamdown='code-block-body'] {
+  border: none !important;
+}
+
+/* Align the language label and the copy/download pill with the code content's
+   inner edges. Without these, the label sits 12px left of the code start and
+   the pill hovers 16px past the code's right edge.
+   Code content starts at outer-p-2 (8px) + body-p-4 (16px) = 24px. The header
+   already has span.ml-1 (4px), so we need 12px of inline-start padding to reach
+   24px. The actions pill sits flush against outer-p-2, so 16px of inline-end
+   margin pushes it to 24px from the right. */
+[data-streamdown='code-block-header'] {
+  padding-inline-start: 12px;
+}
+[data-streamdown='code-block-actions'] {
+  margin-inline-end: 16px;
+}
+
+@keyframes shimmer-text {
+  0% {
+    background-position: 200% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.text-shimmer {
+  background: linear-gradient(90deg, var(--muted-foreground) 0%, var(--foreground) 50%, var(--muted-foreground) 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer-text 3s ease-in-out infinite;
+}

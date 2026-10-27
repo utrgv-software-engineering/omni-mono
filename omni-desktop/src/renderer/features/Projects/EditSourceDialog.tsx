@@ -12,15 +12,15 @@
  * Sources ⋯ menu, alongside Remove.
  */
 import { useStore } from '@nanostores/react';
+import { Button } from '@omniagents/ui/button';
+import { Checkbox } from '@omniagents/ui/checkbox';
+import { cn } from '@omniagents/ui/cn';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@omniagents/ui/dialog';
+import { Input } from '@omniagents/ui/input';
 import { memo, useCallback, useEffect, useState } from 'react';
 
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
-import { Checkbox } from '@/renderer/ds/ui/checkbox';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/renderer/ds/ui/dialog';
-import { Input } from '@/renderer/ds/ui/input';
+import { DirectoryBrowserDialog } from '@/renderer/features/Projects/DirectoryBrowserDialog';
 import { GitCredentialDialog } from '@/renderer/features/SettingsModal/GitCredentialDialog';
-import { DirectoryBrowserDialog } from '@/renderer/features/Tickets/DirectoryBrowserDialog';
 import { persistedStoreApi } from '@/renderer/services/store';
 import { duplicateSourceIdentityMessage, sourceIdentityKey } from '@/shared/project-source';
 import type { Project, ProjectSource } from '@/shared/types';

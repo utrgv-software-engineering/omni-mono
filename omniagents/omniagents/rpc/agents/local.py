@@ -28,6 +28,9 @@ class LocalAgent(RemoteAgent):
         approval_callback: Optional[Any] = None,
         mcp_servers: Optional[List[Any]] = None,
         host_resources: Optional[Any] = None,
+        approvals_reviewer: Optional[str] = None,
+        unattended: bool = False,
+        session_id: Optional[str] = None,
     ):
         """
         Initialize local agent.
@@ -42,6 +45,11 @@ class LocalAgent(RemoteAgent):
                 environment, thread-binding, and routing registries).
                 When omitted the agent composes a private bundle —
                 standalone embedding.
+            approvals_reviewer: Who answers tool approvals (see
+                :class:`RemoteAgent`).
+            unattended: Nobody watches this agent; approval prompts that
+                reach it are rejected (see :class:`RemoteAgent`).
+            session_id: The conversation to run in (see :class:`RemoteAgent`).
         """
         # Initialize RemoteAgent with no URL (we'll use custom transport)
         # Pass context and variables from spec to parent
@@ -49,6 +57,9 @@ class LocalAgent(RemoteAgent):
             url=None,
             variables=getattr(spec, "variables", None),
             context=getattr(spec, "context", None),
+            approvals_reviewer=approvals_reviewer,
+            unattended=unattended,
+            session_id=session_id,
         )
 
         # Worker resumption uses the authorized thread-restore RPC.

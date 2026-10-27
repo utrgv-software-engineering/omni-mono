@@ -26,6 +26,8 @@ vi.mock('node:child_process', async () => {
 vi.mock('@/main/util', () => ({
   getOmniCliPath: vi.fn(() => '/fake/bin/omni'),
   getOmniConfigDir: vi.fn(() => '/fake/config'),
+  // Windows spawns read the provisioned Git Bash under the runtime dir.
+  getOmniRuntimeDir: vi.fn(() => '/fake/runtime'),
   isDirectory: vi.fn(async () => true),
   pathExists: vi.fn(async () => true),
 }));
@@ -34,13 +36,8 @@ vi.mock('@/main/product-runtime', () => ({
   assertServeProtocolSupported: vi.fn(async () => {}),
 }));
 
-vi.mock('@/main/profile-resolver', () => ({
-  resolveProfile: vi.fn(() => ({ kind: 'builtin-default' })),
-}));
-
 vi.mock('shell-env', () => ({ shellEnvSync: () => ({}) }));
 vi.mock('@/lib/pty-utils', () => ({ DEFAULT_ENV: {} }));
-vi.mock('@/main/workspace-sync', () => ({ downloadWorkspace: vi.fn(async () => {}) }));
 vi.mock('@/lib/simple-logger', () => ({
   SimpleLogger: class {
     constructor(_handler: unknown) {}
@@ -168,14 +165,13 @@ describe('AgentProcess dial auth (serve mode)', () => {
     const statuses: WithTimestamp<AgentProcessStatus>[] = [];
     const rawOutput: string[] = [];
     const proc = new AgentProcess({
-      mode: 'serve',
       ipcRawOutput: (data) => rawOutput.push(data),
       onStatusChange: (s) => statuses.push(s),
       // uiUrl HTTP readiness probe: always up.
       fetchFn: (async () => ({ status: 200 })) as unknown as typeof globalThis.fetch,
     });
 
-    await proc.start({ profileName: 'host', sources: [] });
+    await proc.start({ sources: [] });
     child.emitStdout(
       `${JSON.stringify({
         sandbox_url: `http://127.0.0.1:${serve.port}`,
@@ -206,24 +202,6 @@ describe('AgentProcess dial auth (serve mode)', () => {
     expect(serve.connections[0]!.authorization).toBe('Bearer serve-token-1');
     expect(serve.connections[0]!.query).toBe('');
 
-    // One-shot server_call dials (pause) carry the same header.
-    const result = await proc.pause({
-      workspaceId: 'workspace-authenticated',
-      environmentId: 'environment-authenticated',
-      environmentGeneration: 3,
-    });
-    expect(result.ok).toBe(true);
-    const callConn = serve.connections.find((c) => c.calls.includes('sandbox.pause'));
-    expect(callConn?.authorization).toBe('Bearer serve-token-1');
-    expect(callConn?.query).toBe('');
-    expect(callConn?.methods.slice(0, 3)).toEqual(['initialize', 'initialized', 'server_call']);
-    expect(callConn?.environmentIds).toEqual(['environment-authenticated']);
-    expect(callConn?.routing[0]).toMatchObject({
-      workspace_id: 'workspace-authenticated',
-      environment_id: 'environment-authenticated',
-      environment_generation: 3,
-    });
-
     // The echoed readiness line (renderer log viewer / stdout) never carries
     // the token — it is redacted at the echo chokepoint.
     const echoed = rawOutput.join('');
@@ -236,13 +214,12 @@ describe('AgentProcess dial auth (serve mode)', () => {
     hoisted.nextChild = child;
     const statuses: WithTimestamp<AgentProcessStatus>[] = [];
     const proc = new AgentProcess({
-      mode: 'serve',
       ipcRawOutput: () => {},
       onStatusChange: (s) => statuses.push(s),
       fetchFn: (async () => ({ status: 200 })) as unknown as typeof globalThis.fetch,
     });
 
-    await proc.start({ profileName: 'host', sources: [] });
+    await proc.start({ sources: [] });
     child.emitStdout(
       `${JSON.stringify({
         sandbox_url: `http://127.0.0.1:${serve.port}`,
@@ -266,4 +243,4 @@ describe('AgentProcess dial auth (serve mode)', () => {
     expect(serve.connections[0]!.authorization).toBeUndefined();
   });
 });
-import { guiInitializeResult } from 'tests/unit/gui-initialize';
+import { guiInitializeResult } from '@omniagents/client/testing/gui-initialize';

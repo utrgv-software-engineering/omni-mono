@@ -71,6 +71,7 @@ export function buildProviderConfig(
     provider.type = 'openai';
   } else if (answers.kind === 'anthropic') {
     provider.type = 'litellm';
+    provider.routing_prefix = 'anthropic';
   } else {
     provider.type = 'openai-compatible';
     provider.base_url = normalizeCompatibleBaseUrl(answers.baseUrl ?? '');
@@ -154,7 +155,7 @@ export function buildCodexConfig(
 /**
  * Map a configured ProviderEntry to a health probe, or null when the entry
  * isn't probe-able (azure, generic litellm fan-out, OAuth — Codex health
- * comes from `codex:status` instead).
+ * comes from the runtime's account status instead).
  */
 export function probeForProvider(name: string, provider: ProviderEntry): ProviderProbe | null {
   if (provider.type === 'openai' && provider.api_key) {

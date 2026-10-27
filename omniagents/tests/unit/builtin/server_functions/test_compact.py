@@ -41,7 +41,7 @@ def test_empty_session_short_circuits():
     set_compaction_summarizer(None)
     svc = _FakeService()
     result = asyncio.run(compact(svc, _FakeSession()))
-    assert "Nothing to compact yet" in result
+    assert "Nothing to compact yet" in result["message"]
     assert svc.status_calls == []
 
 
@@ -65,7 +65,8 @@ def test_missing_summarizer_reports_unavailable():
 
     result = asyncio.run(compact(svc, session))
 
-    assert "no compaction summarizer" in result
+    assert result["ok"] is False
+    assert "no compaction summarizer" in result["message"]
     # History untouched — no checkpoint appended without a summarizer.
     assert len(session.history) == 1
 
@@ -84,7 +85,7 @@ def test_compacts_with_installed_summarizer():
 
     result = asyncio.run(compact(svc, session))
 
-    assert result == "Context compacted."
+    assert result == {"ok": True, "message": "Context compacted."}
     assert "fix the bug" in captured["prompt"]
     assert captured["session"] is session
     # A checkpoint marker item was appended.
@@ -124,7 +125,7 @@ async def test_timeout_clears_status_preserves_history_and_allows_retry(monkeypa
 
     set_compaction_summarizer(success)
     monkeypatch.setattr(module, "COMPACTION_TIMEOUT_SECONDS", 5)
-    assert await compact(svc, session) == "Context compacted."
+    assert await compact(svc, session) == {"ok": True, "message": "Context compacted."}
 
 
 @pytest.mark.asyncio
@@ -226,7 +227,9 @@ async def test_native_compaction_always_wins_over_agent(trigger, failure):
     else:
         result = await invoke()
         assert result == (
-            "Context compacted." if trigger == "manual" else {"retry": True}
+            {"ok": True, "message": "Context compacted."}
+            if trigger == "manual"
+            else {"retry": True}
         )
         assert await session.get_items() == replacement
     endpoint.assert_awaited_once_with(model="gpt-6-astra", input=[original])
@@ -284,5 +287,8 @@ async def test_native_command_does_not_inherit_checkpoint_timeout(monkeypatch):
     native = SimpleNamespace(run_compaction=AsyncMock(side_effect=native_compact))
     session = _FakeSession([{"role": "user", "content": "history"}])
     session._sdk_compaction_session = native
-    assert await compact(_FakeService(), session) == "Context compacted."
+    assert await compact(_FakeService(), session) == {
+        "ok": True,
+        "message": "Context compacted.",
+    }
     native.run_compaction.assert_awaited_once()

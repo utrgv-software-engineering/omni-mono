@@ -5,7 +5,6 @@ import type Store from 'electron-store';
 import path from 'path';
 
 import { completeChatRemoval } from '@/main/chat-removal';
-import { PROJECT_KEYS } from '@/main/db-store-bridge';
 import { isDevelopment, manageWindowSize } from '@/main/util';
 import { applyChatCommand } from '@/shared/chat-commands';
 import type {
@@ -26,12 +25,6 @@ export class MainProcessManager {
   private status: WithTimestamp<MainProcessStatus>;
   private store: Store<StoreData>;
 
-  /**
-   * Optional snapshot provider. When set, `store:get` and `store:get-key` for
-   * project keys read from SQLite instead of electron-store. Set by `index.ts`
-   * after the ProjectManager is created.
-   */
-  getStoreSnapshot: (() => StoreData) | null = null;
   cleanupRemovedChat?: (tab: import('@/shared/types').CodeTab) => Promise<void>;
 
   ipc: IpcListener<IpcEvents>;
@@ -45,25 +38,13 @@ export class MainProcessManager {
     this.status = { type: 'initializing', timestamp: Date.now() };
     this.store = store;
     this.store.onDidAnyChange((data) => {
-      // Only broadcast for non-project key changes when repo is active.
-      // Project data changes are broadcast by ProjectManager/DbChangeWatcher.
-      if (!this.getStoreSnapshot) {
-        this.sendToWindow('store:changed', data);
-      }
+      this.sendToWindow('store:changed', data);
     });
-    this.ipc.handle('store:get-key', (_, key) => {
-      if (this.getStoreSnapshot && PROJECT_KEYS.has(key)) {
-        return this.getStoreSnapshot()[key];
-      }
-      return this.store.get(key);
-    });
+    this.ipc.handle('store:get-key', (_, key) => this.store.get(key));
     this.ipc.handle('store:chat-command', async (_, command) => {
-      const { patch, result } = applyChatCommand(this.getStoreSnapshot?.() ?? this.store.store, command);
+      const { patch, result } = applyChatCommand(this.store.store, command);
       // One synchronous commit: no window can observe half of a tab/history mutation.
       this.store.set(patch);
-      if (this.getStoreSnapshot) {
-        this.sendToWindow('store:changed', this.getStoreSnapshot());
-      }
       await completeChatRemoval(command, result, (tab) => {
         if (!this.cleanupRemovedChat) {
           throw new Error('Chat cleanup is not initialized');
@@ -73,48 +54,23 @@ export class MainProcessManager {
       return result;
     });
     this.ipc.handle('store:set-key', (_, key, value) => {
-      if (key === 'codeTabs' || key === 'chatConversations' || key === 'activeCodeTabId' || key === 'chatCleanupJobs') {
+      if (key === 'codeTabs' || key === 'chatConversations' || key === 'activeCodeTabId') {
         throw new Error('Use store:chat-command for chat state mutations');
-      }
-      if (this.getStoreSnapshot && PROJECT_KEYS.has(key)) {
-        throw new Error(
-          `store:set-key for project key "${String(key)}" is not allowed when SQLite is active. Use ProjectManager APIs.`
-        );
       }
       this.store.set(key, value);
-      // When repo is active, broadcast the merged snapshot so project data is included
-      if (this.getStoreSnapshot) {
-        this.sendToWindow('store:changed', this.getStoreSnapshot());
-      }
     });
-    this.ipc.handle('store:get', (_) => {
-      if (this.getStoreSnapshot) {
-        return this.getStoreSnapshot();
-      }
-      return this.store.store;
-    });
+    this.ipc.handle('store:get', (_) => this.store.store);
     this.ipc.handle('store:set', (_, data) => {
-      if ('codeTabs' in data || 'chatConversations' in data || 'activeCodeTabId' in data || 'chatCleanupJobs' in data) {
+      if ('codeTabs' in data || 'chatConversations' in data || 'activeCodeTabId' in data) {
         throw new Error('Use store:chat-command for chat state mutations');
       }
-      if (this.getStoreSnapshot) {
-        const conflicts = [...PROJECT_KEYS].filter((k) => k in data);
-        if (conflicts.length > 0) {
-          throw new Error(
-            `store:set with project keys [${conflicts.join(', ')}] is not allowed when SQLite is active.`
-          );
-        }
-      }
       this.store.store = data;
-      if (this.getStoreSnapshot) {
-        this.sendToWindow('store:changed', this.getStoreSnapshot());
-      }
     });
     this.ipc.handle('store:reset', (_) => {
+      // Settings reset, not a data wipe: projects and conversation history stay.
+      const { projects, chatConversations } = this.store.store;
       this.store.clear();
-      if (this.getStoreSnapshot) {
-        this.sendToWindow('store:changed', this.getStoreSnapshot());
-      }
+      this.store.set({ projects, chatConversations });
     });
 
     contextMenu({
@@ -162,7 +118,7 @@ export class MainProcessManager {
     // reading this requires a window reload, which matches the link/unlink
     // UX (the link handlers prompt for a reload after they fire). The wsl
     // kind is resolved to its live URL here — WslBackendManager has already
-    // picked the port and spawned the daemon before window creation. The
+    // spawned the daemon and persisted the port it bound. The
     // cloud and server kinds already persist their url and pass through.
     const backend = this.store.get('remoteBackend') ?? null;
     const remoteBackend: RemoteBackendBootstrap | null =

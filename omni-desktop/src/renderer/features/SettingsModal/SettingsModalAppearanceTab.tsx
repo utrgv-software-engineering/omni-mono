@@ -1,18 +1,17 @@
 import { useStore } from '@nanostores/react';
+import { Card, CardContent } from '@omniagents/ui/card';
+import { Field, FieldLabel } from '@omniagents/ui/field';
+import { NativeSelect as Select } from '@omniagents/ui/native-select';
+import { type OmniTheme, TEXT_SCALES, type TextScale } from '@omniagents/ui/themes';
 import type { ChangeEvent } from 'react';
 import { memo, useCallback } from 'react';
 
-import { Card, CardContent } from '@/renderer/ds/ui/card';
-import { Field, FieldLabel } from '@/renderer/ds/ui/field';
-import { NativeSelect as Select } from '@/renderer/ds/ui/native-select';
 import {
   settingsCardContentClassName,
   SettingsPane,
   SettingsSection,
 } from '@/renderer/features/SettingsModal/SettingsLayout';
 import { persistedStoreApi } from '@/renderer/services/store';
-import { TEXT_SCALES, type TextScale } from '@/renderer/theme/themes';
-import type { OmniTheme } from '@/shared/types';
 
 const TEXT_SCALE_LABELS: Record<TextScale, string> = {
   90: 'Small',

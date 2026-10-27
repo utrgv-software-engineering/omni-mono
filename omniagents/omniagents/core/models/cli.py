@@ -42,6 +42,43 @@ class _CLIContext:
     store: ModelConfigStore
     prog: str
     product_label: str
+    confirm_provider_change: bool = False
+
+    def __post_init__(self):
+        from copy import copy
+
+        if not self.store.single_provider:
+            return
+        original = self.store
+        guarded = copy(original)
+
+        def save(config):
+            old = original.selected_provider()
+            parsed = original.parse_model_ref(config.get("default") or "")
+            new = parsed[0] if parsed else None
+            if old and new != old:
+                confirmed = self.confirm_provider_change
+                if not confirmed:
+                    print(
+                        f"Change workspace provider from {old} to {new or 'the default provider'}? Continuing conversations will send their history to the new provider. Active runs keep their current provider."
+                    )
+                    try:
+                        confirmed = input(
+                            "Confirm provider change [y/N]: "
+                        ).strip().lower() in {"y", "yes"}
+                    except (EOFError, OSError):
+                        confirmed = False
+                if not confirmed:
+                    raise ValueError(
+                        "Provider change cancelled. Use --confirm-provider-change to explicitly confirm a non-interactive change."
+                    )
+            config = dict(config)
+            if new and (self.confirm_provider_change or not old or old != new):
+                config["provider_scope_version"] = 1
+            original.save_config(config)
+
+        guarded.save_config = save  # type: ignore[method-assign]
+        object.__setattr__(self, "store", guarded)
 
 
 def _resolve_identity(
@@ -907,10 +944,23 @@ def run_model_command(
     product_label: Optional[str] = None,
 ):
     prog, product_label = _resolve_identity(prog, product_label)
-    ctx = _CLIContext(store=store, prog=prog, product_label=product_label or prog)
+    argv = list(sys.argv[1:] if argv is None else argv)
+    confirmed = "--confirm-provider-change" in argv
+    argv = [arg for arg in argv if arg != "--confirm-provider-change"]
+    ctx = _CLIContext(
+        store=store,
+        prog=prog,
+        product_label=product_label or prog,
+        confirm_provider_change=confirmed,
+    )
     parser = argparse.ArgumentParser(
         prog=f"{prog} model",
         description=f"Manage model configurations for {ctx.product_label}",
+    )
+    parser.add_argument(
+        "--confirm-provider-change",
+        action="store_true",
+        help="Confirm that continuing conversations may send history to a new provider",
     )
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
@@ -1026,10 +1076,23 @@ def run_provider_command(
     product_label: Optional[str] = None,
 ):
     prog, product_label = _resolve_identity(prog, product_label)
-    ctx = _CLIContext(store=store, prog=prog, product_label=product_label or prog)
+    argv = list(sys.argv[1:] if argv is None else argv)
+    confirmed = "--confirm-provider-change" in argv
+    argv = [arg for arg in argv if arg != "--confirm-provider-change"]
+    ctx = _CLIContext(
+        store=store,
+        prog=prog,
+        product_label=product_label or prog,
+        confirm_provider_change=confirmed,
+    )
     parser = argparse.ArgumentParser(
         prog=f"{prog} provider",
         description=f"Manage provider configurations for {ctx.product_label}",
+    )
+    parser.add_argument(
+        "--confirm-provider-change",
+        action="store_true",
+        help="Confirm that continuing conversations may send history to a new provider",
     )
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 

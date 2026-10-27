@@ -1,0 +1,9 @@
+{
+  "timestamp": "2025_10_08_14_21_41",
+  "name": "error_analysis_mini",
+  "counts": {
+    "total": 20
+  },
+  "source": "agents/weather_agent/agent.yml",
+  "workflow_generate": "weather_agent_scenarios_error_analysis_mini_2025_10_08_14_21_41_generate"
+}

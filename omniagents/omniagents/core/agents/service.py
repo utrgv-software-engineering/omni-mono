@@ -14,9 +14,9 @@ import copy
 import hashlib
 import json
 import logging
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, asynccontextmanager
 from types import SimpleNamespace
-from typing import Awaitable, Optional, Dict, Any, Callable
+from typing import Awaitable, Optional, Dict, Any, Callable, List
 from pathlib import Path
 import inspect
 from dataclasses import replace as dataclass_replace
@@ -92,11 +92,11 @@ from omniagents.core.session.event_log import (
     stamp_session_event,
 )
 from omniagents.core.session.manager import QueuedItem
-from omniagents.core.session.history_db import get_user_messages
 from omniagents.core.runtime.bridge import stream_agent
 from omniagents.core.agents.builder import _default_build_agent
 from omniagents.core.agents.mcp import (
     build_mcp_servers,
+    subagent_mcp_configs,
     _instantiate_server,
     _resolve_setting_placeholders,
 )
@@ -468,6 +468,40 @@ def reset_current_service(token: contextvars.Token) -> None:
     _current_service.reset(token)
 
 
+#: How long run_end waits for a stopped run's session release (deferred by a
+#: still-running fenced operation) before telling clients anyway.
+RUN_RELEASE_WAIT_SECONDS = 30.0
+
+
+def _binds(signature: inspect.Signature, args: tuple) -> bool:
+    """Whether *args* fit *signature* positionally."""
+    try:
+        signature.bind(*args)
+    except TypeError:
+        return False
+    return True
+
+
+def _agents_in(agent: Any) -> List[Any]:
+    """``agent`` and every agent it calls as a tool or hands off to."""
+    found: List[Any] = []
+    pending = [agent]
+    while pending:
+        current = pending.pop()
+        if current is None or any(current is a for a in found):
+            continue
+        found.append(current)
+        for tool in getattr(current, "tools", None) or []:
+            pending.append(getattr(tool, "_agent_instance", None))
+        for handoff in getattr(current, "handoffs", None) or []:
+            pending.append(
+                handoff
+                if hasattr(handoff, "mcp_servers")
+                else getattr(handoff, "agent", None)
+            )
+    return found
+
+
 class AgentService(RpcMethodsBase):
     """JSON-RPC methods for agent operations.
 
@@ -536,19 +570,6 @@ class AgentService(RpcMethodsBase):
                 from omniagents.core.tracing import setup_tracing
 
                 setup_tracing(tracing_cfg)
-        except Exception:
-            pass
-
-        # Auto-activate platform providers if credentials are available.
-        # Checks OMNI_PLATFORM_URL env var or ~/.config/omni_code/platform.json.
-        # Merges platform security config into the spec so audit, auth, and
-        # policy providers activate without manual project.yml configuration.
-        try:
-            from omniagents.core.providers.platform.bootstrap import (
-                maybe_inject_platform_config,
-            )
-
-            maybe_inject_platform_config(self.spec)
         except Exception:
             pass
 
@@ -679,18 +700,6 @@ class AgentService(RpcMethodsBase):
                             secrets_provider=_secrets_provider,
                         ),
                     )
-                elif audit_backend == "remote":
-                    from omniagents.core.providers.platform.audit import (
-                        create_remote_audit_hook,
-                    )
-
-                    self.register_runtime_hook(
-                        "audit",
-                        create_remote_audit_hook(
-                            audit_cfg,
-                            project_slug=project_slug,
-                        ),
-                    )
         except Exception:
             pass
 
@@ -716,23 +725,6 @@ class AgentService(RpcMethodsBase):
         except Exception:
             pass
 
-        # Register platform policy hook if configured
-        try:
-            policy_cfg = (sec.get("providers") or {}).get("policy")
-            if policy_cfg and policy_cfg.get("type") == "platform":
-                from omniagents.core.providers.platform.policy import (
-                    create_policy_hook,
-                )
-
-                self.register_runtime_hook(
-                    "run_started", create_policy_hook(policy_cfg)
-                )
-        except Exception:
-            pass
-
-        # Note: we intentionally do NOT register built-in example functions
-        # like "session.get_history" so they won't surface in UIs that
-        # dynamically list server functions (e.g., Bubble Tea /help).
         self._default_settings: Dict[str, Any] = {}
         for field in getattr(self.spec, "settings_fields", []) or []:
             key = getattr(field, "key", None)
@@ -967,8 +959,18 @@ class AgentService(RpcMethodsBase):
                     )
 
     async def _ensure_session_mcp_servers(
-        self, session: Session, environment_lease: EnvironmentLease | None = None
+        self,
+        session: Session,
+        environment_lease: EnvironmentLease | None = None,
+        *,
+        hold: list | None = None,
     ) -> list[Any]:
+        """The session's live MCP servers, started if need be.
+
+        With ``hold`` (a list), a use of the returned set is taken and its
+        token appended: the set is never closed while held. Release each
+        token with :meth:`_mcp_release` (a run does so as it ends).
+        """
         if environment_lease is None:
             context = current_request_context()
             environment_lease = context.environment_lease if context else None
@@ -983,13 +985,90 @@ class AgentService(RpcMethodsBase):
         async with lock:
             task = getattr(session, "_mcp_lifecycle_task", None)
             if task is not None and not task.done():
-                if getattr(session, "_mcp_owner", None) == owner:
+                # A caller with no environment lease (out of band: an MCP App
+                # reading its page or calling a tool through mcp_read_resource
+                # / mcp_call_tool) has no environment of its own to ask for:
+                # it uses the session's live servers as they are.
+                if (
+                    getattr(session, "_mcp_owner", None) == owner
+                    or environment_lease is None
+                ):
                     await self._wait_session_mcp_ready(session, task)
+                    if hold is not None:
+                        hold.append(self._mcp_hold(session, task))
                     return session._mcp_servers_active
                 # A Thread moving to another lease must not reuse workers
-                # configured against its previous workspace/environment.
-                await self._close_session_mcp_task(session._mcp_shutdown, task)
-            return await self._start_session_mcp_servers(session, environment_lease)
+                # configured against its previous workspace/environment; the
+                # old set stays open for whoever still holds it.
+                await self._retire_session_mcp(session)
+            servers = await self._start_session_mcp_servers(session, environment_lease)
+            if hold is not None:
+                hold.append(
+                    self._mcp_hold(
+                        session, getattr(session, "_mcp_lifecycle_task", None)
+                    )
+                )
+            return servers
+
+    # ------------------------------------------------------------------
+    #  MCP server sets in use: a set is closed only when nothing holds it.
+    #  A run holds the set its agent was built with until it ends; an
+    #  out-of-band call holds it for the call. Replacing a held set (a new
+    #  lease, a reload, a server removed) retires it instead: the session
+    #  moves on to a new set, and the old one closes when its last holder
+    #  lets go. Closing it at once left a run holding closed servers, and
+    #  the run failed on them.
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _mcp_hold(session: Session, task: Any) -> Any:
+        if task is None:
+            return None
+        users = getattr(session, "_mcp_users", None)
+        if users is None:
+            users = session._mcp_users = {}
+        users[task] = users.get(task, 0) + 1
+        return task
+
+    @staticmethod
+    def _mcp_release(session: Session, task: Any) -> None:
+        if task is None:
+            return
+        users = getattr(session, "_mcp_users", None) or {}
+        left = users.get(task, 0) - 1
+        if left > 0:
+            users[task] = left
+            return
+        users.pop(task, None)
+        retired = getattr(session, "_mcp_retired", None) or {}
+        shutdown = retired.pop(task, None)
+        if shutdown is not None:
+            # (its lifecycle task closes its servers itself once told)
+            shutdown.set()
+
+    async def _retire_session_mcp(self, session: Session) -> None:
+        """Move the session off its current MCP server set: closed now when
+        nothing holds it, else when its last holder lets go."""
+        task = getattr(session, "_mcp_lifecycle_task", None)
+        shutdown = getattr(session, "_mcp_shutdown", None)
+        if task is not None and not task.done() and shutdown is not None:
+            if (getattr(session, "_mcp_users", None) or {}).get(task):
+                retired = getattr(session, "_mcp_retired", None)
+                if retired is None:
+                    retired = session._mcp_retired = {}
+                retired[task] = shutdown
+            else:
+                await self._close_session_mcp_task(shutdown, task)
+        setattr(session, "_mcp_shutdown", None)
+        setattr(session, "_mcp_lifecycle_task", None)
+        setattr(session, "_mcp_servers_active", [])
+
+    @staticmethod
+    def _close_retired_session_mcp(session: Session) -> None:
+        """The session is going: every retired set closes, held or not."""
+        retired = getattr(session, "_mcp_retired", None) or {}
+        for shutdown in retired.values():
+            shutdown.set()
+        retired.clear()
 
     @staticmethod
     async def _close_session_mcp_task(shutdown_event, task) -> None:
@@ -1032,7 +1111,11 @@ class AgentService(RpcMethodsBase):
         """
         # Merge spec-level and session-level (dynamic) MCP server configs
         dynamic_cfgs: list = getattr(session, "_dynamic_mcp_servers", None) or []
-        if not self.spec.mcp_servers and not dynamic_cfgs:
+        if (
+            not self.spec.mcp_servers
+            and not dynamic_cfgs
+            and not subagent_mcp_configs(self.spec)
+        ):
             return []
 
         # Create Event to signal when servers are ready
@@ -1072,6 +1155,21 @@ class AgentService(RpcMethodsBase):
                         settings,
                         auth_resolver=self.mcp_manager.auth_resolver,
                     )
+                    # The servers its sub-agents (agent tools, handoffs)
+                    # declare and it does not: connected here too, so a
+                    # sub-agent works with the session's live servers.
+                    subagent_cfgs = subagent_mcp_configs(self.spec)
+                    for extra in (
+                        build_mcp_servers(
+                            SimpleNamespace(mcp_servers=subagent_cfgs),
+                            settings,
+                            auth_resolver=self.mcp_manager.auth_resolver,
+                        )
+                        if subagent_cfgs
+                        else []
+                    ):
+                        extra._omni_subagent_only = True
+                        servers.append(extra)
 
                     # Build dynamic MCP servers from session (e.g. launcher-provided)
                     for dyn_cfg in dynamic_cfgs:
@@ -1294,7 +1392,6 @@ class AgentService(RpcMethodsBase):
         self,
         session_id: str,
         principal=None,
-        default_environment_id: Optional[str] = None,
     ) -> "RequestContext | None":
         """Resolve a routed request context for out-of-band execution paired
         to a GUI session — the realtime (voice) pipeline, which runs outside
@@ -1304,19 +1401,16 @@ class AgentService(RpcMethodsBase):
         selects the environment (existing or automatic) and ``materialize``
         provisions an automatic selection into a ready lease.
 
-        A session that has never run a text turn has a targetless binding, so
-        inherit resolves to no environment. ``default_environment_id`` covers
-        that: it is the same server default the GUI handshake advertises
-        (``agent_host.default_environment_id``) and is applied here as an
-        explicit selection, exactly as the GUI client would on its first
-        ``start_run``.
+        A session never seen before gets the AgentHost's default binding
+        (``ThreadRuntimeBindingRegistry.set_initial_default``), so a
+        voice-first session routes exactly like a text-first one.
 
         The WHOLE context is returned, not just its ``environment_lease``:
         the caller binds it for its task tree (``bind_request_context``) so
         lease-routed helpers — ``require_environment_lease``, worker
         isolation sources — resolve there exactly as they do inside a Run.
-        Returns ``None`` when neither the binding nor the default names an
-        environment; a targetless context would only mask that.
+        Returns ``None`` when the binding names no environment; a targetless
+        context would only mask that.
         """
         request_context = await self.operation_router.prepare_protocol(
             OPERATION_BY_NAME["start_run"],
@@ -1327,18 +1421,6 @@ class AgentService(RpcMethodsBase):
             principal=principal,
         )
         request_context = await self.operation_router.materialize(request_context)
-        if request_context.environment_lease is None and default_environment_id:
-            request_context = await self.operation_router.prepare_protocol(
-                OPERATION_BY_NAME["start_run"],
-                {
-                    "session_id": session_id,
-                    "environment_selection": {
-                        "mode": "explicit",
-                        "environment_id": default_environment_id,
-                    },
-                },
-                principal=principal,
-            )
         return request_context if request_context.environment_lease else None
 
     def build_realtime_client_tools(self, session_id: str, principal=None) -> list:
@@ -1410,6 +1492,34 @@ class AgentService(RpcMethodsBase):
         run_spec.sandbox_run_config = run_config
         return run_spec
 
+    def _runtime_context(self, sess: Session) -> Any:
+        """The run context a run of *sess* is given.
+
+        When a build_context factory exists it is always called, so dynamic
+        template variables (skills, date, etc.) are generated; session-level
+        context and variables are merged into its input and its output.
+        """
+        if self.spec.build_context:
+            factory_vars = dict(self.spec.variables or {})
+            if hasattr(sess, "variables") and isinstance(sess.variables, dict):
+                factory_vars.update(sess.variables)
+            # Also pull workspace_root from sess.context if set
+            if hasattr(sess, "context") and isinstance(sess.context, dict):
+                for k, v in sess.context.items():
+                    factory_vars.setdefault(k, v)
+            runtime_context = self.spec.build_context(factory_vars)
+            # Merge any extra session context keys the factory didn't produce
+            if hasattr(sess, "context") and isinstance(sess.context, dict):
+                if isinstance(runtime_context, dict):
+                    for k, v in sess.context.items():
+                        runtime_context.setdefault(k, v)
+            return runtime_context
+        if hasattr(sess, "context") and sess.context is not None:
+            return sess.context
+        if hasattr(sess, "variables") and sess.variables is not None:
+            return sess.variables
+        return self.spec.context
+
     async def _build_agent_for_session(
         self,
         session: Session,
@@ -1417,7 +1527,14 @@ class AgentService(RpcMethodsBase):
         *,
         spec: AgentSpec | None = None,
         environment_lease: EnvironmentLease | None = None,
+        mcp_holds: list | None = None,
+        start_mcp: bool = True,
     ) -> Any:
+        """The session's agent for a run. With ``mcp_holds`` (a list), the
+        MCP servers it's built with are held (their tokens appended) until
+        the caller releases them: a run holds them to its end. Without
+        ``start_mcp`` the agent is built with no MCP servers, which are
+        processes a description must not start."""
         build_spec = spec or self.spec
         stub_app = SimpleNamespace(
             spec=build_spec,
@@ -1431,8 +1548,13 @@ class AgentService(RpcMethodsBase):
         settings = dict(self._default_settings)
 
         # Use session-scoped MCP servers (managed by dedicated task)
-        active_servers = await self._ensure_session_mcp_servers(
-            session, environment_lease
+        holds: list = []
+        active_servers = (
+            await self._ensure_session_mcp_servers(
+                session, environment_lease, hold=holds
+            )
+            if start_mcp
+            else []
         )
 
         setattr(stub_app, "mcp_servers", active_servers)
@@ -1484,11 +1606,26 @@ class AgentService(RpcMethodsBase):
                     skip_approvals=_skip_approvals,
                 )
 
+            # (the last agent built: what an out-of-band tool call's guardrails
+            # are given as the agent acting, _sf_mcp_call_tool)
+            session._mcp_guardrail_agent = agent
+            if mcp_holds is not None:
+                mcp_holds.extend(holds)
+            else:
+                for token in holds:
+                    self._mcp_release(session, token)
             return agent
         except Exception:
+            for token in holds:
+                self._mcp_release(session, token)
             # If agent building fails, cleanup MCP lifecycle if it was just created
+            # (unless something else holds it: an app's call in flight)
             lifecycle_task = getattr(session, "_mcp_lifecycle_task", None)
-            if lifecycle_task and not lifecycle_task.done():
+            if (
+                lifecycle_task
+                and not lifecycle_task.done()
+                and not (getattr(session, "_mcp_users", None) or {}).get(lifecycle_task)
+            ):
                 # Cancel the lifecycle task
                 shutdown_event = getattr(session, "_mcp_shutdown", None)
                 if shutdown_event:
@@ -1507,34 +1644,22 @@ class AgentService(RpcMethodsBase):
             raise
 
     def _clone_agent(self, agent: Any) -> Any:
-        static_mcp_servers = None
-        restored_original = False
-        if hasattr(agent, "mcp_servers"):
-            try:
-                servers = getattr(agent, "mcp_servers")
-                static_mcp_servers = servers
-                setattr(agent, "mcp_servers", [])
-                restored_original = True
-            except Exception:
-                static_mcp_servers = None
+        # Connected MCP servers are the session's, shared by every run: the
+        # clone keeps the same ones, its sub-agents' (agent tools, handoffs)
+        # included.
+        memo: Dict[int, Any] = {}
+        for owner in _agents_in(agent):
+            servers = getattr(owner, "mcp_servers", None)
+            if servers is not None:
+                memo[id(servers)] = servers
+                for server in servers:
+                    memo[id(server)] = server
         try:
-            cloned = copy.deepcopy(agent)
+            return copy.deepcopy(agent, memo)
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError(
                 "Agent builder must return deepcopy-able agent instances for per-run isolation"
             ) from exc
-        finally:
-            if restored_original:
-                try:
-                    setattr(agent, "mcp_servers", static_mcp_servers)
-                except Exception:
-                    pass
-        if static_mcp_servers is not None:
-            try:
-                setattr(cloned, "mcp_servers", static_mcp_servers)
-            except Exception:
-                pass
-        return cloned
 
     def _apply_session_tool_policy(self, session: Session, agent: Any) -> None:
         # The session's always_allow_tools / always_allow_patterns sets are
@@ -1787,53 +1912,29 @@ class AgentService(RpcMethodsBase):
                 return await on_invoke(self, sess, args or {})
             return on_invoke(self, sess, args or {})
 
-        # Try common calling conventions in order
-        to_call = None
+        # Server functions take (service, session, args), (session, args),
+        # (args) or nothing. Pick the convention by signature and call once:
+        # retrying on TypeError would also swallow a TypeError raised inside
+        # the function and re-run it with different arguments.
         is_bound = getattr(fn, "__self__", None) is not None
-        candidates_async = []
-        candidates_sync = []
-        if is_bound:
-            candidates_sync = [
-                (sess, args or {}),
-                (args or {},),
-                tuple(),
-            ]
-        else:
-            candidates_sync = [
-                (self, sess, args or {}),
-                (sess, args or {}),
-                (args or {},),
-                tuple(),
-            ]
-        candidates_async = candidates_sync
-
-        if asyncio.iscoroutinefunction(fn):
-            for cand in candidates_async:
-                try:
-                    return await fn(*cand)
-                except TypeError:
-                    continue
-            # Last resort: call with no args
-            return await fn()
-        else:
-            for cand in candidates_sync:
-                try:
-                    return fn(*cand)
-                except TypeError:
-                    continue
-            return fn()
-
-    # --- Built-in server functions -------------------------------------
-    def _sf_session_get_history(
-        self, session: Session | None, args: dict | None = None
-    ) -> list[dict]:
-        """Return the current history for the given session.
-        If no session was supplied, return an empty list.
-        """
+        candidates = [(sess, args or {}), (args or {},), ()]
+        if not is_bound:
+            candidates.insert(0, (self, sess, args or {}))
         try:
-            return list(session.history) if session else []
-        except Exception:
-            return []
+            signature = inspect.signature(fn)
+        except (TypeError, ValueError):
+            signature = None
+        call_args = next(
+            (
+                cand
+                for cand in candidates
+                if signature is None or _binds(signature, cand)
+            ),
+            (),
+        )
+        if asyncio.iscoroutinefunction(fn):
+            return await fn(*call_args)
+        return fn(*call_args)
 
     def _apply_session_metadata(
         self,
@@ -2001,7 +2102,9 @@ class AgentService(RpcMethodsBase):
                 async def _run(session: Session | None = None, args=None):
                     payload = args or {}
                     arg = payload.get("text") if isinstance(payload, dict) else None
-                    message = await run_slash_agent(command, spec, arg)
+                    message = await run_slash_agent(
+                        command, spec, arg, service=self, session=session
+                    )
                     return {"message": message}
 
                 return _run
@@ -2026,8 +2129,11 @@ class AgentService(RpcMethodsBase):
             self.register_server_function(
                 command_name,
                 handler,
-                resource_scope=ResourceScope.AGENT_HOST,
-                execution_requirements=ExecutionRequirement.NONE,
+                # The bound agent reads and edits the session's workspace and
+                # runs its shell, so the command is routed to that environment.
+                resource_scope=ResourceScope.THREAD,
+                execution_requirements=ExecutionRequirement.WORKSPACE_WRITE
+                | ExecutionRequirement.PROCESS,
                 description=str(binding.get("description") or ""),
                 params_schema={
                     "type": "object",
@@ -2090,6 +2196,136 @@ class AgentService(RpcMethodsBase):
                 return server
         return None
 
+    @asynccontextmanager
+    async def _held_mcp_server(self, session: Session | None, server_name: str):
+        """A session's live MCP server by name, held for the block (an
+        out-of-band call: the set can't close under it). None if absent."""
+        holds: list = []
+        server = None
+        if session is not None:
+            try:
+                servers = await self._ensure_session_mcp_servers(session, hold=holds)
+            except Exception:
+                servers = list(getattr(session, "_mcp_servers_active", []) or [])
+            for candidate in servers or []:
+                if getattr(candidate, "name", None) == server_name:
+                    server = candidate
+                    break
+        try:
+            yield server
+        finally:
+            for token in holds:
+                self._mcp_release(session, token)
+
+    def _mcp_public_name(
+        self, session: Session, server_name: str, tool_name: str
+    ) -> str:
+        """The tool's name as the agent knows it (``mcp_<server>__<tool>``):
+        approvals and guardrails see an app's call as they'd see the agent's."""
+        from omniagents.core.agents.mcp_identity import get_session_identities
+
+        for public, identity in get_session_identities(session).items():
+            if tuple(identity) == (server_name, tool_name):
+                return public
+        return f"mcp_{server_name}__{tool_name}"
+
+    def _app_tool_needs_approval(
+        self, session: Session, server_name: str, tool_name: str, public_name: str
+    ) -> bool:
+        """The rule a run's MCP tool call is held to (approval._make_mcp_predicate,
+        wired in _build_agent_for_session), for an app's out-of-band call."""
+        import re as _re
+
+        from omniagents.core.agents.approval import session_allows_mcp_tool
+
+        spec = self.spec
+        opts = spec.safe_agent_options
+        use_safe = spec.use_safe_agent
+        skip = bool(getattr(opts, "skip_approvals", False))
+        if (
+            spec.security_config
+            and spec.security_config.get("safety_mode") == "enforced"
+        ):
+            use_safe = True
+            skip = False
+        if not use_safe or skip:
+            return False
+        if session_allows_mcp_tool(session, server_name, tool_name):
+            return False
+        names = set(getattr(opts, "safe_tool_names", None) or []) if opts else set()
+        if public_name in names:
+            return False
+        for pattern in (
+            (getattr(opts, "safe_tool_patterns", None) or []) if opts else []
+        ):
+            if _re.compile(pattern).match(public_name):
+                return False
+        return True
+
+    async def _gate_app_tool_call(
+        self, session: Session, server_name: str, tool_name: str, arguments: dict
+    ) -> str | None:
+        """An app's call to its server's tool, through the agent's tool-input
+        guardrails and its approvals: None to go ahead, else why not (given
+        back to the app as the call's error)."""
+        from agents.tool_context import ToolContext
+        from agents.tool_guardrails import ToolInputGuardrailData
+
+        from omniagents.core.agents.mcp_identity import get_session_identities
+
+        public = self._mcp_public_name(session, server_name, tool_name)
+        args_json = json.dumps(arguments or {})
+        call_id = f"app_{uuid.uuid4().hex}"
+
+        guardrails = list(getattr(self.spec, "tool_input_guardrails", None) or [])
+        if guardrails:
+            data = ToolInputGuardrailData(
+                context=ToolContext(
+                    context=None,
+                    tool_name=public,
+                    tool_call_id=call_id,
+                    tool_arguments=args_json,
+                ),
+                agent=getattr(session, "_mcp_guardrail_agent", None),
+            )
+            for guardrail in guardrails:
+                try:
+                    output = await guardrail.run(data)
+                except Exception as e:
+                    # (a guardrail that can't decide doesn't let the call through)
+                    return f"Not run: a guardrail couldn't check it ({e})"
+                behavior = output.behavior
+                kind = (
+                    behavior.get("type")
+                    if isinstance(behavior, dict)
+                    else getattr(behavior, "type", None)
+                )
+                if kind == "reject_content":
+                    message = (
+                        behavior.get("message")
+                        if isinstance(behavior, dict)
+                        else getattr(behavior, "message", None)
+                    )
+                    return str(message or "Not run: a guardrail refused it")
+                if kind == "raise_exception":
+                    return "Not run: a guardrail stopped it"
+
+        if self._app_tool_needs_approval(session, server_name, tool_name, public):
+            # (its identity known to the approval, so an "always" answer is
+            # the same (server, tool) grant a run's call would make)
+            get_session_identities(session).setdefault(public, (server_name, tool_name))
+            response = await self.request_tool_approval(
+                session=session,
+                call_id=call_id,
+                tool_name=public,
+                arguments=args_json,
+            )
+            if response.get("decision") != "approve":
+                return str(
+                    response.get("rejection_message") or "Not run: it wasn't allowed"
+                )
+        return None
+
     async def _sf_mcp_list_resources(
         self, session: Session | None, args: dict | None = None
     ) -> dict:
@@ -2099,20 +2335,19 @@ class AgentService(RpcMethodsBase):
         if not server_name:
             raise ValueError("server_name is required")
 
-        server = await self._resolve_mcp_server_by_name(session, server_name)
-        if server is None:
-            raise ValueError(f"Unknown or inactive MCP server: {server_name}")
-        if not hasattr(server, "list_resources"):
-            raise ValueError(
-                f"MCP server '{server_name}' does not support list_resources "
-                "(SDK 0.16+ required)"
+        async with self._held_mcp_server(session, server_name) as server:
+            if server is None:
+                raise ValueError(f"Unknown or inactive MCP server: {server_name}")
+            if not hasattr(server, "list_resources"):
+                raise ValueError(
+                    f"MCP server '{server_name}' does not support list_resources "
+                    "(SDK 0.16+ required)"
+                )
+            result = (
+                await server.list_resources(cursor=cursor)
+                if cursor
+                else await server.list_resources()
             )
-
-        result = (
-            await server.list_resources(cursor=cursor)
-            if cursor
-            else await server.list_resources()
-        )
         # ``ListResourcesResult`` from the mcp package is a pydantic model.
         resources_attr = getattr(result, "resources", []) or []
         next_cursor = getattr(result, "next_cursor", None) or getattr(
@@ -2152,16 +2387,15 @@ class AgentService(RpcMethodsBase):
         if not uri:
             raise ValueError("uri is required")
 
-        server = await self._resolve_mcp_server_by_name(session, server_name)
-        if server is None:
-            raise ValueError(f"Unknown or inactive MCP server: {server_name}")
-        if not hasattr(server, "read_resource"):
-            raise ValueError(
-                f"MCP server '{server_name}' does not support read_resource "
-                "(SDK 0.16+ required)"
-            )
-
-        result = await server.read_resource(uri)
+        async with self._held_mcp_server(session, server_name) as server:
+            if server is None:
+                raise ValueError(f"Unknown or inactive MCP server: {server_name}")
+            if not hasattr(server, "read_resource"):
+                raise ValueError(
+                    f"MCP server '{server_name}' does not support read_resource "
+                    "(SDK 0.16+ required)"
+                )
+            result = await server.read_resource(uri)
         contents_attr = getattr(result, "contents", []) or []
         out: list[dict] = []
         for content in contents_attr:
@@ -2189,7 +2423,6 @@ class AgentService(RpcMethodsBase):
     ) -> dict:
         payload = args or {}
         server_name = str(payload.get("server_name") or "")
-        cursor = payload.get("cursor")
         if not server_name:
             raise ValueError("server_name is required")
 
@@ -2199,14 +2432,9 @@ class AgentService(RpcMethodsBase):
         if not hasattr(server, "list_tools"):
             raise ValueError(f"MCP server '{server_name}' does not support list_tools")
 
-        # ``list_tools`` on the agents SDK MCPServer subclasses takes an
-        # optional ``run_context``/``agent`` kwargs depending on SDK version.
-        # We don't have either in this OOB path, so call positionally without
-        # arguments — the SDK falls back to listing all tools.
-        try:
-            result = await server.list_tools()
-        except TypeError:
-            result = await server.list_tools(run_context=None, agent=None)
+        # No run context or agent on this out-of-band path: list every tool.
+        # The SDK pages through the server itself, so there is no cursor.
+        result = await server.list_tools()
 
         # ``MCPServer.list_tools`` returns ``list[mcp.types.Tool]`` directly.
         # Some transports wrap it as ``ListToolsResult`` (with .tools).
@@ -2261,13 +2489,47 @@ class AgentService(RpcMethodsBase):
         if not isinstance(arguments, dict):
             raise ValueError("arguments must be an object")
 
-        server = await self._resolve_mcp_server_by_name(session, server_name)
-        if server is None:
-            raise ValueError(f"Unknown or inactive MCP server: {server_name}")
-        if not hasattr(server, "call_tool"):
-            raise ValueError(f"MCP server '{server_name}' does not support call_tool")
+        async with self._held_mcp_server(session, server_name) as server:
+            if server is None:
+                raise ValueError(f"Unknown or inactive MCP server: {server_name}")
+            if not hasattr(server, "call_tool"):
+                raise ValueError(
+                    f"MCP server '{server_name}' does not support call_tool"
+                )
+            # An app calls its server's tools out of band, outside any run: the
+            # checks a run's tool call passes are made here instead. First, the
+            # tool must be one its app may call (MCP Apps' visibility)
+            from omniagents.core.agents.mcp import tool_visibility
 
-        result = await server.call_tool(tool_name, arguments)
+            visible = tool_visibility(server_name, tool_name)
+            if visible is None:
+                try:
+                    await server.list_tools()  # (the wrapper records visibility)
+                except Exception:
+                    logger.debug("list_tools for visibility failed", exc_info=True)
+                visible = tool_visibility(server_name, tool_name)
+            if visible is None:
+                raise ValueError(
+                    f"MCP server '{server_name}' has no tool '{tool_name}'"
+                )
+            if "app" not in visible:
+                raise PermissionError(
+                    f"'{tool_name}' on '{server_name}' isn't one its app may call"
+                )
+            # Then the agent's guardrails and its approvals, as for its own calls
+            refusal = await self._gate_app_tool_call(
+                session, server_name, tool_name, arguments
+            )
+            if refusal is not None:
+                return {
+                    "server_name": server_name,
+                    "tool_name": tool_name,
+                    "result": {
+                        "content": [{"type": "text", "text": refusal}],
+                        "isError": True,
+                    },
+                }
+            result = await server.call_tool(tool_name, arguments)
         result_dict: dict[str, Any]
         if hasattr(result, "model_dump"):
             try:
@@ -2933,7 +3195,8 @@ class AgentService(RpcMethodsBase):
     ) -> dict | None:
         """Resolve an approval via the sandbox tier or guardian, or ``None``.
 
-        ``None`` means "route to the human" — the caller proceeds with the
+        ``None`` means the reviewer is a person (the ``user`` reviewer): the
+        guardian always decides, failing closed. On ``None`` the caller proceeds with the
         ordinary broadcast-and-await prompt. A non-None return is a complete
         response dict (``decision``/``always_approve``/``rejection_message``)
         that never reached the client; the decision is audited and broadcast
@@ -2981,11 +3244,12 @@ class AgentService(RpcMethodsBase):
                 "rejection_message": None,
             }
 
-        # GUARDIAN — codex-style: allow approves, deny rejects with the
-        # rationale; unsure/timeout/error and a tripped circuit breaker fall
-        # through to the human prompt.
-        if guardian.breaker_tripped(session, run_id):
-            return None
+        # GUARDIAN — codex's: allow approves; deny, a failed review and a
+        # timed-out one all reject the call back to the model with codex's
+        # instructions for each (fail closed). Too many denials interrupt
+        # the run.
+        context = current_request_context()
+        lease = context.environment_lease if context is not None else None
         request = guardian.GuardianRequest(
             kind=kind,
             tool_name=tool_name,
@@ -2994,24 +3258,10 @@ class AgentService(RpcMethodsBase):
             metadata=metadata,
             environment_kind=environment.kind,
             environment_has_network=environment.has_network,
+            workspace_root=lease.workspace.root if lease is not None else None,
         )
-        assessment = await guardian.review_approval(self, session, request)
-        if assessment is None:
-            return None
-        if assessment.allowed:
-            response = {
-                "decision": "approve",
-                "always_approve": False,
-                "rejection_message": None,
-            }
-        else:
-            response = {
-                "decision": "reject",
-                "always_approve": False,
-                "rejection_message": (
-                    f"Denied by the approval reviewer: {assessment.rationale}"
-                ),
-            }
+        decision = await guardian.review_approval(self, session, request, run_id=run_id)
+        assessment = decision.assessment
         await self._record_reviewed_approval(
             session,
             kind=kind,
@@ -3021,15 +3271,25 @@ class AgentService(RpcMethodsBase):
             run_id=run_id,
             reviewer="guardian",
             arguments=arguments,
-            outcome=assessment.outcome,
-            risk_level=assessment.risk_level,
-            rationale=assessment.rationale,
+            # A review that failed or timed out denies the action too.
+            outcome="allow" if decision.approved else "deny",
+            risk_level=assessment.risk_level if assessment is not None else None,
+            rationale=decision.rationale,
         )
-        if assessment.allowed:
-            guardian.record_allow(session, run_id)
-        else:
-            guardian.record_denial(session, run_id)
-        return response
+        if decision.interrupt and run_id:
+            logger.warning(guardian.interrupt_message(session, run_id))
+            asyncio.get_running_loop().create_task(self.stop_run(run_id))
+        if decision.approved:
+            return {
+                "decision": "approve",
+                "always_approve": False,
+                "rejection_message": None,
+            }
+        return {
+            "decision": "reject",
+            "always_approve": False,
+            "rejection_message": decision.message,
+        }
 
     async def _record_reviewed_approval(
         self,
@@ -3167,14 +3427,6 @@ class AgentService(RpcMethodsBase):
         )
         if resolved is not None:
             return resolved
-
-        worker = getattr(self, "_worker_approval_context", None)
-        if worker is not None:
-            delegated = await worker.escalate(
-                kind="tool", session=session, payload=payload
-            )
-            if delegated is not None:
-                return delegated
 
         # Keep provider correlation as metadata; only the new token authorizes
         # a decision. Reused provider IDs (even within one session) cannot alias.
@@ -3328,14 +3580,6 @@ class AgentService(RpcMethodsBase):
             "arguments": arguments or "",
             "session_id": session.id,
         }
-        worker = getattr(self, "_worker_approval_context", None)
-        if worker is not None:
-            delegated = await worker.escalate(
-                kind="mcp", session=session, payload={**payload, "run_id": run_id}
-            )
-            if delegated is not None:
-                return delegated
-
         request_id = f"apr_{uuid.uuid4().hex}"
         payload["request_id"] = request_id
         if run_id is not None:
@@ -3830,7 +4074,13 @@ class AgentService(RpcMethodsBase):
         self._recover_local_run_ownership(sess)
         ownership = reserve_run(self._queue_store(sess), sess.id)
         sess.runtime_ownership = ownership
+        from omniagents.core.models import bind_run_models, reset_run_models
+
+        model_scope = model_token = None
         try:
+            store = self._model_catalog_store()
+            if store is not None and store.single_provider:
+                model_scope, model_token = bind_run_models(store.snapshot_for_run(sess))
             ownership.start_heartbeat()
             if ownership.took_over_from is not None:
                 self._close_interrupted_run(sess, ownership.took_over_from)
@@ -3851,6 +4101,17 @@ class AgentService(RpcMethodsBase):
                 session_id=session_id,
             )
         finally:
+            if model_token is not None:
+                reset_run_models(model_token)
+            if model_scope is not None:
+                if ownership.transferred and sess.current_task is not None:
+                    # Queue drainers may inherit this context: once the run ends,
+                    # they must see current configuration for the next turn.
+                    sess.current_task.add_done_callback(
+                        lambda _: setattr(model_scope, "active", False)
+                    )
+                else:
+                    model_scope.active = False
             # Preparation failure/cancellation never dispatched a worker.
             if not ownership.transferred:
                 ownership.release()
@@ -3982,6 +4243,12 @@ class AgentService(RpcMethodsBase):
             environment_lease=environment_lease,
         )
 
+        if getattr(self.spec, "memory_config", None):
+            sess._memory_config = self.spec.memory_config
+            idle_task = getattr(sess, "_memory_idle_task", None)
+            if idle_task is not None and not idle_task.done():
+                idle_task.cancel()
+
         self._apply_safe_tool_overrides(sess, safe_tool_overrides)
         self._apply_approvals_reviewer(sess, approvals_reviewer)
 
@@ -4022,6 +4289,10 @@ class AgentService(RpcMethodsBase):
             except Exception as e:
                 logger.debug(f"Failed to resolve default model config: {e}")
 
+        catalog_store = self._model_catalog_store()
+        if catalog_store is not None:
+            catalog_store.reconcile_session_model(sess)
+
         # Track current channel for real-time notifications.
         if channel is not None and channel not in sess.channels:
             sess.channels.append(channel)
@@ -4051,9 +4322,20 @@ class AgentService(RpcMethodsBase):
             sess.pending_events = still_pending
 
         run_spec = self._spec_for_environment(environment_lease)
+        mcp_holds: list = []
         agent = await self._build_agent_for_session(
-            sess, None, spec=run_spec, environment_lease=environment_lease
+            sess,
+            None,
+            spec=run_spec,
+            environment_lease=environment_lease,
+            mcp_holds=mcp_holds,
         )
+        # The run holds the MCP servers its agent was built with until its
+        # reservation is released (however it ends, started or not)
+        for token in mcp_holds:
+            ownership.add_release_callback(
+                lambda token=token: self._mcp_release(sess, token)
+            )
 
         # When the caller supplies a non-user prompt role, write the
         # message to history with that role and tell the worker to
@@ -4093,35 +4375,9 @@ class AgentService(RpcMethodsBase):
             current_task = asyncio.current_task()
             run_name = current_task.get_name() if current_task else None
 
-            # Resolve runtime context once
-            # When a build_context factory exists, always call it so that
-            # dynamic template variables (skills, date, etc.) are generated.
-            # Merge any session-level context/variables into the factory input.
-            if self.spec.build_context:
-                # Determine the variables to pass to the factory
-                factory_vars = dict(self.spec.variables or {})
-                if hasattr(sess, "variables") and isinstance(sess.variables, dict):
-                    factory_vars.update(sess.variables)
-                # Also pull workspace_root from sess.context if set
-                if hasattr(sess, "context") and isinstance(sess.context, dict):
-                    for k, v in sess.context.items():
-                        factory_vars.setdefault(k, v)
-                runtime_context = self.spec.build_context(factory_vars)
-                # Merge any extra session context keys the factory didn't produce
-                if hasattr(sess, "context") and isinstance(sess.context, dict):
-                    if isinstance(runtime_context, dict):
-                        for k, v in sess.context.items():
-                            runtime_context.setdefault(k, v)
-            elif hasattr(sess, "context") and sess.context is not None:
-                runtime_context = sess.context
-            elif hasattr(sess, "variables") and sess.variables is not None:
-                runtime_context = sess.variables
-            else:
-                runtime_context = self.spec.context
+            runtime_context = self._runtime_context(sess)
 
             # Retry policy (env configurable)
-            import math
-
             max_retries = int(os.getenv("OMNIAGENTS_RETRY_MAX", "3"))
             base_delay = float(os.getenv("OMNIAGENTS_RETRY_BASE", "1.5"))
 
@@ -4147,7 +4403,11 @@ class AgentService(RpcMethodsBase):
                 from omniagents.core.agents.run_options import build_model_provider
 
                 model_provider = None
-                session_model_config = getattr(sess, "model_config", None)
+                session_model_config = (
+                    catalog_store.get_model_config(catalog_store._run_model_ref)
+                    if catalog_store is not None and catalog_store._run_model_ref
+                    else getattr(sess, "model_config", None)
+                )
 
                 # Map session_model_config (legacy "provider" key) onto the
                 # build_model_provider shape (keys: type, base_url, api_key).
@@ -4171,13 +4431,32 @@ class AgentService(RpcMethodsBase):
                 elif getattr(self.spec, "model_provider_config", None):
                     provider_cfg = self.spec.model_provider_config
 
-                if provider_cfg:
+                if catalog_store is not None and catalog_store.single_provider:
+                    from omniagents.core.models import provider_from_runtime
+
+                    runtime = catalog_store.resolve_model_for_runtime(
+                        catalog_store._run_model_ref or sess.active_model
+                    )
+                    model_provider, _ = provider_from_runtime(runtime)
+                elif provider_cfg:
                     try:
                         model_provider = build_model_provider(provider_cfg)
                     except ImportError as e:
+                        if catalog_store is not None and catalog_store.single_provider:
+                            raise
                         logger.warning(str(e))
                     except Exception as e:
+                        if catalog_store is not None and catalog_store.single_provider:
+                            raise
                         logger.warning(f"Failed to create model provider: {e}")
+                if (
+                    catalog_store is not None
+                    and catalog_store.single_provider
+                    and model_provider is None
+                ):
+                    raise ValueError(
+                        "The workspace provider could not be initialized. Check its connection in Settings."
+                    )
 
                 # If the spec opts in to SDK-native compaction, build (and
                 # memoise) a wrapper that delegates reads/writes to the
@@ -4231,9 +4510,19 @@ class AgentService(RpcMethodsBase):
                             if session_model_config
                             else None
                         )
+                        memory_prompt = prompt
+                        if getattr(self.spec, "memory_config", None):
+                            from omniagents.core.memory import MemoryClient
+
+                            try:
+                                memory_prompt += await MemoryClient(
+                                    self.spec.memory_config
+                                ).relevant(prompt)
+                            except Exception:
+                                logger.exception("Could not retrieve turn memory")
                         final_details = await stream_agent(
                             agent,
-                            prompt,
+                            memory_prompt,
                             sess,
                             self.channel,
                             service=self,
@@ -4357,6 +4646,15 @@ class AgentService(RpcMethodsBase):
                         error_info = {"message": _msg, "type": e.__class__.__name__}
                         logger.error(f"Non-retryable error: {e}", exc_info=True)
                         break
+            except Exception as e:
+                # A failure before the agent runs (its model provider, its
+                # environment) ends the run too; run_end says why.
+                end_reason = "error"
+                error_info = {
+                    "message": str(e).strip() or e.__class__.__name__,
+                    "type": e.__class__.__name__,
+                }
+                logger.error(f"Run {run_name} could not start: {e}", exc_info=True)
             finally:
                 # Inform client the run finished
                 payload = {
@@ -4374,7 +4672,11 @@ class AgentService(RpcMethodsBase):
                     # Catalog identity of the serving model, so run-level
                     # usage joins the model catalog (see protocol.md).
                     if getattr(sess, "active_model", None):
-                        payload["model_ref"] = sess.active_model
+                        payload["model_ref"] = (
+                            catalog_store._run_model_ref
+                            if catalog_store is not None
+                            else None
+                        ) or sess.active_model
                     if final_details.get("max_input_tokens") is not None:
                         payload["max_input_tokens"] = final_details.get(
                             "max_input_tokens"
@@ -4414,6 +4716,60 @@ class AgentService(RpcMethodsBase):
                 if sess.current_task is task:
                     ownership.release()
                     sess.current_task = None
+                    # A fenced operation still in flight (retiring a stopped
+                    # command tree) defers the release to its own end. run_end
+                    # tells clients they may send again, so wait for it.
+                    if not ownership.released:
+                        released = asyncio.Event()
+                        ownership.add_release_callback(released.set)
+                        try:
+                            await asyncio.wait_for(
+                                released.wait(), timeout=RUN_RELEASE_WAIT_SECONDS
+                            )
+                        except asyncio.TimeoutError:
+                            logger.warning(
+                                "run_end sent before run %s released its session",
+                                run_name,
+                            )
+
+                memory_config = getattr(self.spec, "memory_config", None)
+                if memory_config:
+                    from omniagents.core.memory.extract import schedule
+
+                    extraction = memory_config.get("extraction") or {}
+                    triggers = extraction.get("triggers", [])
+                    if "idle" in triggers or "daily" in triggers:
+                        try:
+                            history = await self.get_session_history(sess.id)
+                            source = {
+                                "session_id": sess.id,
+                                "run_id": run_name,
+                                "error": error_info,
+                            }
+                            if "idle" in triggers:
+                                sess._memory_idle_task = schedule(
+                                    memory_config,
+                                    history,
+                                    source,
+                                    "idle",
+                                    delay=float(extraction.get("idle_seconds", 60)),
+                                )
+                            if "daily" in triggers:
+                                from omniagents.core.memory.extract import (
+                                    schedule_daily,
+                                )
+
+                                daily_task = getattr(sess, "_memory_daily_task", None)
+                                if daily_task is None or daily_task.done():
+                                    sess._memory_daily_task = schedule_daily(
+                                        memory_config,
+                                        lambda: self.get_session_history(sess.id),
+                                        {"session_id": sess.id},
+                                    )
+                        except Exception:
+                            logger.exception(
+                                "Could not schedule personal memory extraction"
+                            )
 
                 # Debug log the payload for visibility when debugging (single source)
                 _debug_rpc("run_end", payload)
@@ -4511,6 +4867,11 @@ class AgentService(RpcMethodsBase):
         # with the right role: notification batches arrive as "assistant"
         # so the wakeup reads as the agent observing its own background
         # activity, not as fake user input.
+        from omniagents.core.conversation.attachments import describe_attachments
+
+        # What the prompt carried besides text (image thumbnails, file
+        # names), so the transcript shows what was sent.
+        attachments = describe_attachments(content)
         await self._broadcast_session(
             sess,
             "run_started",
@@ -4519,6 +4880,7 @@ class AgentService(RpcMethodsBase):
                 "session_id": sess.id,
                 "prompt": prompt,
                 "prompt_role": prompt_role,
+                **({"attachments": attachments} if attachments else {}),
             },
             track_live=True,
         )
@@ -5586,9 +5948,9 @@ class AgentService(RpcMethodsBase):
                 return OWNER_UNKNOWN
             return getattr(sess, "user_id", None)
         try:
-            from omniagents.core.session.history_db import get_session_user_id
+            from omniagents.core.session.history_db import get_session_owner
 
-            return get_session_user_id(
+            return get_session_owner(
                 session_id,
                 project_slug=getattr(self._session_manager, "_project_slug", None),
                 agent_slug=getattr(self._session_manager, "_agent_slug", None),
@@ -5914,6 +6276,117 @@ class AgentService(RpcMethodsBase):
         _debug_rpc("get_agent_info", info)
         return info
 
+    async def describe_agent(self, workspace_root: str | None = None) -> dict:
+        """What a run of this agent works with, resolved as a run resolves it.
+
+        The agent is built exactly as for a run (capability tools, the model
+        resolver, approval predicates) on a throwaway session that is never
+        stored, and its instructions are rendered against the context a run
+        in *workspace_root* is given. MCP servers are described from their
+        configuration rather than started. Operator tools (Studio) show this
+        so what they display is what runs. Not an RPC.
+        """
+        from omniagents.core.agents import description
+
+        manager = self._session_manager
+        session = Session(
+            getattr(manager, "_project_slug", None),
+            getattr(manager, "_agent_slug", None),
+        )
+        if workspace_root:
+            session.context = {"workspace_root": workspace_root}
+        agent = await self._build_agent_for_session(
+            session, None, spec=self._spec_for_environment(None), start_mcp=False
+        )
+        spec = self.spec
+        agent_tools = [
+            *(getattr(spec, "agent_tool_configs", None) or []),
+        ]
+        agent_tool_names = {
+            config.tool_name or description.subagent_name(config)
+            for config in agent_tools
+        }
+        opts = spec.safe_agent_options
+        security = spec.security_config or {}
+        enforced = security.get("safety_mode") == "enforced"
+        skills: list[dict] = []
+        if "skills.list" in self._server_functions:
+            from omniagents.core.skills import (
+                discover_skill_dirs,
+                merge_skill_dirs,
+                read_properties,
+                skill_roots,
+            )
+
+            for skill_dir in merge_skill_dirs(
+                discover_skill_dirs(skill_roots(workspace_root))
+            ):
+                try:
+                    props = read_properties(skill_dir)
+                    skills.append(
+                        {"name": props.name, "description": props.description}
+                    )
+                except Exception as exc:
+                    skills.append(
+                        {"name": skill_dir.name, "description": "", "error": str(exc)}
+                    )
+        return {
+            "name": spec.name,
+            "label": getattr(spec, "label", None) or spec.name,
+            "description": getattr(spec, "description", None) or "",
+            "model": {
+                "name": description.model_name(agent),
+                "settings": description.model_settings(agent),
+            },
+            "instructions": await description.instructions(
+                agent, self._runtime_context(session)
+            ),
+            "tools": description.tools(agent, agent_tool_names),
+            "guardrails": description.guardrails(agent),
+            "output": description.output(agent),
+            "handoffs": description.handoffs(agent),
+            "agent_tools": [
+                {
+                    "name": config.tool_name or description.subagent_name(config),
+                    "agent": description.subagent_name(config),
+                    "description": config.tool_description or "",
+                    "max_turns": config.max_turns,
+                }
+                for config in agent_tools
+            ],
+            "capabilities": sorted(
+                str(getattr(cap, "capability_name", "") or type(cap).__name__)
+                for cap in (getattr(spec, "resolved_capabilities", None) or [])
+            ),
+            "mcp_servers": [
+                {"name": server.name, "type": server.type}
+                for server in (getattr(spec, "mcp_servers", None) or [])
+            ],
+            "skills": sorted(skills, key=lambda skill: skill["name"].lower()),
+            "server_functions": sorted(
+                (
+                    {"name": name, "description": meta.get("description") or ""}
+                    for name, meta in self._server_functions.items()
+                ),
+                key=lambda entry: entry["name"],
+            ),
+            "policy": {
+                "approvals": (
+                    "enforced"
+                    if enforced
+                    else "safe_agent" if spec.use_safe_agent else "none"
+                ),
+                "skip_approvals": bool(getattr(opts, "skip_approvals", False))
+                and not enforced,
+                "safe_tool_names": list(getattr(opts, "safe_tool_names", None) or []),
+                "safe_tool_patterns": list(
+                    getattr(opts, "safe_tool_patterns", None) or []
+                ),
+                "max_turns": spec.max_turns,
+                "compaction": spec.session_compaction_config,
+            },
+        }
+
     async def agent_host_register_workspace(
         self,
         workspace_id: str,
@@ -6206,10 +6679,18 @@ class AgentService(RpcMethodsBase):
             store, include_hidden=include_hidden, modality=modality
         )
         result["reasons"] = []
+        if store.single_provider:
+            result["models"] = [
+                m
+                for m in result["models"]
+                if m["provider"]["name"] == store.selected_provider()
+            ]
         if session_id:
             sess = self._session_manager.get_or_create(
                 session_id, user_id=self._current_user_id()
             )
+            if sess.current_task is None or sess.current_task.done():
+                store.reconcile_session_model(sess)
             active = getattr(sess, "active_model", None)
             result["session"] = {
                 "session_id": sess.id,
@@ -6364,7 +6845,6 @@ class AgentService(RpcMethodsBase):
         session_id: str,
         content: str,
         role: str = "user",
-        trigger_run: bool = False,
         variables: dict | None = None,
         safe_tool_overrides: dict | None = None,
         source: str | None = None,
@@ -6373,9 +6853,8 @@ class AgentService(RpcMethodsBase):
     ) -> dict:  # noqa: D401
         """Queue a message for serialized processing on a session.
 
-        - ``trigger_run=False``: append to history, no run.
-        - ``trigger_run=True``:  call ``start_run`` with ``content`` as the
-          prompt — ``start_run`` writes the user turn and drives the agent.
+        Every accepted message starts a turn when the recipient is available.
+        Transcript recording is a separate operation, not a delivery option.
 
         Items are processed in FIFO order. The drainer waits for any
         in-flight run (queued or user-initiated) before starting a new one,
@@ -6386,7 +6865,6 @@ class AgentService(RpcMethodsBase):
             {
                 "session_id": session_id,
                 "role": role,
-                "trigger_run": trigger_run,
                 "source": source,
             },
         )
@@ -6405,7 +6883,6 @@ class AgentService(RpcMethodsBase):
             content=content,
             input_content=input_content,
             role=role,
-            trigger_run=trigger_run,
             variables=variables,
             safe_tool_overrides=safe_tool_overrides,
             source=source,
@@ -6422,7 +6899,6 @@ class AgentService(RpcMethodsBase):
                 "session_id": session_id,
                 "content": content,
                 "role": role,
-                "trigger_run": trigger_run,
                 "variables": variables,
                 "safe_tool_overrides": safe_tool_overrides,
                 "source": source,
@@ -6502,13 +6978,45 @@ class AgentService(RpcMethodsBase):
         ):
             ownership.release()
 
+    def _existing_queue_store(self, sess):
+        """The store holding *sess*'s thread, or None when it has none yet.
+
+        Reads go through this, not :meth:`_queue_store`: looking at a
+        conversation (its snapshot, its queue) must not create it, or every
+        chat a client merely opens is left behind as an empty conversation.
+        A legacy session's history is projected on first sight, as any read
+        of it would; work arriving (an enqueue, a run) creates the thread.
+        """
+        from omniagents.core.conversation.recorder import recorder_for_session
+        from omniagents.core.conversation.service import ThreadNotFound
+
+        recorder = recorder_for_session(sess)
+        if recorder is None:
+            return None
+        if recorder.store.get_thread(sess.id) is not None:
+            recorder.recover_pending_messages(sess.id)
+            return recorder.store
+        try:
+            self._conversation_service().ensure_thread(sess.id)
+        except ThreadNotFound:
+            return None
+        return recorder.store
+
     def _refresh_queue(self, sess, *, reveal_claims=False):
         from omniagents.core.session import queue_inbox
         from omniagents.core.conversation.model import derive_item_id
 
         self._recover_local_run_ownership(sess)
-        store = self._queue_store(sess)
+        store = self._existing_queue_store(sess)
+        if store is None:
+            # No thread yet: nothing was ever queued for it.
+            sess.pending_notifications = []
+            sess.message_queue = []
+            return
         sess.archived = store.get_thread(sess.id).status.value == "archived"
+        from omniagents.core.workers.recovery import reconcile_session
+
+        reconcile_session(self, sess, store)
         sess.pending_notifications = queue_inbox.notifications(store, sess.id)
         if sess.pending_notifications and not sess.archived:
             sess.notification_signal.set()
@@ -6517,7 +7025,7 @@ class AgentService(RpcMethodsBase):
         for entry in queue_inbox.entries(store, sess.id):
             item = dict(entry["item"])
             owner = entry["owner"]
-            if owner is not None and item["trigger_run"]:
+            if owner is not None:
                 receipt = store.submission_receipt(
                     sess.id, f"queue-dispatch:{item['id']}"
                 )
@@ -6526,6 +7034,15 @@ class AgentService(RpcMethodsBase):
                     if run is not None and run.status.value != "running":
                         queue_inbox.finish(store, sess.id, item["id"], owner)
                         continue
+                    if run is not None and run.status.value == "running":
+                        from omniagents.core.runtime.ownership import lease_expired
+
+                        if lease_expired(queue_inbox.runtime_owner(store, sess.id)):
+                            self._close_interrupted_run(sess, {"run_id": run.turn_id})
+                            reason = "Queued run was interrupted; inspect recorded effects before sending follow-up work"
+                            queue_inbox.fail(store, sess.id, item["id"], owner, reason)
+                            item.update(state="failed", error=reason)
+                            owner = None
                 elif receipt and receipt.get("status") == "failed":
                     queue_inbox.fail(
                         store,
@@ -6536,7 +7053,7 @@ class AgentService(RpcMethodsBase):
                     )
                     item.update(state="failed", error=receipt.get("error"))
                     owner = None
-            if owner is not None and not item["trigger_run"]:
+            if owner is not None:
                 # A canonical queued item proves the append committed. The
                 # thread ensure above has already drained history intents.
                 recorded = store.get_item(
@@ -6557,6 +7074,7 @@ class AgentService(RpcMethodsBase):
                 # item is simply pending again. A live foreign claim is a run
                 # about to start; it is shown as pending too.
                 queue_inbox.release_claim_if_stale(store, sess.id, item["id"])
+            item.pop("trigger_run", None)  # Decode old persisted queue entries.
             visible.append(QueuedItem(**item))
         sess.message_queue = visible
 
@@ -6583,15 +7101,15 @@ class AgentService(RpcMethodsBase):
             # The database pins item/inbox reads against other processes; no
             # await pins this serving runtime's state and event watermark.
             import copy
-            from omniagents.core.conversation.recorder import ensure_conversation_thread
             from omniagents.core.conversation.runtime_snapshot import (
                 reconcile_runtime_controls,
                 snapshot_queue,
                 snapshot_state_events,
             )
 
-            ensure_conversation_thread(sess)
-
+            # A conversation with no thread yet reads as empty; reading it
+            # does not create it.
+            self._existing_queue_store(sess)
             stored = self._conversation_service().store.read_snapshot(sess.id)
             items = [item.to_dict() for item in stored["items"]]
             queue = snapshot_queue(stored["inbox"], sess)
@@ -6746,64 +7264,25 @@ class AgentService(RpcMethodsBase):
             sess.message_queue.remove(item)
             try:
                 await self._broadcast_queue_changed(sess)
-                if item.trigger_run:
-                    # start_run appends the prompt to history AND drives a
-                    # turn. Don't pre-append — that would duplicate.
-                    # prompt_role lets non-user notifications (assistant-
-                    # role batches from _notification_flusher) land in
-                    # history with their real role while still triggering
-                    # a run via the resume-from-history path.
-                    dispatch_token = queue_inbox.current_dispatch.set(
-                        (sess.id, item.id, sess.queue_owner)
+                dispatch_token = queue_inbox.current_dispatch.set(
+                    (sess.id, item.id, sess.queue_owner)
+                )
+                try:
+                    # Worker lifecycle admission wraps the same serialized queue.
+                    dispatch = getattr(self, "_worker_queue_dispatch", self.start_run)
+                    await dispatch(
+                        prompt=item.content,
+                        content=item.input_content,
+                        environment_selection={"mode": "inherit"},
+                        session_id=sess.id,
+                        variables=item.variables,
+                        safe_tool_overrides=item.safe_tool_overrides,
+                        prompt_role=item.role,
+                        submission_id=f"queue-dispatch:{item.id}",
                     )
-                    try:
-                        await self.start_run(
-                            prompt=item.content,
-                            content=item.input_content,
-                            environment_selection={"mode": "inherit"},
-                            session_id=sess.id,
-                            variables=item.variables,
-                            safe_tool_overrides=item.safe_tool_overrides,
-                            prompt_role=item.role,
-                            submission_id=f"queue-dispatch:{item.id}",
-                        )
-                    finally:
-                        queue_inbox.current_dispatch.reset(dispatch_token)
-                    # Shepherd the run we just scheduled to completion
-                    # before exiting the drainer. The loop's outer wait
-                    # at the top would catch this on the next iteration
-                    # too, but if this was the last queued item we'd
-                    # otherwise exit while the run was still in flight.
-                    await _wait_for_current_task()
-                else:
-                    # Materialize BEFORE the history append so legacy
-                    # projection cannot duplicate this new canonical item.
-                    from omniagents.core.conversation.recorder import (
-                        ensure_conversation_thread,
-                    )
-
-                    recorder = ensure_conversation_thread(sess)
-                    sess.append_message(
-                        {
-                            "role": item.role,
-                            "content": item.content,
-                            "type": "message",
-                        },
-                        projection={
-                            "version": 1,
-                            "kind": "queued_message",
-                            "queue_id": item.id,
-                        },
-                    )
-                    if recorder is not None:
-                        recorded = recorder.record_queued_message(
-                            sess.id,
-                            queue_id=item.id,
-                            role=item.role,
-                            content=item.content,
-                        )
-                        if recorded is not None:
-                            await self.notify_item_updated(sess, recorded)
+                finally:
+                    queue_inbox.current_dispatch.reset(dispatch_token)
+                await _wait_for_current_task()
                 queue_inbox.finish(store, sess.id, item.id, sess.queue_owner)
                 self._refresh_queue(sess)
             except asyncio.CancelledError:
@@ -6839,7 +7318,7 @@ class AgentService(RpcMethodsBase):
     #  Background notifications (batched, role="assistant").
     #
     #  enqueue_notification buffers per-session; _notification_flusher
-    #  coalesces a burst into ONE QueuedItem with trigger_run=True at:
+    #  coalesces a burst into ONE QueuedItem that starts a run at:
     #    - the moment ``current_task`` ends (run-active case)
     #    - after a debounce window (idle case)
     #    - immediately when a real user message arrives (chronological
@@ -6900,7 +7379,7 @@ class AgentService(RpcMethodsBase):
     async def _flush_notifications(self, sess: Session) -> None:
         """Drain ``pending_notifications`` into ONE combined QueuedItem.
 
-        Always role="assistant", always trigger_run=True. Safe to call
+        Always role="assistant", always starts a run. Safe to call
         with an empty buffer (no-op). The drainer routes the role
         through ``start_run(prompt_role=...)`` which appends to history
         with the real role and resumes the run without injecting a
@@ -6913,7 +7392,6 @@ class AgentService(RpcMethodsBase):
             return QueuedItem(
                 content=self._format_notification_batch(items),
                 role="assistant",
-                trigger_run=True,
                 source="notifications:batch",
                 safe_tool_overrides=self._merge_notification_safe_tool_overrides(items),
             ).to_dict()
@@ -7091,6 +7569,8 @@ class AgentService(RpcMethodsBase):
                         # Log but don't fail the archive operation
                         pass
 
+                # (the session is going: the sets it retired go too)
+                self._close_retired_session_mcp(sess)
                 # Clean up session attributes
                 setattr(sess, "_mcp_shutdown", None)
                 setattr(sess, "_mcp_lifecycle_task", None)
@@ -7801,24 +8281,25 @@ class AgentService(RpcMethodsBase):
                 getattr(server, "name", None) == server_name for server in active
             ):
                 continue
-            shutdown_event = getattr(sess, "_mcp_shutdown", None)
-            if shutdown_event:
-                shutdown_event.set()
-            lifecycle_task = getattr(sess, "_mcp_lifecycle_task", None)
-            if lifecycle_task and not lifecycle_task.done():
+            # (a set a run is using is retired, not closed under it: the run
+            # finishes on it, and the next build connects afresh)
+            lock = getattr(sess, "_mcp_start_lock", None)
+            if lock is None:
+                lock = sess._mcp_start_lock = asyncio.Lock()
+            async with lock:
+                lifecycle_task = getattr(sess, "_mcp_lifecycle_task", None)
                 try:
-                    await asyncio.wait_for(lifecycle_task, timeout=5.0)
-                except asyncio.TimeoutError:
-                    lifecycle_task.cancel()
-                    try:
-                        await lifecycle_task
-                    except asyncio.CancelledError:
-                        pass
+                    await self._retire_session_mcp(sess)
                 except Exception:
-                    pass
-            setattr(sess, "_mcp_shutdown", None)
-            setattr(sess, "_mcp_lifecycle_task", None)
-            setattr(sess, "_mcp_servers_active", [])
+                    if lifecycle_task and not lifecycle_task.done():
+                        lifecycle_task.cancel()
+                        try:
+                            await lifecycle_task
+                        except (asyncio.CancelledError, Exception):
+                            pass
+                    setattr(sess, "_mcp_shutdown", None)
+                    setattr(sess, "_mcp_lifecycle_task", None)
+                    setattr(sess, "_mcp_servers_active", [])
             count += 1
         return count
 

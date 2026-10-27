@@ -1,4 +1,12 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
+import {
+  activeSessionId,
+  expectRunFinished,
+  newDeckChat,
+  openSession,
+  sessionPane,
+  visibleComposer,
+} from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -30,42 +38,44 @@ test('persisted response appears once in its own tile without its stream message
     });
   });
   await page.reload();
-  await expect(page.getByRole('textbox', { name: 'How can I help you today?' })).toBeVisible({ timeout: 90_000 });
-  await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
+  const composer = visibleComposer(page);
+  await expect(composer).toBeVisible({ timeout: 90_000 });
+  const ids: string[] = [];
   for (let index = 0; index < 2; index++) {
     if (index) {
-      await page.getByRole('button', { name: 'New chat', exact: true }).click();
-      await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
+      await newDeckChat(page);
+      await expect.poll(() => activeSessionId(page)).not.toBe(ids[0]);
     }
-    const column = page.locator('[data-deck-column]').nth(index);
-    const workstation = column.getByRole('button', { name: 'Workstation', exact: true });
-    if (await workstation.isVisible()) {
-      await workstation.click();
-      await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
-    }
-    await column.getByRole('textbox').fill(`PERSISTENCE_SETUP_${index}`);
-    await column.getByRole('textbox').press('Enter');
+    ids.push(await activeSessionId(page));
+    const column = sessionPane(page, ids[index]!);
+    await composer.fill(`PERSISTENCE_SETUP_${index}`);
+    await composer.press('Enter');
     await expect(column.getByText('HOST_FIRST_MESSAGE_READY', { exact: true })).toBeVisible({ timeout: 90_000 });
-    await expect(column.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
+    await expectRunFinished(column);
     await expect(column.getByText('HOST_FIRST_MESSAGE_READY', { exact: true })).toHaveCount(1);
   }
-  const a = page.locator('[data-deck-column]').nth(0);
-  const b = page.locator('[data-deck-column]').nth(1);
-  await b.getByRole('textbox').fill('independent persistence-check draft');
+  const a = sessionPane(page, ids[0]!);
+  const b = sessionPane(page, ids[1]!);
+  await composer.fill('independent persistence-check draft');
   const updatesBefore = providerUpdates;
-  await a.getByRole('textbox').fill('SOAK_PERSISTENCE WAIT_FOR_SESSION_A');
-  await a.getByRole('textbox').press('Enter');
+  await openSession(page, 'PERSISTENCE_SETUP_0');
+  await composer.fill('SOAK_PERSISTENCE WAIT_FOR_SESSION_A');
+  await composer.press('Enter');
   await expect(a.getByText('SESSION_A_REPLY', { exact: true })).toBeVisible({ timeout: 90_000 });
-  await expect(a.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
+  await expectRunFinished(a);
   expect(suppressed).toBeGreaterThan(0);
   expect(providerUpdates).toBeGreaterThan(updatesBefore);
   await expect(a.getByText('SESSION_A_REPLY', { exact: true })).toHaveCount(1);
   await expect(b.getByText('SESSION_A_REPLY', { exact: true })).toHaveCount(0);
-  await expect(b.getByRole('textbox')).toHaveValue('independent persistence-check draft');
-  await attachProofPng(info, 'persisted-response-owning-tile', await app.captureScreenshot());
+  await attachProofPng(info, 'persisted-response-owning-session', await app.captureScreenshot());
+  await openSession(page, 'PERSISTENCE_SETUP_1');
+  await expect(composer).toHaveValue('independent persistence-check draft');
   await page.reload();
+  await openSession(page, 'PERSISTENCE_SETUP_0');
   await expect(a.getByText('SESSION_A_REPLY', { exact: true })).toBeVisible({ timeout: 90_000 });
   await expect(a.getByText('SESSION_A_REPLY', { exact: true })).toHaveCount(1);
   await expect(b.getByText('SESSION_A_REPLY', { exact: true })).toHaveCount(0);
-  await expect(b.getByRole('textbox')).toHaveValue('independent persistence-check draft');
+  await openSession(page, 'PERSISTENCE_SETUP_1');
+  // Drafts live in memory: a reload starts every composer empty.
+  await expect(composer).toHaveValue('');
 });

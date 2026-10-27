@@ -6,7 +6,7 @@
  *
  * STT/TTS run on the user's machine (Electron) or the self-hosted server host —
  * never in the agent runtime — so this works in every Electron mode and in
- * self-hosted browser/server. See isLocalVoiceCapable().
+ * browser/server mode.
  */
 
 import { IpcEmitter, IpcListener } from '@electron-toolkit/typed-ipc/renderer';
@@ -46,11 +46,6 @@ class VoiceClient {
   private audioCtx: AudioContext | null = null;
   private nextStartAt = 0;
   private seq = 0;
-
-  /** Available only where the local sidecar can run on this host. */
-  get supported(): boolean {
-    return isElectron || !isVoiceCloudLinked();
-  }
 
   private ctx(): AudioContext {
     if (!this.audioCtx) {
@@ -166,17 +161,6 @@ class VoiceClient {
   }
 }
 
-/**
- * Whether the agent compute is cloud-linked. Voice still runs locally, so this
- * only matters for browser/server: a managed/Azure server host must NOT run
- * per-user local inference. In Electron the sidecar is always local → allowed.
- * Detected from the boot bootstrap (set by the preload / server template).
- */
-function isVoiceCloudLinked(): boolean {
-  const b = (window as unknown as { __omniBootstrap?: { remoteBackend?: { kind?: unknown } | null } }).__omniBootstrap;
-  return b?.remoteBackend?.kind === 'cloud';
-}
-
 let _client: VoiceClient | null = null;
 export const getVoiceClient = (): VoiceClient => {
   if (!_client) {
@@ -184,10 +168,3 @@ export const getVoiceClient = (): VoiceClient => {
   }
   return _client;
 };
-
-/**
- * True when local voice *can* run in the current deployment (Electron any mode,
- * or self-hosted browser/server). Whether it's actually used is a separate
- * user choice — the `localVoiceEnabled` setting (Settings → Models → Voice).
- */
-export const isLocalVoiceCapable = (): boolean => getVoiceClient().supported;

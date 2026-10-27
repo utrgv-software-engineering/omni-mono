@@ -1,15 +1,13 @@
 import { randomUUID } from 'node:crypto';
 
+import type { RoutineApprovalRequest, RoutineEvent } from '@omniagents/chat-ui/host';
 import type Store from 'electron-store';
 
-import { appendActivityEvent } from '@/lib/activity-log';
 import { mostRecentMissedScheduledTaskRun, nextScheduledTaskRun } from '@/lib/scheduled-task-schedule';
 import type { RoutineBridge } from '@/main/routine-bridge';
 import type { IIpcListener } from '@/shared/ipc-listener';
 import type {
   IpcRendererEvents,
-  RoutineApprovalRequest,
-  RoutineBridgeEvent,
   ScheduledTask,
   ScheduledTaskAllowedMcpTool,
   ScheduledTaskInput,
@@ -153,7 +151,6 @@ export class ScheduledTaskManager {
       permissionMode: input.permissionMode ?? DEFAULT_PERMISSION_MODE,
       enabled: input.enabled ?? true,
       ...(input.projectId ? { projectId: input.projectId } : {}),
-      ...(input.profileName ? { profileName: input.profileName } : {}),
       createdAt: now,
       updatedAt: now,
       nextRunAt: input.enabled === false ? null : nextScheduledTaskRun(input.schedule, now),
@@ -195,9 +192,6 @@ export class ScheduledTaskManager {
     }
     if (patch.projectId !== undefined) {
       next.projectId = patch.projectId;
-    }
-    if (patch.profileName !== undefined) {
-      next.profileName = patch.profileName;
     }
     validateTask(next);
     next.nextRunAt = next.enabled ? nextScheduledTaskRun(next.schedule, this.now()) : null;
@@ -415,7 +409,7 @@ export class ScheduledTaskManager {
    * matching task's active run. Events for tasks without an active run (stale
    * tabs, post-completion disconnects) are ignored.
    */
-  private handleBridgeEvent(event: RoutineBridgeEvent): void {
+  private handleBridgeEvent(event: RoutineEvent): void {
     const active = this.activeRuns.get(event.taskId);
     if (!active) {
       return;
@@ -490,24 +484,6 @@ export class ScheduledTaskManager {
           : run
       );
       const clearRunning = Boolean(finishedRun?.sessionId && task.runningSessionId === finishedRun.sessionId);
-      // Written before patchTask so its store:changed broadcast carries both.
-      const now = this.now();
-      this.store.set(
-        'activityLog',
-        appendActivityEvent(
-          this.store.get('activityLog'),
-          {
-            id: randomUUID(),
-            at: now,
-            kind: status === 'completed' ? 'routine_run_finished' : 'run_failed',
-            title: task.name,
-            ...(reason && reason !== 'completed' ? { outcome: reason } : {}),
-            ...(task.projectId ? { projectId: task.projectId } : {}),
-            link: { type: 'routine', taskId },
-          },
-          now
-        )
-      );
       this.patchTask(taskId, {
         ...(clearRunning ? { runningSessionId: undefined } : {}),
         history,
@@ -633,7 +609,7 @@ export class ScheduledTaskManager {
     // Broadcast the COMPOSED snapshot when a provider is wired — the raw
     // electron-store payload lacks the SQLite projection and the resident
     // mirrors, and would clobber them in the renderer's atom. (Server mode's
-    // wrapper intercepts the channel and substitutes the tenant snapshot.)
+    // wrapper intercepts the channel and substitutes the full snapshot.)
     this.sendToWindow?.(
       'store:changed',
       this.getSnapshot ? this.getSnapshot() : ((this.store as Store<StoreData>).store as StoreData | undefined)

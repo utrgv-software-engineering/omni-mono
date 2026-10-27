@@ -1,7 +1,7 @@
 // Presentation logic for the `@` file-mention popup, kept out of the
 // component so it is unit-testable without an Ink render.
 
-import type { FsListEntry } from "../rpc/client.js";
+import type { FsEntry } from "@omniagents/client/rpc/fs";
 
 export type MentionRow = {
   /** Workspace-relative path as the composer will receive it. */
@@ -22,9 +22,7 @@ export function normalizeMentionPath(path: string): string {
  * trees are dropped: nobody @-mentions node_modules, and a popup that
  * lists ten thousand of its files buries the file they meant.
  */
-export function buildMentionRows(
-  entries: readonly FsListEntry[],
-): MentionRow[] {
+export function buildMentionRows(entries: readonly FsEntry[]): MentionRow[] {
   const rows: MentionRow[] = [];
   const seen = new Set<string>();
   for (const entry of entries) {

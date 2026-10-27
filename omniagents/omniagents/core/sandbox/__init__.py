@@ -13,7 +13,7 @@ guards because each requires its own pip extra (e.g. ``omniagents[sandbox-e2b]``
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from .factory import (
     build_manifest,
@@ -77,12 +77,3 @@ except Exception:  # pragma: no cover - SDK should always be present
     Manifest = Any  # type: ignore[assignment]
     SandboxAgent = Any  # type: ignore[assignment]
     SandboxRunConfig = Any  # type: ignore[assignment]
-
-
-def has_sandbox_run_config(value: Optional[Any]) -> bool:
-    """Return True when *value* looks like a populated ``SandboxRunConfig``.
-
-    Used by the bridge/builder to keep behavior unchanged when no sandbox
-    block is configured.
-    """
-    return value is not None

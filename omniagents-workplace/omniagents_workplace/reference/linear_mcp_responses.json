@@ -1,0 +1,610 @@
+{
+ "note": "Real calls against a test team (Factory Sandbox, FSB), 2026-10-24. The workspace, people and ids are replaced (acme, you@acme.test, stable fake UUIDs); upload signatures are removed.",
+ "calls": [
+  {
+   "tool": "get_workspace",
+   "arguments": {},
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"id\":\"3aef1798-cca1-5fff-8055-f97a074b84d0\",\"name\":\"acme\",\"url\":\"https://linear.app/acme\"}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "list_teams",
+   "arguments": {},
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"teams\":[{\"id\":\"a99229ca-08a9-57de-bfad-5f61c00483dc\",\"key\":\"IND\",\"parentId\":null,\"displayName\":\"Acme\",\"icon\":\"Radar\",\"name\":\"Acme\",\"visibility\":\"public\",\"createdAt\":\"2026-03-17T17:50:28.956Z\",\"updatedAt\":\"2026-09-18T18:12:26.886Z\"}],\"hasNextPage\":false}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "list_users",
+   "arguments": {},
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"users\":[{\"id\":\"b201f2a8-ebf4-5278-8222-5023b389dcdf\",\"name\":\"Linear\",\"email\":\"linear-3aef1798-cca1-5fff-8055-f97a074b84d0@linear.linear.app\",\"displayName\":\"linear\",\"avatarUrl\":\"https://static.linear.app/assets/avatar/avatar_512.png\",\"isAdmin\":false,\"isGuest\":false,\"isActive\":true,\"createdAt\":\"2026-03-24T19:52:13.322Z\",\"updatedAt\":\"2026-03-24T19:52:13.322Z\",\"status\":\"Offline (last seen 2026-03-24T19:52:13.376Z)\"},{\"id\":\"82eb3f90-8c20-5dfb-a1ae-da0de3b172f8\",\"name\":\"you@acme.test\",\"email\":\"you@acme.test\",\"displayName\":\"you\",\"isAdmin\":true,\"isGuest\":false,\"isActive\":true,\"createdAt\":\"2026-03-17T17:50:28.956Z\",\"updatedAt\":\"2026-03-17T17:50:31.690Z\",\"status\":\"Offline (last seen 2026-10-24T05:47:21.092Z)\"}],\"hasNextPage\":false}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "list_issue_statuses",
+   "arguments": {
+    "team": "Factory Sandbox"
+   },
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "[{\"id\":\"485a67c9-9438-57ae-88fb-52beffa645ec\",\"type\":\"started\",\"name\":\"In Progress\"},{\"id\":\"372dc9c7-d735-58e5-bca9-5e7b115ea6f4\",\"type\":\"backlog\",\"name\":\"Backlog\"},{\"id\":\"d6df6ebc-d01b-5bb3-9544-b6db3c765d21\",\"type\":\"unstarted\",\"name\":\"Todo\"},{\"id\":\"ca63fb04-01b1-5f8f-b3f9-e22d2561a999\",\"type\":\"duplicate\",\"name\":\"Duplicate\"},{\"id\":\"5aa9b1e1-45ed-5632-8229-aba114a5f1a5\",\"type\":\"completed\",\"name\":\"Done\"},{\"id\":\"c9551546-71dd-5b9d-8ec8-7b7f8585d944\",\"type\":\"canceled\",\"name\":\"Canceled\"}]",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "list_issue_labels",
+   "arguments": {
+    "team": "Factory Sandbox"
+   },
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"labels\":[{\"id\":\"be1bc4b7-acce-54a3-89dd-52ecfaf577a0\",\"name\":\"Improvement\",\"color\":\"#4EA7FC\",\"description\":null,\"archivedAt\":null},{\"id\":\"ad61c301-6f69-51f9-9eac-ad4708189a30\",\"name\":\"Feature\",\"color\":\"#BB87FC\",\"description\":null,\"archivedAt\":null},{\"id\":\"03d504a4-a2e2-5c90-a9c8-a60f6cd8f72d\",\"name\":\"Bug\",\"color\":\"#EB5757\",\"description\":null,\"archivedAt\":null}],\"hasNextPage\":false}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "save_issue",
+   "arguments": {
+    "team": "Factory Sandbox",
+    "title": "Add pagination to GET /tasks",
+    "description": "GET /tasks returns every task.\n\n- Add `page` and `per_page`.\n- Return `pages`.",
+    "priority": 2
+   },
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"id\":\"FSB-1\",\"uuid\":\"95265dad-1895-54b3-a8f6-cf297a95b33b\",\"title\":\"Add pagination to GET /tasks\",\"description\":\"GET /tasks returns every task.\\n\\n* Add `page` and `per_page`.\\n* Return `pages`.\",\"priority\":{\"value\":2,\"name\":\"High\"},\"url\":\"https://linear.app/acme/issue/FSB-1/add-pagination-to-get-tasks\",\"gitBranchName\":\"you/fsb-1-add-pagination-to-get-tasks\",\"createdAt\":\"2026-10-24T05:54:33.714Z\",\"updatedAt\":\"2026-10-24T05:54:33.714Z\",\"archivedAt\":null,\"completedAt\":null,\"startedAt\":null,\"canceledAt\":null,\"dueDate\":null,\"slaStartedAt\":null,\"slaMediumRiskAt\":null,\"slaHighRiskAt\":null,\"slaBreachesAt\":null,\"status\":\"Backlog\",\"statusType\":\"backlog\",\"labels\":[],\"attachments\":[],\"documents\":[],\"createdBy\":\"you@acme.test\",\"createdById\":\"82eb3f90-8c20-5dfb-a1ae-da0de3b172f8\",\"team\":\"Factory Sandbox\",\"teamId\":\"feba117c-0342-5147-ac65-644446bd55bd\"}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "list_issues",
+   "arguments": {
+    "team": "Factory Sandbox",
+    "limit": 5
+   },
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"issues\":[{\"id\":\"FSB-1\",\"uuid\":\"95265dad-1895-54b3-a8f6-cf297a95b33b\",\"title\":\"Add pagination to GET /tasks\",\"description\":\"GET /tasks returns every task.\\n\\n* Add `page` and `per_page`.\\n* Return `pages`.\",\"priority\":{\"value\":2,\"name\":\"High\"},\"url\":\"https://linear.app/acme/issue/FSB-1/add-pagination-to-get-tasks\",\"gitBranchName\":\"you/fsb-1-add-pagination-to-get-tasks\",\"createdAt\":\"2026-10-24T05:54:33.714Z\",\"updatedAt\":\"2026-10-24T05:54:33.714Z\",\"archivedAt\":null,\"completedAt\":null,\"startedAt\":null,\"canceledAt\":null,\"dueDate\":null,\"slaStartedAt\":null,\"slaMediumRiskAt\":null,\"slaHighRiskAt\":null,\"slaBreachesAt\":null,\"status\":\"Backlog\",\"statusType\":\"backlog\",\"labels\":[],\"createdBy\":\"you@acme.test\",\"createdById\":\"82eb3f90-8c20-5dfb-a1ae-da0de3b172f8\",\"team\":\"Factory Sandbox\",\"teamId\":\"feba117c-0342-5147-ac65-644446bd55bd\"}],\"hasNextPage\":false}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "get_issue",
+   "arguments": {
+    "id": "FSB-1"
+   },
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"id\":\"FSB-1\",\"uuid\":\"95265dad-1895-54b3-a8f6-cf297a95b33b\",\"title\":\"Add pagination to GET /tasks\",\"description\":\"GET /tasks returns every task.\\n\\n* Add `page` and `per_page`.\\n* Return `pages`.\",\"priority\":{\"value\":2,\"name\":\"High\"},\"url\":\"https://linear.app/acme/issue/FSB-1/add-pagination-to-get-tasks\",\"gitBranchName\":\"you/fsb-1-add-pagination-to-get-tasks\",\"createdAt\":\"2026-10-24T05:54:33.714Z\",\"updatedAt\":\"2026-10-24T05:54:33.714Z\",\"archivedAt\":null,\"completedAt\":null,\"startedAt\":null,\"canceledAt\":null,\"dueDate\":null,\"slaStartedAt\":null,\"slaMediumRiskAt\":null,\"slaHighRiskAt\":null,\"slaBreachesAt\":null,\"status\":\"Backlog\",\"statusType\":\"backlog\",\"labels\":[],\"attachments\":[],\"documents\":[],\"stateHistory\":[{\"state\":{\"id\":\"372dc9c7-d735-58e5-bca9-5e7b115ea6f4\",\"name\":\"Backlog\",\"type\":\"backlog\"},\"startedAt\":\"2026-10-24T05:54:33.714Z\",\"endedAt\":null}],\"createdBy\":\"you@acme.test\",\"createdById\":\"82eb3f90-8c20-5dfb-a1ae-da0de3b172f8\",\"team\":\"Factory Sandbox\",\"teamId\":\"feba117c-0342-5147-ac65-644446bd55bd\"}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "save_comment",
+   "arguments": {
+    "issueId": "FSB-1",
+    "body": "Triage: the request is clear and bounded. Code: `list_tasks` in app/api.py."
+   },
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"id\":\"a7579043-e369-5630-a715-20ed22dc85a9\",\"body\":\"Triage: the request is clear and bounded. Code: `list_tasks` in app/api.py.\",\"attachments\":[],\"createdAt\":\"2026-10-24T05:54:35.239Z\",\"updatedAt\":\"2026-10-24T05:54:35.220Z\",\"parentId\":null,\"resolvedAt\":null,\"quotedText\":null,\"author\":{\"id\":\"82eb3f90-8c20-5dfb-a1ae-da0de3b172f8\",\"name\":\"you@acme.test\"},\"onBehalfOf\":null}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "list_comments",
+   "arguments": {
+    "issueId": "FSB-1"
+   },
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"comments\":[{\"id\":\"a7579043-e369-5630-a715-20ed22dc85a9\",\"body\":\"Triage: the request is clear and bounded. Code: `list_tasks` in app/api.py.\",\"attachments\":[],\"createdAt\":\"2026-10-24T05:54:35.239Z\",\"updatedAt\":\"2026-10-24T05:54:35.220Z\",\"parentId\":null,\"resolvedAt\":null,\"quotedText\":null,\"author\":{\"id\":\"82eb3f90-8c20-5dfb-a1ae-da0de3b172f8\",\"name\":\"you@acme.test\"},\"onBehalfOf\":null}],\"hasNextPage\":false}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "create_issue_label",
+   "arguments": {
+    "name": "factory:Acme",
+    "color": "#5319e7",
+    "teamId": "Factory Sandbox"
+   },
+   "isError": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"error\":\"invalid_request\",\"message\":\"teamId must be a UUID.\",\"status\":400,\"requestId\":\"0000000000000000\"}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "save_issue",
+   "arguments": {
+    "id": "FSB-1",
+    "state": "In Progress",
+    "addLabels": [
+     "factory:Acme"
+    ],
+    "assignee": "me"
+   },
+   "isError": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "Error: Could not find label \"factory:Acme\" for addLabels. Each may not exist, or your current permissions may not allow access to it. Provide addLabels as a JSON array of strings (e.g. [\"Bug\", \"Improvement\"]) where each entry is an existing label name or ID. No labels are changed while any entry is unresolved",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "save_issue",
+   "arguments": {
+    "id": "FSB-1",
+    "links": [
+     {
+      "url": "https://github.com/acme/api-service/pull/15",
+      "title": "acme/api-service#15"
+     }
+    ]
+   },
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"id\":\"FSB-1\",\"uuid\":\"95265dad-1895-54b3-a8f6-cf297a95b33b\",\"title\":\"Add pagination to GET /tasks\",\"description\":\"GET /tasks returns every task.\\n\\n* Add `page` and `per_page`.\\n* Return `pages`.\",\"priority\":{\"value\":2,\"name\":\"High\"},\"url\":\"https://linear.app/acme/issue/FSB-1/add-pagination-to-get-tasks\",\"gitBranchName\":\"you/fsb-1-add-pagination-to-get-tasks\",\"createdAt\":\"2026-10-24T05:54:33.714Z\",\"updatedAt\":\"2026-10-24T05:54:33.714Z\",\"archivedAt\":null,\"completedAt\":null,\"startedAt\":null,\"canceledAt\":null,\"dueDate\":null,\"slaStartedAt\":null,\"slaMediumRiskAt\":null,\"slaHighRiskAt\":null,\"slaBreachesAt\":null,\"status\":\"Backlog\",\"statusType\":\"backlog\",\"labels\":[],\"attachments\":[{\"id\":\"6744b1b6-e8af-51af-9d5d-18b599f03d8a\",\"title\":\"acme/api-service#15\",\"subtitle\":\"\",\"url\":\"https://github.com/acme/api-service/pull/15\"}],\"documents\":[],\"createdBy\":\"you@acme.test\",\"createdById\":\"82eb3f90-8c20-5dfb-a1ae-da0de3b172f8\",\"team\":\"Factory Sandbox\",\"teamId\":\"feba117c-0342-5147-ac65-644446bd55bd\"}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "create_attachment",
+   "arguments": {
+    "issue": "FSB-1",
+    "base64Content": "<base64 of a 1x1 png>",
+    "filename": "step-2.png",
+    "contentType": "image/png",
+    "size": 70,
+    "sha256": "6b7fa434f92a8b80aab02d9bf1a12e49ffcae424e4013a1c4f68b67e3d2bbcd0",
+    "title": "Page 2"
+   },
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"id\":\"6394f2eb-2a58-5924-8779-24faa698e791\",\"title\":\"Page 2\",\"url\":\"https://uploads.linear.app/3aef1798-cca1-5fff-8055-f97a074b84d0/f31f6c1c-0fdd-56f2-a456-a1493203b62c/91e66d4b-575c-5a87-8a9d-1637a69293de?signature=REDACTED\"}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "get_issue",
+   "arguments": {
+    "id": "FSB-1",
+    "includeRelations": true
+   },
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"id\":\"FSB-1\",\"uuid\":\"95265dad-1895-54b3-a8f6-cf297a95b33b\",\"title\":\"Add pagination to GET /tasks\",\"description\":\"GET /tasks returns every task.\\n\\n* Add `page` and `per_page`.\\n* Return `pages`.\",\"priority\":{\"value\":2,\"name\":\"High\"},\"url\":\"https://linear.app/acme/issue/FSB-1/add-pagination-to-get-tasks\",\"gitBranchName\":\"you/fsb-1-add-pagination-to-get-tasks\",\"createdAt\":\"2026-10-24T05:54:33.714Z\",\"updatedAt\":\"2026-10-24T05:54:33.714Z\",\"archivedAt\":null,\"completedAt\":null,\"startedAt\":null,\"canceledAt\":null,\"dueDate\":null,\"slaStartedAt\":null,\"slaMediumRiskAt\":null,\"slaHighRiskAt\":null,\"slaBreachesAt\":null,\"status\":\"Backlog\",\"statusType\":\"backlog\",\"labels\":[],\"attachments\":[{\"id\":\"6394f2eb-2a58-5924-8779-24faa698e791\",\"title\":\"Page 2\",\"subtitle\":null,\"url\":\"https://uploads.linear.app/3aef1798-cca1-5fff-8055-f97a074b84d0/f31f6c1c-0fdd-56f2-a456-a1493203b62c/91e66d4b-575c-5a87-8a9d-1637a69293de?signature=REDACTED\"},{\"id\":\"6744b1b6-e8af-51af-9d5d-18b599f03d8a\",\"title\":\"acme/api-service#15\",\"subtitle\":\"\",\"url\":\"https://github.com/acme/api-service/pull/15\"}],\"documents\":[],\"stateHistory\":[{\"state\":{\"id\":\"372dc9c7-d735-58e5-bca9-5e7b115ea6f4\",\"name\":\"Backlog\",\"type\":\"backlog\"},\"startedAt\":\"2026-10-24T05:54:33.714Z\",\"endedAt\":null}],\"createdBy\":\"you@acme.test\",\"createdById\":\"82eb3f90-8c20-5dfb-a1ae-da0de3b172f8\",\"team\":\"Factory Sandbox\",\"teamId\":\"feba117c-0342-5147-ac65-644446bd55bd\",\"relations\":{\"blocks\":[],\"blockedBy\":[],\"relatedTo\":[],\"duplicateOf\":null}}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "get_issue_status",
+   "arguments": {
+    "name": "Done",
+    "team": "Factory Sandbox"
+   },
+   "isError": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "Input validation error: Invalid arguments for tool get_issue_status: id: Invalid input: expected string, received undefined",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "list_issues",
+   "arguments": {
+    "query": "pagination",
+    "team": "Factory Sandbox"
+   },
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"issues\":[{\"id\":\"FSB-1\",\"uuid\":\"95265dad-1895-54b3-a8f6-cf297a95b33b\",\"title\":\"Add pagination to GET /tasks\",\"description\":\"GET /tasks returns every task.\\n\\n* Add `page` and `per_page`.\\n* Return `pages`.\",\"priority\":{\"value\":2,\"name\":\"High\"},\"url\":\"https://linear.app/acme/issue/FSB-1/add-pagination-to-get-tasks\",\"gitBranchName\":\"you/fsb-1-add-pagination-to-get-tasks\",\"createdAt\":\"2026-10-24T05:54:33.714Z\",\"updatedAt\":\"2026-10-24T05:54:33.714Z\",\"archivedAt\":null,\"completedAt\":null,\"startedAt\":null,\"canceledAt\":null,\"dueDate\":null,\"slaStartedAt\":null,\"slaMediumRiskAt\":null,\"slaHighRiskAt\":null,\"slaBreachesAt\":null,\"status\":\"Backlog\",\"statusType\":\"backlog\",\"labels\":[],\"createdBy\":\"you@acme.test\",\"createdById\":\"82eb3f90-8c20-5dfb-a1ae-da0de3b172f8\",\"team\":\"Factory Sandbox\",\"teamId\":\"feba117c-0342-5147-ac65-644446bd55bd\"}],\"hasNextPage\":false}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "get_user",
+   "arguments": {
+    "query": "me"
+   },
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"id\":\"82eb3f90-8c20-5dfb-a1ae-da0de3b172f8\",\"name\":\"you@acme.test\",\"email\":\"you@acme.test\",\"displayName\":\"you\",\"avatarUrl\":null,\"isAdmin\":true,\"isGuest\":false,\"isActive\":true,\"createdAt\":\"2026-03-17T17:50:28.956Z\",\"updatedAt\":\"2026-03-17T17:50:31.690Z\",\"status\":\"Offline (last seen 2026-10-24T05:47:21.092Z)\",\"teams\":[{\"id\":\"feba117c-0342-5147-ac65-644446bd55bd\",\"name\":\"Factory Sandbox\",\"key\":\"FSB\"},{\"id\":\"a99229ca-08a9-57de-bfad-5f61c00483dc\",\"name\":\"Acme\",\"key\":\"IND\"}]}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "get_team",
+   "arguments": {
+    "query": "Factory Sandbox"
+   },
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"id\":\"feba117c-0342-5147-ac65-644446bd55bd\",\"key\":\"FSB\",\"parentId\":null,\"displayName\":\"Factory Sandbox\",\"icon\":\"Bitcoin\",\"name\":\"Factory Sandbox\",\"description\":\"Test team for the omniagents workplace simulator; safe to delete.\",\"visibility\":\"public\",\"createdAt\":\"2026-10-24T05:54:06.022Z\",\"updatedAt\":\"2026-10-24T05:54:06.238Z\"}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "get_issue",
+   "arguments": {
+    "id": "FSB-999"
+   },
+   "isError": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"error\":\"invalid_request\",\"message\":\"Could not find referenced Issue.\",\"status\":400,\"requestId\":\"0000000000000000\"}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "save_issue",
+   "arguments": {
+    "team": "No Such Team",
+    "title": "x"
+   },
+   "isError": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "Error: Could not find team \"No Such Team\"",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "save_comment",
+   "arguments": {
+    "body": "orphan"
+   },
+   "isError": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "Error: Provide exactly one of issueId, projectId, initiativeId, documentId, milestoneId, or statusUpdateId",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "create_issue_label",
+   "arguments": {
+    "name": "factory:Acme",
+    "color": "#5319e7",
+    "teamId": "feba117c-0342-5147-ac65-644446bd55bd"
+   },
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"id\":\"a7a0ce5f-a58c-52dc-b8e2-b15fc2e3775c\",\"name\":\"factory:Acme\",\"color\":\"#5319e7\",\"isGroup\":false,\"teamId\":\"feba117c-0342-5147-ac65-644446bd55bd\"}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "save_issue",
+   "arguments": {
+    "id": "FSB-1",
+    "state": "In Progress",
+    "addLabels": [
+     "factory:Acme"
+    ],
+    "assignee": "me"
+   },
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"id\":\"FSB-1\",\"uuid\":\"95265dad-1895-54b3-a8f6-cf297a95b33b\",\"title\":\"Add pagination to GET /tasks\",\"description\":\"GET /tasks returns every task.\\n\\n* Add `page` and `per_page`.\\n* Return `pages`.\",\"priority\":{\"value\":2,\"name\":\"High\"},\"url\":\"https://linear.app/acme/issue/FSB-1/add-pagination-to-get-tasks\",\"gitBranchName\":\"you/fsb-1-add-pagination-to-get-tasks\",\"createdAt\":\"2026-10-24T05:54:33.714Z\",\"updatedAt\":\"2026-10-24T05:55:03.730Z\",\"archivedAt\":null,\"completedAt\":null,\"startedAt\":\"2026-10-24T05:55:03.678Z\",\"canceledAt\":null,\"dueDate\":null,\"slaStartedAt\":null,\"slaMediumRiskAt\":null,\"slaHighRiskAt\":null,\"slaBreachesAt\":null,\"status\":\"In Progress\",\"statusType\":\"started\",\"labels\":[\"factory:Acme\"],\"attachments\":[{\"id\":\"6394f2eb-2a58-5924-8779-24faa698e791\",\"title\":\"Page 2\",\"subtitle\":null,\"url\":\"https://uploads.linear.app/3aef1798-cca1-5fff-8055-f97a074b84d0/f31f6c1c-0fdd-56f2-a456-a1493203b62c/91e66d4b-575c-5a87-8a9d-1637a69293de?signature=REDACTED\"},{\"id\":\"6744b1b6-e8af-51af-9d5d-18b599f03d8a\",\"title\":\"acme/api-service#15\",\"subtitle\":\"\",\"url\":\"https://github.com/acme/api-service/pull/15\"}],\"documents\":[],\"createdBy\":\"you@acme.test\",\"createdById\":\"82eb3f90-8c20-5dfb-a1ae-da0de3b172f8\",\"assignee\":\"you@acme.test\",\"assigneeId\":\"82eb3f90-8c20-5dfb-a1ae-da0de3b172f8\",\"team\":\"Factory Sandbox\",\"teamId\":\"feba117c-0342-5147-ac65-644446bd55bd\"}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "get_issue_status",
+   "arguments": {
+    "id": "5aa9b1e1-45ed-5632-8229-aba114a5f1a5",
+    "name": "Done",
+    "team": "Factory Sandbox"
+   },
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"id\":\"5aa9b1e1-45ed-5632-8229-aba114a5f1a5\",\"type\":\"completed\",\"name\":\"Done\"}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "save_comment",
+   "arguments": {
+    "parentId": "a7579043-e369-5630-a715-20ed22dc85a9",
+    "body": "Opened acme/api-service#15."
+   },
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"id\":\"c2c59425-0d22-5777-8fcc-fbad31f095e1\",\"body\":\"Opened acme/api-service#15.\",\"attachments\":[],\"createdAt\":\"2026-10-24T05:55:05.213Z\",\"updatedAt\":\"2026-10-24T05:55:05.189Z\",\"parentId\":\"a7579043-e369-5630-a715-20ed22dc85a9\",\"resolvedAt\":null,\"quotedText\":null,\"author\":{\"id\":\"82eb3f90-8c20-5dfb-a1ae-da0de3b172f8\",\"name\":\"you@acme.test\"},\"onBehalfOf\":null}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "save_comment",
+   "arguments": {
+    "id": "a7579043-e369-5630-a715-20ed22dc85a9",
+    "body": "Triage (edited): clear and bounded."
+   },
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"id\":\"a7579043-e369-5630-a715-20ed22dc85a9\",\"body\":\"Triage (edited): clear and bounded.\",\"attachments\":[],\"createdAt\":\"2026-10-24T05:54:35.239Z\",\"updatedAt\":\"2026-10-24T05:55:06.383Z\",\"parentId\":null,\"resolvedAt\":null,\"quotedText\":null,\"author\":{\"id\":\"82eb3f90-8c20-5dfb-a1ae-da0de3b172f8\",\"name\":\"you@acme.test\"},\"onBehalfOf\":null}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "list_comments",
+   "arguments": {
+    "issueId": "FSB-1"
+   },
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"comments\":[{\"id\":\"a7579043-e369-5630-a715-20ed22dc85a9\",\"body\":\"Triage (edited): clear and bounded.\",\"attachments\":[],\"createdAt\":\"2026-10-24T05:54:35.239Z\",\"updatedAt\":\"2026-10-24T05:55:06.383Z\",\"parentId\":null,\"resolvedAt\":null,\"quotedText\":null,\"author\":{\"id\":\"82eb3f90-8c20-5dfb-a1ae-da0de3b172f8\",\"name\":\"you@acme.test\"},\"onBehalfOf\":null},{\"id\":\"c2c59425-0d22-5777-8fcc-fbad31f095e1\",\"body\":\"Opened acme/api-service#15.\",\"attachments\":[],\"createdAt\":\"2026-10-24T05:55:05.213Z\",\"updatedAt\":\"2026-10-24T05:55:05.189Z\",\"parentId\":\"a7579043-e369-5630-a715-20ed22dc85a9\",\"resolvedAt\":null,\"quotedText\":null,\"author\":{\"id\":\"82eb3f90-8c20-5dfb-a1ae-da0de3b172f8\",\"name\":\"you@acme.test\"},\"onBehalfOf\":null}],\"hasNextPage\":false}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "save_issue",
+   "arguments": {
+    "team": "Factory Sandbox",
+    "title": "Second issue",
+    "state": "Triage"
+   },
+   "isError": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "Error: Could not find state \"Triage\"",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "save_issue",
+   "arguments": {
+    "id": "FSB-2",
+    "state": "Done"
+   },
+   "isError": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "Error: Could not find issue \"FSB-2\". To create a new issue, omit the \"id\" parameter. The \"id\" parameter should only be used to update an existing issue.",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "list_issues",
+   "arguments": {
+    "team": "Factory Sandbox",
+    "state": "completed"
+   },
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"issues\":[],\"hasNextPage\":false}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "get_issue",
+   "arguments": {
+    "id": "FSB-1",
+    "fields": [
+     "identifier",
+     "title",
+     "delegate",
+     "assignee",
+     "status"
+    ]
+   },
+   "isError": true,
+   "content": [
+    {
+     "type": "text",
+     "text": "Input validation error: Invalid arguments for tool get_issue: fields.0: Invalid option: expected one of \"id\"|\"uuid\"|\"title\"|\"description\"|\"projectMilestone\"|\"priority\"|\"estimate\"|\"url\"|\"gitBranchName\"|\"createdAt\"|\"updatedAt\"|\"archivedAt\"|\"completedAt\"|\"startedAt\"|\"canceledAt\"|\"startedTriageAt\"|\"triagedAt\"|\"dueDate\"|\"slaStartedAt\"|\"slaMediumRiskAt\"|\"slaHighRiskAt\"|\"slaBreachesAt\"|\"slaType\"|\"status\"|\"statusType\"|\"labels\"|\"triageIntel\"|\"createdBy\"|\"createdById\"|\"assignee\"|\"assigneeId\"|\"delegate\"|\"delegateId\"|\"project\"|\"projectId\"|\"parentId\"|\"team\"|\"teamId\"|\"cycleId\"|\"attachments\"|\"documents\"|\"stateHistory\"|\"relations\"|\"customerNeeds\"|\"releases\"",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "list_issues",
+   "arguments": {
+    "team": "Factory Sandbox",
+    "fields": [
+     "title",
+     "status"
+    ],
+    "limit": 1
+   },
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"issues\":[{\"title\":\"Add pagination to GET /tasks\",\"status\":\"In Progress\",\"id\":\"FSB-1\"}],\"hasNextPage\":false}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "list_projects",
+   "arguments": {
+    "limit": 3
+   },
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"projects\":[{\"id\":\"P-IND-1\",\"uuid\":\"fc95de3d-8627-58d4-b6c3-36cad6dd72c0\",\"icon\":null,\"color\":\"#bec2c8\",\"name\":\"Payments Overhaul\",\"summary\":\"\",\"description\":\"test\",\"url\":\"https://linear.app/acme/project/payments-overhaul-cfd43dd47958\",\"createdAt\":\"2026-03-17T17:52:36.725Z\",\"updatedAt\":\"2026-03-17T17:52:36.725Z\",\"startedAt\":null,\"completedAt\":null,\"canceledAt\":null,\"startDate\":null,\"startDateResolution\":null,\"targetDate\":null,\"targetDateResolution\":null,\"priority\":{\"value\":0,\"name\":\"No priority\"},\"labels\":[],\"initiatives\":[],\"lead\":{},\"leadTeam\":{\"id\":\"a99229ca-08a9-57de-bfad-5f61c00483dc\",\"name\":\"Acme\",\"key\":\"IND\"},\"status\":{\"id\":\"1002edf6-92f8-5cac-a3c7-969c537dd9ba\",\"name\":\"Backlog\",\"type\":\"backlog\"},\"teams\":[{\"id\":\"a99229ca-08a9-57de-bfad-5f61c00483dc\",\"name\":\"Acme\",\"key\":\"IND\"}]}],\"hasNextPage\":false}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "list_issue_labels",
+   "arguments": {
+    "team": "Factory Sandbox",
+    "name": "factory:Acme"
+   },
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"labels\":[{\"id\":\"a7a0ce5f-a58c-52dc-b8e2-b15fc2e3775c\",\"name\":\"factory:Acme\",\"color\":\"#5319e7\",\"description\":null,\"archivedAt\":null}],\"hasNextPage\":false}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "get_triage_responsibility",
+   "arguments": {
+    "team": "Factory Sandbox"
+   },
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"team\":{\"id\":\"feba117c-0342-5147-ac65-644446bd55bd\",\"key\":\"FSB\",\"name\":\"Factory Sandbox\"},\"triageEnabled\":false,\"currentUser\":null}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  },
+  {
+   "tool": "list_users",
+   "arguments": {
+    "query": "Linear"
+   },
+   "isError": false,
+   "content": [
+    {
+     "type": "text",
+     "text": "{\"users\":[{\"id\":\"b201f2a8-ebf4-5278-8222-5023b389dcdf\",\"name\":\"Linear\",\"email\":\"linear-3aef1798-cca1-5fff-8055-f97a074b84d0@linear.linear.app\",\"displayName\":\"linear\",\"avatarUrl\":\"https://static.linear.app/assets/avatar/avatar_512.png\",\"isAdmin\":false,\"isGuest\":false,\"isActive\":true,\"createdAt\":\"2026-03-24T19:52:13.322Z\",\"updatedAt\":\"2026-03-24T19:52:13.322Z\",\"status\":\"Offline (last seen 2026-03-24T19:52:13.376Z)\"}],\"hasNextPage\":false}",
+     "annotations": null,
+     "meta": null
+    }
+   ]
+  }
+ ]
+}

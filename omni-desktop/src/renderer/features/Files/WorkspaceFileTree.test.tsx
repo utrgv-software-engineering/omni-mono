@@ -1,8 +1,7 @@
+import type { FsEntry, FsListResult, WatchCallbacks } from '@omniagents/client/rpc/fs';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-import type { FsEntry, FsListResult, WatchCallbacks } from '@/renderer/omniagents-ui/rpc/fs';
 
 import { WorkspaceFileTree, type WorkspaceTreeWatchRegistry } from './WorkspaceFileTree';
 

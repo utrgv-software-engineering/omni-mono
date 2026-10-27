@@ -11,13 +11,12 @@ import base64
 import logging
 import os
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
-from typing import Optional, Dict, Any, AsyncIterator, Callable, Tuple
+from typing import Optional, Dict, Any, AsyncIterator, Tuple
 from contextlib import asynccontextmanager
 from contextlib import AsyncExitStack
 
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.session.audio_storage import (
-    AudioStorage,
     AudioStorageBackend,
     build_audio_storage,
 )
@@ -377,7 +376,7 @@ class RealtimeSession:
             spec: Agent specification with realtime settings
             settings: API keys and other settings
             session_id: Optional session ID (generated if not provided)
-            audio_storage: Optional AudioStorage instance (created if not provided)
+            audio_storage: Optional AudioStorageBackend instance (created if not provided)
             owner_user_id: Authenticated principal that owns this session
             extra_tools: Additional SDK tools appended to the spec's tools —
                 the client-tool proxies bridged from a GUI session sharing
@@ -417,9 +416,7 @@ class RealtimeSession:
         self._project_slug = getattr(spec, "project_slug", None)
         self._agent_slug = getattr(spec, "agent_slug", None)
 
-        # Initialize audio storage — backend chosen by env
-        # (OMNIAGENTS_AUDIO_BACKEND=blob|fs). Local FS is the default and
-        # matches the pre-refactor behaviour.
+        # Initialize audio storage (local filesystem unless injected).
         if audio_storage:
             self.audio_storage = audio_storage
         else:
@@ -599,7 +596,7 @@ class RealtimeSession:
                 attach_tool_approval_predicates,
             )
 
-            attach_tool_approval_predicates(
+            tools = attach_tool_approval_predicates(
                 tools,
                 session=self.paired_session,
                 safe_tool_names=getattr(safe_opts, "safe_tool_names", None),
@@ -712,6 +709,12 @@ class RealtimeSession:
             output_guardrails=output_guardrails,
             mcp_servers=list(mcp_servers),
             mcp_config=self.spec.mcp_config or {},
+        )
+
+        from omniagents.core.tools.output_budget import install_output_budget
+
+        install_output_budget(
+            self._agent, (self.spec.project_slug, self.spec.agent_slug)
         )
 
         # MCP tools are not in the static list above: the SDK resolves them

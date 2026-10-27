@@ -1,4 +1,0 @@
-web: bin/rails server -p 3000
-css: bin/rails tailwindcss:watch
-hotel_agent: cd agents && "${AGENTS_VENV:-.venv}/bin/omniagents" run --project ${HOTEL_AGENT_PROJECT:-/home/emm/code/hotel_agent}/project.yml --mode server --port 9000
-data_agent: cd agents && "${AGENTS_VENV:-.venv}/bin/omniagents" run --project ${HOTEL_AGENT_PROJECT:-/home/emm/code/hotel_agent}/project.yml --agent data_agent --mode server --port 9001

@@ -1,5 +1,6 @@
 import React from "react";
-import type { RPCClient } from "../rpc/client.js";
+import type { RPCClient } from "@omniagents/client/rpc/client";
+import { defaultEnvironmentId } from "../rpc/host.js";
 
 const identities = new WeakMap<RPCClient, number>();
 let nextIdentity = 0;
@@ -17,7 +18,7 @@ export function WorkspaceView({
   if (client && !identities.has(client)) identities.set(client, ++nextIdentity);
   const key = JSON.stringify([
     client ? identities.get(client) : null,
-    client?.defaultEnvironmentId(),
+    client ? defaultEnvironmentId(client) : null,
   ]);
   return active ? <React.Fragment key={key}>{children}</React.Fragment> : null;
 }

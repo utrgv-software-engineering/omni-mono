@@ -50,7 +50,7 @@ export const getActiveProduct = (): ProductDefinition => BUNDLED_PRODUCT;
  * Serve-protocol version this launcher targets. Contract: omniagents
  * `docs/serve-protocol.md` (`omniagents.product_serve.SERVE_PROTOCOL_VERSION`).
  */
-export const SUPPORTED_SERVE_PROTOCOL = 2;
+export const SUPPORTED_SERVE_PROTOCOL = 3;
 
 /** Runtime facts reported by `<prog> describe --json` from the installed venv. */
 export type ProductRuntimeInfo = {
@@ -142,15 +142,4 @@ export const getCachedProductRuntimeInfo = (): ProductRuntimeInfo | null => cach
 /** Store (or clear) the runtime info. Written by `src/main/product-runtime.ts`. */
 export const setCachedProductRuntimeInfo = (info: ProductRuntimeInfo | null): void => {
   cachedRuntimeInfo = info;
-};
-
-/**
- * The product's platform identity slug — used for policy lookups, the
- * default agentSlug, and the Codex OAuth originator. Authoritative value
- * comes from `describe --json`; before the product is installed we fall
- * back to the conventional derivation (distribution name with `-` → `_`),
- * which resolves to the same value for a convention-following product.
- */
-export const getProductSlug = (): string => {
-  return cachedRuntimeInfo?.slug ?? getActiveProduct().packageName.replace(/-/g, '_');
 };

@@ -1,16 +1,17 @@
+import type { ClientToolCallHandler } from '@omniagents/chat-ui/App';
+import { App as OmniAgentsCore } from '@omniagents/chat-ui/App';
+import type { PendingMessage } from '@omniagents/chat-ui/ChatShell';
+import { RPCClientProvider } from '@omniagents/chat-ui/rpc-context';
+import type { SessionController } from '@omniagents/chat-ui/session-controller';
+import { UiConfigProvider } from '@omniagents/chat-ui/ui-config';
+import type { ExecutionTarget } from '@omniagents/client/rpc/execution';
+import type { PlanItem } from '@omniagents/client/transcript/chat-types';
 import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 
+import { CLIENT_IDENTITY } from '@/renderer/omniagents-ui/client-identity';
 import { serverOrigin } from '@/renderer/services/ipc';
-import type { SessionController } from '@/renderer/services/session-control';
-import type { PlanItem } from '@/shared/chat-types';
-import type { AgentRuntimeConnection, ExecutionTarget, TicketId } from '@/shared/types';
-
-import type { ClientToolCallHandler } from './App';
-import { App as OmniAgentsCore } from './App';
-import type { PendingMessage } from './ChatShell';
-import { RPCClientProvider } from './rpc-context';
-import { UiConfigProvider } from './ui-config';
+import type { AgentRuntimeConnection } from '@/shared/types';
 
 type OmniAgentsAppProps = {
   /** RPC server connection for the directly embedded React client. */
@@ -29,13 +30,6 @@ type OmniAgentsAppProps = {
   headerActionsCompact?: boolean;
   pendingMessages?: PendingMessage[];
   onPendingMessagesFlushed?: () => void;
-  sandboxLabel?: string;
-  /** Options shown in the in-composer sandbox picker. Omit to render a read-only chip. */
-  sandboxOptions?: { value: string; label: string }[];
-  /** Currently-selected profile name (used to mark the active entry in the menu). */
-  currentSandboxProfile?: string;
-  /** Called when the user picks a different profile from the in-composer menu. */
-  onSandboxChange?: (value: string) => void;
   /** Extra composer chips (e.g. attach-project) rendered after the sandbox chip. */
   composerExtras?: ReactNode;
   onClientToolCall?: ClientToolCallHandler;
@@ -47,8 +41,6 @@ type OmniAgentsAppProps = {
   onRunStarted?: (runId: string) => void;
   pendingPlan?: PlanItem | null;
   onPlanDecision?: (approved: boolean) => void;
-  /** Ticket bound to this column. When set, the app registers a supervisor bridge actor. */
-  ticketId?: TicketId;
   /** Routine (scheduled task) bound to this column. When set, the app registers a routine bridge actor. */
   routineId?: string;
   /** Project workspace directory the launcher already knows about. Used to
@@ -59,6 +51,8 @@ type OmniAgentsAppProps = {
   onOpenApp?: (appId: string) => void;
   /** Transcript-viewer mode: no composer or pill row. */
   readOnly?: boolean;
+  /** Refetch a read-only transcript when its external worker advances. */
+  transcriptRevision?: string;
   /** Additional column UI that must share this exact RPC connection. */
   providerChildren?: ReactNode;
 };
@@ -77,10 +71,6 @@ export const OmniAgentsApp = ({
   headerActionsCompact,
   pendingMessages,
   onPendingMessagesFlushed,
-  sandboxLabel,
-  sandboxOptions,
-  currentSandboxProfile,
-  onSandboxChange,
   composerExtras,
   onClientToolCall,
   onController,
@@ -88,16 +78,16 @@ export const OmniAgentsApp = ({
   onRunStarted,
   pendingPlan,
   onPlanDecision,
-  ticketId,
   routineId,
   workspaceDir,
   onOpenApp,
   readOnly,
+  transcriptRevision,
   providerChildren,
 }: OmniAgentsAppProps) => {
   // Resolve relative ``/proxy/...`` payloads against the launcher's actual
-  // origin — same-origin in browser server mode, cloud baseUrl in
-  // cloud-linked Electron. An absolute connection base ignores the fallback.
+  // origin — same-origin in browser server mode, backend baseUrl in
+  // remote-linked Electron. An absolute connection base ignores the fallback.
   const normalizedConnection = useMemo<AgentRuntimeConnection>(
     () => ({ ...connection, baseUrl: new URL(connection.baseUrl, serverOrigin()).toString() }),
     [connection.authToken, connection.baseUrl]
@@ -105,7 +95,7 @@ export const OmniAgentsApp = ({
 
   return (
     <UiConfigProvider connection={normalizedConnection}>
-      <RPCClientProvider>
+      <RPCClientProvider identity={CLIENT_IDENTITY}>
         <OmniAgentsCore
           sessionId={sessionId}
           executionTarget={executionTarget}
@@ -119,10 +109,6 @@ export const OmniAgentsApp = ({
           headerActionsCompact={headerActionsCompact}
           pendingMessages={pendingMessages}
           onPendingMessagesFlushed={onPendingMessagesFlushed}
-          sandboxLabel={sandboxLabel}
-          sandboxOptions={sandboxOptions}
-          currentSandboxProfile={currentSandboxProfile}
-          onSandboxChange={onSandboxChange}
           composerExtras={composerExtras}
           onClientToolCall={onClientToolCall}
           onController={onController}
@@ -130,11 +116,11 @@ export const OmniAgentsApp = ({
           onRunStarted={onRunStarted}
           pendingPlan={pendingPlan}
           onPlanDecision={onPlanDecision}
-          ticketId={ticketId}
           routineId={routineId}
           workspaceDir={workspaceDir}
           onOpenApp={onOpenApp}
           readOnly={readOnly}
+          transcriptRevision={transcriptRevision}
         />
         {providerChildren}
       </RPCClientProvider>

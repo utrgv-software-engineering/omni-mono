@@ -1,17 +1,14 @@
 import { objectEquals } from '@observ33r/object-equals';
+import { XTERM_OPTIONS } from '@omniagents/chat-ui/terminal/xterm-options';
 import { Terminal } from '@xterm/xterm';
 import { map } from 'nanostores';
 
-import { DEFAULT_XTERM_OPTIONS } from '@/renderer/constants';
 import { toast } from '@/renderer/features/Toast/state';
 import { emitter, ipc, wsEmitter } from '@/renderer/services/ipc';
 import type {
   AgentProcessStartOptions,
   AgentProcessStatus,
-  AgentProcessStopOptions,
   AgentProcessStopResult,
-  SandboxPauseResult,
-  SandboxSwitchResult,
   WithTimestamp,
 } from '@/shared/types';
 
@@ -27,9 +24,9 @@ export const warnForUncertainStop = (result: AgentProcessStopResult | null | und
   if (!result || result.shutdown !== 'forced') {
     return;
   }
-  // Workspaces live in the container's writable layer and survive a forced
-  // host kill — the warning is about the host process, not data loss.
-  toast.warning('Sandbox host force-closed', 'The agent host could not finish a graceful shutdown.', {
+  // Workspaces are host folders and survive a forced kill — the warning is
+  // about the agent process, not data loss.
+  toast.warning('Agent host force-closed', 'The agent host could not finish a graceful shutdown.', {
     durationMs: 12_000,
   });
 };
@@ -40,7 +37,7 @@ export const initializeTerminal = (processId: string): Terminal => {
     return existing;
   }
 
-  const xterm = new Terminal({ ...DEFAULT_XTERM_OPTIONS, disableStdin: true });
+  const xterm = new Terminal({ ...XTERM_OPTIONS, disableStdin: true });
   const subs = new Set<() => void>();
 
   subs.add(
@@ -49,12 +46,6 @@ export const initializeTerminal = (processId: string): Terminal => {
         xterm.write(data);
       }
     })
-  );
-
-  subs.add(
-    xterm.onResize(({ cols, rows }) => {
-      emitter.invoke('agent-process:resize', processId, cols, rows);
-    }).dispose
   );
 
   xtermSubscriptions.set(processId, subs);
@@ -87,28 +78,11 @@ export const agentProcessApi = {
     return emitter.invoke('agent-process:start', processId, arg);
   },
 
-  stop: async (processId: string, opts?: AgentProcessStopOptions) => {
-    const result = await emitter.invoke('agent-process:stop', processId, opts);
+  stop: async (processId: string) => {
+    const result = await emitter.invoke('agent-process:stop', processId);
     warnForUncertainStop(result);
     teardownTerminal(processId);
     return result;
-  },
-
-  rebuild: (processId: string, arg: AgentProcessStartOptions) => {
-    initializeTerminal(processId);
-    emitter.invoke('agent-process:rebuild', processId, arg);
-  },
-
-  pause: (processId: string): Promise<SandboxPauseResult> => {
-    return emitter.invoke('agent-process:pause', processId);
-  },
-
-  unpause: (processId: string): Promise<SandboxPauseResult> => {
-    return emitter.invoke('agent-process:unpause', processId);
-  },
-
-  switchSandbox: (processId: string, profileName: string): Promise<SandboxSwitchResult> => {
-    return emitter.invoke('agent-process:switch-sandbox', processId, profileName);
   },
 
   getStatus: (processId: string): WithTimestamp<AgentProcessStatus> => {

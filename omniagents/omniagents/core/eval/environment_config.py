@@ -353,9 +353,12 @@ class ConfiguredWorkspaceEnvironment(
         default_profile_path: str | Path | None = None,
         profile: Optional[str] = None,
         image: Optional[str] = None,
+        profile_base_dir: str | Path | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
+        if profile_base_dir is not None:
+            self.profile_base_dir = Path(profile_base_dir)
         if profile_resolver is not None:
             self.profile_resolver = profile_resolver
         if default_profile_path is not None:
@@ -363,6 +366,18 @@ class ConfiguredWorkspaceEnvironment(
         # Optional class-level fallbacks; per-scenario `environment:` wins.
         self.default_profile = profile
         self.default_image = image
+
+    def container_env_vars(self, context: EnvironmentContext) -> Dict[str, str]:
+        # The declared env, with {workspace} as the container sees it; the
+        # host's PATH and XDG config stay on the host.
+        mapping = {
+            "workspace": self.CONTAINER_WORKSPACE_ROOT,
+            "workspace_root": self.CONTAINER_WORKSPACE_ROOT,
+        }
+        env = {"PWD": self.CONTAINER_WORKSPACE_ROOT}
+        for key, value in self.env_map.items():
+            env[key] = _expand(value, mapping)
+        return env
 
 
 # ---------------------------------------------------------------------------
@@ -514,6 +529,7 @@ def _build_local_workspace(
         if not isinstance(routing_block, Mapping):
             raise ValueError("environment.container_routing must be a mapping")
         kwargs.update(_parse_container_routing(routing_block, base))
+        kwargs["profile_base_dir"] = base
 
     return ConfiguredWorkspaceEnvironment(**kwargs)
 
@@ -532,6 +548,18 @@ def register_environment_type(name: str, factory: EnvironmentFactory) -> None:
     is built.
     """
     _FACTORIES[str(name)] = factory
+
+
+def _installed_factory(name: str) -> Optional[EnvironmentFactory]:
+    """A factory an installed package provides as an ``omniagents.eval_environments`` entry point."""
+    from importlib.metadata import entry_points
+
+    for entry in entry_points(group="omniagents.eval_environments"):
+        if entry.name == name:
+            factory = entry.load()
+            _FACTORIES[name] = factory
+            return factory
+    return None
 
 
 def build_environment(
@@ -558,7 +586,7 @@ def build_environment(
             "evaluation.environment requires a 'type' naming a registered "
             f"environment factory (registered: {sorted(_FACTORIES)})"
         )
-    factory = _FACTORIES.get(str(type_name))
+    factory = _FACTORIES.get(str(type_name)) or _installed_factory(str(type_name))
     if factory is None:
         raise ValueError(
             f"unknown evaluation environment type {str(type_name)!r} "

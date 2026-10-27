@@ -1,15 +1,22 @@
 import { useKeyedSelection } from "../hooks/useKeyedSelection.js";
-import React, { useEffect, useMemo, useState } from "react";
-import { Box, Text, useStdout } from "ink";
+import React, {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import { $subagentTranscriptsBySession } from "@omniagents/client/transcript/activity-store";
+import type { RPCClient } from "@omniagents/client/rpc/client";
+import type { MessageItem } from "@omniagents/client/transcript/chat-types";
+import { Box, Text } from "ink";
+import { useSessionItems } from "../hooks/useSessionItems.js";
+import { useTerminalSize } from "../hooks/useTerminalSize.js";
 import Spinner from "ink-spinner";
 import { useKeypress } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
-import {
-  useActions,
-  useSubagentEvents,
-  useSubagents,
-} from "../store/appStore.js";
-import type { SubagentSummary } from "../store/appStore.js";
+import { useActions, useSessionId, useSubagents } from "../store/appStore.js";
+import type { SubagentSummary } from "@omniagents/client/transcript/activity-store";
 import { windowStart } from "./model-picker-model.js";
 import { clampScroll } from "./git-model.js";
 import { buildWorkerDetail } from "./agents-model.js";
@@ -24,16 +31,26 @@ const DETAIL_PAGE = 12;
 
 type Props = {
   active: boolean;
+  /** Reads a worker's own session for its live activity. */
+  client?: RPCClient | null;
   height: number;
   onExit: () => void;
+  onWorkerAction?: (
+    workerId: string,
+    action: "resume" | "close",
+  ) => Promise<void>;
 };
 
-const EMPTY_EVENTS: never[] = [];
+const EMPTY_TRANSCRIPT: readonly MessageItem[] = [];
 
 function statusColor(worker: SubagentSummary): string {
   if (worker.status === "running") return Theme.stateActive;
   if (worker.status === "completed") return Theme.stateDone;
-  if (worker.status === "cancelled") return Theme.stateBlocked;
+  if (worker.status === "closed") return Theme.textChrome;
+  if (["cancelled", "blocked", "interrupted"].includes(worker.status))
+    return Theme.stateBlocked;
+  if (["accepted", "provisioning", "ready", "resuming"].includes(worker.status))
+    return Theme.stateActive;
   return Theme.stateFailed;
 }
 
@@ -58,14 +75,26 @@ function shortTask(task: string, max = 28): string {
 // focus model as Review: ←/→ (h/l) switch panes, ↑↓ is contextual
 // (worker cursor on the list, scrolling on the detail), enter opens,
 // esc pops. Push-driven from the workers snapshots; no polling.
-export const AgentsScreen = ({ active, height, onExit }: Props) => {
-  const { stdout } = useStdout();
-  const width = stdout?.columns ?? 80;
+export const AgentsScreen = ({
+  active,
+  client = null,
+  height,
+  onExit,
+  onWorkerAction,
+}: Props) => {
+  const { columns: width } = useTerminalSize();
   const wide = width >= WIDE_BREAKPOINT;
   const workers = useSubagents();
-  const subagentEvents = useSubagentEvents();
+  const sessionId = useSessionId();
+  const transcripts = useSyncExternalStore(
+    $subagentTranscriptsBySession.subscribe,
+    $subagentTranscriptsBySession.get,
+  );
   const actions = useActions();
 
+  const pendingAction = useRef(false);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [detailScroll, setDetailScroll] = useState(0);
   // Which pane owns ↑↓. Only meaningful in the wide split — narrow
   // mode stacks both panes and keeps the combined keys.
@@ -88,6 +117,29 @@ export const AgentsScreen = ({ active, height, onExit }: Props) => {
   }, [active]);
 
   const selected = ordered[index] ?? null;
+  const canResume =
+    selected?.kind === "worker" &&
+    !!selected.worker_id &&
+    ["interrupted", "blocked"].includes(selected.status);
+  const canClose =
+    selected?.kind === "worker" &&
+    !!selected.worker_id &&
+    selected.status !== "closed";
+  const performAction = (action: "resume" | "close") => {
+    if (!onWorkerAction || !selected?.worker_id || pendingAction.current)
+      return;
+    pendingAction.current = true;
+    setActionBusy(true);
+    setActionError(null);
+    void onWorkerAction(selected.worker_id, action)
+      .catch((error) => {
+        setActionError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        pendingAction.current = false;
+        setActionBusy(false);
+      });
+  };
 
   // 1Hz tick for live elapsed while anything runs and the screen shows.
   const [, setNowTick] = useState(0);
@@ -103,13 +155,22 @@ export const AgentsScreen = ({ active, height, onExit }: Props) => {
   const detailWidth = wide
     ? Math.max(20, width - LIST_WIDTH - 2)
     : Math.max(20, width - 1);
-  const selectedEvents = selected
-    ? (subagentEvents[selected.subagent_id] ?? EMPTY_EVENTS)
-    : EMPTY_EVENTS;
+  // A worker owns a session: its activity is that thread. An agent-tool
+  // run's beats are relayed into the parent's activity store.
+  const workerSession =
+    selected?.kind === "worker" ? (selected.session_id ?? null) : null;
+  const workerItems = useSessionItems(client, workerSession);
+  const selectedTranscript = !selected
+    ? EMPTY_TRANSCRIPT
+    : workerSession
+      ? workerItems
+      : (transcripts[sessionId]?.[selected.subagent_id] ?? EMPTY_TRANSCRIPT);
   const detailLines = useMemo(
     () =>
-      selected ? buildWorkerDetail(selected, detailWidth, selectedEvents) : [],
-    [selected, detailWidth, selectedEvents],
+      selected
+        ? buildWorkerDetail(selected, detailWidth, selectedTranscript)
+        : [],
+    [selected, detailWidth, selectedTranscript],
   );
 
   useEffect(() => {
@@ -162,6 +223,14 @@ export const AgentsScreen = ({ active, height, onExit }: Props) => {
     (input, key) => {
       if (key.paste) return true;
       if (key.ctrl || (key.meta && !key.escape)) return false;
+      if (onWorkerAction && input === "r" && canResume) {
+        performAction("resume");
+        return true;
+      }
+      if (onWorkerAction && input === "x" && canClose) {
+        performAction("close");
+        return true;
+      }
       if (key.tab) return false; // tab always cycles screens
       if (key.escape || input === "q") {
         // Esc pops one level: detail pane → list → chat.
@@ -247,7 +316,15 @@ export const AgentsScreen = ({ active, height, onExit }: Props) => {
           </RowText>
         ) : (
           <RowText color={statusColor(worker)}>
-            {worker.status === "completed" ? "✔ " : "✗ "}
+            {worker.status === "completed"
+              ? "✔ "
+              : worker.status === "closed"
+                ? "○ "
+                : ["accepted", "provisioning", "ready", "resuming"].includes(
+                      worker.status,
+                    )
+                  ? "· "
+                  : "✗ "}
           </RowText>
         )}
         {/* minWidth 0 — see ReviewScreen sidebar: overflowing rows
@@ -355,7 +432,10 @@ export const AgentsScreen = ({ active, height, onExit }: Props) => {
         </Box>
       )}
 
-      <Text color={Theme.textChrome}>
+      <Text color={actionError ? Theme.stateFailed : Theme.textChrome}>
+        {actionError ?? (actionBusy ? "worker action pending · " : "")}
+        {onWorkerAction && !actionBusy && canResume ? "r recover · " : ""}
+        {onWorkerAction && !actionBusy && canClose ? "x close · " : ""}
         {detailFocused
           ? "↑↓ scroll · ←/esc list"
           : wide

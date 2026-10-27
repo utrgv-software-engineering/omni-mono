@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Optional
-import shutil
+from typing import List, Tuple, Optional
 import yaml
 from omniagents._version import __version__ as OMNIAGENTS_VERSION
 
@@ -304,14 +303,8 @@ def scaffold_project(
         created,
     )
     _write_template(
-        eval_dir / "metrics.yml",
-        "project/evaluations/metrics.yml",
-        force,
-        created,
-    )
-    _write_template(
-        eval_dir / "scenarios.yml",
-        "project/evaluations/scenarios.yml",
+        eval_dir / "scenarios" / "basics.yml",
+        "project/evaluations/scenarios/basics.yml",
         force,
         created,
     )
@@ -389,48 +382,6 @@ def scaffold_agent(
     return created, str(root), sanitized
 
 
-def delete_agent(project_ref: str, agent_key: str) -> Tuple[List[str], str, str]:
-    root = _resolve_project_root(project_ref)
-    agents_dir = root / "agents"
-    target_dir = agents_dir / agent_key
-    if not target_dir.exists() or not target_dir.is_dir():
-        raise FileNotFoundError(f"Agent directory not found: {target_dir}")
-    existing_keys = sorted(
-        p.name
-        for p in agents_dir.iterdir()
-        if p.is_dir() and (p / "agent.yml").is_file()
-    )
-    if agent_key not in existing_keys:
-        raise FileNotFoundError(f"Agent not found: {agent_key}")
-    if len(existing_keys) <= 1:
-        raise ValueError("Cannot delete the only agent in the project")
-    shutil.rmtree(target_dir)
-    removed = [str(target_dir)]
-    project_yml = root / "project.yml"
-    if project_yml.is_file():
-        data = yaml.safe_load(project_yml.read_text(encoding="utf-8")) or {}
-        if not isinstance(data, dict):
-            data = {}
-        agents_cfg = data.get("agents")
-        if not isinstance(agents_cfg, dict):
-            agents_cfg = {}
-        entry = agents_cfg.get("entrypoint")
-        if entry == agent_key:
-            # Prefer a non-battery agent for the new entrypoint — the
-            # conventional summarizer/worker agents are headless subagents.
-            battery_keys = {"recapper", "compactor", "session_summarizer", "worker"}
-            candidates = [k for k in existing_keys if k != agent_key]
-            preferred = [k for k in candidates if k not in battery_keys]
-            for candidate in preferred or candidates:
-                agents_cfg["entrypoint"] = candidate
-                break
-        data["agents"] = agents_cfg
-        project_yml.write_text(
-            yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
-        )
-    return removed, str(root), agent_key
-
-
 def scaffold_guardrail(
     project_ref: str,
     kind: str,
@@ -478,16 +429,20 @@ def scaffold_server_function(
 def scaffold_judge(
     project_ref: str,
     key: str,
-    model: str = "gpt-4.1",
+    model: str = "gpt-4.1-2025-04-14",
     source: str = "final_assistant_text",
     add_measure: bool = True,
     failure_category: Optional[str] = None,
     force: bool = False,
 ) -> Tuple[List[str], str]:
+    from omniagents.core.eval.layout import evaluations_dir
+
     root = _resolve_project_root(project_ref)
     sanitized = _sanitize_name(key)
-    eval_dir = root / "evaluations"
-    eval_dir.mkdir(exist_ok=True)
+    eval_dir = evaluations_dir(
+        root, yaml.safe_load((root / "project.yml").read_text(encoding="utf-8")) or {}
+    )
+    eval_dir.mkdir(parents=True, exist_ok=True)
     judges_root = eval_dir / "judges" / sanitized
     judges_root.mkdir(parents=True, exist_ok=True)
     created: List[str] = []
@@ -602,41 +557,48 @@ def scaffold_judge(
 
     if failure_category:
         evaluation_yml = eval_dir / "evaluation.yml"
-        base: Dict[str, Any] = {}
-        if evaluation_yml.exists():
-            try:
-                base = yaml.safe_load(evaluation_yml.read_text(encoding="utf-8")) or {}
-            except Exception:
-                base = {}
-        if not isinstance(base, dict):
-            base = {}
-        ev = base.get("evaluation") or {}
-        if not isinstance(ev, dict):
-            ev = {}
-        fcs = ev.get("failure_categories") or []
-        if not isinstance(fcs, list):
-            fcs = []
-        found = None
-        for it in fcs:
-            if isinstance(it, dict) and str(it.get("name")) == str(failure_category):
-                found = it
-                break
-        if found is None:
-            found = {"name": str(failure_category), "measures": [f"{sanitized}_agent"]}
-            fcs.append(found)
-        else:
-            ms = found.get("measures") or []
-            if f"{sanitized}_agent" not in ms:
-                ms.append(f"{sanitized}_agent")
-                found["measures"] = ms
-        ev["failure_categories"] = fcs
-        base["evaluation"] = ev
-        evaluation_yml.write_text(
-            yaml.safe_dump(base, sort_keys=False, allow_unicode=True), encoding="utf-8"
-        )
+        add_category_measure(evaluation_yml, failure_category, f"{sanitized}_agent")
         created.append(str(evaluation_yml))
 
     return created, str(root)
+
+
+def add_category_measure(evaluation_yml: Path, category: str, measure: str) -> None:
+    """List ``measure`` under failure category ``category`` in
+    ``evaluation.yml`` (adding the category when it is new), keeping the
+    rest of the file as it is."""
+    from omniagents.core.utils.yaml_edit import (
+        dump_document,
+        load_document,
+        replace_file,
+    )
+
+    text = evaluation_yml.read_text(encoding="utf-8") if evaluation_yml.exists() else ""
+    doc_yaml, doc = load_document(text)
+    block = doc.get("evaluation")
+    if not isinstance(block, dict):
+        block = doc["evaluation"] = {}
+    categories = block.get("failure_categories")
+    if not isinstance(categories, list):
+        categories = block["failure_categories"] = []
+    entry = next(
+        (
+            item
+            for item in categories
+            if isinstance(item, dict) and str(item.get("name")) == str(category)
+        ),
+        None,
+    )
+    if entry is None:
+        categories.append({"name": str(category), "measures": [measure]})
+    else:
+        measures = entry.get("measures")
+        if not isinstance(measures, list):
+            measures = entry["measures"] = []
+        if measure not in measures:
+            measures.append(measure)
+    evaluation_yml.parent.mkdir(parents=True, exist_ok=True)
+    replace_file(evaluation_yml, dump_document(doc_yaml, doc))
 
 
 def scaffold_optimizer(
@@ -646,10 +608,14 @@ def scaffold_optimizer(
     kind: str = "agent",
     force: bool = False,
 ) -> Tuple[List[str], str]:
+    from omniagents.core.eval.layout import evaluations_dir
+
     root = _resolve_project_root(project_ref)
     sanitized = _sanitize_name(key)
-    eval_dir = root / "evaluations"
-    eval_dir.mkdir(exist_ok=True)
+    eval_dir = evaluations_dir(
+        root, yaml.safe_load((root / "project.yml").read_text(encoding="utf-8")) or {}
+    )
+    eval_dir.mkdir(parents=True, exist_ok=True)
     opt_root = eval_dir / "optimizers" / sanitized
     opt_root.mkdir(parents=True, exist_ok=True)
     created: List[str] = []

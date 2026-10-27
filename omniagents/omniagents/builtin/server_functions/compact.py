@@ -40,7 +40,7 @@ from omniagents.core.server_functions.slash import slash_command
     resource_scope=ResourceScope.THREAD,
     execution_requirements=ExecutionRequirement.NONE,
 )
-async def compact(service: Any, session: Session) -> str:
+async def compact(service: Any, session: Session) -> dict:
     if getattr(getattr(service, "spec", None), "session_backend", None) is not None:
         raise RuntimeError(
             "Explicit compaction is unavailable for an external SDK session backend."
@@ -84,15 +84,21 @@ async def compact(service: Any, session: Session) -> str:
         raise RuntimeError("Context compaction is already in progress.")
     history = list(getattr(session, "history", []) or [])
     if not history:
-        return "Nothing to compact yet — this session hasn't started."
+        return {
+            "ok": True,
+            "message": "Nothing to compact yet — this session hasn't started.",
+        }
 
     native = native_compaction_for_session(service, session)
     summarizer = compaction_summarizer() if native is None else None
     if native is None and summarizer is None:
-        return (
-            "Compaction is unavailable: no compaction summarizer is installed "
-            "(see omniagents.core.runtime.compaction.set_compaction_summarizer)."
-        )
+        return {
+            "ok": False,
+            "message": (
+                "Compaction is unavailable: no compaction summarizer is installed "
+                "(see omniagents.core.runtime.compaction.set_compaction_summarizer)."
+            ),
+        }
 
     setattr(session, "_compact_command_in_progress", True)
     setattr(session, "_checkpoint_compaction_in_progress", native is None)
@@ -165,4 +171,4 @@ async def compact(service: Any, session: Session) -> str:
             show_spinner=False,
         )
 
-    return "Context compacted."
+    return {"ok": True, "message": "Context compacted."}

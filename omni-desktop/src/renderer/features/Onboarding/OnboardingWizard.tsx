@@ -1,10 +1,10 @@
+import { Card } from '@omniagents/ui/card';
+import { Progress } from '@omniagents/ui/progress';
 import { AnimatePresence, motion } from 'framer-motion';
 import { memo, useCallback, useState } from 'react';
 
 import { buildProviderConfig, maskApiKey } from '@/lib/provider-config';
 import { OmniMark } from '@/renderer/common/OmniMark';
-import { Card } from '@/renderer/ds/ui/card';
-import { Progress } from '@/renderer/ds/ui/progress';
 import { OnboardingChatGptStep } from '@/renderer/features/Onboarding/OnboardingChatGptStep';
 import type { IdentityKind } from '@/renderer/features/Onboarding/OnboardingChooseStep';
 import { OnboardingChooseStep } from '@/renderer/features/Onboarding/OnboardingChooseStep';
@@ -19,7 +19,7 @@ import { OnboardingProviderTypeStep } from '@/renderer/features/Onboarding/Onboa
 import { OnboardingValidationStep } from '@/renderer/features/Onboarding/OnboardingValidationStep';
 import { OnboardingWslStep } from '@/renderer/features/Onboarding/OnboardingWslStep';
 import { agentConfigApi } from '@/renderer/services/config';
-import { bootstrapPlatform, isCloudLinked, isElectron, isWslLinked } from '@/renderer/services/ipc';
+import { bootstrapPlatform, isElectron, isServerLinked, isWslLinked } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
 import { resolveModelChoices } from '@/shared/model-catalog';
 import type { ProviderEntry } from '@/shared/types';
@@ -67,7 +67,7 @@ type ConnectedInfo = { providerLabel: string; modelLabel: string; maskedKey?: st
 // the wizard writes lands in the backend that will actually be used — choosing
 // WSL relaunches the app against a fresh data root inside the distro. Only on
 // Windows Electron that isn't already linked to a remote backend.
-const WSL_STEP_ELIGIBLE = isElectron && bootstrapPlatform === 'win32' && !isCloudLinked && !isWslLinked;
+const WSL_STEP_ELIGIBLE = isElectron && bootstrapPlatform === 'win32' && !isServerLinked && !isWslLinked;
 
 const stepVariants = {
   initial: { opacity: 0, x: 24 },
@@ -197,6 +197,9 @@ export const OnboardingWizard = memo(() => {
     const config = await agentConfigApi.getModels();
     const provider: ProviderEntry = config.providers[providerName] ?? { type: advProviderType, models: {} };
     provider.type = advProviderType;
+    if (advProviderType === 'litellm' && !provider.routing_prefix && advModelId.includes('/')) {
+      provider.routing_prefix = advModelId.trim().split('/')[0];
+    }
     if (advApiKey.trim()) {
       provider.api_key = advApiKey.trim();
     }

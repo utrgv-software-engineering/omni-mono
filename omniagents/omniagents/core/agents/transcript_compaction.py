@@ -11,14 +11,18 @@ from __future__ import annotations
 
 from typing import Any
 
-#: Transcript budgets (approximate tokens; 4 chars ≈ 1 token). Mirrors the
-#: shape of codex's guardian: recent entries only, with per-entry caps so one
-#: giant tool result can't crowd out the user's actual intent.
+#: Transcript budgets (approximate tokens; 4 chars ≈ 1 token). Recent
+#: entries, with per-entry caps so one giant tool result can't crowd out the
+#: user's actual intent; and, as codex's guardian does, the user's messages
+#: are kept apart from that window, so tool traffic can never evict the
+#: request that authorizes (or forbids) an action.
 MAX_TRANSCRIPT_ENTRIES = 40
 MAX_MESSAGE_ENTRY_CHARS = 8_000
 MAX_TOOL_ENTRY_CHARS = 4_000
 MAX_TRANSCRIPT_CHARS = 80_000
 MAX_ACTION_CHARS = 64_000
+#: The share of the transcript budget the user's earlier messages may take.
+MAX_USER_MESSAGES_CHARS = MAX_TRANSCRIPT_CHARS // 2
 
 
 async def compact_transcript(service: Any, session: Any) -> str:
@@ -28,15 +32,46 @@ async def compact_transcript(service: Any, session: Any) -> str:
         return ""
     if not isinstance(items, list):
         return ""
-    lines: list[str] = []
-    for item in items[-MAX_TRANSCRIPT_ENTRIES:]:
-        line = transcript_line(item)
-        if line:
-            lines.append(line)
-    text = "\n".join(lines)
-    if len(text) > MAX_TRANSCRIPT_CHARS:
-        text = "[earlier transcript truncated]\n" + text[-MAX_TRANSCRIPT_CHARS:]
-    return text
+    start = max(0, len(items) - MAX_TRANSCRIPT_ENTRIES)
+    earlier = _earlier_user_messages(items[:start])
+    recent = "\n".join(line for line in map(transcript_line, items[start:]) if line)
+    budget = MAX_TRANSCRIPT_CHARS - len(earlier)
+    if len(recent) > budget:
+        recent = "[earlier transcript truncated]\n" + recent[-budget:]
+    return f"{earlier}{recent}"
+
+
+def _earlier_user_messages(items: list) -> str:
+    """The user's messages from before the recent window, in order.
+
+    The first (the task) is always kept; when they exceed their budget, the
+    latest are kept after it and the omission is stated, never silent.
+    """
+    lines = [
+        transcript_line(item)
+        for item in items
+        if isinstance(item, dict) and item.get("role") == "user"
+    ]
+    lines = [line for line in lines if line]
+    if not lines:
+        return "[earlier transcript truncated]\n" if items else ""
+    kept = [lines[0]]
+    used = len(lines[0])
+    tail: list[str] = []
+    for line in reversed(lines[1:]):
+        if used + len(line) > MAX_USER_MESSAGES_CHARS:
+            break
+        tail.insert(0, line)
+        used += len(line)
+    omitted = len(lines) - 1 - len(tail)
+    if omitted:
+        kept.append(f"[{omitted} earlier user messages omitted]")
+    kept.extend(tail)
+    return (
+        "[earlier user messages, in order]\n"
+        + "\n".join(kept)
+        + "\n[earlier tool activity truncated; recent transcript follows]\n"
+    )
 
 
 def transcript_line(item: Any) -> str:

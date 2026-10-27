@@ -37,6 +37,7 @@ class WorkerDefaults:
     history_loader: Optional[Callable[..., Any]] = None
     default_isolation: str = "none"
     namer: Optional[Callable[[set], str]] = None
+    recipe_id: str = "project-worker-v1"
 
 
 _defaults = WorkerDefaults()

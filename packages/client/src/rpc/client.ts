@@ -1,0 +1,1493 @@
+import { createActor } from 'xstate';
+
+import {
+  classifyCloseCode,
+  classifyRpcErrorCode,
+  ConnectionClosedError,
+  RpcAbortError,
+  RpcTimeoutError,
+} from '../lifecycle';
+import { createMachineLogger } from '../machines/machine-logger';
+import {
+  MAX_PENDING_CALLS,
+  RPC_CALL_TIMEOUT_MS,
+  type RPCClientActor,
+  rpcClientMachine,
+  WS_CONNECT_TIMEOUT_MS,
+} from '../machines/rpc-client.machine';
+import { OmniagentsRpcError } from '../protocol/errors';
+import type {
+  Capabilities,
+  EnvironmentSelection,
+  Identity,
+  InitializeResult,
+  JsonRpcError,
+  JsonRpcId,
+  Platform,
+  RpcClientNotificationMap,
+  RpcMethodMap,
+  RpcNotificationMap,
+} from '../protocol/gui-v2';
+import { GUI_PROTOCOL_VERSION } from '../protocol/gui-v2';
+import { guiInitializationError, validateGuiInitialization } from '../protocol/handshake';
+import { ClientRequestNotPendingError } from './client-response-error';
+import { ElicitationQueue } from './elicitation';
+import type { ExecutionTarget } from './execution';
+import { McpManagementClient } from './mcp-management';
+import { type ResumeResult, SessionReplayCoordinator } from './replay';
+import { decodeSessionSnapshot } from './session-snapshot';
+import { withConnectTicket, WsTicketError } from './ws-ticket';
+
+type JSONRPCResponse = {
+  jsonrpc: '2.0';
+  id: JsonRpcId;
+  result?: unknown;
+  error?: JsonRpcError;
+};
+
+type JSONRPCNotification = {
+  jsonrpc: '2.0';
+  method: string;
+  params?: Record<string, unknown>;
+};
+
+export type RPCConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
+
+type Listener = (payload: any) => void;
+
+export { OmniagentsRpcError } from '../protocol/errors';
+
+type PendingEntry = {
+  resolve: (v: any) => void;
+  reject: (e: Error) => void;
+  timer: ReturnType<typeof setTimeout> | null;
+  signal?: AbortSignal;
+  abortHandler?: () => void;
+  method: string;
+  startedAt: number;
+  reqBytes: number;
+};
+
+export type RequestOptions = {
+  /** Per-call deadline. ``null`` explicitly disables the deadline. */
+  timeoutMs?: number | null;
+  /** Abort this local wait without retrying or resending the mutation. */
+  signal?: AbortSignal;
+};
+
+/**
+ * Debounce window for ``ack_events``. Matches the reference OmniAgents
+ * web-UI client: acks exist purely so the server can compact its durable
+ * event journal, so batching them per session is always safe.
+ */
+export const ACK_DEBOUNCE_MS = 500;
+
+export const LIVENESS_IDLE_MS = 30_000;
+export const LIVENESS_TIMEOUT_MS = 10_000;
+
+/**
+ * Workspace operations are one negotiated surface: requests and their
+ * notifications must be named explicitly in ``experimental_operations``.
+ * Keep this list exhaustive so a successful handshake is sufficient to
+ * build the explorer without a second capability round trip.
+ */
+export const EXPERIMENTAL_FEATURE_MANIFESTS = {
+  filesystem: [
+    'fs_watch',
+    'fs_unwatch',
+    'fs_list',
+    'fs_stat',
+    'fs_download_open',
+    'fs_download_read',
+    'fs_download_close',
+    'fs_upload_open',
+    'fs_upload_chunk',
+    'fs_upload_commit',
+    'fs_upload_abort',
+    'fs_delete',
+    'fs_rename',
+    'fs_mkdir',
+    'fs_events',
+    'fs_rescan_required',
+    'fs_transfer_progress',
+  ],
+  git: [
+    'git_list_repositories',
+    'git_status',
+    'git_diff',
+    'git_log',
+    'git_list_branches',
+    'git_list_worktrees',
+    'git_conflicts',
+    'git_stage',
+    'git_unstage',
+    'git_discard',
+    'git_commit',
+    'git_checkout',
+    'git_reset',
+    'git_fetch',
+    'git_pull',
+    'git_push',
+    'git_operation_progress',
+    'git_status_watch',
+    'git_status_unwatch',
+    'git_status_changed',
+  ],
+  mcpOperations: ['mcp_read_resource', 'mcp_call_tool', 'mcp_get_prompt'],
+  // Renderer management is read-only. validate/write remain behind the
+  // main-process admin broker and therefore are intentionally not requested
+  // on an ordinary per-column connection.
+  layeredConfig: ['get_config'],
+  // The sidebar and conversation actions use canonical thread reads and
+  // mutations. ``thread_updated`` is part of the feature, not an optional
+  // enhancement: it keeps every open column converged after metadata changes.
+  // Descendant/export/purge operations stay unrequested until a UI consumes
+  // them.
+  conversationOrganization: ['list_threads', 'search_threads', 'update_thread', 'thread_updated'],
+  // The TUI's session manager forks a conversation and places retention
+  // holds on one.
+  conversationForking: ['fork_session'],
+  retentionHolds: ['set_session_hold'],
+  // Plans and run diffs are authoritative, revisioned conversation items.
+  // Requesting the reads without ``item_updated`` would leave an active run's
+  // projection stale, so negotiate the notification atomically with both
+  // recovery reads.
+  plansAndDiffs: ['get_plan', 'get_run_diff', 'item_updated'],
+  // Approval reviewer ("Approve for me"): the session toggle and the
+  // journaled reviewed-decision record are one feature — a toggle without
+  // the transcript record would hide what the guardian did.
+  approvalReviewer: ['set_session_approvals', 'tool_approval_reviewed'],
+  // Workflow completion reviewer (plan-step exit criteria): the session
+  // toggle and the journaled review-outcome record are one feature, mirroring
+  // approvalReviewer — a toggle without the transcript chip would hide why a
+  // completion was rejected.
+  workflowReviewer: ['set_session_workflow', 'plan_completion_reviewed'],
+  // Hydration must know whether a run is active before enabling submission.
+  sessionRunState: ['queue_status'],
+} as const;
+
+export type ExperimentalFeature = keyof typeof EXPERIMENTAL_FEATURE_MANIFESTS;
+
+/**
+ * Compatibility export for existing consumers. This is derived only from
+ * feature manifests whose consumer and reconnect recovery are live. The
+ * historical name remains until callers migrate to feature-specific gates.
+ */
+export const WORKSPACE_EXPERIMENTAL_OPERATIONS = [
+  ...EXPERIMENTAL_FEATURE_MANIFESTS.filesystem,
+  ...EXPERIMENTAL_FEATURE_MANIFESTS.git,
+  ...EXPERIMENTAL_FEATURE_MANIFESTS.mcpOperations,
+  ...EXPERIMENTAL_FEATURE_MANIFESTS.layeredConfig,
+  ...EXPERIMENTAL_FEATURE_MANIFESTS.conversationOrganization,
+  ...EXPERIMENTAL_FEATURE_MANIFESTS.conversationForking,
+  ...EXPERIMENTAL_FEATURE_MANIFESTS.retentionHolds,
+  ...EXPERIMENTAL_FEATURE_MANIFESTS.plansAndDiffs,
+  ...EXPERIMENTAL_FEATURE_MANIFESTS.approvalReviewer,
+  ...EXPERIMENTAL_FEATURE_MANIFESTS.workflowReviewer,
+  ...EXPERIMENTAL_FEATURE_MANIFESTS.sessionRunState,
+] as const;
+
+const requestedCapabilities = (experimentalOperations: readonly string[]): Capabilities => ({
+  realtime: true,
+  mcp_apps: true,
+  client_functions: true,
+  approvals: true,
+  artifacts: true,
+  replay: true,
+  terminal: true,
+  experimental_operations: [...experimentalOperations],
+  disabled_notifications: [],
+});
+
+function unsupportedExperimentalCapabilities(error: unknown): string[] | null {
+  if (!(error instanceof OmniagentsRpcError) || error.code !== -32013) {
+    return null;
+  }
+  const data = error.data;
+  if (!data || typeof data !== 'object' || (data as { kind?: unknown }).kind !== 'capability_not_negotiated') {
+    return null;
+  }
+  const unsupported = (data as { unsupported_capabilities?: unknown }).unsupported_capabilities;
+  if (!Array.isArray(unsupported) || unsupported.some((capability) => typeof capability !== 'string')) {
+    return null;
+  }
+  return unsupported;
+}
+
+function profileEnabled(): boolean {
+  try {
+    return typeof localStorage !== 'undefined' && localStorage.getItem('debug:profile') === '1';
+  } catch {
+    return false;
+  }
+}
+
+function profileLog(msg: string): void {
+  if (profileEnabled()) {
+    console.log(`[profile] ${msg}`);
+  }
+}
+
+/** The machine a client runs on: Node's for a terminal client; a page
+ * cannot see its operating system, so a browser reports itself. */
+function hostPlatform(): Platform {
+  const node = (globalThis as { process?: { platform?: string; arch?: string; versions?: { node?: string } } }).process;
+  if (node?.versions?.node && typeof window === 'undefined') {
+    return { os: node.platform ?? 'unknown', arch: node.arch ?? 'unknown' };
+  }
+  return { os: 'browser', arch: 'unknown' };
+}
+
+export class RPCClient {
+  private ws: WebSocket | null = null;
+  private url: string;
+  private token?: string;
+  private identity: Identity;
+  private nextId = 0;
+  private pending = new Map<JsonRpcId, PendingEntry>();
+  private listeners = new Map<string, Set<Listener>>();
+  private disposed = false;
+  private reconnectSub: { unsubscribe(): void } | null = null;
+  private connectInFlight: Promise<void> | null = null;
+  private activeConnect: { controller: AbortController; socket: WebSocket | null } | null = null;
+  private livenessTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastReceivedAt = 0;
+  private negotiatedInitialization: InitializeResult | null = null;
+  private unavailableExperimentalOperations = new Set<string>();
+  private replay: SessionReplayCoordinator;
+  private ackTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private resyncListeners = new Set<(sessionId: string) => void>();
+  readonly elicitations: ElicitationQueue;
+  readonly actor: RPCClientActor;
+
+  /** `identity` names the application this client is part of; servers
+   * record it for the connection. */
+  constructor(url: string, identity: Identity, token?: string) {
+    this.url = url;
+    this.identity = identity;
+    this.token = token;
+    // Sequence-aware dedup / gap recovery for the durable event stream
+    // (protocol.md § "Durable Sequenced Event Replay"). Replay cursors
+    // live on the client (not the socket), so dedup and gap backfill
+    // survive reconnects. Duplicates are dropped BEFORE dispatch — a
+    // replayed `client_request` can never re-execute a client function.
+    this.elicitations = new ElicitationQueue({
+      request: (method, params) => this.call(method, params),
+    });
+    this.replay = new SessionReplayCoordinator(
+      (sessionId, streamId, afterSeq) => this.resumeSession(sessionId, streamId ?? undefined, afterSeq),
+      (method, params) => {
+        this.deliverNotification(method, params);
+        this.scheduleAck(params);
+      },
+      (sessionId) => this.emitResyncRequired(sessionId)
+    );
+    this.actor = createActor(rpcClientMachine, {
+      input: { url, token },
+      inspect: createMachineLogger('rpc', { tags: { url } }),
+    });
+    this.actor.start();
+
+    // Wire up automatic reconnection: when the machine transitions to
+    // `connecting` from `reconnecting`, open a new WebSocket.
+    // The machine handles backoff timing — we just need to create the socket.
+    this.reconnectSub = this.actor.subscribe((snap) => {
+      if (snap.value === 'connecting' && snap.context.reconnectAttempt > 0 && !this.disposed) {
+        this.connect().catch(() => {});
+      }
+    });
+  }
+
+  /** Send event to the machine only if not disposed. */
+  private send(event: import('../machines/rpc-client.machine').RPCClientEvent): void {
+    if (this.disposed) {
+      return;
+    }
+    this.actor.send(event);
+  }
+
+  /** Current connection state from the machine. */
+  get connectionState(): RPCConnectionState {
+    if (this.disposed) {
+      return 'disconnected';
+    }
+    return this.actor.getSnapshot().value as any;
+  }
+
+  /** True when the WebSocket is open and ready for calls. */
+  get isConnected(): boolean {
+    return this.connectionState === 'connected';
+  }
+
+  /** The server capability intersection from the latest successful handshake. */
+  get initializeResult(): InitializeResult | null {
+    return this.negotiatedInitialization;
+  }
+
+  /** True only when the current connection negotiated this experimental operation. */
+  supportsExperimentalOperation(operation: string): boolean {
+    return this.negotiatedInitialization?.capabilities.experimental_operations.includes(operation) ?? false;
+  }
+
+  /**
+   * True only when every operation and notification required by a Desktop
+   * feature was granted. This prevents partially negotiated experimental
+   * surfaces from exposing controls that cannot stay converged.
+   */
+  supportsExperimentalFeature(feature: ExperimentalFeature): boolean {
+    return EXPERIMENTAL_FEATURE_MANIFESTS[feature].every((operation) => this.supportsExperimentalOperation(operation));
+  }
+
+  /** True only when a stable capability was granted by the server. */
+  supportsCapability(
+    capability: Exclude<keyof Capabilities, 'experimental_operations' | 'disabled_notifications'>
+  ): boolean {
+    return this.negotiatedInitialization?.capabilities[capability] ?? false;
+  }
+
+  /** Operations rejected by an older runtime and omitted by the degraded handshake. */
+  get degradedExperimentalOperations(): readonly string[] {
+    return [...this.unavailableExperimentalOperations];
+  }
+
+  async connect(): Promise<void> {
+    if (this.disposed) {
+      throw new Error('RPCClient is disposed');
+    }
+
+    if (this.connectInFlight) {
+      return this.connectInFlight;
+    }
+
+    // Noop only when the connection is genuinely usable: socket open AND the
+    // GUI handshake completed AND the lifecycle machine agrees. An open
+    // socket without those is a leftover from a partially-failed attempt —
+    // trusting it here caused a silent livelock (machine retrying forever,
+    // connect() no-oping forever, zero packets on the wire). Tear it down
+    // and dial fresh instead.
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      if (this.negotiatedInitialization && this.actor.getSnapshot().value === 'connected') {
+        return;
+      }
+      this.teardownSocket(this.ws);
+    } else if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+      if (this.connectInFlight) {
+        return this.connectInFlight;
+      }
+      // Orphaned CONNECTING socket with no active attempt — abandon it.
+      this.teardownSocket(this.ws);
+    }
+
+    const attempt = { controller: new AbortController(), socket: null as WebSocket | null };
+    let begin!: () => void;
+    const connectPromise = new Promise<void>((resolve, reject) => {
+      begin = () => {
+        void this.connectImpl(attempt).then(resolve, reject);
+      };
+    });
+    // Publish ownership before notifying synchronous machine subscribers.
+    // Reentrant connect calls must join this attempt, not open another one.
+    this.connectInFlight = connectPromise;
+    this.activeConnect = attempt;
+
+    // Emit CONNECT only when we're actually leaving `disconnected`. When
+    // this is triggered by the machine's own reconnect delay (via the
+    // reconnectSub subscription), the machine has already moved itself
+    // into `connecting`, so re-emitting CONNECT would land in a state
+    // that doesn't list it and the dropped-event detector would warn.
+    if (this.actor.getSnapshot().value === 'disconnected') {
+      this.send({ type: 'CONNECT' });
+    }
+
+    begin();
+    // Swallow the rejection on this bookkeeping chain — without the catch,
+    // the promise derived by .finally() is unhandled and every benign
+    // "WebSocket replaced" rejection surfaces as a console error even when
+    // the caller of connect() handles it.
+    connectPromise
+      .catch(() => {})
+      .finally(() => {
+        if (this.connectInFlight === connectPromise) {
+          this.connectInFlight = null;
+        }
+      });
+    return connectPromise;
+  }
+
+  private async connectImpl(attempt: { controller: AbortController; socket: WebSocket | null }): Promise<void> {
+    const { controller } = attempt;
+    let onAbort!: () => void;
+    const interrupted = new Promise<never>((_, reject) => {
+      onAbort = () => reject(controller.signal.reason);
+      controller.signal.addEventListener('abort', onAbort, { once: true });
+      if (controller.signal.aborted) {
+        onAbort();
+      }
+    });
+    const timeout = setTimeout(() => {
+      controller.abort(new RpcTimeoutError('initialize', WS_CONNECT_TIMEOUT_MS));
+    }, WS_CONNECT_TIMEOUT_MS);
+
+    try {
+      await Promise.race([this.connectAttempt(attempt), interrupted]);
+    } catch (error) {
+      // A disconnected attempt can settle after its replacement has begun.
+      // Close only its own socket; never tear down the new connection.
+      const failedSocket = attempt.socket;
+      if (failedSocket) {
+        this.teardownSocket(failedSocket);
+      }
+      if (this.activeConnect === attempt && error instanceof RpcTimeoutError) {
+        this.rejectAllPending(new RpcTimeoutError('initialize', WS_CONNECT_TIMEOUT_MS));
+        this.send({
+          type: 'WS_ERROR',
+          error: `Connection attempt timed out after ${WS_CONNECT_TIMEOUT_MS}ms`,
+        });
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+      controller.signal.removeEventListener('abort', onAbort);
+      if (this.activeConnect === attempt) {
+        this.activeConnect = null;
+      }
+    }
+  }
+
+  /** Detach handlers, close, and clear `this.ws` if it still points at the socket. */
+  private teardownSocket(socket: WebSocket): void {
+    if (this.ws === socket) {
+      this.stopLiveness();
+    }
+    socket.onmessage = null;
+    socket.onclose = null;
+    socket.onerror = null;
+    try {
+      socket.close();
+    } catch {}
+    if (this.ws === socket) {
+      this.ws = null;
+    }
+  }
+
+  /** One complete ticket + socket + initialize + replay-registration attempt. */
+  private async connectAttempt(attempt: { controller: AbortController; socket: WebSocket | null }): Promise<void> {
+    const signal = attempt.controller.signal;
+    signal.throwIfAborted();
+    if (this.disposed) {
+      throw new Error('RPCClient is disposed');
+    }
+
+    // Clean up any previous WebSocket that isn't open (e.g. CLOSING, CLOSED,
+    // or still CONNECTING from a previous failed attempt) to avoid leaking
+    // sockets through the proxy on each reconnection attempt.
+    if (this.ws) {
+      this.ws.onmessage = null;
+      this.ws.onclose = null;
+      this.ws.onerror = null;
+      try {
+        this.ws.close();
+      } catch {}
+      this.ws = null;
+    }
+
+    // Browsers cannot set WebSocket upgrade headers, so the bearer token is
+    // exchanged for a short-lived single-use ticket over HTTP and only the
+    // ticket ever appears in the dial URL — never the token itself.
+    // Tokenless (unauthenticated server) dials stay fully synchronous.
+    let wsUrl = this.url;
+    if (this.token) {
+      try {
+        wsUrl = await withConnectTicket(this.url, this.token, signal);
+        signal.throwIfAborted();
+      } catch (err) {
+        // A failed exchange must still drive the machine out of `connecting` —
+        // otherwise the reconnect loop wedges on a state with no pending dial.
+        if (!signal.aborted && this.activeConnect === attempt) {
+          this.send({
+            type: 'WS_ERROR',
+            error: (err as Error).message || 'ticket exchange failed',
+            permanent: err instanceof WsTicketError && err.permanent,
+          });
+        }
+        throw err;
+      }
+    }
+    signal.throwIfAborted();
+    if (this.disposed || this.activeConnect !== attempt) {
+      throw new ConnectionClosedError('Connection attempt retired');
+    }
+    const ws = new WebSocket(wsUrl);
+    attempt.socket = ws;
+    this.ws = ws;
+
+    await new Promise<void>((resolve, reject) => {
+      // Guard: ignore events from stale WebSocket instances (e.g. after disconnect()
+      // closes this WS while a new connect() has already started with a different one).
+      const isStale = () => this.ws !== ws;
+      const onOpen = () => {
+        cleanup();
+        if (isStale()) {
+          reject(new Error('WebSocket replaced'));
+          return;
+        }
+        resolve();
+      };
+      const onError = () => {
+        cleanup();
+        if (isStale()) {
+          reject(new Error('WebSocket replaced'));
+          return;
+        }
+        this.send({ type: 'WS_ERROR', error: 'WebSocket connection error' });
+        reject(new Error('WebSocket error'));
+      };
+      const onClose = (event?: CloseEvent) => {
+        cleanup();
+        if (isStale()) {
+          reject(new Error('WebSocket replaced'));
+          return;
+        }
+        this.send({ type: 'WS_CLOSE', code: event?.code, reason: event?.reason });
+        reject(new Error('WebSocket closed during connect'));
+      };
+      const onAbort = () => {
+        cleanup();
+        reject(signal.reason);
+      };
+      const cleanup = () => {
+        ws.removeEventListener('open', onOpen);
+        ws.removeEventListener('error', onError);
+        ws.removeEventListener('close', onClose);
+        signal.removeEventListener('abort', onAbort);
+      };
+      ws.addEventListener('open', onOpen);
+      ws.addEventListener('error', onError);
+      ws.addEventListener('close', onClose);
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+
+    if (this.ws !== ws || signal.aborted) {
+      throw new Error('WebSocket disconnected');
+    }
+
+    // Capture the socket reference for stale-check guards on long-lived
+    // handlers. If another connect() replaces `this.ws` before these fire,
+    // they're events from an abandoned socket and must not be dispatched
+    // to the machine — otherwise we end up sending WS_CLOSE to a machine
+    // that's already connected via the replacement socket.
+    const attachedWs = this.ws;
+
+    // Wire up ongoing message handling before sending initialize: a server is
+    // allowed to answer in the same task as WebSocket.send().
+    this.ws.onmessage = (ev) => {
+      if (this.ws !== attachedWs) {
+        return;
+      }
+      const profile = profileEnabled();
+      const t0 = profile ? performance.now() : 0;
+      const rawData = ev.data as string;
+      const respBytes = profile && typeof rawData === 'string' ? rawData.length : -1;
+      try {
+        const msg = JSON.parse(rawData) as JSONRPCResponse | JSONRPCNotification;
+        this.lastReceivedAt = Date.now();
+        const tParsed = profile ? performance.now() : 0;
+        if ('id' in msg) {
+          const pending = this.pending.get(msg.id);
+          if (pending) {
+            this.cleanupPendingEntry(pending);
+            this.pending.delete(msg.id);
+            this.send({ type: 'CALL_SETTLED' });
+            if (profile) {
+              const totalMs = performance.now() - pending.startedAt;
+              profileLog(
+                `rpc.call method=${pending.method} id=${msg.id} ms=${totalMs.toFixed(1)} ` +
+                  `req_bytes=${pending.reqBytes} resp_bytes=${respBytes} parse_ms=${(tParsed - t0).toFixed(1)}`
+              );
+            }
+            if ((msg as JSONRPCResponse).error) {
+              pending.reject(new OmniagentsRpcError((msg as JSONRPCResponse).error!));
+            } else {
+              pending.resolve((msg as JSONRPCResponse).result);
+            }
+            if (profile) {
+              profileLog(`rpc.settle method=${pending.method} dispatch_ms=${(performance.now() - tParsed).toFixed(1)}`);
+            }
+          }
+        } else {
+          if (!this.negotiatedInitialization) {
+            return;
+          }
+          const evt = msg as JSONRPCNotification;
+          // Single notification dispatch point. The replay coordinator
+          // drops duplicate deliveries (so replays never create duplicate
+          // UI items), backfills gaps via resume_session, and reports
+          // unrecoverable streams through onResyncRequired.
+          if (this.replay.handle(evt.method, evt.params)) {
+            return;
+          }
+          this.deliverNotification(evt.method, evt.params);
+          this.scheduleAck(evt.params);
+          if (profile) {
+            profileLog(
+              `rpc.event method=${evt.method} resp_bytes=${respBytes} ` +
+                `parse_ms=${(tParsed - t0).toFixed(1)} dispatch_ms=${(performance.now() - tParsed).toFixed(1)}`
+            );
+          }
+        }
+      } catch (e) {
+        console.error('RPC parse error', e);
+      }
+    };
+
+    // Handle unexpected close — reject all pending, notify machine.
+    // Guard against stale sockets from a prior connect() still firing.
+    this.ws.onclose = (event) => {
+      if (this.ws !== attachedWs) {
+        return;
+      }
+      const code = event?.code;
+      const reason = event?.reason;
+      const failureClass = classifyCloseCode(code);
+      this.stopLiveness();
+      this.rejectAllPending(
+        new ConnectionClosedError(reason || 'WebSocket connection closed', {
+          permanent: failureClass === 'permanent',
+          closeCode: code,
+          reason,
+        })
+      );
+      this.ws = null;
+      this.send({ type: 'WS_CLOSE', code, reason });
+    };
+
+    this.ws.onerror = () => {
+      // onclose will fire after onerror
+    };
+
+    try {
+      await this.initializeConnection(attachedWs);
+    } catch (error) {
+      // A failed handshake never produces a connected state. Close only the
+      // socket that attempted it; an onclose from an already-replaced socket
+      // must not disturb the replacement connection.
+      if (this.ws === attachedWs) {
+        this.rejectAllPending(
+          new ConnectionClosedError('GUI protocol handshake failed', {
+            permanent: error instanceof OmniagentsRpcError && classifyRpcErrorCode(error.code) === 'permanent',
+          })
+        );
+        attachedWs.onmessage = null;
+        attachedWs.onclose = null;
+        attachedWs.onerror = null;
+        try {
+          attachedWs.close();
+        } catch {}
+        this.ws = null;
+        this.send({
+          type: 'WS_ERROR',
+          error: (error as Error).message || 'GUI protocol handshake failed',
+          permanent: error instanceof OmniagentsRpcError && classifyRpcErrorCode(error.code) === 'permanent',
+        });
+      }
+      throw error;
+    }
+
+    // Reconnect hook: proactively backfill every session we hold a replay
+    // cursor for, before any re-render depends on live events. The
+    // resume_session call replays events missed while disconnected AND
+    // re-registers this channel for live notifications. On the first
+    // connect no cursors exist yet, so this is a no-op.
+    await this.replay.resumeAll();
+
+    if (signal.aborted || this.ws !== attachedWs) {
+      throw new ConnectionClosedError('Connection replaced while restoring replay state');
+    }
+
+    // Raw transport open is not application readiness. Only transition the
+    // lifecycle machine and resolve connect() after initialize was accepted,
+    // initialized was sent, and registered sessions finished replay setup.
+    this.send({ type: 'WS_OPEN' });
+    if (this.ws === attachedWs && this.isConnected) {
+      this.lastReceivedAt = Date.now();
+      this.scheduleLiveness(attachedWs);
+    }
+  }
+
+  private stopLiveness(): void {
+    if (this.livenessTimer !== null) {
+      clearTimeout(this.livenessTimer);
+      this.livenessTimer = null;
+    }
+  }
+
+  /** An idle socket needs an application round trip: proxy/browser ping-pong
+   * alone does not prove the RPC path is alive. This read is session-free and
+   * never starts work. A slow mutation is not itself a transport failure. */
+  private scheduleLiveness(socket: WebSocket): void {
+    this.stopLiveness();
+    this.livenessTimer = setTimeout(async () => {
+      this.livenessTimer = null;
+      if (this.ws !== socket || !this.isConnected) {
+        return;
+      }
+      if (Date.now() - this.lastReceivedAt >= LIVENESS_IDLE_MS) {
+        try {
+          await this.callWithOptions('get_agent_info', {}, { timeoutMs: LIVENESS_TIMEOUT_MS }, true);
+        } catch (error) {
+          if (this.ws !== socket || !this.isConnected) {
+            return;
+          }
+          // An RPC error is still a successful round trip.
+          if (error instanceof RpcTimeoutError) {
+            this.teardownSocket(socket);
+            this.rejectAllPending(new ConnectionClosedError('Connection liveness check timed out'));
+            this.send({ type: 'WS_ERROR', error: 'Connection liveness check timed out' });
+            return;
+          }
+        }
+      }
+      if (this.ws === socket && this.isConnected) {
+        this.scheduleLiveness(socket);
+      }
+    }, LIVENESS_IDLE_MS);
+  }
+
+  private async initializeConnection(socket: WebSocket): Promise<void> {
+    let requestedExperimental = [...WORKSPACE_EXPERIMENTAL_OPERATIONS] as string[];
+    this.negotiatedInitialization = null;
+    this.unavailableExperimentalOperations.clear();
+
+    while (true) {
+      try {
+        const result = await this.call('initialize', {
+          protocol_version: GUI_PROTOCOL_VERSION,
+          identity: this.identity,
+          platform: hostPlatform(),
+          capabilities: requestedCapabilities(requestedExperimental),
+        });
+        if (this.ws !== socket) {
+          throw new Error('WebSocket replaced during GUI protocol handshake');
+        }
+        this.negotiatedInitialization = validateGuiInitialization(result);
+        this.notify('initialized', {});
+        return;
+      } catch (error) {
+        const unsupported = unsupportedExperimentalCapabilities(error);
+        if (!unsupported) {
+          throw guiInitializationError(error);
+        }
+        const unsupportedSet = new Set(unsupported);
+        const reduced = requestedExperimental.filter((operation) => !unsupportedSet.has(operation));
+        if (reduced.length === requestedExperimental.length) {
+          throw error;
+        }
+        for (const operation of unsupported) {
+          this.unavailableExperimentalOperations.add(operation);
+        }
+        requestedExperimental = reduced;
+      }
+    }
+  }
+
+  disconnect(): void {
+    this.stopLiveness();
+    const attempt = this.activeConnect;
+    this.activeConnect = null;
+    attempt?.controller.abort(new ConnectionClosedError('Client disconnected'));
+    this.rejectAllPending('Client disconnected');
+    this.connectInFlight = null;
+    if (this.ws) {
+      // Clear handlers before close to prevent stale onclose from firing
+      this.ws.onmessage = null;
+      this.ws.onclose = null;
+      this.ws.onerror = null;
+      this.ws.close();
+      this.ws = null;
+    }
+    this.send({ type: 'DISCONNECT' });
+  }
+
+  /**
+   * Connect and wait for the machine to reach `connected` state.
+   * Leverages the machine's built-in reconnection with exponential backoff.
+   * Rejects if the machine gives up (max attempts) or on timeout.
+   */
+  async connectAndWait(timeoutMs = 60_000): Promise<void> {
+    if (this.disposed) {
+      throw new Error('RPCClient is disposed');
+    }
+    if (this.isConnected) {
+      return;
+    }
+
+    // Kick off the initial connection attempt
+    this.connect().catch(() => {});
+
+    return new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        sub.unsubscribe();
+        reject(new RpcTimeoutError('connect', timeoutMs));
+      }, timeoutMs);
+
+      const sub = this.actor.subscribe((snap) => {
+        if (snap.value === 'connected') {
+          clearTimeout(timeout);
+          sub.unsubscribe();
+          resolve();
+        } else if (snap.value === 'disconnected' && snap.context.error) {
+          // Machine gave up (max reconnect attempts reached)
+          clearTimeout(timeout);
+          sub.unsubscribe();
+          reject(
+            new ConnectionClosedError(snap.context.error, {
+              permanent: snap.context.permanent,
+              closeCode: snap.context.closeCode,
+              reason: snap.context.error,
+            })
+          );
+        }
+      });
+    });
+  }
+
+  /** Stop the state machine actor. Call when disposing the client permanently. */
+  dispose(): void {
+    this.disposed = true;
+    this.reconnectSub?.unsubscribe();
+    this.reconnectSub = null;
+    this.connectInFlight = null;
+    for (const timer of this.ackTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.ackTimers.clear();
+    this.resyncListeners.clear();
+    this.elicitations.dispose();
+    this.disconnect();
+    this.actor.stop();
+  }
+
+  /**
+   * Subscribe to resync-required signals: the sequenced event stream for
+   * ``sessionId`` cannot be recovered by replay (stream epoch changed,
+   * cursor fell below the compaction floor, or ``resume_session`` failed
+   * with ``-32030``). The host must refetch authoritative state through
+   * the existing ``get_session_history`` path. Returns an unsubscribe fn.
+   */
+  onResyncRequired(handler: (sessionId: string) => void): () => void {
+    this.resyncListeners.add(handler);
+    return () => this.resyncListeners.delete(handler);
+  }
+
+  /** Register a UI-owned session for live delivery and reconnect replay. */
+  async registerSession(sessionId: string, restoreNow = true): Promise<void> {
+    this.replay.registerSession(sessionId);
+    if (restoreNow && this.isConnected) {
+      await this.replay.resumeAll();
+    }
+  }
+
+  /** Release replay state for a session the UI no longer owns. */
+  unregisterSession(sessionId: string): void {
+    const timer = this.ackTimers.get(sessionId);
+    if (timer) {
+      clearTimeout(timer);
+      this.ackTimers.delete(sessionId);
+    }
+    this.replay.unregisterSession(sessionId);
+  }
+
+  /** Unquarantine a session after its authoritative transcript was reloaded. */
+  async completeSessionResync(sessionId: string, streamId: string | null = null, lastSeq = 0): Promise<void> {
+    this.replay.completeResync(sessionId, streamId, lastSeq);
+    if (this.isConnected) {
+      await this.replay.resumeAll();
+    }
+  }
+
+  /**
+   * Observe application-level connection readiness. The current state is
+   * delivered immediately; subsequent `connected` values are emitted only
+   * after the GUI handshake has completed. This is intentionally higher
+   * level than raw WebSocket events so connection-bound resources (watches,
+   * transfers) can rebuild safely after reconnect.
+   */
+  onConnectionState(handler: (state: RPCConnectionState) => void): () => void {
+    let previous = this.connectionState;
+    handler(previous);
+    const subscription = this.actor.subscribe((snapshot) => {
+      const state = snapshot.value as RPCConnectionState;
+      if (state !== previous) {
+        previous = state;
+        handler(state);
+      }
+    });
+    return () => subscription.unsubscribe();
+  }
+
+  private emitResyncRequired(sessionId: string): void {
+    for (const fn of this.resyncListeners) {
+      try {
+        fn(sessionId);
+      } catch {}
+    }
+  }
+
+  /**
+   * Debounced ack of the latest applied sequence id per session, so the
+   * server can compact its journal. Only fires for sessions we actually
+   * hold a cursor for (i.e. sessions that delivered sequenced events).
+   */
+  private scheduleAck(params?: Record<string, unknown>): void {
+    const sessionId = params?.session_id;
+    if (typeof sessionId !== 'string' || typeof params?.seq !== 'number') {
+      return;
+    }
+    if (this.ackTimers.has(sessionId)) {
+      return;
+    }
+    this.ackTimers.set(
+      sessionId,
+      setTimeout(() => {
+        this.ackTimers.delete(sessionId);
+        const tracker = this.replay.tracker(sessionId);
+        if (!tracker.streamId || tracker.lastSeq <= 0) {
+          return;
+        }
+        this.ackEvents(sessionId, tracker.streamId, tracker.lastSeq).catch((error: unknown) => {
+          if (error instanceof OmniagentsRpcError && error.code === -32030) {
+            this.replay.requireResync(sessionId);
+          }
+        });
+      }, ACK_DEBOUNCE_MS)
+    );
+  }
+
+  on<Event extends keyof RpcNotificationMap>(
+    event: Event,
+    handler: (payload: RpcNotificationMap[Event]) => void
+  ): () => void;
+  on(event: string, handler: Listener): () => void;
+  on(event: string, handler: Listener): () => void {
+    if (!this.listeners.has(event)) {
+      this.listeners.set(event, new Set());
+    }
+    const set = this.listeners.get(event)!;
+    set.add(handler as Listener);
+    return () => set.delete(handler);
+  }
+
+  private emitEvent(event: string, payload: any): void {
+    const set = this.listeners.get(event);
+    if (!set) {
+      return;
+    }
+    for (const fn of set) {
+      try {
+        fn(payload);
+      } catch {}
+    }
+  }
+
+  private deliverNotification(method: string, params: Record<string, unknown> | undefined): void {
+    if (method === 'elicitation_requested') {
+      void this.elicitations.receiveRequested(params);
+    } else if (method === 'elicitation_resolved') {
+      try {
+        this.elicitations.receiveResolved(params);
+      } catch (error) {
+        console.warn('Ignoring malformed elicitation resolution', error);
+      }
+    }
+    this.emitEvent(method, params);
+  }
+
+  /** Typed request entry point for protocol-specific client modules. */
+  request<Method extends keyof RpcMethodMap>(
+    method: Method,
+    ...args: Record<never, never> extends RpcMethodMap[Method]['params']
+      ? [params?: RpcMethodMap[Method]['params'], options?: RequestOptions]
+      : [params: RpcMethodMap[Method]['params'], options?: RequestOptions]
+  ): Promise<RpcMethodMap[Method]['result']> {
+    if (!this.isConnected) {
+      return Promise.reject(new ConnectionClosedError('RPC client handshake is not complete'));
+    }
+    return this.callWithOptions(method, args[0], args[1]);
+  }
+
+  private async call<Method extends keyof RpcMethodMap>(
+    method: Method,
+    ...args: Record<never, never> extends RpcMethodMap[Method]['params']
+      ? [params?: RpcMethodMap[Method]['params']]
+      : [params: RpcMethodMap[Method]['params']]
+  ): Promise<RpcMethodMap[Method]['result']> {
+    return this.callWithOptions(method, args[0]);
+  }
+
+  private async callWithOptions<Method extends keyof RpcMethodMap>(
+    method: Method,
+    params: RpcMethodMap[Method]['params'] | undefined,
+    options: RequestOptions = {},
+    livenessProbe = false
+  ): Promise<RpcMethodMap[Method]['result']> {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new ConnectionClosedError('WebSocket not connected');
+    }
+    // The single serialized liveness probe has a reserved slot. Saturated
+    // application calls (including deadline-free waits) cannot disable recovery.
+    if (this.pending.size >= MAX_PENDING_CALLS && !livenessProbe) {
+      throw new Error(`RPC pending queue full (max ${MAX_PENDING_CALLS})`);
+    }
+
+    const id = ++this.nextId;
+    if (options.signal?.aborted) {
+      throw new RpcAbortError(String(method));
+    }
+
+    const req = { jsonrpc: '2.0' as const, id, method, params };
+    const serialized = JSON.stringify(req);
+    const startedAt = performance.now();
+    const isCompaction =
+      method === 'server_call' && (params as { function?: unknown } | undefined)?.function === 'compact';
+    const timeoutMs = options.timeoutMs === undefined ? (isCompaction ? null : RPC_CALL_TIMEOUT_MS) : options.timeoutMs;
+
+    const p = new Promise<RpcMethodMap[Method]['result']>((resolve, reject) => {
+      const settleLocally = (error: Error) => {
+        const pending = this.pending.get(id);
+        if (pending) {
+          this.pending.delete(id);
+          this.cleanupPendingEntry(pending);
+          this.send({ type: 'CALL_SETTLED' });
+          reject(error);
+        }
+      };
+      const timer =
+        timeoutMs === null
+          ? null
+          : setTimeout(() => {
+              if (this.pending.has(id)) {
+                profileLog(`rpc.timeout method=${method} id=${id} ms=${timeoutMs}`);
+                settleLocally(new RpcTimeoutError(String(method), timeoutMs));
+              }
+            }, timeoutMs);
+      const abortHandler = options.signal ? () => settleLocally(new RpcAbortError(String(method))) : undefined;
+
+      this.pending.set(id, {
+        resolve: resolve as any,
+        reject,
+        timer,
+        method,
+        startedAt,
+        reqBytes: serialized.length,
+        signal: options.signal,
+        abortHandler,
+      });
+      if (abortHandler) {
+        options.signal!.addEventListener('abort', abortHandler, { once: true });
+      }
+      this.send({ type: 'CALL_STARTED' });
+    });
+
+    this.ws.send(serialized);
+    return p;
+  }
+
+  private notify<Method extends keyof RpcClientNotificationMap>(
+    method: Method,
+    params: RpcClientNotificationMap[Method]
+  ): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket not connected');
+    }
+    this.ws.send(JSON.stringify({ jsonrpc: '2.0' as const, method, params }));
+  }
+
+  private cleanupPendingEntry(entry: PendingEntry): void {
+    if (entry.timer) {
+      clearTimeout(entry.timer);
+    }
+    if (entry.signal && entry.abortHandler) {
+      entry.signal.removeEventListener('abort', entry.abortHandler);
+    }
+  }
+
+  private rejectAllPending(error: Error | string): void {
+    const rejection = typeof error === 'string' ? new ConnectionClosedError(error) : error;
+    for (const entry of this.pending.values()) {
+      this.cleanupPendingEntry(entry);
+      entry.reject(rejection);
+    }
+    this.pending.clear();
+    // Reset pending count in machine
+    const snapshot = this.actor.getSnapshot();
+    if (snapshot.context.pendingCount > 0) {
+      // Send enough CALL_SETTLED events to zero it out
+      for (let i = 0; i < snapshot.context.pendingCount; i++) {
+        this.send({ type: 'CALL_SETTLED' });
+      }
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // RPC methods — unchanged public API
+  // -----------------------------------------------------------------------
+
+  async startRun(
+    prompt: string,
+    environmentSelection: EnvironmentSelection,
+    sessionId?: string,
+    variables?: Record<string, unknown>,
+    content?: unknown,
+    submissionId?: string
+  ): Promise<{ run_id: string; session_id: string }> {
+    const params: RpcMethodMap['start_run']['params'] = {
+      prompt,
+      environment_selection: environmentSelection,
+    };
+    if (sessionId) {
+      params.session_id = sessionId;
+    }
+    if (submissionId) {
+      params.submission_id = submissionId;
+    }
+    if (variables) {
+      // Extract safe_tool_overrides / approvals_reviewer — top-level
+      // start_run params, not variables.
+      const { safe_tool_overrides, approvals_reviewer, ...rest } = variables;
+      if (Object.keys(rest).length > 0) {
+        params.variables = rest;
+      }
+      if (safe_tool_overrides) {
+        params.safe_tool_overrides = safe_tool_overrides as Record<string, unknown>;
+      }
+      if (typeof approvals_reviewer === 'string') {
+        params.approvals_reviewer = approvals_reviewer;
+      }
+    }
+    if (content != null) {
+      params.content = content as string;
+    }
+    return this.call('start_run', params);
+  }
+
+  async getSessionSnapshot(sessionId: string): Promise<any> {
+    this.replay.beginSnapshot(sessionId);
+    const result = await this.call('queue_status', { session_id: sessionId, include_snapshot: true });
+    return decodeSessionSnapshot(result, sessionId);
+  }
+
+  /** Set the session's approval reviewer ("user" | "auto"). */
+  async setSessionApprovals(sessionId: string, reviewer: 'user' | 'auto'): Promise<Record<string, unknown>> {
+    return this.call('set_session_approvals', { session_id: sessionId, reviewer });
+  }
+
+  /**
+   * Set the session's workflow completion reviewer ("off" | "guardian" |
+   * "user") — the per-session override of `workflow.completion_reviewer`.
+   * `set_session_workflow` ships in the omniagents contract alongside the
+   * `plan_completion_reviewed` broadcast; the generated gui-v2 method map
+   * predates it, hence the local widening until the schema is regenerated.
+   */
+  async setSessionWorkflow(sessionId: string, reviewer: 'off' | 'guardian' | 'user'): Promise<Record<string, unknown>> {
+    const call = this.call.bind(this) as unknown as (
+      method: string,
+      params: Record<string, unknown>
+    ) => Promise<Record<string, unknown>>;
+    return call('set_session_workflow', { session_id: sessionId, reviewer });
+  }
+
+  async stopRun(runId: string): Promise<void> {
+    await this.call('stop_run', { run_id: runId });
+  }
+
+  /**
+   * Replay retained sequenced events after ``afterSeq`` from the server's
+   * durable journal. Rejects with ``OmniagentsRpcError`` code ``-32030``
+   * when the cursor cannot be served (resync required).
+   */
+  async resumeSession(sessionId: string, streamId?: string, afterSeq?: number): Promise<ResumeResult> {
+    const params: RpcMethodMap['resume_session']['params'] = { session_id: sessionId };
+    if (streamId) {
+      params.stream_id = streamId;
+    }
+    if (afterSeq != null) {
+      params.after_seq = afterSeq;
+    }
+    return this.call('resume_session', params) as Promise<ResumeResult>;
+  }
+
+  /** Acknowledge applied events so the server can compact its journal. */
+  async ackEvents(sessionId: string, streamId: string, seq: number): Promise<Record<string, unknown>> {
+    return this.call('ack_events', { session_id: sessionId, stream_id: streamId, seq });
+  }
+
+  async clientResponse(
+    requestId: string,
+    ok: boolean,
+    result?: Record<string, unknown>,
+    error?: Record<string, unknown>
+  ): Promise<void> {
+    const params: RpcMethodMap['client_response']['params'] = { request_id: requestId, ok };
+    if (result) {
+      params.result = result;
+    }
+    if (error) {
+      params.error = error;
+    }
+    const accepted = await this.call('client_response', params);
+    if (accepted === false) {
+      throw new ClientRequestNotPendingError();
+    }
+    if (accepted !== true) {
+      throw new Error('The server did not confirm this response. Retry to confirm its outcome.');
+    }
+  }
+
+  /**
+   * Respond to a ``tool_approval_requested`` event (omniagents 0.16+
+   * function-tool interruption flow). The wire format moved off the
+   * generic ``client_request``/``client_response`` pair onto a dedicated
+   * RPC method so the server can distinguish approvals from other
+   * server-initiated requests without sniffing the ``function`` field.
+   */
+  async toolApprovalResponse(
+    callId: string,
+    decision: 'approve' | 'reject',
+    alwaysApprove: boolean = false,
+    rejectionMessage?: string
+  ): Promise<boolean> {
+    const params: RpcMethodMap['tool_approval_response']['params'] = { call_id: callId, decision };
+    if (alwaysApprove) {
+      params.always_approve = true;
+    }
+    if (rejectionMessage) {
+      params.rejection_message = rejectionMessage;
+    }
+    return this.call('tool_approval_response', params);
+  }
+
+  /**
+   * Respond to an ``mcp_approval_requested`` event (omniagents 0.16+
+   * hosted-MCP interruption flow). Parallel to ``toolApprovalResponse``
+   * but keyed by ``request_id`` (the server-issued approval token)
+   * — intentionally no ``always_approve`` flag on this path.
+   */
+  async mcpApprovalResponse(
+    requestId: string,
+    decision: 'approve' | 'reject',
+    rejectionMessage?: string
+  ): Promise<boolean> {
+    const params: RpcMethodMap['mcp_approval_response']['params'] = { request_id: requestId, decision };
+    if (rejectionMessage) {
+      params.rejection_message = rejectionMessage;
+    }
+    return this.call('mcp_approval_response', params);
+  }
+
+  async listServerFunctions(): Promise<
+    Array<{
+      name: string;
+      description?: string;
+      params_schema?: Record<string, unknown>;
+      result_schema?: Record<string, unknown>;
+    }>
+  > {
+    return this.call('list_server_functions') as Promise<
+      Array<{
+        name: string;
+        description?: string;
+        params_schema?: Record<string, unknown>;
+        result_schema?: Record<string, unknown>;
+      }>
+    >;
+  }
+
+  /** The typeable subset of server functions (`server_call("slash.list")`); [] on older servers. */
+  async listSlashCommands(): Promise<unknown[]> {
+    try {
+      const result = (await this.serverCall('slash.list', {})) as { commands?: unknown };
+      return Array.isArray(result?.commands) ? result.commands : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async serverCall(
+    func: string,
+    args?: Record<string, unknown>,
+    sessionId?: string,
+    target?: ExecutionTarget | string
+  ): Promise<Record<string, unknown>> {
+    const params: RpcMethodMap['server_call']['params'] = { function: func };
+    if (args) {
+      params.args = args;
+    }
+    if (sessionId) {
+      params.session_id = sessionId;
+    }
+    if (typeof target === 'string') {
+      params.environment_id = target;
+    } else if (target) {
+      params.workspace_id = target.workspaceId;
+      params.environment_id = target.environmentId;
+      params.environment_generation = target.environmentGeneration;
+    }
+    return this.call('server_call', params);
+  }
+
+  // MCP Apps host helpers used by the MCP-UI ``AppRenderer`` integration
+  // (see MessageList.tsx). Tool discovery remains on server_call because the
+  // generated protocol has no list-tools operation. Resource reads and tool
+  // calls use their typed, negotiated operations below.
+
+  async mcpListTools(
+    serverName: string,
+    sessionId?: string
+  ): Promise<{
+    server_name: string;
+    tools: Array<Record<string, unknown>>;
+    next_cursor?: string;
+  }> {
+    const res = await this.serverCall('mcp.list_tools', { server_name: serverName }, sessionId);
+    return res as { server_name: string; tools: Array<Record<string, unknown>>; next_cursor?: string };
+  }
+
+  async mcpReadResource(
+    serverName: string,
+    uri: string,
+    sessionId?: string
+  ): Promise<{
+    server_name: string;
+    uri: string;
+    contents: Array<Record<string, unknown>>;
+  }> {
+    return new McpManagementClient(this, (operation) => this.supportsExperimentalOperation(operation)).readResource(
+      serverName,
+      uri,
+      sessionId
+    ) as Promise<{ server_name: string; uri: string; contents: Array<Record<string, unknown>> }>;
+  }
+
+  /**
+   * Invoke a tool on an MCP server out-of-band — the agent does not see
+   * this call. Used to route postMessage ``tools/call`` requests from a
+   * rendered MCP-Apps UI back to the originating server.
+   */
+  async mcpCallTool(
+    serverName: string,
+    toolName: string,
+    args?: Record<string, unknown>,
+    sessionId?: string
+  ): Promise<{ server_name: string; tool_name: string; result: Record<string, unknown> }> {
+    if (typeof sessionId !== 'string' || sessionId.length === 0) {
+      throw new TypeError('sessionId must be a non-empty string');
+    }
+    return new McpManagementClient(this, (operation) => this.supportsExperimentalOperation(operation)).callTool(
+      serverName,
+      toolName,
+      sessionId,
+      args
+    ) as Promise<{ server_name: string; tool_name: string; result: Record<string, unknown> }>;
+  }
+
+  async clientFunctions(version: number, functions: Array<{ name: string; description?: string }>): Promise<void> {
+    await this.call('client_functions', { version, functions });
+  }
+
+  async getAgentInfo(): Promise<{
+    name?: string;
+    header_title?: string;
+    page_title?: string;
+    welcome_text?: string;
+    page_title_suffix?: string;
+    theme_color?: string;
+  }> {
+    return this.call('get_agent_info');
+  }
+
+  // ---------------------------------------------------------------------
+  // Queue — background-injected messages serialized against current_task.
+  // See omniagents/core/agents/service.py::enqueue_message and friends.
+  // ---------------------------------------------------------------------
+
+  /**
+   * Enqueue a message for the next available turn, starting immediately if idle.
+   */
+  async enqueueMessage(
+    sessionId: string,
+    content: string,
+    opts?: {
+      role?: string;
+      variables?: Record<string, unknown>;
+      safeToolOverrides?: Record<string, unknown>;
+      source?: string;
+      inputContent?: Record<string, unknown>[];
+      submissionId?: string;
+    }
+  ): Promise<{ ok: boolean; id?: string; depth?: number; reason?: string; session_id?: string; enqueued_at?: number }> {
+    const params: RpcMethodMap['enqueue_message']['params'] = { session_id: sessionId, content };
+    if (opts?.submissionId) {
+      params.submission_id = opts.submissionId;
+    }
+    if (opts?.inputContent !== undefined) {
+      params.input_content = opts.inputContent;
+    }
+    if (opts?.role) {
+      params.role = opts.role;
+    }
+    if (opts?.variables) {
+      const { safe_tool_overrides, ...variables } = opts.variables;
+      if (Object.keys(variables).length > 0) {
+        params.variables = variables;
+      }
+      if (safe_tool_overrides && !opts.safeToolOverrides) {
+        params.safe_tool_overrides = safe_tool_overrides as Record<string, unknown>;
+      }
+    }
+    if (opts?.safeToolOverrides) {
+      params.safe_tool_overrides = opts.safeToolOverrides;
+    }
+    if (opts?.source) {
+      params.source = opts.source;
+    }
+    return this.call('enqueue_message', params) as ReturnType<RPCClient['enqueueMessage']>;
+  }
+
+  /** Snapshot of the queue. Used to seed local state on session-switch / reconnect. */
+  async listQueue(sessionId: string): Promise<{ session_id: string; depth: number; items: QueuedMessage[] }> {
+    return this.call('list_queue', { session_id: sessionId }) as Promise<{
+      session_id: string;
+      depth: number;
+      items: QueuedMessage[];
+    }>;
+  }
+
+  /** Remove an item by id. Returns ``not_found`` if it has already been popped. */
+  async cancelQueuedMessage(
+    sessionId: string,
+    itemId: string
+  ): Promise<{ ok: boolean; id?: string; depth?: number; reason?: string }> {
+    return this.call('cancel_queued_message', { session_id: sessionId, item_id: itemId }) as Promise<{
+      ok: boolean;
+      id?: string;
+      depth?: number;
+      reason?: string;
+    }>;
+  }
+}
+
+/**
+ * Wire shape returned by ``list_queue`` and inside the ``queue_changed``
+ * notification — matches ``QueuedItem.to_dict()`` on the server.
+ */
+export type QueuedMessage = {
+  state?: 'pending' | 'failed' | 'dispatch_uncertain';
+  error?: string | null;
+  id: string;
+  content: string;
+  role: string;
+  variables: Record<string, unknown> | null;
+  safe_tool_overrides: Record<string, unknown> | null;
+  source: string | null;
+  enqueued_at: number;
+};

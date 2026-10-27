@@ -1,12 +1,13 @@
 """Retention: delete a session's data from EVERY store that holds it.
 
-A session's content lives in three places, added at three different times:
+A session's content lives in four places:
 
 1. ``history`` / ``sessions`` / ``audio_metadata`` — the original store.
 2. ``threads`` / ``turns`` / ``items`` — the canonical conversation domain
    objects (and, on SQLite, the full-text index built over them).
 3. the durable replay journal — every replayable notification, payloads
    included.
+4. saved textual tool outputs on the runtime host.
 
 Every one of those holds transcript text. ``purge_old_sessions`` only ever
 knew about the first, so a deployment with a retention policy configured
@@ -16,7 +17,7 @@ conversation in the domain store — the defect review found in
 
 This module is the single place that knows the full list. Both callers —
 the boot-time retention sweep and the ``purge_threads`` RPC — go through
-it, so a fourth store added later has exactly one place to be registered.
+it, so another store added later has exactly one place to be registered.
 """
 
 from __future__ import annotations
@@ -81,6 +82,18 @@ def purge_session_derivatives(
     except Exception:
         logger.exception(
             "retention: replay journal not deleted", extra={"session": session_id}
+        )
+
+    try:
+        import shutil
+        from omniagents.core.tools.output_budget import output_dir
+
+        directory = output_dir((project_slug, agent_slug), session_id)
+        if directory.exists():
+            shutil.rmtree(directory)
+    except Exception:
+        logger.exception(
+            "retention: saved tool outputs not deleted", extra={"session": session_id}
         )
 
 

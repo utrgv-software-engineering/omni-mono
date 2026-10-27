@@ -1,0 +1,522 @@
+import { Badge } from '@omniagents/ui/badge'
+import { Button } from '@omniagents/ui/button'
+import { Checkbox } from '@omniagents/ui/checkbox'
+import { Input } from '@omniagents/ui/input'
+import { Label } from '@omniagents/ui/label'
+import { NativeSelect, NativeSelectOption } from '@omniagents/ui/native-select'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@omniagents/ui/table'
+import { Textarea } from '@omniagents/ui/textarea'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Plus, Trash2 } from 'lucide-react'
+import { useEffect, useState } from 'react'
+
+import { cn } from '../../../lib/utils'
+import { api } from '../../../lib/api'
+import type { Judge, JudgeDataset } from '../../../types/evaluation'
+import { excerpt, percent, when } from '../format'
+import { JobPanel } from '../jobs'
+import { useJob } from '../useJob'
+
+/**
+ * Judges (a model that reads a run and decides a failure category), the
+ * datasets they are checked and optimized on, and optimizing one.
+ */
+export function JudgesTab() {
+  const judges = useQuery({ queryKey: ['evaluation', 'judges'], queryFn: () => api.getJudges() })
+  const [selected, setSelected] = useState<string | null>(null)
+  const [adding, setAdding] = useState(false)
+  const list = judges.data?.judges ?? []
+  const current = adding ? null : (list.find((judge) => judge.key === selected) ?? list[0] ?? null)
+
+  return (
+    <div className="grid h-full grid-cols-[16rem_1fr]">
+      <nav className="space-y-1 overflow-y-auto border-r border-border p-3 text-sm">
+        <Button variant="outline" size="sm" className="mb-2 w-full" onClick={() => setAdding(true)}>
+          <Plus /> Judge
+        </Button>
+        {judges.error ? <p className="text-xs text-destructive">{(judges.error as Error).message}</p> : null}
+        {list.map((judge) => (
+          <button
+            key={judge.key}
+            type="button"
+            onClick={() => {
+              setAdding(false)
+              setSelected(judge.key)
+            }}
+            className={cn('w-full rounded-md px-2 py-1.5 text-left hover:bg-muted', current?.key === judge.key && 'bg-muted font-medium')}
+          >
+            <div className="truncate">{judge.label}</div>
+            <div className="truncate text-xs text-muted-foreground">
+              {judge.failure_category ?? 'no category'} · {STATUS[judge.status]}
+            </div>
+          </button>
+        ))}
+      </nav>
+      <div className="min-w-0 space-y-8 overflow-y-auto p-6">
+        {adding ? (
+          <NewJudge
+            onCreated={(key) => {
+              setAdding(false)
+              setSelected(key)
+            }}
+          />
+        ) : current ? (
+          <JudgeEditor key={current.key} judge={current} />
+        ) : (
+          <p className="text-sm text-muted-foreground">No judges yet.</p>
+        )}
+        <JudgeDatasets judges={list} />
+      </div>
+    </div>
+  )
+}
+
+function NewJudge({ onCreated }: { onCreated: (key: string) => void }) {
+  const queryClient = useQueryClient()
+  const categories = useQuery({ queryKey: ['evaluation', 'categories'], queryFn: () => api.getCategories() })
+  const [key, setKey] = useState('')
+  const [model, setModel] = useState('gpt-4.1-2025-04-14')
+  const [category, setCategory] = useState('')
+  const create = useMutation({
+    mutationFn: () => api.addJudge({ key: key.trim(), model: model.trim(), failure_category: category || null }),
+    onSuccess: (judge) => {
+      void queryClient.invalidateQueries({ queryKey: ['evaluation'] })
+      onCreated(judge.key)
+    },
+  })
+  return (
+    <section className="max-w-xl space-y-3">
+      <h3 className="text-base font-semibold">New judge</h3>
+      <p className="text-xs text-muted-foreground">
+        Written to judges/&lt;key&gt;/ with instructions and a template to edit, and a &lt;key&gt;_agent measure that reports
+        its verdict (listed under the category it decides).
+      </p>
+      <div className="grid grid-cols-3 gap-3">
+        <Input aria-label="Key" placeholder="politeness_judge" value={key} onChange={(e) => setKey(e.target.value)} />
+        <Input aria-label="Model" value={model} onChange={(e) => setModel(e.target.value)} />
+        <NativeSelect aria-label="Failure category" value={category} onChange={(e) => setCategory(e.target.value)}>
+          <NativeSelectOption value="">No category</NativeSelectOption>
+          {(categories.data?.categories ?? []).map((c) => (
+            <NativeSelectOption key={c.id} value={c.name}>
+              {c.name}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+      </div>
+      <Button size="sm" disabled={!key.trim() || !model.trim() || create.isPending} onClick={() => create.mutate()}>
+        Create
+      </Button>
+      {create.error ? <p className="text-sm text-destructive">{(create.error as Error).message}</p> : null}
+    </section>
+  )
+}
+
+function JudgeEditor({ judge }: { judge: Judge }) {
+  const queryClient = useQueryClient()
+  const categories = useQuery({ queryKey: ['evaluation', 'categories'], queryFn: () => api.getCategories() })
+  const [draft, setDraft] = useState(judge)
+  useEffect(() => setDraft(judge), [judge])
+  const refresh = () => void queryClient.invalidateQueries({ queryKey: ['evaluation'] })
+  const save = useMutation({
+    mutationFn: () =>
+      api.updateJudge(judge.key, {
+        model: draft.model,
+        label: draft.label,
+        source: draft.source,
+        failure_category: draft.failure_category ?? '',
+        instructions: draft.instructions,
+        template: draft.template,
+      }),
+    onSuccess: refresh,
+  })
+  const remove = useMutation({ mutationFn: () => api.removeJudge(judge.key), onSuccess: refresh })
+  const changed = JSON.stringify(draft) !== JSON.stringify(judge)
+
+  return (
+    <section className="space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-base font-semibold">{judge.label}</h3>
+          <p className="font-mono text-xs text-muted-foreground">{judge.defined_in}</p>
+          <Validation judge={judge} />
+        </div>
+        <div className="flex gap-2">
+          <Button size="sm" disabled={!changed || save.isPending} onClick={() => save.mutate()}>
+            {save.isPending ? 'Saving…' : 'Save'}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => window.confirm(`Delete ${judge.label}?`) && remove.mutate()}
+          >
+            <Trash2 /> Delete
+          </Button>
+        </div>
+      </div>
+      {save.error || remove.error ? (
+        <p className="text-sm text-destructive">{((save.error ?? remove.error) as Error).message}</p>
+      ) : null}
+      <div className="grid grid-cols-4 gap-3">
+        <div className="grid gap-1.5">
+          <Label>Label</Label>
+          <Input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} />
+        </div>
+        <div className="grid gap-1.5">
+          <Label>Model</Label>
+          <Input value={draft.model ?? ''} onChange={(e) => setDraft({ ...draft, model: e.target.value })} />
+        </div>
+        <div className="grid gap-1.5">
+          <Label>Reads</Label>
+          <NativeSelect value={draft.source} onChange={(e) => setDraft({ ...draft, source: e.target.value })}>
+            <NativeSelectOption value="final_assistant_text">The final reply</NativeSelectOption>
+            <NativeSelectOption value="history">The whole conversation</NativeSelectOption>
+          </NativeSelect>
+        </div>
+        <div className="grid gap-1.5">
+          <Label>Decides</Label>
+          <NativeSelect
+            value={draft.failure_category ?? ''}
+            onChange={(e) => setDraft({ ...draft, failure_category: e.target.value || null })}
+          >
+            <NativeSelectOption value="">No category</NativeSelectOption>
+            {(categories.data?.categories ?? []).map((c) => (
+              <NativeSelectOption key={c.id} value={c.name}>
+                {c.name}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </div>
+      </div>
+      <div className="grid gap-1.5">
+        <Label>Instructions</Label>
+        <Textarea
+          rows={10}
+          className="font-mono text-xs"
+          value={draft.instructions}
+          onChange={(e) => setDraft({ ...draft, instructions: e.target.value })}
+        />
+      </div>
+      <div className="grid gap-1.5">
+        <Label>Template: what the judge is shown ({'{{ text }}'} is the reply or conversation)</Label>
+        <Textarea
+          rows={6}
+          className="font-mono text-xs"
+          value={draft.template}
+          onChange={(e) => setDraft({ ...draft, template: e.target.value })}
+        />
+      </div>
+      <FewShotExamples judge={judge} />
+    </section>
+  )
+}
+
+function categoryId(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\-_]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '')
+}
+
+/**
+ * A judge's few-shot examples: reviewed answers from the train split of its
+ * category's dataset, each shown to the judge with the reviewer's notes as
+ * its critique. Never from dev or test, which measure the judge.
+ */
+function FewShotExamples({ judge }: { judge: Judge }) {
+  const queryClient = useQueryClient()
+  const datasets = useQuery({ queryKey: ['evaluation', 'judge-datasets'], queryFn: () => api.getJudgeDatasets() })
+  const dataset = judge.failure_category
+    ? datasets.data?.datasets.find((d) => d.category === categoryId(judge.failure_category!))
+    : undefined
+  const trainPath = dataset?.splits.find((split) => split.split === 'train')?.path ?? null
+  const train = useQuery({
+    queryKey: ['evaluation', 'judge-split', trainPath],
+    queryFn: () => api.getJudgeDatasetSplit(trainPath!),
+    enabled: !!trainPath,
+  })
+  const [chosen, setChosen] = useState<string[]>(judge.examples)
+  useEffect(() => setChosen(judge.examples), [judge.examples])
+  const save = useMutation({
+    mutationFn: () => api.setJudgeExamples(judge.key, chosen),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['evaluation'] }),
+  })
+  const changed = JSON.stringify(chosen) !== JSON.stringify(judge.examples)
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-end justify-between gap-2">
+        <div>
+          <Label>Few-shot examples</Label>
+          <p className="text-xs text-muted-foreground">
+            Answers from the train split of its judge dataset, shown to the judge with the reviewer&apos;s notes as the
+            critique. Pick a clear Pass, a clear Fail and a borderline case (2-4 in all).
+          </p>
+        </div>
+        <Button size="sm" variant="outline" disabled={!changed || save.isPending} onClick={() => save.mutate()}>
+          Save examples
+        </Button>
+      </div>
+      {!judge.failure_category ? (
+        <p className="text-xs text-muted-foreground">Give the judge a failure category to draw examples from its dataset.</p>
+      ) : !trainPath ? (
+        <p className="text-xs text-muted-foreground">Build its category&apos;s judge dataset first.</p>
+      ) : (
+        <div className="max-h-72 space-y-1 overflow-y-auto rounded-md border border-border p-2">
+          {(train.data?.scenarios ?? []).map((answer) => {
+            const id = String(answer.id)
+            const notes = typeof answer.notes === 'string' ? answer.notes.trim() : ''
+            return (
+              <label key={id} className={cn('flex items-start gap-2 text-xs', !notes && 'opacity-50')}>
+                <Checkbox
+                  checked={chosen.includes(id)}
+                  disabled={!notes}
+                  onCheckedChange={(on) => setChosen(on ? [...chosen, id] : chosen.filter((c) => c !== id))}
+                />
+                <span className="min-w-0 flex-1">
+                  <Badge variant={answer.label ? 'destructive' : 'secondary'} className="mr-1">
+                    {answer.label ? 'Fail' : 'Pass'}
+                  </Badge>
+                  {excerpt(answer.reply, 120)}
+                  <span className="block text-muted-foreground">
+                    {notes ? `Critique: ${excerpt(notes, 160)}` : 'No reviewer notes, so it cannot be an example'}
+                  </span>
+                </span>
+              </label>
+            )
+          })}
+        </div>
+      )}
+      {save.error ? <p className="text-xs text-destructive">{(save.error as Error).message}</p> : null}
+    </div>
+  )
+}
+
+function JudgeDatasets({ judges }: { judges: Judge[] }) {
+  const queryClient = useQueryClient()
+  const datasets = useQuery({ queryKey: ['evaluation', 'judge-datasets'], queryFn: () => api.getJudgeDatasets() })
+  const [browsing, setBrowsing] = useState<string | null>(null)
+  const remove = useMutation({
+    mutationFn: (dataset: JudgeDataset) => api.removeJudgeDataset(dataset.category),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['evaluation', 'judge-datasets'] }),
+  })
+  const list = datasets.data?.datasets ?? []
+  return (
+    <section className="space-y-3">
+      <div>
+        <h3 className="text-base font-semibold">Judge datasets</h3>
+        <p className="text-xs text-muted-foreground">
+          One per category, built from every answer reviewed in Logs: the judge should say Fail where reviewers saw the
+          category, Pass elsewhere. Splits are balanced by label, and building again with the same seed adds new reviews
+          and keeps every earlier answer where it was.
+        </p>
+      </div>
+      <BuildJudgeDataset />
+      {list.length === 0 ? <p className="text-sm text-muted-foreground">No judge datasets yet.</p> : null}
+      {list.map((dataset) => (
+        <div key={dataset.category} className="space-y-2 rounded-md border border-border p-3">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="font-medium">{dataset.category}</span>
+            {dataset.manifest.built_at ? (
+              <span className="text-xs text-muted-foreground">built {when(String(dataset.manifest.built_at))}</span>
+            ) : null}
+            {dataset.splits.map((split) => (
+              <button key={split.split} type="button" onClick={() => setBrowsing(browsing === split.path ? null : split.path)}>
+                <Badge variant={browsing === split.path ? 'default' : 'outline'}>
+                  {split.split}: {split.fails} Fail / {split.passes} Pass
+                </Badge>
+              </button>
+            ))}
+            <Button variant="ghost" size="icon-xs" className="ml-auto" aria-label="Delete dataset" onClick={() => remove.mutate(dataset)}>
+              <Trash2 />
+            </Button>
+          </div>
+          {dataset.manifest.warnings?.length ? (
+            <ul className="list-disc pl-5 text-xs text-amber-700 dark:text-amber-400">
+              {dataset.manifest.warnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          ) : null}
+          {dataset.splits.some((split) => split.path === browsing) ? <SplitBrowser path={browsing!} /> : null}
+          <OptimizeJudge dataset={dataset} judges={judges} />
+        </div>
+      ))}
+    </section>
+  )
+}
+
+function SplitBrowser({ path }: { path: string }) {
+  const { data, error } = useQuery({ queryKey: ['evaluation', 'judge-split', path], queryFn: () => api.getJudgeDatasetSplit(path) })
+  if (error) return <p className="text-xs text-destructive">{(error as Error).message}</p>
+  if (!data) return null
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Scenario</TableHead>
+          <TableHead>Label</TableHead>
+          <TableHead>Reply the judge reads</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {data.scenarios.map((scenario) => (
+          <TableRow key={String(scenario.id ?? scenario.name)}>
+            <TableCell className="align-top text-xs">{scenario.name}</TableCell>
+            <TableCell className="align-top">
+              <Badge variant={scenario.label ? 'destructive' : 'secondary'}>{scenario.label ? 'Fail' : 'Pass'}</Badge>
+            </TableCell>
+            <TableCell className="max-w-xl whitespace-normal align-top text-xs text-muted-foreground">
+              {scenario.reply === null ? <em>No reply</em> : excerpt(scenario.reply, 240)}
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  )
+}
+
+function OptimizeJudge({ dataset, judges }: { dataset: JudgeDataset; judges: Judge[] }) {
+  const job = useJob([['evaluation', 'judges']])
+  const deciding = judges.filter((judge) => (judge.failure_category ?? '').toLowerCase().replace(/\s+/g, '_') === dataset.category)
+  const [judge, setJudge] = useState(deciding[0]?.key ?? judges[0]?.key ?? '')
+  const [budget, setBudget] = useState('60')
+  if (judges.length === 0) {
+    return <p className="text-xs text-muted-foreground">Create a judge to optimize it on this dataset.</p>
+  }
+  return (
+    <div className="space-y-2">
+      <div className="flex items-end gap-2">
+        <div className="grid gap-1">
+          <Label htmlFor={`optimize-${dataset.category}`} className="text-xs">
+            Optimize judge
+          </Label>
+          <NativeSelect id={`optimize-${dataset.category}`} size="sm" value={judge} onChange={(e) => setJudge(e.target.value)}>
+            {judges.map((j) => (
+              <NativeSelectOption key={j.key} value={j.key}>
+                {j.label}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </div>
+        <div className="grid w-24 gap-1">
+          <Label htmlFor={`budget-${dataset.category}`} className="text-xs">
+            Budget
+          </Label>
+          <Input
+            id={`budget-${dataset.category}`}
+            className="h-8"
+            type="number"
+            min={6}
+            value={budget}
+            onChange={(e) => setBudget(e.target.value)}
+          />
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!judge || job.running}
+          onClick={() =>
+            void job.start({
+              kind: 'optimize_judge',
+              judge,
+              category: dataset.category,
+              max_metric_calls: Math.max(6, Number(budget) || 60),
+            })
+          }
+        >
+          Optimize on this dataset
+        </Button>
+      </div>
+      <JobPanel job={job.job} error={job.error} onDismiss={job.dismiss} />
+    </div>
+  )
+}
+
+/** Build (or rebuild) one category's judge dataset from the reviews. */
+function BuildJudgeDataset() {
+  const queryClient = useQueryClient()
+  const categories = useQuery({ queryKey: ['evaluation', 'categories'], queryFn: () => api.getCategories() })
+  const ids = categories.data?.categories.map((c) => c.id) ?? []
+  const [category, setCategory] = useState('')
+  const [seed, setSeed] = useState('42')
+  const chosen = category || ids[0] || ''
+  const build = useMutation({
+    mutationFn: () => api.createJudgeDataset({ category: chosen, seed: Number(seed) || 42 }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['evaluation', 'judge-datasets'] }),
+  })
+  return (
+    <div className="flex flex-wrap items-end gap-2">
+      <div className="grid gap-1">
+        <Label htmlFor="judge-dataset-category" className="text-xs">
+          Category
+        </Label>
+        <NativeSelect id="judge-dataset-category" size="sm" value={chosen} onChange={(e) => setCategory(e.target.value)}>
+          {ids.map((id) => (
+            <NativeSelectOption key={id} value={id}>
+              {id}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+      </div>
+      <div className="grid w-20 gap-1">
+        <Label htmlFor="judge-dataset-seed" className="text-xs">
+          Seed
+        </Label>
+        <Input id="judge-dataset-seed" className="h-8" value={seed} onChange={(e) => setSeed(e.target.value)} />
+      </div>
+      <Button size="sm" variant="outline" disabled={!chosen || build.isPending} onClick={() => build.mutate()}>
+        Build from reviews
+      </Button>
+      {build.error ? <span className="text-xs text-destructive">{(build.error as Error).message}</span> : null}
+    </div>
+  )
+}
+
+const STATUS: Record<Judge['status'], string> = {
+  validated: 'validated',
+  changed: 'changed since validation',
+  unvalidated: 'not validated',
+}
+
+/**
+ * Whether the judge as it is now can be trusted: its one measurement on the
+ * test split of its judge dataset (Pass positive). Until then, runs report
+ * its verdicts uncorrected.
+ */
+function Validation({ judge }: { judge: Judge }) {
+  return (
+    <>
+      <ValidationStatus judge={judge} />
+      {!judge.model_pinned ? (
+        <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+          Its model ({judge.model ?? 'unset'}) is an alias the provider can change; pin a dated snapshot (e.g.
+          gpt-4.1-2025-04-14) so it cannot drift from its validation.
+        </p>
+      ) : null}
+    </>
+  )
+}
+
+function ValidationStatus({ judge }: { judge: Judge }) {
+  const test = judge.validation?.test
+  if (judge.status === 'unvalidated' || !test) {
+    return (
+      <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+        Not validated: run it once on its judge dataset&apos;s test split (<code>omniagents judge run -s test</code>) before
+        trusting its pass rates.
+      </p>
+    )
+  }
+  const rates = `TPR ${percent(test.tpr)}, TNR ${percent(test.tnr)} on ${test.tp + test.fn + test.tn + test.fp} test answers`
+  return judge.status === 'validated' ? (
+    <p className="mt-1 text-xs text-muted-foreground">
+      Validated {when(judge.validation!.validated_at)}: {rates}.
+    </p>
+  ) : (
+    <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+      Changed since it was validated ({rates}); runs report it uncorrected until it is measured on the test split again.
+    </p>
+  )
+}

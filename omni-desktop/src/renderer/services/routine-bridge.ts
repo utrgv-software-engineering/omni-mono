@@ -1,7 +1,7 @@
 /**
  * Renderer-side routine bridge.
  *
- * Mirrors `supervisor-bridge.ts` but for Routines (scheduled tasks). Main asks
+ * For Routines (scheduled tasks). Main asks
  * the renderer to ensure a Code column exists for a routine run (creating the
  * tab on demand) and to start a single run on that column's live session. The
  * run therefore streams into the visible UI exactly like a user-driven session,
@@ -12,22 +12,12 @@
  * No session id or tool-call routing lives here — the column owns both.
  */
 
+import type { RoutineActor, RoutineEvent } from '@omniagents/chat-ui/host';
+
 import { ensureRoutineSessionTab } from '@/renderer/features/ScheduledTasks/routine-session';
 import { emitter, ipc } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
-import type { RoutineBridgeEvent, RoutineBridgeRequest, RunOverrides } from '@/shared/types';
-
-export type RoutineActor = {
-  taskId: string;
-  /**
-   * Start a single run on the column's session through the same handleSubmit
-   * path the user's keyboard uses. `safeToolOverrides` carries the routine's
-   * always-allow list. Resolves with the runId once `start_run` is acked.
-   */
-  startRun: (prompt: string, safeToolOverrides?: RunOverrides['safeToolOverrides']) => Promise<{ runId: string }>;
-  /** Stop any in-flight run on the column's session. */
-  stop: () => Promise<void>;
-};
+import type { RoutineBridgeRequest } from '@/shared/types';
 
 const actors = new Map<string, RoutineActor>();
 const waiters = new Map<string, Array<(a: RoutineActor) => void>>();
@@ -78,7 +68,7 @@ function awaitActor(taskId: string, timeoutMs: number): Promise<RoutineActor> {
   });
 }
 
-export async function forwardRoutineEvent(event: RoutineBridgeEvent): Promise<void> {
+export async function forwardRoutineEvent(event: RoutineEvent): Promise<void> {
   try {
     await emitter.invoke('routine:event', event);
   } catch {

@@ -4,14 +4,14 @@
 import type {
   GoalSnapshot,
   LoopTaskSnapshot,
-  Message,
-  UsageInfo,
-} from "../store/appStore.js";
+} from "@omniagents/client/session/panel-types";
+import type { TokenUsage } from "@omniagents/client/session/session-panels";
+import type { Message } from "../store/appStore.js";
 
 export type StatusFacts = {
   sessionId: string | null | undefined;
   model: string | null;
-  usage: UsageInfo | null;
+  usage: TokenUsage | null;
   goal: GoalSnapshot | null;
   loops: LoopTaskSnapshot[];
   workspaceRoot: string | null;

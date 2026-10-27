@@ -1,7 +1,6 @@
+import { cn } from '@omniagents/ui/cn';
+import { SidebarTrigger } from '@omniagents/ui/sidebar';
 import type { ReactNode } from 'react';
-
-import { cn } from '@/renderer/ds/cn';
-import { SidebarTrigger } from '@/renderer/ds/ui/sidebar';
 
 type PageHeaderProps = {
   title: string;

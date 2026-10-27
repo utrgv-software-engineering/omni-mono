@@ -1,5 +1,7 @@
-import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { ChildProcessByStdio } from 'node:child_process';
 import { execFileSync, spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import type { Readable } from 'node:stream';
 
 const delay = (ms: number) =>
   new Promise((resolve) => {
@@ -8,7 +10,7 @@ const delay = (ms: number) =>
 
 const tail = (value: string, lineCount = 120) => value.split('\n').slice(-lineCount).join('\n');
 
-function signalProcessTree(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
+function signalProcessTree(child: ChildProcessByStdio<null, Readable, Readable>, signal: NodeJS.Signals): void {
   try {
     if (process.platform === 'win32' || child.pid === undefined) {
       child.kill(signal);
@@ -23,7 +25,83 @@ function signalProcessTree(child: ChildProcessWithoutNullStreams, signal: NodeJS
   }
 }
 
+/** Abruptly stop only this launched application's process tree. */
+export function crashProcessTree(pid: number): void {
+  if (process.platform === 'win32') {
+    execFileSync('taskkill', ['/pid', String(pid), '/T', '/F']);
+    return;
+  }
+  const parents = execFileSync('ps', ['-eo', 'pid=,ppid='], { encoding: 'utf8' })
+    .trim()
+    .split('\n')
+    .map((line) => line.trim().split(/\s+/).map(Number) as [number, number]);
+  const targets = new Set([pid]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [child, parent] of parents) {
+      if (targets.has(parent) && !targets.has(child)) {
+        targets.add(child);
+        changed = true;
+      }
+    }
+  }
+  const signal = (target: number, value: NodeJS.Signals) => {
+    try {
+      process.kill(target, value);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
+        throw error;
+      }
+    }
+  };
+  // Freeze first so a dying child cannot trigger a graceful parent finalizer.
+  for (const target of targets) {
+    signal(target, 'SIGSTOP');
+  }
+  for (const target of targets) {
+    signal(target, 'SIGKILL');
+  }
+}
+
+/** `pid` and its live descendants, via /proc. Linux only. */
+export function processTree(pid: number): number[] {
+  const found = new Set<number>();
+  const pending = [pid];
+  while (pending.length) {
+    const next = pending.pop()!;
+    if (found.has(next)) {
+      continue;
+    }
+    try {
+      const children = readFileSync(`/proc/${next}/task/${next}/children`, 'utf8').trim().split(/\s+/);
+      found.add(next);
+      pending.push(...children.filter(Boolean).map(Number));
+    } catch {
+      /* A process may exit during the snapshot. */
+    }
+  }
+  return [...found];
+}
+
+export function commandLine(pid: number): string[] {
+  try {
+    return readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The `omni serve` hosts a launcher spawned. The desktop always passes
+ * `--exit-on-stdin-close`, so the flag identifies them unambiguously.
+ */
+export function runtimePidsUnder(root: number): number[] {
+  return processTree(root).filter((pid) => commandLine(pid).includes('--exit-on-stdin-close'));
+}
+
 export type ManagedProcess = {
+  readonly pid: number | undefined;
   crashDescendant: (pid: number) => void;
   logs: () => string;
   stop: (signal?: NodeJS.Signals) => Promise<void>;
@@ -43,7 +121,7 @@ export function startProcess(input: {
     detached: process.platform !== 'win32',
     shell: process.platform === 'win32',
     stdio: ['ignore', 'pipe', 'pipe'],
-  }) as ChildProcessWithoutNullStreams;
+  });
   let output = '';
 
   child.stdout.on('data', (chunk: Buffer) => {
@@ -60,6 +138,7 @@ export function startProcess(input: {
   });
 
   return {
+    pid: child.pid,
     crashDescendant: (pid) => {
       const parents = new Map(
         execFileSync('ps', ['-eo', 'pid=,ppid='], { encoding: 'utf8' })

@@ -1,0 +1,873 @@
+/**
+ * XState v5 machine for chat session state.
+ *
+ * Manages: session identity, run lifecycle, message items, tool approval
+ * flow, and session-based event filtering.
+ *
+ * Pure definition — no React, no IPC, no DOM imports.
+ * Session filtering reuses the pure guards from `@/lib/session-filter`.
+ */
+import { assign, setup } from 'xstate';
+
+import type {
+  ApprovalItem,
+  ArtifactItem,
+  Attachment,
+  ChatItemMetadata,
+  ChatMessage,
+  GuardianReviewItem,
+  MessageItem,
+  WorkflowReviewItem,
+} from '../transcript/chat-types';
+import {
+  appendAssistantMessage as appendAssistantMessageItem,
+  applyToolResult as applyToolResultItem,
+  upsertToolCall as upsertToolCallItem,
+} from '../transcript/transcript-items';
+import { acceptLooseEvent, acceptStrictEvent } from '../util/session-filter';
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+/**
+ * Flattened view of the hierarchical state machine.
+ *
+ * The machine has three top-level states (`initializing`, `initError`,
+ * `ready`) and `ready` has nested run sub-states. We flatten both levels
+ * into one union for ergonomic UI rendering.
+ *
+ * Invariant: when `phase` is one of `idle`, `starting`, `running`,
+ * `awaitingApproval`, or `stopping`, the machine is inside `ready` and
+ * `context.sessionId` is guaranteed to be defined.
+ */
+export type ChatSessionPhase =
+  'initializing' | 'initError' | 'idle' | 'starting' | 'running' | 'awaitingApproval' | 'stopping';
+
+/**
+ * One snapshot of model context staged via MCP-Apps ``ui/update-model-context``.
+ * Per spec, "each request overwrites the previous context stored by the view"
+ * — so the buffer is keyed by ``source`` (e.g. ``mcp_ui:<call_id>``) and a new
+ * stage from the same source replaces the prior one. On submit we flatten
+ * all staged entries into the prompt, then clear.
+ */
+export type StagedContextEntry = {
+  source: string;
+  text: string;
+};
+
+export type ChatSessionContext = {
+  sessionId: string | undefined;
+  runId: string | undefined;
+  items: MessageItem[];
+  pendingApprovals: Map<string, ApprovalItem>;
+  status: string | undefined;
+  statusSpinner: boolean;
+  statusItalic: boolean;
+  toolStatus: string | undefined;
+  error: string | undefined;
+  stagedContext: StagedContextEntry[];
+};
+
+export type ChatSessionEvent =
+  // User actions
+  | {
+      type: 'SUBMIT';
+      text: string;
+      attachments?: Attachment[];
+      /**
+       * MCP-Apps staged context entries flushed on this submit. Stored
+       * on the resulting user-turn ChatMessage so the chat log shows
+       * that extra context was attached.
+       */
+      stagedContext?: ReadonlyArray<StagedContextEntry>;
+    }
+  | { type: 'SELECT_SESSION'; id: string }
+  | { type: 'HYDRATE' }
+  | { type: 'NEW_SESSION'; sessionId: string }
+  | { type: 'STOP' }
+  | { type: 'STOP_FAILED'; run_id: string }
+  | { type: 'APPROVAL_DECIDED'; request_id: string; value: 'yes' | 'always' | 'no' }
+  // Server events
+  | { type: 'RUN_STARTED'; run_id: string; session_id?: string; prompt?: string; prompt_role?: string }
+  | { type: 'RUN_END'; session_id?: string; run_id?: string }
+  | { type: 'MESSAGE_OUTPUT'; content: string; session_id?: string; message_id?: string; run_id?: string }
+  | {
+      type: 'TOOL_CALLED';
+      call_id: string;
+      tool: string;
+      input: string;
+      // In-flight card title from the tool's ``running_summary`` declaration
+      // (omniagents attaches it as ``metadata.summary`` on ``tool_called``);
+      // superseded wholesale by the result's metadata.
+      metadata?: ChatItemMetadata;
+      // (server, tool) identity fields for MCP-derived tools.
+      server_label?: string;
+      tool_label?: string;
+      run_id?: string;
+      session_id?: string;
+    }
+  | {
+      type: 'TOOL_RESULT';
+      call_id: string;
+      tool: string;
+      output: string;
+      metadata?: ChatItemMetadata;
+      server_label?: string;
+      tool_label?: string;
+      run_id?: string;
+      session_id?: string;
+    }
+  | { type: 'RUN_STATUS'; text: string; session_id?: string }
+  | { type: 'TOKEN'; session_id?: string }
+  | {
+      type: 'REQUEST_APPROVAL';
+      run_id?: string;
+      request_id: string;
+      tool: string;
+      argumentsText?: string;
+      metadata?: ChatItemMetadata;
+      session_id?: string;
+      // Discriminator for the two interruption flows in omniagents
+      // 0.16+: function-tool approvals (default) vs hosted-MCP
+      // approvals. MCP approvals carry a server_label and are answered
+      // via a different RPC (no ``always_approve`` flag).
+      kind?: 'function' | 'mcp';
+      server_label?: string;
+      tool_label?: string;
+    }
+  | { type: 'APPROVAL_RESOLVED'; request_id: string }
+  | {
+      type: 'GUARDIAN_REVIEWED';
+      request_id: string;
+      tool: string;
+      reviewer: string;
+      outcome: 'allow' | 'deny';
+      risk_level?: string;
+      rationale?: string;
+      kind?: 'tool' | 'mcp';
+      server_label?: string;
+      session_id?: string;
+    }
+  | {
+      type: 'WORKFLOW_REVIEWED';
+      task_id: string;
+      subject: string;
+      outcome: 'reject' | 'accept_unverified' | 'escalated';
+      reviewer: string;
+      rationale?: string;
+      session_id?: string;
+    }
+  | { type: 'SET_STATUS'; text?: string; showSpinner?: boolean; session_id?: string }
+  // History loading
+  | { type: 'HISTORY_LOADED'; items: MessageItem[]; active_run_id?: string }
+  | { type: 'HISTORY_ERROR'; error: string }
+  | { type: 'CANONICAL_ITEM_UPDATED'; item: MessageItem; session_id?: string }
+  // Errors
+  | { type: 'SUBMIT_ERROR'; error: string }
+  // Artifacts
+  | {
+      type: 'ADD_ARTIFACT';
+      artifact_id?: string;
+      title: string;
+      content: string;
+      mode?: string;
+      session_id?: string;
+      mcp_ui?: ArtifactItem['mcp_ui'];
+    }
+  // Direct item manipulation (slash commands, external updates)
+  | { type: 'APPEND_RESPONSE'; content: string; command?: string }
+  | { type: 'RUN_FAILED'; message: string }
+  | { type: 'SET_SESSION_ID'; sessionId: string }
+  // MCP-Apps ``ui/update-model-context`` — stage content for the next
+  // user turn. ``source`` keys per-view (e.g. ``mcp_ui:<call_id>``) so
+  // re-stages from the same source replace the prior entry, matching
+  // the spec's "overwrite previous context" semantics.
+  | { type: 'STAGE_CONTEXT'; source: string; text: string }
+  | { type: 'CLEAR_STAGED_CONTEXT' };
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function sessionId(event: { session_id?: string }): string | undefined {
+  return event.session_id;
+}
+
+const INITIAL_CONTEXT: ChatSessionContext = {
+  sessionId: undefined,
+  runId: undefined,
+  items: [],
+  pendingApprovals: new Map(),
+  status: undefined,
+  statusSpinner: false,
+  statusItalic: false,
+  toolStatus: undefined,
+  error: undefined,
+  stagedContext: [],
+};
+
+// ---------------------------------------------------------------------------
+// Machine definition
+// ---------------------------------------------------------------------------
+
+export const chatSessionMachine = setup({
+  types: {
+    context: {} as ChatSessionContext,
+    events: {} as ChatSessionEvent,
+  },
+
+  // --- Guards ---
+  guards: {
+    /** Strict filter — rejects events from other sessions. startingRun = false. */
+    acceptStrict: ({ context, event }) =>
+      acceptStrictEvent(
+        { currentSessionId: context.sessionId, startingRun: false },
+        sessionId(event as { session_id?: string })
+      ),
+
+    /** Strict filter — but startingRun = true (used in the `starting` state). */
+    acceptStrictOrStarting: ({ context, event }) =>
+      acceptStrictEvent(
+        { currentSessionId: context.sessionId, startingRun: true },
+        sessionId(event as { session_id?: string })
+      ),
+
+    /** Loose filter — only rejects when both sides have IDs that disagree. */
+    acceptLoose: ({ context, event }) =>
+      !(event.type === 'RUN_END' && event.run_id && context.runId && event.run_id !== context.runId) &&
+      acceptLooseEvent(
+        { currentSessionId: context.sessionId, startingRun: false },
+        sessionId(event as { session_id?: string })
+      ),
+
+    /** True when more than one approval is pending (so removing one still leaves queue non-empty). */
+    hasMoreApprovals: ({ context }) => context.pendingApprovals.size > 1,
+  },
+
+  // --- Actions ---
+  actions: {
+    // SUBMIT only fires from ready.idle where context.sessionId is already
+    // set. We deliberately do NOT assign sessionId here — minting a session
+    // at submit time was the defensive hack that masked upstream load
+    // failures. See the machine-level comment on initialState for the
+    // enforced invariant.
+    appendUserMessage: assign({
+      items: ({ context, event }) => {
+        const e = event as Extract<ChatSessionEvent, { type: 'SUBMIT' }>;
+        const msg: ChatMessage = { type: 'chat', role: 'user', content: e.text };
+        if (e.attachments?.length) {
+          msg.attachments = e.attachments;
+        }
+        if (e.stagedContext && e.stagedContext.length > 0) {
+          msg.staged_context = e.stagedContext;
+        }
+        return [...context.items, msg];
+      },
+      status: undefined,
+      statusSpinner: false,
+      statusItalic: false,
+      toolStatus: undefined,
+    }),
+
+    setRunStarted: assign(({ context, event }) => {
+      const e = event as Extract<ChatSessionEvent, { type: 'RUN_STARTED' }>;
+      return {
+        runId: e.run_id,
+        sessionId: e.session_id ?? context.sessionId,
+        status: undefined,
+        statusSpinner: false,
+        statusItalic: false,
+        toolStatus: undefined,
+      };
+    }),
+
+    // RUN_STARTED can fire from ``idle`` when a run was initiated outside
+    // the local actor — e.g. a queued message that the server drainer
+    // turned into a start_run, or a background-automation enqueue. In
+    // that case the user-side SUBMIT never ran, so the originating turn
+    // is missing from items. Append it from the prompt carried on the
+    // event so the transcript stays coherent. The server tags the turn
+    // with ``prompt_role`` so notification-batch wakeups (worker /
+    // bash-job completions) land as assistant messages rather than fake
+    // user input; default to user for back-compat with servers that
+    // don't ship the field.
+    appendUserMessageFromRunStarted: assign(({ context, event }) => {
+      const e = event as Extract<ChatSessionEvent, { type: 'RUN_STARTED' }>;
+      const text = typeof e.prompt === 'string' ? e.prompt : '';
+      if (!text) {
+        return { items: context.items };
+      }
+      const role: ChatMessage['role'] =
+        e.prompt_role === 'assistant' || e.prompt_role === 'system' ? e.prompt_role : 'user';
+      // Idempotency: scan items for a matching same-role chat message
+      // already present. Reconnect / history-replay can deliver the same
+      // RUN_STARTED twice; the rehydrate path may also have written the
+      // turn to items already if reload races the live event.
+      const dup = context.items.some((it) => it.type === 'chat' && it.role === role && it.content === text);
+      if (dup) {
+        return { items: context.items };
+      }
+      const msg: ChatMessage = { type: 'chat', role, content: text };
+      if (role === 'assistant') {
+        // Assistant-role wakeup prompts are recorded canonically as
+        // agent_message items with a turn_id, so after reload they fold
+        // into the run's activity chain. Stamp the same run identity live.
+        // The event's run_id is authoritative here: setRunStarted runs
+        // AFTER this action, so context.runId still holds the prior run.
+        msg.runId = e.run_id;
+      }
+      return { items: [...context.items, msg] };
+    }),
+
+    // Live narration, tool calls and their results all build items through
+    // the shared reducer (`@/shared/transcript-items`) — the same one the
+    // subagent transcript store uses, so a nested run reads identically.
+    appendAssistantMessage: assign(({ context, event }) => {
+      const e = event as Extract<ChatSessionEvent, { type: 'MESSAGE_OUTPUT' }>;
+      return {
+        items: appendAssistantMessageItem(context.items, e.content, e.run_id ?? context.runId, e.message_id),
+        status: undefined,
+        statusItalic: false,
+      };
+    }),
+
+    appendToolItem: assign(({ context, event }) => {
+      const e = event as Extract<ChatSessionEvent, { type: 'TOOL_CALLED' }>;
+      return { items: upsertToolCallItem(context.items, e, context.runId) };
+    }),
+
+    updateToolResult: assign(({ context, event }) => {
+      const e = event as Extract<ChatSessionEvent, { type: 'TOOL_RESULT' }>;
+      return { items: applyToolResultItem(context.items, e, context.runId) };
+    }),
+
+    updateRunStatus: assign(({ event }) => {
+      const e = event as Extract<ChatSessionEvent, { type: 'RUN_STATUS' }>;
+      return { status: e.text, statusSpinner: true, statusItalic: false };
+    }),
+
+    setStatusFromServer: assign(({ event }) => {
+      const e = event as Extract<ChatSessionEvent, { type: 'SET_STATUS' }>;
+      return {
+        status: e.text,
+        statusSpinner: e.showSpinner ?? true,
+        statusItalic: false,
+        toolStatus: e.text?.trim() ? e.text : undefined,
+      };
+    }),
+
+    addApproval: assign(({ context, event }) => {
+      const e = event as Extract<ChatSessionEvent, { type: 'REQUEST_APPROVAL' }>;
+      const item: ApprovalItem = {
+        type: 'approval',
+        run_id: e.run_id ?? context.runId,
+        request_id: e.request_id,
+        tool: e.tool,
+        argumentsText: e.argumentsText,
+        metadata: e.metadata,
+        session_id: e.session_id,
+        kind: e.kind ?? 'function',
+        server_label: e.server_label,
+        tool_label: e.tool_label,
+      };
+      const newPending = new Map(context.pendingApprovals);
+      newPending.set(e.request_id, item);
+      // Remove any existing approval with same request_id, then append
+      const filtered = context.items.filter(
+        (it) => !(it.type === 'approval' && (it as ApprovalItem).request_id === e.request_id)
+      );
+      return { pendingApprovals: newPending, items: [...filtered, item] };
+    }),
+
+    appendGuardianReview: assign(({ context, event }) => {
+      const e = event as Extract<ChatSessionEvent, { type: 'GUARDIAN_REVIEWED' }>;
+      const item: GuardianReviewItem = {
+        type: 'guardian_review',
+        request_id: e.request_id,
+        tool: e.tool,
+        reviewer: e.reviewer,
+        outcome: e.outcome,
+        risk_level: e.risk_level,
+        rationale: e.rationale,
+        kind: e.kind,
+        server_label: e.server_label,
+        session_id: e.session_id,
+      };
+      // Replay re-delivers journaled reviews; the record is append-once.
+      const filtered = context.items.filter(
+        (it) => !(it.type === 'guardian_review' && (it as GuardianReviewItem).request_id === e.request_id)
+      );
+      return { items: [...filtered, item] };
+    }),
+
+    appendWorkflowReview: assign(({ context, event }) => {
+      const e = event as Extract<ChatSessionEvent, { type: 'WORKFLOW_REVIEWED' }>;
+      const item: WorkflowReviewItem = {
+        type: 'workflow_review',
+        task_id: e.task_id,
+        subject: e.subject,
+        outcome: e.outcome,
+        reviewer: e.reviewer,
+        rationale: e.rationale,
+        session_id: e.session_id,
+      };
+      // Completion reviews carry no request id; replay convergence dedupes on
+      // the full record (task, outcome, rationale) so re-delivery replaces
+      // while genuinely distinct reviews of the same step all stay on record.
+      const filtered = context.items.filter(
+        (it) =>
+          !(
+            it.type === 'workflow_review' &&
+            (it as WorkflowReviewItem).task_id === e.task_id &&
+            (it as WorkflowReviewItem).outcome === e.outcome &&
+            (it as WorkflowReviewItem).rationale === e.rationale
+          )
+      );
+      return { items: [...filtered, item] };
+    }),
+
+    removeApproval: assign(({ context, event }) => {
+      const e = event as Extract<ChatSessionEvent, { type: 'APPROVAL_DECIDED' | 'APPROVAL_RESOLVED' }>;
+      const newPending = new Map(context.pendingApprovals);
+      newPending.delete(e.request_id);
+      return {
+        pendingApprovals: newPending,
+        items: context.items.filter(
+          (it) => !(it.type === 'approval' && (it as ApprovalItem).request_id === e.request_id)
+        ),
+      };
+    }),
+
+    resetSessionState: assign(({ event }) => {
+      const e = event as Extract<ChatSessionEvent, { type: 'SELECT_SESSION' | 'NEW_SESSION' }>;
+      const sid = e.type === 'SELECT_SESSION' ? e.id : (e as { sessionId: string }).sessionId;
+      return {
+        sessionId: sid,
+        items: [],
+        status: undefined,
+        statusSpinner: false,
+        statusItalic: false,
+        toolStatus: undefined,
+        runId: undefined,
+        pendingApprovals: new Map<string, ApprovalItem>(),
+        error: undefined,
+      };
+    }),
+
+    clearRunState: assign({
+      items: ({ context, event }) =>
+        event.type === 'RUN_END'
+          ? context.items.filter((item) => !(item.type === 'approval' && item.run_id && item.run_id === context.runId))
+          : context.items,
+      pendingApprovals: ({ context, event }) =>
+        event.type === 'RUN_END'
+          ? new Map([...context.pendingApprovals].filter(([, item]) => !item.run_id || item.run_id !== context.runId))
+          : context.pendingApprovals,
+      runId: undefined,
+      status: undefined,
+      statusSpinner: false,
+      statusItalic: false,
+      toolStatus: undefined,
+    }),
+
+    setHistoryItems: assign({
+      pendingApprovals: ({ context, event }) => {
+        const pending = new Map(context.pendingApprovals);
+        const e = event as Extract<ChatSessionEvent, { type: 'HISTORY_LOADED' }>;
+        for (const item of e.items) {
+          if (item.type === 'approval') {
+            pending.set(item.request_id, { ...item, run_id: item.run_id ?? e.active_run_id });
+          }
+        }
+        return pending;
+      },
+      items: ({ context, event }) => {
+        const e = event as Extract<ChatSessionEvent, { type: 'HISTORY_LOADED' }>;
+        const items = e.items.map((item) =>
+          item.type === 'approval' ? { ...item, run_id: item.run_id ?? e.active_run_id } : item
+        );
+        // Merge any pending approvals that arrived during history loading
+        if (context.pendingApprovals.size === 0) {
+          return items;
+        }
+        const approvalItems = [...context.pendingApprovals.values()].filter(
+          (a) => !items.some((it) => it.type === 'approval' && (it as ApprovalItem).request_id === a.request_id)
+        );
+        return approvalItems.length ? [...items, ...approvalItems] : items;
+      },
+    }),
+
+    upsertCanonicalItem: assign({
+      items: ({ context, event }) => {
+        const e = event as Extract<ChatSessionEvent, { type: 'CANONICAL_ITEM_UPDATED' }>;
+        const incoming = e.item.canonical;
+        if (!incoming) {
+          return context.items;
+        }
+        // Provider-identified assistant output may arrive via persistence or
+        // streaming first. Merge only by stable identity, never by text.
+        // Other canonical updates have no legacy live counterpart.
+        // Canonical approval / guardian / workflow items
+        // arrive only via HISTORY_LOADED, which replaces items wholesale —
+        // so a canonical twin can never sit next to its live-appended
+        // counterpart.
+        const next = context.items.slice();
+        const index = next.findIndex(
+          (item) =>
+            item.canonical?.item_id === incoming.item_id ||
+            (e.item.type === 'chat' &&
+              e.item.role === 'assistant' &&
+              e.item.message_id &&
+              item.type === 'chat' &&
+              item.role === 'assistant' &&
+              item.message_id === e.item.message_id)
+        );
+        if (index >= 0) {
+          const current = next[index]!.canonical;
+          if (
+            current &&
+            (incoming.revision < current.revision ||
+              (incoming.revision === current.revision && incoming.updated_at <= current.updated_at))
+          ) {
+            return context.items;
+          }
+          next[index] = e.item;
+        } else {
+          const insertionIndex = next.findIndex(
+            (item) => item.canonical !== undefined && item.canonical.seq > incoming.seq
+          );
+          if (insertionIndex < 0) {
+            next.push(e.item);
+          } else {
+            next.splice(insertionIndex, 0, e.item);
+          }
+        }
+        // HISTORY_LOADED already supplies canonical items in sequence order.
+        // Live messages/tools do not yet carry canonical envelopes, so sorting
+        // the mixed list would partition all live items ahead of history on
+        // every plan/diff update. Preserve the existing transcript order;
+        // replacements stay in place; a new canonical item is inserted before
+        // the next canonical sequence without moving any existing live item.
+        return next;
+      },
+    }),
+
+    setSubmitError: assign(({ context, event }) => {
+      const e = event as Extract<ChatSessionEvent, { type: 'SUBMIT_ERROR' }>;
+      return {
+        items: [...context.items, { type: 'chat' as const, role: 'assistant' as const, content: `Error: ${e.error}` }],
+      };
+    }),
+
+    // Deliberately NOT runId-stamped: APPEND_RESPONSE carries out-of-band
+    // content (slash-command results), not model output of a run — stamping
+    // it would fold external text into the agent's activity chain.
+    appendRunFailure: assign({
+      items: ({ context, event }) => {
+        const e = event as Extract<ChatSessionEvent, { type: 'RUN_FAILED' }>;
+        return [...context.items, { type: 'chat' as const, role: 'system' as const, content: e.message }];
+      },
+    }),
+
+    appendResponse: assign({
+      items: ({ context, event }) => {
+        const e = event as Extract<ChatSessionEvent, { type: 'APPEND_RESPONSE' }>;
+        return [
+          ...context.items,
+          {
+            type: 'chat' as const,
+            role: 'assistant' as const,
+            content: e.content,
+            ...(e.command ? { command: e.command } : {}),
+          },
+        ];
+      },
+    }),
+
+    addArtifact: assign(({ context, event }) => {
+      const e = event as Extract<ChatSessionEvent, { type: 'ADD_ARTIFACT' }>;
+      const entry: ArtifactItem = {
+        type: 'artifact',
+        artifact_id: e.artifact_id,
+        title: e.title,
+        content: e.content,
+        mode: e.mode,
+        session_id: e.session_id,
+        mcp_ui: e.mcp_ui,
+        updated_at: Date.now(),
+      };
+      const next = context.items.slice();
+      // If artifact_id exists, update in-place; otherwise append
+      const idx = e.artifact_id
+        ? next.findIndex((it) => it.type === 'artifact' && (it as ArtifactItem).artifact_id === e.artifact_id)
+        : -1;
+      if (idx >= 0) {
+        next[idx] = entry;
+      } else {
+        next.push(entry);
+      }
+      return { items: next };
+    }),
+
+    setSessionIdOnly: assign({
+      sessionId: ({ event }) => (event as Extract<ChatSessionEvent, { type: 'SET_SESSION_ID' }>).sessionId,
+    }),
+
+    stageContext: assign(({ context, event }) => {
+      const e = event as Extract<ChatSessionEvent, { type: 'STAGE_CONTEXT' }>;
+      const text = (e.text || '').trim();
+      // Replace any existing entry with the same source; per MCP-Apps spec
+      // each ``ui/update-model-context`` request overwrites the previous
+      // context stored by that view.
+      const next = context.stagedContext.filter((c) => c.source !== e.source);
+      if (text) {
+        next.push({ source: e.source, text });
+      }
+      return { stagedContext: next };
+    }),
+
+    clearStagedContext: assign({
+      stagedContext: () => [],
+    }),
+  },
+}).createMachine({
+  id: 'chatSession',
+  // Initial state. Consumers MUST call `loadSession(id | undefined)` before
+  // user interaction — that's how we leave this state. No UI should allow
+  // submission until the machine has reached `ready`. See initError / ready.
+  initial: 'initializing',
+  context: { ...INITIAL_CONTEXT },
+
+  // Root-level event handlers — applied from any state unless a child
+  // state defines its own handler for the same event (child wins).
+  //
+  // These are idempotent, side-effect-free context mutations that must
+  // NEVER be silently dropped just because the machine happens to be in
+  // the "wrong" state. XState drops unhandled events without any warning,
+  // and we've lost days to that exact class of bug — the approval queue
+  // getting stuck, HISTORY_LOADED dropped on mount, etc. The rule:
+  // if an event only assigns context, it belongs at root.
+  //
+  // SELECT_SESSION and NEW_SESSION also live here: they're the one way to
+  // (re)initialize the session, valid from any state. Selecting a session
+  // mid-run aborts the run implicitly because the target state is outside
+  // `ready`.
+  on: {
+    SET_SESSION_ID: { actions: 'setSessionIdOnly' },
+    HISTORY_LOADED: { actions: 'setHistoryItems' },
+    CANONICAL_ITEM_UPDATED: { guard: 'acceptLoose', actions: 'upsertCanonicalItem' },
+    APPEND_RESPONSE: { actions: 'appendResponse' },
+    RUN_FAILED: { actions: 'appendRunFailure' },
+    ADD_ARTIFACT: { guard: 'acceptLoose', actions: 'addArtifact' },
+    STAGE_CONTEXT: { actions: 'stageContext' },
+    CLEAR_STAGED_CONTEXT: { actions: 'clearStagedContext' },
+    // Approvals are NOT bound to a text run. A voice turn's tool gate
+    // prompts over the same /ws channel while this machine sits in
+    // `ready.idle` — the realtime channel never broadcasts run_started —
+    // so a state-scoped handler dropped the card until the voice session
+    // ended and the canonical reload re-projected it. Appending the item
+    // is a pure context assign, so it belongs here; `running` keeps its
+    // own targeted transition into `awaitingApproval` (child wins) and
+    // `awaitingApproval` keeps its queue-aware APPROVAL_DECIDED branches.
+    REQUEST_APPROVAL: { guard: 'acceptStrict', actions: 'addApproval' },
+    APPROVAL_DECIDED: { actions: 'removeApproval' },
+    APPROVAL_RESOLVED: { actions: 'removeApproval' },
+    SELECT_SESSION: {
+      target: '.initializing',
+      actions: 'resetSessionState',
+    },
+    HYDRATE: {
+      target: '.initializing',
+      actions: ['clearRunState', assign({ pendingApprovals: () => new Map<string, ApprovalItem>(), error: undefined })],
+    },
+    NEW_SESSION: {
+      target: '.ready.idle',
+      actions: 'resetSessionState',
+    },
+  },
+
+  states: {
+    // -------------------------------------------------------------------
+    // Initializing — initial state. Waiting for HISTORY_LOADED (selected an
+    // existing session) or a direct transition via NEW_SESSION (fresh chat).
+    // The only valid transitions out are: to `ready` via HISTORY_LOADED /
+    // NEW_SESSION, or to `initError` on failure.
+    // -------------------------------------------------------------------
+    initializing: {
+      on: {
+        HISTORY_LOADED: [
+          {
+            guard: ({ event }) => !!event.active_run_id && event.items.some((item) => item.type === 'approval'),
+            target: 'ready.awaitingApproval',
+            actions: ['setHistoryItems', assign({ runId: ({ event }) => event.active_run_id })],
+          },
+          {
+            guard: ({ event }) => !!event.active_run_id,
+            target: 'ready.running',
+            actions: ['setHistoryItems', assign({ runId: ({ event }) => event.active_run_id })],
+          },
+          { target: 'ready.idle', actions: 'setHistoryItems' },
+        ],
+        HISTORY_ERROR: { target: 'initError', actions: assign({ error: ({ event }) => event.error }) },
+      },
+    },
+
+    // -------------------------------------------------------------------
+    // InitError — history load failed. SELECT_SESSION / NEW_SESSION
+    // (handled at root) are the way out.
+    // -------------------------------------------------------------------
+    initError: {},
+
+    // -------------------------------------------------------------------
+    // Ready — session is loaded, context.sessionId is defined, all run
+    // operations are safe. Nested run lifecycle lives below.
+    // -------------------------------------------------------------------
+    ready: {
+      initial: 'idle',
+      states: {
+        idle: {
+          on: {
+            SUBMIT: { target: 'starting', actions: 'appendUserMessage' },
+            // A queued message draining server-side, or any background-
+            // initiated run, surfaces here as a RUN_STARTED while the
+            // machine sits in idle. Treat it the same as the user's own
+            // SUBMIT path: append the user message (from event.prompt) and
+            // advance to running so subsequent message_output / tool
+            // events aren't dropped.
+            RUN_STARTED: {
+              guard: 'acceptLoose',
+              target: 'running',
+              actions: ['appendUserMessageFromRunStarted', 'setRunStarted'],
+            },
+            // Late-arriving events from a previous run (session-filtered)
+            MESSAGE_OUTPUT: { guard: 'acceptStrict', actions: 'appendAssistantMessage' },
+            // A client that attached MID-run (the read-only worker
+            // transcript viewer, a reconnect whose replay was superseded
+            // by the authoritative transcript) never saw RUN_STARTED —
+            // it sits here while the run streams. Tool events must still
+            // land or pending tool calls silently vanish; appendToolItem
+            // upserts by call_id so canonical rehydration + live delivery
+            // never duplicate.
+            TOOL_CALLED: { guard: 'acceptStrict', actions: 'appendToolItem' },
+            TOOL_RESULT: { guard: 'acceptStrict', actions: 'updateToolResult' },
+          },
+        },
+
+        starting: {
+          on: {
+            RUN_STARTED: {
+              guard: 'acceptStrictOrStarting',
+              target: 'running',
+              actions: 'setRunStarted',
+            },
+            RUN_END: {
+              guard: 'acceptLoose',
+              target: 'idle',
+              actions: 'clearRunState',
+            },
+            MESSAGE_OUTPUT: {
+              guard: 'acceptStrictOrStarting',
+              actions: 'appendAssistantMessage',
+            },
+            TOOL_CALLED: {
+              guard: 'acceptStrictOrStarting',
+              actions: 'appendToolItem',
+            },
+            TOOL_RESULT: {
+              guard: 'acceptStrictOrStarting',
+              actions: 'updateToolResult',
+            },
+            SUBMIT_ERROR: { target: 'idle', actions: 'setSubmitError' },
+          },
+        },
+
+        running: {
+          on: {
+            MESSAGE_OUTPUT: { guard: 'acceptStrict', actions: 'appendAssistantMessage' },
+            TOOL_CALLED: { guard: 'acceptStrict', actions: 'appendToolItem' },
+            GUARDIAN_REVIEWED: { guard: 'acceptStrict', actions: 'appendGuardianReview' },
+            WORKFLOW_REVIEWED: { guard: 'acceptStrict', actions: 'appendWorkflowReview' },
+            TOOL_RESULT: { guard: 'acceptStrict', actions: 'updateToolResult' },
+            RUN_STATUS: { guard: 'acceptLoose', actions: 'updateRunStatus' },
+            TOKEN: { guard: 'acceptLoose' },
+            SET_STATUS: { guard: 'acceptLoose', actions: 'setStatusFromServer' },
+            REQUEST_APPROVAL: {
+              guard: 'acceptStrict',
+              target: 'awaitingApproval',
+              actions: 'addApproval',
+            },
+            RUN_END: {
+              guard: 'acceptLoose',
+              target: 'idle',
+              actions: ['clearRunState'],
+            },
+            STOP: { target: 'stopping' },
+          },
+        },
+
+        awaitingApproval: {
+          on: {
+            STOP: { target: 'stopping' },
+            APPROVAL_DECIDED: [
+              // Stay in awaitingApproval if more approvals are still queued
+              { guard: 'hasMoreApprovals', actions: 'removeApproval' },
+              { target: 'running', actions: 'removeApproval' },
+            ],
+            RUN_END: {
+              guard: 'acceptLoose',
+              target: 'idle',
+              actions: ['clearRunState'],
+            },
+            // Additional approvals can arrive while one is pending
+            REQUEST_APPROVAL: { guard: 'acceptStrict', actions: 'addApproval' },
+            // Events can still flow while awaiting approval
+            MESSAGE_OUTPUT: { guard: 'acceptStrict', actions: 'appendAssistantMessage' },
+            TOOL_CALLED: { guard: 'acceptStrict', actions: 'appendToolItem' },
+            GUARDIAN_REVIEWED: { guard: 'acceptStrict', actions: 'appendGuardianReview' },
+            WORKFLOW_REVIEWED: { guard: 'acceptStrict', actions: 'appendWorkflowReview' },
+            TOOL_RESULT: { guard: 'acceptStrict', actions: 'updateToolResult' },
+            RUN_STATUS: { guard: 'acceptLoose', actions: 'updateRunStatus' },
+            SET_STATUS: { guard: 'acceptLoose', actions: 'setStatusFromServer' },
+          },
+        },
+
+        stopping: {
+          on: {
+            STOP_FAILED: [
+              {
+                guard: ({ context, event }) => context.runId === event.run_id && context.pendingApprovals.size > 0,
+                target: 'awaitingApproval',
+              },
+              { guard: ({ context, event }) => context.runId === event.run_id, target: 'running' },
+            ],
+            RUN_END: {
+              guard: 'acceptLoose',
+              target: 'idle',
+              actions: ['clearRunState'],
+            },
+            // Events can still arrive while stopping
+            MESSAGE_OUTPUT: { guard: 'acceptStrict', actions: 'appendAssistantMessage' },
+            TOOL_CALLED: { guard: 'acceptStrict', actions: 'appendToolItem' },
+            GUARDIAN_REVIEWED: { guard: 'acceptStrict', actions: 'appendGuardianReview' },
+            WORKFLOW_REVIEWED: { guard: 'acceptStrict', actions: 'appendWorkflowReview' },
+            TOOL_RESULT: { guard: 'acceptStrict', actions: 'updateToolResult' },
+          },
+        },
+      },
+    },
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Exported actor/snapshot types
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Derived-state helpers
+// ---------------------------------------------------------------------------
+
+/** Whether the machine is in a "thinking" state (agent actively processing). */
+export function isThinking(phase: ChatSessionPhase): boolean {
+  return phase === 'running' || phase === 'starting' || phase === 'stopping';
+}

@@ -1,55 +1,47 @@
 /**
  * "Remote backend" card for Settings → General: links the desktop app to a
- * backend other than local Electron main. Three link kinds share the card:
+ * backend other than local Electron main. Two link kinds share the card:
  *
- * - **Cloud** — a deployed launcher (server mode) so chat sessions, projects,
- *   tickets etc. live in the cloud's Postgres and sync across devices. The
- *   flow: enter the launcher URL → ``cloud:link`` discovers the AAD tenant +
- *   client id via ``/.well-known/omni-cloud``, runs the device-code flow, and
- *   persists the tokens + the remoteBackend flag.
  * - **WSL** (Windows only) — the same server build running as a daemon inside
- *   a WSL distro, where Docker and the sandboxes are Linux-native.
+ *   a WSL distro.
  *   ``wsl:link`` provisions the payload into the chosen distro and persists
  *   the flag.
  * - **Self-hosted server** — a server-mode launcher the user runs themselves
- *   (homelab, Tailscale, LAN). No Entra: ``server:link`` validates the URL
+ *   (homelab, Tailscale, LAN). ``server:link`` validates the URL
  *   against ``/api/health`` + ``/api/ws-token`` and persists the flag. The
  *   server must trust this machine's network (``OMNI_TRUSTED_CIDRS``).
  *
  * All flows end with main relaunching the app so the renderer transport
- * switches at boot; all disconnect through the shared ``cloud:unlink`` path.
+ * switches at boot; all disconnect through the shared ``remote-backend:unlink`` path.
  *
  * Electron-only (linking is meaningless in server mode — the web app IS the
  * remote client). The card hides itself on the browser build.
  */
+import { Button } from '@omniagents/ui/button';
+import { Card, CardContent } from '@omniagents/ui/card';
+import { cn } from '@omniagents/ui/cn';
+import { Field, FieldContent, FieldDescription, FieldLabel } from '@omniagents/ui/field';
+import { Input } from '@omniagents/ui/input';
+import { NativeSelect as Select } from '@omniagents/ui/native-select';
+import { Switch } from '@omniagents/ui/switch';
+import { ToggleGroup, ToggleGroupItem } from '@omniagents/ui/toggle-group';
 import { memo, useCallback, useEffect, useState } from 'react';
 
-import { cn } from '@/renderer/ds/cn';
-import { Button } from '@/renderer/ds/ui/button';
-import { Card, CardContent } from '@/renderer/ds/ui/card';
-import { Field, FieldContent, FieldDescription, FieldLabel } from '@/renderer/ds/ui/field';
-import { Input } from '@/renderer/ds/ui/input';
-import { NativeSelect as Select } from '@/renderer/ds/ui/native-select';
-import { Spinner } from '@/renderer/ds/ui/spinner';
-import { Switch } from '@/renderer/ds/ui/switch';
-import { ToggleGroup, ToggleGroupItem } from '@/renderer/ds/ui/toggle-group';
-import { MachineIdentityChip } from '@/renderer/features/SettingsModal/MachineIdentityChip';
 import { settingsCardContentClassName } from '@/renderer/features/SettingsModal/SettingsLayout';
 import {
   bootstrapPlatform,
-  ipc,
   isElectron,
   isServerLinked,
   isWslLinked,
   localEmitter,
   serverOrigin,
 } from '@/renderer/services/ipc';
-import type { CloudDeviceCode, CloudStatus, WslBackendStatus, WslDetectResult } from '@/shared/types';
+import type { WslBackendStatus, WslDetectResult } from '@/shared/types';
 
 type WslStatusLine = { text: string; tone: 'ok' | 'warn' | 'error' | 'muted' };
-type BackendSetupMode = 'cloud' | 'wsl' | 'server';
+type BackendSetupMode = 'wsl' | 'server';
 
-/** Map the daemon + Docker state to a single friendly status line. */
+/** Map the daemon state to a single friendly status line. */
 const wslStatusLine = (status: WslBackendStatus | null): WslStatusLine => {
   if (!status) {
     return { text: 'Checking backend status…', tone: 'muted' };
@@ -63,17 +55,8 @@ const wslStatusLine = (status: WslBackendStatus | null): WslStatusLine => {
   if (status.state === 'starting') {
     return { text: 'Starting…', tone: 'muted' };
   }
-  if (status.docker === 'missing') {
-    return {
-      text: `Docker not found in ${status.distro ?? 'the distro'} — enable Docker Desktop's WSL integration for this distro, or install docker-ce`,
-      tone: 'warn',
-    };
-  }
-  if (status.docker === 'daemon-down') {
-    return { text: 'Docker is installed but not running', tone: 'warn' };
-  }
   if (status.state === 'running') {
-    return { text: 'Running — Docker available', tone: 'ok' };
+    return { text: 'Running', tone: 'ok' };
   }
   return { text: 'Checking backend status…', tone: 'muted' };
 };
@@ -86,29 +69,11 @@ const FRESH_DATA_ROOT_NOTE =
   'Switching starts a fresh backend data root inside the distro — existing local data stays on Windows and is not migrated.';
 
 export const RemoteBackendCard = memo(() => {
-  const [setupMode, setSetupMode] = useState<BackendSetupMode>('cloud');
-  const [url, setUrl] = useState('');
-  const [connecting, setConnecting] = useState(false);
-  const [deviceCode, setDeviceCode] = useState<CloudDeviceCode | null>(null);
+  const [setupMode, setSetupMode] = useState<BackendSetupMode>('server');
   const [error, setError] = useState<string | null>(null);
   const [restarting, setRestarting] = useState(false);
 
-  // Link state is a LOCAL-main concept (the `remoteBackend` electron-store
-  // flag). It must NOT be read from `persistedStoreApi`/`$store` — in remote-
-  // linked mode that mirror reflects the BACKEND's store, which has no
-  // `remoteBackend`, so the card would always look disconnected and the
-  // Disconnect button would never render. Ask local main directly via
-  // `cloud:status` (which reports disconnected for the wsl kind).
-  const [cloudStatus, setCloudStatus] = useState<CloudStatus | null>(null);
-  useEffect(() => {
-    void localEmitter.invoke('cloud:status').then(setCloudStatus);
-  }, []);
-  const cloudMode = cloudStatus?.connected ? cloudStatus : null;
-
-  // Main process emits the AAD device code mid-flow; show it while polling.
-  useEffect(() => ipc.on('cloud:device-code', setDeviceCode), []);
-
-  // ── WSL-linked: live daemon + Docker status, polled while visible ──
+  // ── WSL-linked: live daemon status, polled while visible ──
   const [wslStatus, setWslStatus] = useState<WslBackendStatus | null>(null);
   const refreshWslStatus = useCallback(() => {
     void localEmitter
@@ -201,32 +166,12 @@ export const RemoteBackendCard = memo(() => {
     }
   }, [refreshWslDetect]);
 
-  const onConnect = useCallback(async () => {
-    setConnecting(true);
-    setError(null);
-    setDeviceCode(null);
-    try {
-      // cloud:link / cloud:unlink are handled in LOCAL main (they mutate the
-      // electron-store remoteBackend flag + secret store). They must NOT route
-      // over the backend WS — once linked, `emitter` points at the backend, so
-      // an unlink sent there would never reach local main. Always use `localEmitter`.
-      await localEmitter.invoke('cloud:link', url);
-      // Main relaunches the app on a short delay; show a transient message
-      // so the user knows what's happening when the window blanks.
-      setRestarting(true);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Cloud sign-in failed');
-    } finally {
-      setConnecting(false);
-      setDeviceCode(null);
-    }
-  }, [url]);
-
-  // Shared disconnect path for BOTH kinds — main clears the flag and relaunches.
+  // Shared disconnect path for both kinds — main clears the flag and relaunches.
+  // Always local main: once linked, `emitter` points at the backend.
   const onDisconnect = useCallback(async () => {
     setError(null);
     try {
-      await localEmitter.invoke('cloud:unlink');
+      await localEmitter.invoke('remote-backend:unlink');
       setRestarting(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to disconnect');
@@ -242,7 +187,7 @@ export const RemoteBackendCard = memo(() => {
     setWslError(null);
     try {
       // wsl:link provisions the daemon payload into the distro, persists the
-      // remoteBackend flag, and relaunches — same restart affordance as cloud.
+      // remoteBackend flag, and relaunches.
       await localEmitter.invoke('wsl:link', wslDistro);
       setRestarting(true);
     } catch (e) {
@@ -258,7 +203,7 @@ export const RemoteBackendCard = memo(() => {
   const [serverError, setServerError] = useState<string | null>(null);
 
   const onSetupModeChange = useCallback((value: string) => {
-    if (value === 'cloud' || value === 'wsl' || value === 'server') {
+    if (value === 'wsl' || value === 'server') {
       setSetupMode(value);
     }
   }, []);
@@ -297,7 +242,7 @@ export const RemoteBackendCard = memo(() => {
               <span
                 className={cn('text-xs text-muted-foreground', error ? 'text-destructive' : 'text-muted-foreground')}
               >
-                {error ?? 'Sessions, projects, and tasks live on your server'}
+                {error ?? 'Sessions and projects live on your server'}
               </span>
             </div>
             <Button size="sm" variant="ghost" onClick={onDisconnect}>
@@ -357,95 +302,28 @@ export const RemoteBackendCard = memo(() => {
     );
   }
 
-  if (cloudMode) {
-    return (
-      <Card>
-        <CardContent className={settingsCardContentClassName}>
-          <div className="flex items-center gap-4">
-            <FieldContent>
-              <FieldLabel>{`Connected to ${cloudMode.url}`}</FieldLabel>
-              <FieldDescription>
-                {error ?? `Signed in as ${cloudMode.account.name ?? cloudMode.account.email ?? cloudMode.account.oid}`}
-              </FieldDescription>
-            </FieldContent>
-            <Button size="sm" variant="outline" onClick={onDisconnect}>
-              Disconnect
-            </Button>
-          </div>
-          {restarting && (
-            <span className={cn('text-xs text-muted-foreground', 'text-success')}>Restarting Omni Code…</span>
-          )}
-        </CardContent>
-      </Card>
-    );
-  }
-
   return (
     <Card>
       <CardContent className={settingsCardContentClassName}>
-        <ToggleGroup
-          type="single"
-          variant="outline"
-          spacing={0}
-          value={setupMode}
-          onValueChange={onSetupModeChange}
-          aria-label="Backend connection type"
-        >
-          <ToggleGroupItem value="cloud">Cloud</ToggleGroupItem>
-          {showWslSection && <ToggleGroupItem value="wsl">WSL</ToggleGroupItem>}
-          <ToggleGroupItem value="server">Self-hosted</ToggleGroupItem>
-        </ToggleGroup>
-
-        {setupMode === 'cloud' && (
-          <div className="flex flex-col gap-5">
-            <FieldContent>
-              <FieldLabel>Cloud launcher</FieldLabel>
-              <FieldDescription>Sign in to sync your work across the desktop and web apps.</FieldDescription>
-            </FieldContent>
-            <Field orientation="horizontal" className="justify-between gap-4">
-              <FieldLabel>Launcher URL</FieldLabel>
-              <Input
-                value={url}
-                onChange={(event) => setUrl(event.target.value)}
-                placeholder="https://omni.example.com"
-                disabled={connecting}
-              />
-            </Field>
-            <div className="flex items-center justify-between gap-4">
-              <MachineIdentityChip />
-              <Button size="sm" onClick={onConnect} disabled={connecting || !url.trim()}>
-                {connecting ? 'Connecting…' : 'Connect'}
-              </Button>
-            </div>
-            {error && <span className={cn('text-xs text-muted-foreground', 'text-destructive')}>{error}</span>}
-            {connecting && deviceCode && (
-              <div className="flex flex-col gap-0.5 p-2 rounded-lg bg-background border border-border">
-                <span className="text-xs text-muted-foreground">
-                  Open{' '}
-                  <a
-                    href={deviceCode.verificationUriComplete ?? deviceCode.verificationUri}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    {deviceCode.verificationUri}
-                  </a>{' '}
-                  and enter this code:
-                </span>
-                <span className="font-mono text-xl font-semibold tracking-widest">{deviceCode.userCode}</span>
-                <div className="flex items-center gap-2">
-                  <Spinner />
-                  <span className="text-xs text-muted-foreground">Waiting for authorization…</span>
-                </div>
-              </div>
-            )}
-          </div>
+        {showWslSection && (
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            spacing={0}
+            value={setupMode}
+            onValueChange={onSetupModeChange}
+            aria-label="Backend connection type"
+          >
+            <ToggleGroupItem value="server">Self-hosted</ToggleGroupItem>
+            <ToggleGroupItem value="wsl">WSL</ToggleGroupItem>
+          </ToggleGroup>
         )}
 
         {setupMode === 'wsl' && showWslSection && (
           <div className="flex flex-col gap-5">
             <FieldContent>
               <FieldLabel>Windows Subsystem for Linux</FieldLabel>
-              <FieldDescription>Run sandboxes and agents in a local Linux environment.</FieldDescription>
+              <FieldDescription>Run agents in a local Linux environment.</FieldDescription>
             </FieldContent>
             {wslDetect?.wsl === 'missing' ? (
               wslInstallStarted ? (

@@ -58,11 +58,6 @@ class RealtimeService(RpcMethodsBase):
         self.settings = settings or {}
         self.settings_resolver = settings_resolver
         self._agent_service = agent_service
-        # The server's default environment (same one the GUI handshake
-        # advertises as agent_host.default_environment_id); build_app installs
-        # it. Fallback for voice sessions started before any text run has
-        # bound the session's environment.
-        self.default_environment_id: Optional[str] = None
 
         # Active sessions: session_id -> RealtimeSession
         self._sessions: Dict[str, RealtimeSession] = {}
@@ -199,7 +194,6 @@ class RealtimeService(RpcMethodsBase):
                     await self._agent_service.prepare_environment_context_for_session(
                         session_id,
                         principal=principal,
-                        default_environment_id=self.default_environment_id,
                     )
                 )
             except Exception:

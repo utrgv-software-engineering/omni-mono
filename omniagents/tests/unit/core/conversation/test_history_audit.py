@@ -1,4 +1,5 @@
 import json
+import os
 import sqlite3
 
 import pytest
@@ -187,7 +188,8 @@ def test_repair_preserves_other_threads_and_existing_revisions(databases, tmp_pa
     store.close()
     output = tmp_path / "copy.db"
     repair_copy(history, domain, output, "t")
-    assert output.stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":  # POSIX permission bits; Windows has no 0o600
+        assert output.stat().st_mode & 0o777 == 0o600
     repaired = SqliteConversationStore(path=str(output))
     assert repaired.get_item("t", original.item_id) == original
     assert repaired.get_item("other", other.item_id) == other

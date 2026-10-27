@@ -1,16 +1,16 @@
 /** Searchable browser history presented as a shadcn dialog and item list. */
 import './HistoryPanel.css';
 
+import { Button } from '@omniagents/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@omniagents/ui/dialog';
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@omniagents/ui/empty';
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@omniagents/ui/input-group';
+import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from '@omniagents/ui/item';
+import { ScrollArea } from '@omniagents/ui/scroll-area';
 import { Globe, Search, Trash2 } from 'lucide-react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
 import { fallbackTitle } from '@/lib/url';
-import { Button } from '@/renderer/ds/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/renderer/ds/ui/dialog';
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/renderer/ds/ui/empty';
-import { InputGroup, InputGroupAddon, InputGroupInput } from '@/renderer/ds/ui/input-group';
-import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from '@/renderer/ds/ui/item';
-import { ScrollArea } from '@/renderer/ds/ui/scroll-area';
 import { browserApi } from '@/renderer/features/Browser/state';
 import type { BrowserHistoryEntry, BrowserProfileId } from '@/shared/types';
 

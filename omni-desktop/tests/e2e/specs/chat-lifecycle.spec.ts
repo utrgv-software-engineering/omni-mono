@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from 'tests/e2e/fixtures/test';
+import { newDeckChat } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -45,8 +46,6 @@ test('reconciles an accepted send after its RPC reply is lost', async ({ app }, 
   const composer = page.getByRole('textbox', { name: 'How can I help you today?' });
   await expect(composer).toBeVisible({ timeout: 90_000 });
   await dropAcceptedReply(page);
-  await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
   await composer.fill('Respond with exactly HOST_FIRST_MESSAGE_READY and nothing else.');
   await composer.press('Enter');
   await expect(page.getByText('HOST_FIRST_MESSAGE_READY', { exact: true }).last()).toBeVisible({ timeout: 240_000 });
@@ -62,6 +61,8 @@ test('reconciles an accepted send after its RPC reply is lost', async ({ app }, 
     timeout: 90_000,
   });
   await expect(composer).toHaveValue('');
+  // The composer is usable again (Send is disabled only while it is empty).
+  await composer.fill('NEXT_PROMPT_DRAFT');
   await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled({ timeout: 90_000 });
   await attachProofPng(testInfo, 'lost reply reconciled without duplicate prompt', await app.captureScreenshot());
 });
@@ -71,8 +72,6 @@ test('delivers an attachment when replying to an agent question', async ({ app }
   const page = app.page;
   const composer = page.getByRole('textbox', { name: 'How can I help you today?' });
   await expect(composer).toBeVisible({ timeout: 90_000 });
-  await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
   await composer.fill('ASK_WITH_IMAGE');
   await composer.press('Enter');
   await expect(page.getByText('Please attach the requested image', { exact: true }).last()).toBeVisible({
@@ -93,6 +92,16 @@ test('delivers an attachment when replying to an agent question', async ({ app }
     .poll(() => page.evaluate(() => (window as unknown as { lostReplyDropped?: boolean }).lostReplyDropped))
     .toBe(true);
   await expect(composer).toHaveValue('Here is the image');
+  // The "Message not sent" toast sits over the composer's Send button at
+  // this viewport; dismiss it the way a user would before retrying.
+  const notSent = page
+    .getByRole('region', { name: /Notifications/ })
+    .getByRole('listitem')
+    .filter({
+      hasText: 'Message not sent',
+    });
+  await expect(notSent).toBeVisible();
+  await notSent.getByRole('button', { name: 'Dismiss' }).click();
   await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled({ timeout: 90_000 });
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(composer).toHaveValue('');
@@ -101,76 +110,17 @@ test('delivers an attachment when replying to an agent question', async ({ app }
   await attachProofPng(testInfo, 'agent receives question reply image', await app.captureScreenshot());
 });
 
-test('restores unsent text and attachment bytes after a renderer restart', async ({ app }, testInfo) => {
-  test.setTimeout(360_000);
-  const page = app.page;
-  const composer = page.getByRole('textbox', { name: 'How can I help you today?' });
-  await expect(composer).toBeVisible({ timeout: 90_000 });
-  await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
-  await composer.fill('Respond with exactly HOST_FIRST_MESSAGE_READY and nothing else.');
-  await composer.press('Enter');
-  await expect(page.getByText('HOST_FIRST_MESSAGE_READY', { exact: true }).last()).toBeVisible({ timeout: 240_000 });
-  await composer.fill('This draft survives restart');
-  await page
-    .locator('input[type="file"]')
-    .setInputFiles({ name: 'restart.txt', mimeType: 'text/plain', buffer: Buffer.from('preserved bytes') });
-  await expect
-    .poll(() =>
-      page.evaluate(async () => {
-        return new Promise<boolean>((resolve) => {
-          const request = indexedDB.open('omni-conversation-drafts-v1', 1);
-          request.onsuccess = () => {
-            const db = request.result;
-            const tx = db.transaction('drafts', 'readonly');
-            const rows = tx.objectStore('drafts').getAll();
-            rows.onsuccess = () =>
-              resolve(
-                rows.result.some(
-                  (draft) => draft.text === 'This draft survives restart' && draft.files?.[0]?.name === 'restart.txt'
-                )
-              );
-            tx.oncomplete = () => db.close();
-          };
-        });
-      })
-    )
-    .toBe(true);
-  await page.reload();
-  await page
-    .getByRole('list', { name: 'Recents' })
-    .getByRole('button', { name: /^Respond with exactly HOST_FIRST_MESSAGE_READY/ })
-    .first()
-    .click({ timeout: 90_000 });
-  await page.getByRole('radio', { name: 'Focus', exact: true }).click();
-  await expect(composer).toHaveValue('This draft survives restart');
-  await expect(page.getByText('restart.txt', { exact: true })).toBeVisible();
-  await attachProofPng(testInfo, 'draft and file restored after restart', await app.captureScreenshot());
-});
-
 test('keeps an in-flight reply and draft with their conversation while switching chats', async ({ app }, testInfo) => {
   test.setTimeout(360_000);
   const page = app.page;
   const composer = page.getByRole('textbox', { name: 'How can I help you today?' });
   await expect(composer).toBeVisible({ timeout: 90_000 });
-  await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
   await composer.fill('WAIT_FOR_SESSION_A');
   await composer.press('Enter');
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible({ timeout: 240_000 });
   await composer.fill('Unsent draft belongs to A');
-  await page.getByRole('button', { name: 'New chat', exact: true }).click();
-  const focusLayout = page.getByRole('radio', { name: 'Focus', exact: true });
-  if ((await focusLayout.getAttribute('aria-checked')) !== 'true') {
-    await page.getByRole('button', { name: 'Focus New chat', exact: true }).click();
-  }
-  await expect(focusLayout).toHaveAttribute('aria-checked', 'true');
+  await newDeckChat(page);
   await expect(composer).toHaveValue('');
-  const workstation = page.getByRole('button', { name: 'Workstation', exact: true });
-  if (await workstation.isVisible()) {
-    await workstation.click();
-    await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
-  }
   await composer.fill('PROMPT_FOR_SESSION_B');
   await composer.press('Enter');
   await expect(page.getByText('SESSION_B_REPLY', { exact: true }).last()).toBeVisible({ timeout: 120_000 });
@@ -198,8 +148,6 @@ test('keeps the chosen model and a follow-up draft across first-message startup'
   await page.getByRole('menuitemradio', { name: /GPT 5\.2 Mini E2E/ }).click();
   await expect(model).toContainText('GPT 5.2 Mini E2E');
   await attachProofPng(testInfo, 'model selectable before first message', await app.captureScreenshot());
-  await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
   await composer.fill('Respond with exactly HOST_FIRST_MESSAGE_READY and nothing else.');
   await composer.press('Enter');
   await expect(composer).toHaveValue('');
@@ -219,8 +167,6 @@ test('delivers an image queued during an active response', async ({ app }, testI
   const page = app.page;
   const composer = page.getByPlaceholder('How can I help you today?');
   await expect(composer).toBeVisible({ timeout: 90_000 });
-  await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
   await composer.fill('WAIT_FOR_QUEUED_IMAGE');
   await composer.press('Enter');
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible({ timeout: 240_000 });

@@ -1,15 +1,14 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
+import { expectRunFinished } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
 
-test('retains an aborted attachment across reload and sends its bytes once on retry', async ({ app }, testInfo) => {
+test('retains an aborted attachment and sends its bytes once on retry', async ({ app }, testInfo) => {
   test.setTimeout(360_000);
   const page = app.page;
   const input = page.getByRole('textbox', { name: 'How can I help you today?' });
   await expect(input).toBeVisible({ timeout: 90_000 });
-  await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
   await input.fill('Respond with exactly HOST_FIRST_MESSAGE_READY and nothing else.');
   await input.press('Enter');
   await expect(page.getByText('HOST_FIRST_MESSAGE_READY', { exact: true }).last()).toBeVisible({ timeout: 240_000 });
@@ -17,7 +16,7 @@ test('retains an aborted attachment across reload and sends its bytes once on re
     const read = FileReader.prototype.readAsArrayBuffer;
     FileReader.prototype.readAsArrayBuffer = function () {
       FileReader.prototype.readAsArrayBuffer = read;
-      queueMicrotask(() => this.onabort?.call(this, new ProgressEvent('abort')));
+      queueMicrotask(() => this.onabort?.call(this, new ProgressEvent('abort') as ProgressEvent<FileReader>));
     };
   });
   await input.fill('ATTACHMENT_RETRY');
@@ -31,15 +30,6 @@ test('retains an aborted attachment across reload and sends its bytes once on re
   await expect(input).toHaveValue('ATTACHMENT_RETRY');
   await expect(page.getByText('retained.txt', { exact: true })).toBeVisible();
   await attachProofPng(testInfo, 'aborted read retains original draft and attachment', await app.captureScreenshot());
-  await page.reload();
-  await page
-    .getByRole('list', { name: 'Recents' })
-    .getByRole('button', { name: /^Respond with exactly HOST_FIRST_MESSAGE_READY/ })
-    .first()
-    .click({ timeout: 90_000 });
-  await page.getByRole('radio', { name: 'Focus', exact: true }).click();
-  await expect(input).toHaveValue('ATTACHMENT_RETRY');
-  await expect(page.getByText('retained.txt', { exact: true })).toBeVisible();
   await page.evaluate(() => {
     const send = WebSocket.prototype.send;
     (window as any).attachmentSends = [];
@@ -56,7 +46,7 @@ test('retains an aborted attachment across reload and sends its bytes once on re
   });
   await input.press('Enter');
   await expect(page.getByRole('log')).toContainText('ATTACHMENT_RETRY');
-  await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
+  await expectRunFinished(page);
   const sends = await page.evaluate(() => (window as any).attachmentSends);
   expect(sends).toHaveLength(1);
   expect(JSON.stringify(sends[0])).toContain(Buffer.from('original attachment bytes').toString('base64'));

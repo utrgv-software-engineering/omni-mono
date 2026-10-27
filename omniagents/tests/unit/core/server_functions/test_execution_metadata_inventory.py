@@ -78,6 +78,9 @@ EXPECTED_BUILTIN_CLASSIFICATIONS: dict[str, Classification] = {
     "cron.delete": _classification(ResourceScope.THREAD),
     "models": _classification(ResourceScope.THREAD),
     "model": _classification(ResourceScope.THREAD),
+    # The workspace provider is shared by every thread of the agent.
+    "model_providers": _classification(ResourceScope.AGENT),
+    "switch_provider": _classification(ResourceScope.AGENT),
     "reasoning": _classification(ResourceScope.THREAD),
     "voice-models": _classification(ResourceScope.AGENT),
     "voice-model": _classification(ResourceScope.AGENT),
@@ -103,6 +106,8 @@ EXPECTED_BUILTIN_CLASSIFICATIONS: dict[str, Classification] = {
     "wakeup.status": _classification(ResourceScope.THREAD),
     "workers.list": _classification(ResourceScope.THREAD),
     "workers.kill": _classification(ResourceScope.THREAD),
+    "workers.resume": _classification(ResourceScope.THREAD),
+    "tool_outputs.read": _classification(ResourceScope.THREAD),
     "fs_get_cwd": _classification(
         ResourceScope.WORKSPACE, ExecutionRequirement.WORKSPACE_READ
     ),
@@ -282,11 +287,11 @@ def _literal_core_registrations() -> dict[str, tuple[dict[str, ast.expr], str]]:
     return registrations
 
 
-def test_all_49_decorated_builtins_have_the_expected_execution_metadata():
+def test_all_53_decorated_builtins_have_the_expected_execution_metadata():
     declarations = _decorated_builtins()
     by_name = {declaration.published_name: declaration for declaration in declarations}
 
-    assert len(declarations) == 49
+    assert len(declarations) == 53
     assert len(by_name) == len(
         declarations
     ), "published server-function names must be unique"

@@ -1,4 +1,207 @@
 {
   "excludedFiles": [],
-  "approvedViolations": []
+  "approvedViolations": [
+    {
+      "rule": "dom-style-mutation",
+      "file": "src/renderer/app/AppSidebar.tsx",
+      "match": "style.setProperty(\"--backstop-sidebar-width\")",
+      "source": "root.style.setProperty('--backstop-sidebar-width', SIDEBAR_WIDTH);",
+      "reason": "Publishes the sidebar width as a root CSS variable so shell surfaces outside the sidebar tree can lay out against it."
+    },
+    {
+      "rule": "dom-style-mutation",
+      "file": "src/renderer/app/use-app-height.ts",
+      "match": "probe.style.cssText",
+      "source": "probe.style.cssText =",
+      "reason": "A hidden probe element measures the real safe-area inset; its geometry is set directly because it is never rendered as UI."
+    },
+    {
+      "rule": "dom-style-mutation",
+      "file": "src/renderer/app/use-app-height.ts",
+      "match": "style.setProperty(\"--app-height\")",
+      "source": "root.style.setProperty('--app-height', `${Math.round(visualHeight)}px`);",
+      "reason": "Publishes the visual viewport height and safe-area inset as root CSS variables, the iOS standalone viewport recipe the shell lays out against."
+    },
+    {
+      "rule": "dom-style-mutation",
+      "file": "src/renderer/app/use-app-height.ts",
+      "match": "style.setProperty(\"--safe-area-bottom\")",
+      "source": "root.style.setProperty('--safe-area-bottom', '0px');",
+      "reason": "Publishes the visual viewport height and safe-area inset as root CSS variables, the iOS standalone viewport recipe the shell lays out against."
+    },
+    {
+      "rule": "hardcoded-color",
+      "file": "src/renderer/common/OmniMark.tsx",
+      "match": "#a8e4ff",
+      "source": "<stop offset=\"0%\" stopColor=\"#a8e4ff\" />",
+      "reason": "Brand mark artwork: the planet gradient and ring colors are fixed brand paint, not themeable UI state."
+    },
+    {
+      "rule": "hardcoded-color",
+      "file": "src/renderer/common/OmniMark.tsx",
+      "match": "#5ac8fa",
+      "source": "<stop offset=\"38%\" stopColor=\"#5ac8fa\" />",
+      "reason": "Brand mark artwork: the planet gradient and ring colors are fixed brand paint, not themeable UI state."
+    },
+    {
+      "rule": "hardcoded-color",
+      "file": "src/renderer/common/OmniMark.tsx",
+      "match": "#4b48c8",
+      "source": "<stop offset=\"100%\" stopColor=\"#4b48c8\" />",
+      "reason": "Brand mark artwork: the planet gradient and ring colors are fixed brand paint, not themeable UI state."
+    },
+    {
+      "rule": "hardcoded-color",
+      "file": "src/renderer/common/OmniMark.tsx",
+      "match": "#8fe0ff",
+      "source": "<stop offset=\"0%\" stopColor=\"#8fe0ff\" />",
+      "reason": "Brand mark artwork: the planet gradient and ring colors are fixed brand paint, not themeable UI state."
+    },
+    {
+      "rule": "hardcoded-color",
+      "file": "src/renderer/common/OmniMark.tsx",
+      "match": "#6f6cf0",
+      "source": "<stop offset=\"100%\" stopColor=\"#6f6cf0\" />",
+      "reason": "Brand mark artwork: the planet gradient and ring colors are fixed brand paint, not themeable UI state."
+    },
+    {
+      "rule": "hardcoded-color",
+      "file": "src/renderer/common/OmniMark.tsx",
+      "match": "#3e3da8",
+      "source": "<path d={RING_BACK} transform={RING_TILT} fill=\"none\" stroke=\"#3e3da8\" strokeWidth=\"2.1\" />",
+      "reason": "Brand mark artwork: the planet gradient and ring colors are fixed brand paint, not themeable UI state."
+    },
+    {
+      "rule": "hardcoded-color",
+      "file": "src/renderer/common/OmniMark.tsx",
+      "match": "#15143f",
+      "source": "<path d={RING_SHADOW} transform={RING_TILT} fill=\"none\" stroke=\"#15143f\" strokeWidth=\"4.4\" opacity=\"0.5\" />",
+      "reason": "Brand mark artwork: the planet gradient and ring colors are fixed brand paint, not themeable UI state."
+    },
+    {
+      "rule": "dom-style-mutation",
+      "file": "src/renderer/common/ViewportDebug.tsx",
+      "match": "el.style.cssText",
+      "source": "el.style.cssText =",
+      "reason": "Developer-only viewport debug overlay; its fixed probe geometry is set directly and is never shown to users."
+    },
+    {
+      "rule": "inline-style",
+      "file": "src/renderer/features/Browser/PageContextMenu.tsx",
+      "match": "style",
+      "source": "style={{ left: params.x, top: params.y }}",
+      "expressionHash": "4e218704601f41f98a65da719d21b88bf2c06534aacc0ac9f35dda7957610038",
+      "reason": "Context menu placed at the pointer coordinates the page reports."
+    },
+    {
+      "rule": "inline-style",
+      "file": "src/renderer/features/Browser/TabStrip.tsx",
+      "match": "style",
+      "source": "style={{ transform: CSS.Transform.toString(transform), transition }}",
+      "expressionHash": "99fcbfa8c84f1cd367c73dc5f0de4280a05cdd415c250659f769de423645f25b",
+      "reason": "dnd-kit drag position: the transform and transition change every pointer move and must be applied inline."
+    },
+    {
+      "rule": "inline-style",
+      "file": "src/renderer/features/Code/CodeDeck.tsx",
+      "match": "style",
+      "source": "style={{ transform: CSS.Transform.toString(transform), transition }}",
+      "expressionHash": "99fcbfa8c84f1cd367c73dc5f0de4280a05cdd415c250659f769de423645f25b",
+      "reason": "dnd-kit drag position: the transform and transition change every pointer move and must be applied inline."
+    },
+    {
+      "rule": "arbitrary-value",
+      "file": "src/renderer/features/Code/EnvironmentDock.tsx",
+      "match": "max-w-[calc(100%-1.5rem)]",
+      "source": "className=\"mx-auto mb-2 mt-1.5 h-11 max-w-[calc(100%-1.5rem)] min-w-0 shrink-0 overflow-x-auto overflow-y-hidden rounded-xl border border-border bg-card p-1 shadow-sm [&::-webkit-scrollbar]:hidden\"",
+      "reason": "The dock keeps a 0.75rem gutter on each side of its column; no width utility expresses full width minus a gutter."
+    },
+    {
+      "rule": "dom-style-mutation",
+      "file": "src/renderer/features/Code/VoiceGlow.tsx",
+      "match": "style.setProperty(\"--voice-level\")",
+      "source": "ref.current?.style.setProperty('--voice-level', shown.toFixed(3));",
+      "reason": "Live microphone level drives the glow through a CSS variable updated every animation frame."
+    },
+    {
+      "rule": "arbitrary-value",
+      "file": "src/renderer/features/Git/DiffView.tsx",
+      "match": "grid-cols-[3.5rem_1rem_minmax(max-content,1fr)]",
+      "source": "'grid grid-cols-[3.5rem_1rem_minmax(max-content,1fr)] whitespace-pre',",
+      "reason": "Diff rows use a fixed grid: two line-number gutters and a content track that grows to the longest line for horizontal scrolling."
+    },
+    {
+      "rule": "arbitrary-value",
+      "file": "src/renderer/features/Projects/AddSourceDialog.tsx",
+      "match": "max-h-[70vh]",
+      "source": "<div className={cn('min-h-0 overflow-y-auto', 'flex max-h-[70vh] flex-col gap-5')}>",
+      "reason": "Viewport-relative height cap so long content scrolls inside the surface; Tailwind has no fractional viewport max-height utilities."
+    },
+    {
+      "rule": "arbitrary-value",
+      "file": "src/renderer/features/Projects/RepoPicker.tsx",
+      "match": "max-h-[40vh]",
+      "source": "<CommandList className=\"max-h-[40vh]\">",
+      "reason": "Viewport-relative height cap so long content scrolls inside the surface; Tailwind has no fractional viewport max-height utilities."
+    },
+    {
+      "rule": "arbitrary-value",
+      "file": "../packages/chat-ui/src/activity-presentation.tsx",
+      "match": "grid-cols-[auto_minmax(0,1fr)]",
+      "source": "<dl className=\"grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-xs\">",
+      "reason": "Term/description list: the label column sizes to content and the value column takes the rest without overflowing."
+    },
+    {
+      "rule": "inline-style",
+      "file": "../packages/chat-ui/src/components/MessageList.tsx",
+      "match": "style",
+      "source": "style={{ height }}",
+      "expressionHash": "d196116ff7362e251c07463033f3787989ad96b6f75fc5a9c585826cd536b908",
+      "reason": "Virtualized list spacer height comes from the measured rows."
+    },
+    {
+      "rule": "arbitrary-value",
+      "file": "../packages/chat-ui/src/components/PillStrip.tsx",
+      "match": "max-w-[90vw]",
+      "source": "<PopoverContent side=\"top\" align=\"start\" className=\"w-96 max-w-[90vw] p-0 text-xs\">",
+      "reason": "The popover caps at 90% of the viewport width so it never overflows a narrow window."
+    },
+    {
+      "rule": "arbitrary-value",
+      "file": "../packages/chat-ui/src/components/ai/chain-of-thought.tsx",
+      "match": "max-h-[22rem]",
+      "source": "<div className=\"relative flex max-h-[22rem] items-center justify-center overflow-hidden rounded-lg bg-muted p-3\">",
+      "reason": "Image previews in a reasoning step cap at 22rem tall so one image cannot push the transcript off screen."
+    },
+    {
+      "rule": "inline-style",
+      "file": "../packages/chat-ui/src/components/ai/code-block.tsx",
+      "match": "style",
+      "source": "style={{\n    backgroundColor: token.bgColor,\n    color: token.color,\n    fontStyle: isItalic(token.fontStyle) ? 'italic' : undefined,\n    fontWeight: isBold(token.fontStyle) ? 'bold' : undefined,\n    textDecoration: isUnderline(token.fontStyle) ? 'underline' : undefined,\n    ...token.htmlStyle,\n}}",
+      "expressionHash": "7c0e5be045032502ac801b01eb959aebd929058c723d90d167c794e9088bc772",
+      "reason": "Syntax-highlight token and surface colors come from the Shiki theme."
+    },
+    {
+      "rule": "inline-style",
+      "file": "../packages/chat-ui/src/components/ai/code-block.tsx",
+      "match": "style",
+      "source": "style={useMemo(() => ({ backgroundColor: tokenized.bg, color: tokenized.fg }), [tokenized.bg, tokenized.fg])}",
+      "expressionHash": "60996f74a06d51e67363fe3e939bce85ab6336562273011f6d41eb635b01d5ea",
+      "reason": "Syntax-highlight token and surface colors come from the Shiki theme."
+    },
+    {
+      "rule": "hardcoded-color",
+      "file": "src/renderer/styles/tailwind.css",
+      "match": "#bb9af7",
+      "source": "background-image: linear-gradient(to right, #bb9af7, #7aa2f7);",
+      "reason": "Brand wordmark artwork: the ASCII logo gradient is fixed brand paint, not themeable UI state."
+    },
+    {
+      "rule": "hardcoded-color",
+      "file": "src/renderer/styles/tailwind.css",
+      "match": "#7aa2f7",
+      "source": "background-image: linear-gradient(to right, #bb9af7, #7aa2f7);",
+      "reason": "Brand wordmark artwork: the ASCII logo gradient is fixed brand paint, not themeable UI state."
+    }
+  ]
 }

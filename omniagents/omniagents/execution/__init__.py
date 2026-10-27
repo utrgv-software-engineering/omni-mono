@@ -19,7 +19,11 @@ from .errors import (
     WorkspaceEnvironmentMismatchError,
     WorkspaceNotFoundError,
 )
-from .host import AgentHostResources, register_host_environment
+from .host import (
+    AgentHostResources,
+    register_host_environment,
+    register_sandbox_environment,
+)
 from .control import AgentHostProvisioningCatalog
 from .lifecycle import EnvironmentLifecycleController
 
@@ -102,4 +106,5 @@ __all__ = [
     "require_request_context",
     "reset_request_context",
     "register_host_environment",
+    "register_sandbox_environment",
 ]

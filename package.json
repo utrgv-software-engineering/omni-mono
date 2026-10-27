@@ -1,0 +1,22 @@
+{
+  "name": "omni-mono",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "omni-desktop",
+    "omniagents/omniagents/backends/web/ui",
+    "omniagents/omniagents/backends/ink/tui",
+    "omniagents-studio/web",
+    "omniagents-workplace/web"
+  ],
+  "overrides": {
+    "esbuild": "^0.28.1",
+    "zod": "^4.6.7"
+  },
+  "scripts": {
+    "postinstall": "patch-package && node scripts/harden-mcp-ui.cjs"
+  },
+  "devDependencies": {
+    "patch-package": "^8.0.1"
+  }
+}

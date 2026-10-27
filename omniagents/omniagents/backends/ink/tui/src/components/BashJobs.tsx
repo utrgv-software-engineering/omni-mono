@@ -7,7 +7,7 @@ import {
   useDismissedJobIds,
   useThinking,
 } from "../store/appStore.js";
-import type { BashJobSummary } from "../store/appStore.js";
+import type { BashJobSummary } from "@omniagents/client/transcript/activity-store";
 import { RowText, SelectableRow } from "./shared/SelectableRow.js";
 import {
   Clip,

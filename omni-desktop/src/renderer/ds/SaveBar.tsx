@@ -1,7 +1,6 @@
+import { Alert, AlertDescription } from '@omniagents/ui/alert';
+import { Button } from '@omniagents/ui/button';
 import { memo } from 'react';
-
-import { Alert, AlertDescription } from '@/renderer/ds/ui/alert';
-import { Button } from '@/renderer/ds/ui/button';
 
 type SaveBarProps = {
   onSave: () => void;

@@ -1,3 +1,8 @@
+import { cn } from '@omniagents/ui/cn';
+import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from '@omniagents/ui/command';
+import { Input } from '@omniagents/ui/input';
+import { NativeSelect as Select } from '@omniagents/ui/native-select';
+import { Spinner } from '@omniagents/ui/spinner';
 import { Lock } from 'lucide-react';
 /**
  * Provider-agnostic repository picker: a scope (owner/org) + debounced search +
@@ -13,11 +18,6 @@ import { Lock } from 'lucide-react';
  */
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
-import { cn } from '@/renderer/ds/cn';
-import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from '@/renderer/ds/ui/command';
-import { Input } from '@/renderer/ds/ui/input';
-import { NativeSelect as Select } from '@/renderer/ds/ui/native-select';
-import { Spinner } from '@/renderer/ds/ui/spinner';
 import type { RemoteRepo } from '@/shared/types';
 
 const SEARCH_DEBOUNCE_MS = 350;

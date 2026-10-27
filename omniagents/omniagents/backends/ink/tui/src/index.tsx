@@ -9,6 +9,8 @@ import { initTheme } from "./theme/controller.js";
 import { App } from "./components/App.js";
 import { KeypressProvider } from "./contexts/KeypressContext.js";
 import { enableDebugLog, getDebugLogPath } from "./utils/debugLog.js";
+import { inkRenderOptions, routeConsoleOffTerminal } from "./renderOptions.js";
+import { CLIENT_IDENTITY } from "./client-identity.js";
 
 const cli = meow(
   `
@@ -37,6 +39,7 @@ const cli = meow(
 `,
   {
     importMeta: import.meta,
+    version: CLIENT_IDENTITY.version,
     flags: {
       server: {
         type: "string",
@@ -106,6 +109,10 @@ const {
   settingsFile,
 } = cli.flags;
 
+// Before anything can log: console output belongs in stderr (the debug
+// log or /dev/null under the launcher), never on the TUI's screen.
+const consoleOffTerminal = routeConsoleOffTerminal(process.stderr);
+
 // Enable debug logging to file if requested
 if (debug) {
   enableDebugLog();
@@ -137,17 +144,7 @@ const app = render(
       enableMouse={mouse}
     />
   </KeypressProvider>,
-  {
-    exitOnCtrlC: false,
-    // Enable alternate buffer to eliminate flickering
-    alternateBuffer: true,
-    // Monitor slow renders in debug mode
-    onRender: ({ renderTime }: { renderTime: number }) => {
-      if (debug && renderTime > 200) {
-        console.error(`[DEBUG] Slow render: ${renderTime}ms`);
-      }
-    },
-  },
+  inkRenderOptions({ debug, consoleOffTerminal }),
 );
 
 // Cleanup function to restore terminal state

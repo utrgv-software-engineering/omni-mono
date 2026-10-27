@@ -84,6 +84,7 @@ async def run_agent_once(
     *,
     model: Optional[str] = None,
     model_provider: Any = None,
+    resolved_model_config: Optional[Dict[str, Any]] = None,
     env_overrides: Optional[Dict[str, Optional[str]]] = None,
     session: Any = None,
     workspace_root: Optional[str] = None,
@@ -130,12 +131,48 @@ async def run_agent_once(
     if model:
         spec.model_name = model
 
+    build_session = session
+    if resolved_model_config is not None:
+        from copy import copy
+        from types import SimpleNamespace
+
+        build_session = copy(session) if session is not None else SimpleNamespace()
+        build_session.model_config = {
+            **resolved_model_config,
+            "model": model or resolved_model_config.get("model"),
+        }
+        # An explicit reviewer configuration must not inherit another model's
+        # generation settings. Normal inherited utilities retain session effort.
+        original = getattr(session, "model_config", None) or {}
+        if original.get("model") != build_session.model_config.get("model"):
+            build_session.reasoning_effort = resolved_model_config.get("reasoning")
     built = await _default_build_agent(
-        settings={}, mcp_servers=None, spec=spec, session=session
+        settings={}, mcp_servers=None, spec=spec, session=build_session
     )
 
+    from omniagents.core.models import model_store
+
+    store = model_store()
+    if store is not None and store.single_provider and model_provider is None:
+        raise ValueError(
+            "The workspace provider is unavailable; no other provider will be used."
+        )
+
+    # Outside a run's trace (the guardian reviews an approval from another task),
+    # the run's trace is its session's: the same group, so it is found with it.
+    session_id = getattr(session, "id", None)
+    trace_options: Dict[str, Any] = (
+        {
+            "group_id": f"session_{session_id}",
+            "workflow_name": getattr(spec, "name", None) or "omniagents",
+        }
+        if session_id
+        else {}
+    )
     run_config = (
-        RunConfig(model_provider=model_provider) if model_provider is not None else None
+        RunConfig(model_provider=model_provider, **trace_options)
+        if model_provider is not None or trace_options
+        else None
     )
 
     if not workspace_root:
@@ -300,6 +337,7 @@ async def run_project_agent_once(
         prompt,
         model=model,
         model_provider=model_provider,
+        resolved_model_config=runtime,
         env_overrides=env_overrides,
         session=session,
         workspace_root=workspace_root,

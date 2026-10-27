@@ -1404,51 +1404,6 @@ class TestOIDCAuthProvider:
         assert OIDCAuthProvider._extract_bearer_token("raw_token") == "raw_token"
 
 
-class TestPlatformAuthProviderFailsClosed:
-    """The runtime's own OMNI_RUNTIME_TOKEN (its outbound platform
-    credential) must never authenticate a credential-less inbound
-    connection (tkt_8yl18MvZbENq)."""
-
-    def test_env_token_not_used_for_credentialless_request(self, monkeypatch):
-        from unittest.mock import MagicMock
-
-        from omniagents.core.providers.platform.auth import PlatformAuthProvider
-
-        monkeypatch.setenv("OMNI_RUNTIME_TOKEN", "runtime-secret")
-        req = MagicMock()
-        req.headers = {}
-        req.query_params = {}
-        assert PlatformAuthProvider._extract_bearer_token(req) is None
-
-    @pytest.mark.asyncio
-    async def test_credentialless_connection_rejected_despite_env_token(
-        self, monkeypatch
-    ):
-        from unittest.mock import MagicMock
-
-        from omniagents.core.providers.platform.auth import PlatformAuthProvider
-
-        monkeypatch.setenv("OMNI_RUNTIME_TOKEN", "runtime-secret")
-        provider = PlatformAuthProvider({"platform_url": "https://platform.test"})
-        req = MagicMock()
-        req.headers = {}
-        req.query_params = {}
-        result = await provider.authenticate(req)
-        assert result.authenticated is False
-        assert "No bearer token" in result.error
-
-    def test_client_presented_header_still_extracted(self, monkeypatch):
-        from unittest.mock import MagicMock
-
-        from omniagents.core.providers.platform.auth import PlatformAuthProvider
-
-        monkeypatch.setenv("OMNI_RUNTIME_TOKEN", "runtime-secret")
-        req = MagicMock()
-        req.headers = {"authorization": "Bearer client-jwt"}
-        req.query_params = {}
-        assert PlatformAuthProvider._extract_bearer_token(req) == "client-jwt"
-
-
 # ═══════════════════════════════════════════════════════════════════════
 # WI-4: User identity threading
 # ═══════════════════════════════════════════════════════════════════════

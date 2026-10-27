@@ -1,8 +1,8 @@
+import { Button } from '@omniagents/ui/button';
+import { Input } from '@omniagents/ui/input';
 import type { ChangeEvent } from 'react';
 import { memo, useCallback } from 'react';
 
-import { Button } from '@/renderer/ds/ui/button';
-import { Input } from '@/renderer/ds/ui/input';
 import type { ProviderEntry } from '@/shared/types';
 
 type Props = {

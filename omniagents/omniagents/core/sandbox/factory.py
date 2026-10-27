@@ -13,21 +13,13 @@ YAML schema (all fields optional unless marked required)::
       use_sandbox_agent: false        # opt-in: build SandboxAgent instead of Agent
       run_as: "1000:1000"            # default user identity for sandbox tools
       client:
-        type: unix_local | process | docker | e2b | modal | runloop |
+        type: unix_local | docker | e2b | modal | runloop |
               daytona | blaxel | vercel | cloudflare        # required
         # remaining keys are forwarded as kwargs to the matching
         # ``*SandboxClient`` constructor (provider-specific)
         cap_add: ["NET_ADMIN"]        # docker: extra capabilities
         security_opt: ["seccomp=unconfined"]  # docker: relax seccomp (required for iptables-nft)
         network_mode: "none"          # docker: container network mode
-        # process (omni-sandbox binary; see sandbox/process_extended.py):
-        binary: /path/to/omni-sandbox # optional; else OMNI_SANDBOX_BIN, PATH
-        ro_binds: [/opt/tools]        # extra read-only mounts
-        rw_binds: [~/.cache/x]        # extra read-write mounts
-        network: none                 # none (default) | unrestricted
-        protected_subpaths: [.git]    # omit -> binary defaults (.git/.env/.codex)
-        # network_allow: [...] is a HARD ERROR (fail closed) — the process
-        # sandbox cannot enforce host-level egress filtering
       options:                        # optional client options dict
         # forwarded to the matching ``*SandboxClientOptions``
         image: my/image:tag           # docker
@@ -107,16 +99,6 @@ def _build_unix_local_options(options: Dict[str, Any]) -> Any:
     return UnixLocalSandboxClientOptions(exposed_ports=exposed)
 
 
-def _build_process_client(client_kwargs: Dict[str, Any]) -> Any:
-    # unix_local-shaped client that wraps every exec in the standalone
-    # omni-sandbox binary (bwrap+seccomp / seatbelt / AppContainer).
-    # Construction fails closed on a missing binary or a network_allow
-    # host allowlist — see the module docstring for the profile schema.
-    from omniagents.core.sandbox.process_extended import ProcessSandboxClient
-
-    return ProcessSandboxClient(**client_kwargs)
-
-
 def _build_docker_client(client_kwargs: Dict[str, Any]) -> Any:
     try:
         import docker as docker_sdk  # type: ignore
@@ -124,7 +106,6 @@ def _build_docker_client(client_kwargs: Dict[str, Any]) -> Any:
         raise ImportError(_missing_extra_message("docker", "sandbox-docker")) from e
 
     from omniagents.core.sandbox.docker_extended import (
-        BindSpec,
         ExtendedDockerSandboxClient,
     )
 
@@ -309,29 +290,12 @@ def _build_wasm_options(options: Dict[str, Any]) -> Any:
     return WasmSandboxClientOptions(**options)
 
 
-def _build_host_bridge_client(client_kwargs: Dict[str, Any]) -> Any:
-    # Computer-as-sandbox: the agent stays put; this client forwards the sandbox
-    # surface to a remote host running `omni sandbox-host`. No pip extra — pure
-    # stdlib + websockets (already a core dep).
-    from omniagents.core.sandbox.host_bridge import HostBridgeSandboxClient
-
-    return HostBridgeSandboxClient(**client_kwargs)
-
-
-def _build_host_bridge_options(options: Dict[str, Any]) -> Any:
-    from omniagents.core.sandbox.host_bridge import HostBridgeSandboxClientOptions
-
-    return HostBridgeSandboxClientOptions(**options)
-
-
 # Each entry: (client_factory, options_factory_or_None)
 _CLIENT_BUILDERS: Dict[
     str,
     Tuple[Callable[[Dict[str, Any]], Any], Optional[Callable[[Dict[str, Any]], Any]]],
 ] = {
     "unix_local": (_build_unix_local_client, _build_unix_local_options),
-    # process shares unix_local's options shape (exposed_ports only).
-    "process": (_build_process_client, _build_unix_local_options),
     "docker": (_build_docker_client, _build_docker_options),
     "e2b": (_build_e2b_client, _build_e2b_options),
     "modal": (_build_modal_client, _build_modal_options),
@@ -340,7 +304,6 @@ _CLIENT_BUILDERS: Dict[
     "blaxel": (_build_blaxel_client, _build_blaxel_options),
     "vercel": (_build_vercel_client, _build_vercel_options),
     "cloudflare": (_build_cloudflare_client, _build_cloudflare_options),
-    "host_bridge": (_build_host_bridge_client, _build_host_bridge_options),
     "wasm": (_build_wasm_client, _build_wasm_options),
 }
 

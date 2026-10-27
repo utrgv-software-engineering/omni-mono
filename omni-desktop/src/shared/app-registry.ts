@@ -2,19 +2,15 @@ export type AppId = string;
 
 export type AppKind =
   | 'builtin-chat'
-  | 'builtin-code'
-  | 'builtin-desktop'
   | 'builtin-browser'
   | 'builtin-files'
   | 'builtin-git'
   | 'builtin-review'
   | 'builtin-agents'
   | 'builtin-jobs'
-  | 'builtin-terminal'
-  | 'webview';
+  | 'builtin-terminal';
 
-export type AppScope = 'always' | 'sandbox';
-export type SandboxUrlKey = 'codeServerUrl' | 'noVncUrl';
+export type AppScope = 'always';
 
 export type AppDescriptor = {
   id: AppId;
@@ -23,30 +19,10 @@ export type AppDescriptor = {
   kind: AppKind;
   url?: string;
   scope: AppScope;
-  sandboxUrlKey?: SandboxUrlKey;
   builtin: boolean;
   order: number;
-  /**
-   * When true, the app appears in a code session's `EnvironmentDock`.
-   * When false, the app is available only as a standalone global column (via
-   * the app launcher). Built-ins default to true.
-   */
+  /** When true, the app appears in a code session's `EnvironmentDock`. */
   columnScoped: boolean;
-};
-
-export type CustomAppEntry = {
-  id: AppId;
-  label: string;
-  icon: string;
-  url: string;
-  order: number;
-  /**
-   * When true, this custom app appears in every code session's dock and can
-   * be driven column-scoped by agents in that session. When false (default),
-   * the app is global-only — accessible as its own standalone deck column
-   * via the app launcher, but hidden from the dock.
-   */
-  columnScoped?: boolean;
 };
 
 export const BUILTIN_APPS: AppDescriptor[] = [
@@ -58,28 +34,6 @@ export const BUILTIN_APPS: AppDescriptor[] = [
     scope: 'always',
     builtin: true,
     order: 0,
-    columnScoped: true,
-  },
-  {
-    id: 'code',
-    label: 'Code',
-    icon: 'Code',
-    kind: 'builtin-code',
-    scope: 'sandbox',
-    builtin: true,
-    order: 10,
-    sandboxUrlKey: 'codeServerUrl',
-    columnScoped: true,
-  },
-  {
-    id: 'desktop',
-    label: 'Desktop',
-    icon: 'Monitor',
-    kind: 'builtin-desktop',
-    scope: 'sandbox',
-    builtin: true,
-    order: 20,
-    sandboxUrlKey: 'noVncUrl',
     columnScoped: true,
   },
   {
@@ -155,10 +109,8 @@ export const BUILTIN_APPS: AppDescriptor[] = [
     label: 'Terminal',
     icon: 'SquareTerminal',
     kind: 'builtin-terminal',
-    // Terminals route through `omni serve`'s PTY backends, so a shell
-    // exists only once an environment reporting the `pty` capability is
-    // attached. The column dock enforces that (CodeWorkspaceLayout):
-    // no environment → no icon; wasm sandboxes (no PTY) → no icon.
+    // Terminals route through `omni serve`'s PTY backend, so the column
+    // only offers one once its agent is running.
     scope: 'always',
     builtin: true,
     order: 41,
@@ -166,13 +118,5 @@ export const BUILTIN_APPS: AppDescriptor[] = [
   },
 ];
 
-export function buildAppRegistry(customApps: CustomAppEntry[]): AppDescriptor[] {
-  const custom: AppDescriptor[] = customApps.map((c) => ({
-    ...c,
-    kind: 'webview' as const,
-    scope: 'always' as const,
-    builtin: false,
-    columnScoped: c.columnScoped ?? false,
-  }));
-  return [...BUILTIN_APPS, ...custom].sort((a, b) => a.order - b.order);
-}
+/** Every dock app, in display order. */
+export const APP_REGISTRY: AppDescriptor[] = [...BUILTIN_APPS].sort((a, b) => a.order - b.order);

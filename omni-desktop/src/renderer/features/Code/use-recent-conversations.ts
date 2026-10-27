@@ -1,10 +1,9 @@
 import { useStore } from '@nanostores/react';
+import type { SessionItem } from '@omniagents/chat-ui/components/SessionList';
+import { generateSessionTitle } from '@omniagents/chat-ui/lib/utils';
 import { useEffect, useMemo, useState } from 'react';
 
 import { MAX_CHAT_CONVERSATIONS } from '@/lib/chat-conversations';
-import { isResidentSessionId } from '@/lib/resident-agent';
-import type { SessionItem } from '@/renderer/omniagents-ui/components/SessionList';
-import { generateSessionTitle } from '@/renderer/omniagents-ui/lib/utils';
 import { getSessionController, onColumnRunEnd } from '@/renderer/services/session-control';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { ChatConversation, CodeTab } from '@/shared/types';
@@ -34,7 +33,7 @@ export function useRecentConversations(tabs: CodeTab[]): {
   const [liveSessions, setLiveSessions] = useState<SessionItem[]>([]);
 
   const agentTabKey = tabs
-    .filter((tab) => !tab.customAppId && Boolean(tab.sessionId))
+    .filter((tab) => Boolean(tab.sessionId))
     .map((t) => t.id)
     .join(',');
 
@@ -73,11 +72,6 @@ export function useRecentConversations(tabs: CodeTab[]): {
     const open = new Set(tabs.map((t) => t.sessionId).filter(Boolean));
     const bySession = new Map<string, ChatConversation>();
     for (const s of liveSessions) {
-      // Resident agents' sessions belong to the Agents surface (their DMs and
-      // Session tab), not the user's conversation history.
-      if (isResidentSessionId(s.id)) {
-        continue;
-      }
       // Server-archived sessions are not recents: worker threads are
       // archived at birth (readable via the Agents app, not conversation
       // history), and user-archived threads live behind the Archived
@@ -93,8 +87,8 @@ export function useRecentConversations(tabs: CodeTab[]): {
         });
       }
     }
-    // The launcher index wins on conflicts — it carries resume metadata
-    // (profileName) the live listing doesn't know about.
+    // The launcher index wins on conflicts — it carries metadata (project,
+    // archive state) the live listing doesn't know about.
     for (const c of store.chatConversations ?? []) {
       bySession.set(c.sessionId, { ...bySession.get(c.sessionId), ...c });
     }

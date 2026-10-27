@@ -1,9 +1,9 @@
+import { cn } from '@omniagents/ui/cn';
+import { Spinner } from '@omniagents/ui/spinner';
 import { motion } from 'framer-motion';
 import { ChevronRight } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';
 
-import { cn } from '@/renderer/ds/cn';
-import { Spinner } from '@/renderer/ds/ui/spinner';
 import { localEmitter } from '@/renderer/services/ipc';
 import type { WslDistro } from '@/shared/types';
 
@@ -190,7 +190,7 @@ export const OnboardingWslStep = memo(({ onSkip }: Props) => {
           <span className="flex flex-col gap-0.5 flex-auto min-w-0">
             <span className="text-sm font-semibold">Run the Omni backend in WSL (recommended)</span>
             <span className="text-xs text-muted-foreground">
-              Sandboxes run natively in Linux — uses your {defaultDistro.name} distro
+              Agents run natively in Linux — uses your {defaultDistro.name} distro
             </span>
           </span>
           <ChevronRight className="text-muted-foreground shrink-0" />

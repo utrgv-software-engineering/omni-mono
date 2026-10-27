@@ -10,6 +10,21 @@
 import './BrowserView.css';
 
 import { useStore } from '@nanostores/react';
+import { Badge } from '@omniagents/ui/badge';
+import { Button } from '@omniagents/ui/button';
+import { ButtonGroup } from '@omniagents/ui/button-group';
+import { cn } from '@omniagents/ui/cn';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@omniagents/ui/collapsible';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger,
+} from '@omniagents/ui/dropdown-menu';
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@omniagents/ui/empty';
+import { Popover, PopoverAnchor } from '@omniagents/ui/popover';
 import {
   ArrowLeft,
   ArrowRight,
@@ -37,21 +52,6 @@ import {
   openInBrowserTab,
   type WebviewLoadError,
 } from '@/renderer/common/webview-fallback';
-import { cn } from '@/renderer/ds/cn';
-import { Badge } from '@/renderer/ds/ui/badge';
-import { Button } from '@/renderer/ds/ui/button';
-import { ButtonGroup } from '@/renderer/ds/ui/button-group';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/renderer/ds/ui/collapsible';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuShortcut,
-  DropdownMenuTrigger,
-} from '@/renderer/ds/ui/dropdown-menu';
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/renderer/ds/ui/empty';
-import { Popover, PopoverAnchor } from '@/renderer/ds/ui/popover';
 import { BookmarksBar } from '@/renderer/features/Browser/BookmarksBar';
 import { DevtoolsPanel } from '@/renderer/features/Browser/Devtools/DevtoolsPanel';
 import { $downloads, DownloadsPopoverContent } from '@/renderer/features/Browser/DownloadsTray';

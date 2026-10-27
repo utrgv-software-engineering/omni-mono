@@ -1,7 +1,4 @@
-import { act } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
+import { withChatHost } from '@omniagents/chat-ui/testing/chat-host';
 import {
   $subagentTranscriptsBySession,
   type ActivityActions,
@@ -11,8 +8,11 @@ import {
   requestActivityFocus,
   subagentItemId,
   type SubagentSummary,
-} from '@/renderer/omniagents-ui/activity-store';
-import type { TaskSummary } from '@/renderer/omniagents-ui/canonical-plan-tasks';
+} from '@omniagents/client/transcript/activity-store';
+import type { TaskSummary } from '@omniagents/client/transcript/canonical-plan-tasks';
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AgentsSurface } from './AgentsSurface';
 
@@ -43,7 +43,7 @@ beforeEach(() => {
   vi.stubGlobal('ResizeObserver', ResizeObserverStub);
   container = document.createElement('div');
   document.body.appendChild(container);
-  root = createRoot(container);
+  root = withChatHost(createRoot(container));
 });
 
 afterEach(() => {
@@ -147,7 +147,7 @@ describe('AgentsSurface worker-plan drill-down', () => {
     expect(workerPlanSection()).toBeNull();
 
     await act(async () => root.unmount());
-    root = createRoot(container);
+    root = withChatHost(createRoot(container));
     await renderSubagentDetail(worker(), null);
     expect(workerPlanSection()).toBeNull();
   });
@@ -175,5 +175,33 @@ describe('AgentsSurface agent-tool transcript', () => {
 
     expect(container.querySelector('[data-testid="chat-transcript"]')).toBeNull();
     expect(container.textContent).toContain('left no relayed steps');
+  });
+});
+
+describe('worker recovery', () => {
+  it('offers explicit resume with an operation identity for interrupted workers', async () => {
+    const resumeWorker = vi.fn().mockResolvedValue({ ok: true });
+    await renderSubagentDetail(worker({ status: 'interrupted', recovered: true, error: 'Runtime stopped' }), {
+      ...actionsWith(vi.fn().mockResolvedValue([])),
+      resumeWorker,
+    });
+    expect(container.textContent).toContain('Worker interrupted');
+    const resume = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Resume worker'
+    );
+    expect(resume).toBeDefined();
+    await act(async () => resume!.click());
+    expect(resumeWorker).toHaveBeenCalledWith('w-1', expect.any(String));
+  });
+
+  it('shows blocked recovery and pending completion delivery honestly', async () => {
+    await renderSubagentDetail(
+      worker({ status: 'blocked', error: 'Original environment is unavailable', report_status: 'queued' }),
+      { ...actionsWith(vi.fn().mockResolvedValue([])), resumeWorker: vi.fn() }
+    );
+    expect(container.textContent).toContain('Recovery blocked');
+    expect(container.textContent).toContain('Original environment is unavailable');
+    expect(container.textContent).toContain('Retry recovery');
+    expect(container.textContent).toContain('Pending delivery');
   });
 });

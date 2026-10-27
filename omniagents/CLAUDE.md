@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Installing Dependencies
 ```bash
-pip install -r requirements.txt
-# Or for development with all optional dependencies:
-make dev
+make dev   # pip install -e .[dev]
+# Or, from the omni-mono root, sync the shared workspace venv:
+uv sync
 ```
 
 ### Running Tests
@@ -37,9 +37,7 @@ entries when you touch those modules; never add new ones.
 
 ### Coverage
 ```bash
-make coverage-all          # All coverage (Python, web)
 make coverage-python       # Python agents, FastAPI server, backends
-make coverage-web          # React Studio UI via Vitest
 ```
 
 ### Running the Application
@@ -95,9 +93,6 @@ OmniAgents is a wrapper around OpenAI's agents library (`openai-agents==0.4.2`) 
      - `project/`: Project scaffolding templates
   - `/omniagents/backends/`: UI/interface implementations (server, web, ink)
    - `/omniagents/rpc/`: JSON-RPC protocol implementation for remote agent communication
-   - `/omniagents/studio/`: Web-based UIs:
-     - `tracing/`: Trace visualization UI
-     - `server/`: Studio server with React frontend
    - `/examples/`: Various example implementations showcasing different features
    - `/tests/`: Test suite with fixtures in `conftest.py`
 
@@ -129,11 +124,11 @@ OmniAgents is a wrapper around OpenAI's agents library (`openai-agents==0.4.2`) 
 5. **Configuration**:
    - API keys via environment variables (e.g., `OPENAI_API_KEY`)
    - Agent-specific settings in YAML files (name, instructions_file, tools, use_safe_agent, layout)
-  - Optional dependencies controlled via `pyproject.toml` extras: `[server]`, `[web]`, `[studio]`, `[studio-server]`, `[all]`, `[dev]`
+  - Optional dependencies controlled via `pyproject.toml` extras: `[server]`, `[web]`, `[all]`, `[dev]`
 
 6. **Multi-Language Components**:
    - **Python**: Core framework, backends, RPC implementation
-   - **JavaScript/React**: Web UIs in `omniagents/backends/web/`, `omniagents/backends/ink/`, and `omniagents/studio/server/web/`
+   - **JavaScript/React**: Web UIs in `omniagents/backends/web/` and `omniagents/backends/ink/`
 
 ### Testing
 
@@ -158,7 +153,7 @@ pytest tests/integration/test_git_sandbox_substrate.py \
 ```
 
 CI runs them in the separate `sandbox-substrate` job
-(`.github/workflows/tests.yml`), which pulls the image and sets
+(`.github/workflows/omniagents-tests.yml` at the repository root), which pulls the image and sets
 `OMNIAGENTS_REQUIRE_SANDBOX_IMAGE=1` — that turns the skip into a
 collection error, so the job cannot pass by skipping everything.
 
@@ -171,6 +166,7 @@ container time, not CPU.
 ### Git Workflow Notes
 
 - **Always check branch and working tree status** before making changes (`git status -sb`)
+- **Work on `dev`**; `main` holds released code only, and `make publish` refuses to run off a clean, in-sync `main`. Release order and steps: the launcher's CLAUDE.md, "Branches and releases"
 - **Never modify unrelated dirty files** - surface dirty state to user and wait for guidance
 - **Run Black formatter on all touched Python files** before every commit
 - **Do not commit `docs/TESTING_ISSUES.md`** from inside a worktree

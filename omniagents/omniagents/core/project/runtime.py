@@ -8,7 +8,6 @@ if TYPE_CHECKING:
     from omniagents.core.agents.specs import MCPServerConfig
 import fnmatch
 import re
-import fnmatch
 
 import yaml
 
@@ -107,7 +106,7 @@ def _validate_agent_name(expected_key: str, yaml_name: Any, path: Path) -> str:
     return yaml_name
 
 
-def _manifest_product(proj: Dict[str, Any], base_dir: Path) -> ProductInfo:
+def manifest_product(proj: Dict[str, Any], base_dir: Path) -> ProductInfo:
     """The manifest's product identity — the project's one name.
 
     The ``product:`` section resolved with all conventions applied; when
@@ -223,13 +222,13 @@ def load_project(
     proj, _applied_overlays = _apply_project_overlays(
         proj,
         overlays,
-        config_dir_name=_manifest_product(proj, base_dir).config_dir_name,
+        config_dir_name=manifest_product(proj, base_dir).config_dir_name,
     )
 
     # The project's resolved product identity (post-overlay). This is
     # the project identity: every place the loader/runtime historically
     # read a top-level `name:` now derives from it.
-    product = _manifest_product(proj, base_dir)
+    product = manifest_product(proj, base_dir)
 
     # Install the manifest's product identity (`product:` section) as the
     # process-wide default. A prior explicit
@@ -282,6 +281,11 @@ def load_project(
     # Product prompt-template dirs (conventional filenames bound to
     # framework seams — see omniagents.core.project.prompts).
     prompts_dirs = _resolve_many("prompts", "prompts")
+    # Folders whose @context_factory functions any agent can name with
+    # `context:`, after the agent's own folder and any it extends.
+    context_dirs = _resolve_many("context")
+    # Skills every agent in the project sees (agents add their own skills/).
+    skills_dirs = _resolve_many("skills", "skills")
     paths: Dict[str, List[Path]] = {
         "tools": tools_dirs,
         "guardrails": guardrails_dirs,
@@ -292,10 +296,17 @@ def load_project(
         "target": target_dir,
         "instruction_fragments": instruction_fragments_dirs,
         "prompts": prompts_dirs,
+        "context": context_dirs,
+        "skills": skills_dirs,
     }
 
     agents_section = proj.get("agents") or {}
     entry = agents_section.get("entrypoint")
+    from omniagents.integrations.architecture import factory_architecture
+
+    architecture = factory_architecture()
+    if architecture:
+        entry = "generalist" if architecture == "personal" else "foreman"
     voice_entry = agents_section.get("voice_entrypoint")
     include = agents_section.get("include")
     exclude = agents_section.get("exclude")
@@ -379,10 +390,10 @@ def load_project(
 
     core_root = Path(__file__).resolve().parents[2]
 
-    # Tracing derives from the product identity: provider `studio`,
-    # project and trace name both the product slug. A declared `tracing:`
-    # block deep-merges over those defaults, so a project states only
-    # what deviates.
+    # Tracing is off unless a project turns it on: an always-on local
+    # recorder grew trace databases without bound. Project and trace name
+    # derive from the product slug; a declared `tracing:` block (e.g.
+    # `provider: studio`) deep-merges over these defaults.
     from omniagents.core.utils.merge import deep_merge
 
     tracing_block = proj.get("tracing")
@@ -390,7 +401,7 @@ def load_project(
         tracing_block = {}
     tracing_defaults = deep_merge(
         {
-            "provider": "studio",
+            "provider": "none",
             "project": product.slug,
             "name": product.slug,
         },
@@ -644,6 +655,7 @@ def build_spec_from_project(
     selected_key = agent_key
     key, agent_yaml = resolve_agent(project, selected_key)
     pdefs = {
+        "memory": project.raw.get("memory"),
         "tracing": project.tracing_defaults or None,
         "settings": project.settings_defaults or [],
         "security": project.security.to_dict(),
@@ -651,6 +663,11 @@ def build_spec_from_project(
         "instruction_fragments": [
             str(p) for p in (project.paths.get("instruction_fragments") or [])
         ],
+        # `extends:` folders resolve against the project root; paths.context
+        # folders hold context factories every agent can name.
+        "project_root": str(project.root),
+        "context_dirs": [str(p) for p in (project.paths.get("context") or [])],
+        "skills_dirs": [str(p) for p in (project.paths.get("skills") or [])],
     }
     pdefs.update(project.ui_defaults or {})
     # Builtin server functions are capability-gated (registered by the
@@ -676,6 +693,9 @@ def build_spec_from_project(
     spec.project_slug = project.product.slug
     spec.agent_slug = _slugify(key, key)
     spec.manifest_path = str(project.root / "project.yml")
+    from .values import project_values
+
+    spec.instruction_globals = {"project": project_values(project.raw, project.product)}
 
     voice_spec = None
     voice_key = configured_voice_key

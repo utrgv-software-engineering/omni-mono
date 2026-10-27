@@ -128,19 +128,19 @@ async def test_read_file_with_offset_and_limit(routed, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_read_file_truncates_long_lines(routed, tmp_path):
-    """Test that lines longer than 500 chars are truncated."""
+async def test_read_file_preserves_long_lines(routed, tmp_path):
+    """Long lines remain intact until the shared total-output boundary."""
     file = tmp_path / "test.txt"
     long_line = "x" * 600
     file.write_text(f"short\n{long_line}\nafter\n", encoding="utf-8")
 
     result = await unwrap(file_tools.read_file)(routed, str(file))
 
-    assert result.ui_metadata["metadata"]["lines_truncated"] == 1
-    assert "exceeded 500 chars" in result.llm_output
+    assert result.ui_metadata["metadata"]["lines_truncated"] == 0
+    assert "exceeded 500 chars" not in result.llm_output
     lines = result.llm_output.split("\n")
     long_output_line = [l for l in lines if l.startswith("L2:")][0]
-    assert len(long_output_line) <= 504 + 10  # "L2: " + 500 chars + margin
+    assert long_output_line == "L2: " + long_line
 
 
 @pytest.mark.asyncio

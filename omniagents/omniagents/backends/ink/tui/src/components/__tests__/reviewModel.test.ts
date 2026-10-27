@@ -7,7 +7,7 @@ import {
   numberUnified,
   splitUnifiedDiff,
 } from "../review-model.js";
-import type { GitDiffHunk } from "../../rpc/client.js";
+import type { GitDiffHunk } from "@omniagents/client/rpc/git";
 
 describe("buildReviewView", () => {
   const files = [

@@ -133,7 +133,9 @@ async def _spawn_quick_job_async(tmp_path: Path, session_id: str | None) -> str:
     # something that exists, then spawn the command via the workspace.
     Path(log_path).touch()
 
-    wrapped = f"(echo done && sleep 0.2) >> {_shlex.quote(log_path)} 2>&1 < /dev/null"
+    # Long enough to still be running when the sweeper seeds its baseline;
+    # it only reports changes it observes, and spawning is slow on Windows.
+    wrapped = f"(echo done && sleep 2) >> {_shlex.quote(log_path)} 2>&1 < /dev/null"
     handle = await _ws.spawn(wrapped, cwd=str(tmp_path), shell=True, pty=False)
 
     job = Job(
@@ -248,7 +250,7 @@ async def test_sweeper_broadcasts_exit_to_session_channel(tmp_path):
 
         # 3) Wait until the channel receives a ``client_request`` for
         #    ``ui.bash_jobs.update`` whose snapshot shows the job as exited.
-        deadline = time.monotonic() + 3.0
+        deadline = time.monotonic() + 8.0
         seen_exited = False
         while time.monotonic() < deadline:
             for method, payload in channel.calls:

@@ -3,87 +3,38 @@ if (process.env.NODE_ENV === 'development') {
 }
 
 import { app, dialog, ipcMain, net, protocol, shell } from 'electron';
-import { existsSync, writeFileSync } from 'fs';
-import { migrateFromJson } from 'omni-projects-db';
-import { join, resolve } from 'path';
+import { mkdirSync, writeFileSync } from 'fs';
+import { join } from 'path';
 import { assert } from 'tsafe';
 import { pathToFileURL } from 'url';
 
-import { emptyMcpConfig, emptyModelsConfig, emptyNetworkConfig, parseEnvVars } from '@/lib/agent-config';
-import { getArtifactsDir } from '@/lib/artifacts';
-import { pullRequestEventDetail, pullRequestSystemLine } from '@/lib/pull-request-watch';
-import { parseResidentPrincipal } from '@/lib/resident-agent';
+import { parseEnvVars } from '@/lib/agent-config';
 import { winToWslPath } from '@/lib/wsl-path';
 import { createAppControlManager } from '@/main/app-control-manager';
-import { AutomationManager, registerAutomationHandlers } from '@/main/automation-manager';
 import { listRepos as azureListRepos } from '@/main/azure-repos';
 import { createBrowserManager } from '@/main/browser-manager';
-import { ChatCleanupRunner, cleanupRemovedChat } from '@/main/chat-removal';
-import { assertCleanupOwner, runtimeOwner } from '@/main/chat-runtime-journal';
-import { registerChatHandlers } from '@/main/chat-service';
-import {
-  getStatus as codexStatus,
-  loginWithBrowser,
-  loginWithDeviceFlow,
-  logout as codexLogout,
-} from '@/main/codex-auth';
-import { wireComputeReverseHandlers } from '@/main/compute-reverse-handlers';
-import { migrateAgentConfigFromFiles } from '@/main/config-files-migration';
-import { materializeAgentConfig } from '@/main/config-materializer';
+import { cleanupRemovedChat } from '@/main/chat-removal';
 import { createConsoleManager } from '@/main/console-manager';
-import { rowToProject } from '@/main/db-store-bridge';
 import { createDownloadsManager } from '@/main/downloads-manager';
-import {
-  ensureFreshAccessToken as ensureFreshEntraToken,
-  getStatus as entraStatus,
-  loginWithDeviceFlow as entraLoginWithDeviceFlow,
-  logout as entraLogout,
-} from '@/main/entra-auth';
-import { createExtensionManager } from '@/main/extension-manager';
 import {
   linkWithDeviceFlow as githubLink,
   listOrgs as githubListOrgs,
   searchRepos as githubSearchRepos,
 } from '@/main/github-auth';
-import { durableLocalCodexAgentHostEnv, LocalCodexAccountOwner } from '@/main/local-codex-account-owner';
-import { durableLocalMcpAgentHostEnv, LocalMcpConfigOwner } from '@/main/local-mcp-config-owner';
-import { getOrCreateMachineIdentity, renameMachine } from '@/main/machine-identity';
+import { removeRetiredState } from '@/main/legacy-cleanup';
+import { LocalCodexAccount } from '@/main/local-codex-account';
+import { readLocalModels, writeLocalModels } from '@/main/local-model-config';
 import { MainProcessManager } from '@/main/main-process-manager';
-import { getMcpBinPath } from '@/main/mcp-config-manager';
-import { registerMigrationHandlers } from '@/main/migration-handlers';
 import { createOmniInstallManager } from '@/main/omni-install-manager';
-import { migrateLegacyPagesToConfigDir } from '@/main/pages-relocation-migration';
 import { createPermissionsManager } from '@/main/permissions-manager';
-import { registerPlatformIpc } from '@/main/platform-ipc';
-import { createPlatformClient } from '@/main/platform-mode';
 import { createProcessManager } from '@/main/process-manager';
 import { refreshProductRuntimeInfo } from '@/main/product-runtime';
-import { registerProfileCatalogHandlers } from '@/main/profile-catalog';
-import { getBundledProfilesDir } from '@/main/profile-resolver';
-import { backfillProjectConfigs } from '@/main/project-config-backfill';
-import { closeProjectDb, getDb, openProjectDb } from '@/main/project-db';
 import { createProjectManager } from '@/main/project-manager';
-import { createPullRequestWatcher } from '@/main/pull-request-watcher';
-import { registerResidentHandlers, ResidentAgentManager } from '@/main/resident-agent-manager';
-import { wireReverseRpcRouter } from '@/main/reverse-rpc-bridge';
+import { importLegacyProjectsDb } from '@/main/projects-import';
 import { RoutineBridge } from '@/main/routine-bridge';
-import {
-  defaultSandboxInventoryDeps,
-  processOwnersFromState,
-  registerSandboxInventoryHandlers,
-  suspendedSessionOwners,
-} from '@/main/sandbox-inventory';
 import { registerScheduledTaskHandlers, ScheduledTaskManager } from '@/main/scheduled-task-manager';
 import { LocalSecretStore } from '@/main/secret-store';
-import {
-  DEFAULT_CHAT_SNAPSHOT_TTL_MS,
-  deleteSnapshot,
-  gcStaleSnapshots,
-  protectedSnapshotsFromTabs,
-  registerSnapshotHandlers,
-} from '@/main/snapshot-manager';
 import { getStore } from '@/main/store';
-import { wireTunnelReverseHandlers } from '@/main/tunnel-handler';
 import {
   ensureDirectory,
   getDefaultWorkspaceDir,
@@ -94,9 +45,7 @@ import {
   isFile,
 } from '@/main/util';
 import { getVoiceService } from '@/main/voice-service';
-import { WorkspaceSyncManager } from '@/main/workspace-sync-manager';
 import { createWslBackendManager } from '@/main/wsl-backend';
-import { registerTeamHandlers } from '@/server/team-handlers';
 import { tokenLast4 } from '@/shared/git-credentials';
 import {
   registerConfigHandlers,
@@ -105,8 +54,7 @@ import {
   registerSkillsHandlers,
   registerUtilHandlers,
 } from '@/shared/ipc-handlers';
-import { buildStdioMcpEntry } from '@/shared/mcp-entry';
-import type { GitCredential, GithubOwner, GithubRepoQuery, GithubStatus, RemoteRepo, TicketId } from '@/shared/types';
+import type { GitCredential, GithubOwner, GithubRepoQuery, GithubStatus, RemoteRepo } from '@/shared/types';
 
 // Process-level crash visibility. Log only — do not exit. Killing the
 // Electron main process from an unhandled rejection would take the whole
@@ -120,22 +68,7 @@ process.on('uncaughtException', (err) => {
   console.error('[fatal] uncaughtException:', err);
 });
 
-// Register artifact: protocol as privileged before app is ready.
-// NOTE: `bypassCSP` is intentionally NOT set. Artifacts are agent-generated
-// content (Omni Code writes them into ticket workspaces) — bypassing CSP
-// would let a malicious or buggy artifact execute scripts with full renderer
-// privileges. The `protocol.handle` callback below sets a strict CSP header
-// on every artifact response that blocks script execution while still
-// allowing images, styles, fonts, and media to render.
 protocol.registerSchemesAsPrivileged([
-  {
-    scheme: 'artifact',
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: true,
-    },
-  },
   // MCP Apps sandbox proxy origin. Registered as a separate, opaque
   // origin so the AppFrame iframe (mcp-ui) is cross-origin isolated from
   // the renderer. ``bypassCSP`` is intentionally not set — the handler
@@ -188,105 +121,26 @@ if (process.env.NODE_ENV === 'development' || process.env.OMNI_DEBUG_PORT) {
 const OMNI_CONFIG_DIR = getOmniConfigDir();
 const store = getStore();
 const secretStore = new LocalSecretStore();
-const { repo, asyncRepo } = openProjectDb();
-
-// One-time migration: move project data from electron-store JSON to SQLite.
-// This is idempotent — it skips if the DB already has projects.
-try {
-  const migrated = migrateFromJson(repo, getDb(), {
-    projects: store.get('projects', []) as import('@/shared/types').Project[],
-    tickets: store.get('tickets', []) as import('@/shared/types').Ticket[],
-    milestones: store.get('milestones', []) as import('@/shared/types').Milestone[],
-    pages: store.get('pages', []) as import('@/shared/types').Page[],
-    inboxItems: store.get('inboxItems', []) as import('@/shared/types').InboxItem[],
-    tasks: store.get('tasks', []) as import('@/shared/types').Task[],
-  });
-  if (migrated > 0) {
-    console.log(`[ProjectDb] Migrated ${migrated} projects from electron-store to SQLite`);
-  }
-} catch (err) {
-  console.error('[ProjectDb] Failed to migrate from electron-store:', err);
-}
-
-// Backfill any project rows whose `config` column is NULL — added in
-// schema v3. Idempotent; only touches rows without an existing config.
-try {
-  const backfilled = backfillProjectConfigs(repo);
-  if (backfilled > 0) {
-    console.log(`[ProjectDb] Backfilled config for ${backfilled} projects`);
-  }
-} catch (err) {
-  console.error('[ProjectDb] Failed to backfill project configs:', err);
-}
-
-// Task #18: copy legacy on-disk pages (`<workspaceDir>/Projects/<slug>/pages`,
-// per-project `context.md`, and MCP's `<config>/projects/<slug>/pages`) into
-// the new `<config>/pages/<projectId>/` layout. Idempotent; never deletes
-// originals so a bad migration can be recovered by hand.
-//
-// Records a one-shot notice in the store when legacy paths still exist so
-// the renderer can show a dismissible cleanup banner. The notice is left
-// in place across reboots until the user acknowledges or runs cleanup.
-try {
-  const summary = migrateLegacyPagesToConfigDir(repo);
-  const total = summary.perProjectPagesCopied + summary.rootPagesFromContextMd + summary.mcpPagesCopied;
-  if (total > 0) {
-    console.log(
-      `[ProjectDb] Pages migration copied ${total} files ` +
-        `(per-project: ${summary.perProjectPagesCopied}, ` +
-        `context.md → root: ${summary.rootPagesFromContextMd}, ` +
-        `MCP: ${summary.mcpPagesCopied}, ` +
-        `skipped existing: ${summary.skippedAlreadyMigrated})`
-    );
-  }
-  // Only seed the notice on the first boot where we found something
-  // worth telling the user about. Subsequent boots leave the existing
-  // state alone (so a user mid-decision doesn't get re-prompted).
-  const existing = store.get('pagesMigration');
-  if (!existing && summary.legacyPaths.length > 0) {
-    store.set('pagesMigration', {
-      summary: {
-        perProjectPagesCopied: summary.perProjectPagesCopied,
-        rootPagesFromContextMd: summary.rootPagesFromContextMd,
-        mcpPagesCopied: summary.mcpPagesCopied,
-        skippedAlreadyMigrated: summary.skippedAlreadyMigrated,
-      },
-      legacyPaths: summary.legacyPaths,
-      acknowledged: false,
-    });
-  }
-} catch (err) {
-  console.error('[ProjectDb] Failed to migrate legacy pages:', err);
-}
+importLegacyProjectsDb(store);
+void removeRetiredState(OMNI_CONFIG_DIR).catch((error) => {
+  console.warn('[legacy-cleanup] failed:', error);
+});
 
 /**
- * Materialize the agent's on-disk config from the store (desktop = single user,
- * plaintext). Models/network/env remain Desktop-owned; mcp.json is a derived
- * copy only until the local MCP ownership marker transfers it to Omniagents.
- * Merges the managed `omni-projects` stdio MCP entry and writes a real `.env`.
- * Runs at startup and after every `settings:*` write.
+ * Write the user's Settings → Environment vars to `<config>/.env`, which omni
+ * serve reads. Runs at startup and after every `settings:*` write. MCP servers
+ * and models live in the runtime's own config files.
  */
-function materializeDesktopConfig(): void {
+function writeDesktopEnvFile(): void {
   try {
-    materializeAgentConfig({
-      configDir: OMNI_CONFIG_DIR,
-      models: store.get('modelsConfig') ?? emptyModelsConfig(),
-      mcp: store.get('mcpConfig') ?? emptyMcpConfig(),
-      network: store.get('networkConfig') ?? emptyNetworkConfig(),
-      mode: 'plaintext',
-      managedMcpEntry: buildStdioMcpEntry(getMcpBinPath()),
-      writeMcp: store.get('mcpConfigOwnership') !== 'omniagents',
-    });
+    // First launch runs before the runtime has created its config dir.
+    mkdirSync(OMNI_CONFIG_DIR, { recursive: true });
     writeFileSync(join(OMNI_CONFIG_DIR, '.env'), store.get('envVars') ?? '', 'utf-8');
   } catch (err) {
-    console.error('[config-materializer] desktop materialize failed:', err);
+    console.error('[config] writing .env failed:', err);
   }
 }
-
-// Import any pre-v23 on-disk config files into the store once, then make the
-// store the source of truth that materialize writes back out.
-migrateAgentConfigFromFiles(store, OMNI_CONFIG_DIR);
-materializeDesktopConfig();
+writeDesktopEnvFile();
 
 const main = new MainProcessManager({ store });
 let isShuttingDown = false;
@@ -295,7 +149,7 @@ let isShuttingDown = false;
 // AppControlManager needs its popup callback at construction time so
 // `setWindowOpenHandler` can route `window.open` into `BrowserManager.createTab`.
 let browserManagerRef: ReturnType<typeof createBrowserManager>[0] | null = null;
-const [appControlManager, cleanupAppControl] = createAppControlManager({
+const [, cleanupAppControl] = createAppControlManager({
   ipc: main.ipc,
   onBrowserPopup: (tabsetId, url, disposition) => {
     if (!browserManagerRef) {
@@ -315,27 +169,12 @@ const [omniInstall, cleanupOmniInstall] = createOmniInstallManager({
   ipc: main.ipc,
   sendToWindow: main.sendToWindow,
 });
-let localMcpConfigOwner: LocalMcpConfigOwner;
-let localMcpOwnershipPromise: Promise<void> | null = null;
 const [processManager, cleanupProcessManager] = createProcessManager({
-  runtimeJournalDir: join(getOmniConfigDir(), 'chat-runtime-journal'),
-  claimChatRuntime: (id) => {
-    const tabs = store.get('codeTabs') ?? [];
-    if (!tabs.some((tab) => tab.id === id)) {
-      throw new Error('This chat tab has been closed');
-    }
-    assertCleanupOwner(tabs.find((tab) => tab.id === id)?.runtimeOwner);
-    store.set(
-      'codeTabs',
-      tabs.map((tab) => (tab.id === id ? { ...tab, runtimeOwner } : tab))
-    );
-  },
   ipc: main.ipc,
   sendToWindow: main.sendToWindow,
   fetchFn: (input, init) => net.fetch(input as string, init),
   getStoreData: () => ({
-    defaultProfileName: store.get('defaultProfileName') ?? 'host',
-    projects: repo.listProjects().map(rowToProject),
+    projects: store.get('projects') ?? [],
     gitCredentials: store.get('gitCredentials') ?? [],
   }),
   resolveGitToken: (id) => secretStore.getGitToken(id),
@@ -344,60 +183,12 @@ const [processManager, cleanupProcessManager] = createProcessManager({
   // (the agent/model loop), mirroring server mode's getExtraEnv. The sandbox
   // *container* gets these separately via the materialized `<config>/.env`,
   // which omni serve folds into manifest.environment (`_inject_user_env`).
-  // Trusted local-Electron topology attestation. Deliberately overrides a
-  // user-authored value; server managers never inject it and keep the broker
-  // account-mutation gate disabled.
-  getExtraEnv: () =>
-    durableLocalMcpAgentHostEnv(durableLocalCodexAgentHostEnv(parseEnvVars(store.get('envVars') ?? ''))),
-  durableLocalCodexAccountMutations: true,
-  durableLocalMcpMutations: true,
-  prepareLocalMcpOwnership: (status) => ensureLocalMcpOwnership(status),
-  onManagementReady: async (proc) => {
-    try {
-      await ensureLocalMcpOwnership(await proc.getManagementMcpStatus());
-    } catch (error) {
-      // Keep the management read surface available during migration. The
-      // canonical mutation broker still reruns the same parity proof and
-      // fails closed until it succeeds.
-      console.warn(`[mcp-ownership] local transfer deferred: ${(error as Error).message}`);
-    }
-  },
+  getExtraEnv: () => parseEnvVars(store.get('envVars') ?? ''),
 });
-localMcpConfigOwner = new LocalMcpConfigOwner({
-  store,
-  managedEntry: buildStdioMcpEntry(getMcpBinPath()),
-  environment: () => ({ ...process.env, ...parseEnvVars(store.get('envVars') ?? '') }),
-});
-/** Complete the local MCP ownership transfer once the management host is
- * ready. The transfer is fail-closed and idempotent; legacy reads can still
- * render while a cold host is starting. */
-function ensureLocalMcpOwnership(status?: Record<string, unknown>): Promise<void> {
-  if (store.get('mcpConfigOwnership') === 'omniagents') {
-    return Promise.resolve();
-  }
-  if (!localMcpOwnershipPromise) {
-    localMcpOwnershipPromise = (status ? Promise.resolve(status) : processManager.getManagementMcpStatus())
-      .then((current) => localMcpConfigOwner.ensureOwnership(current))
-      .then(() => {
-        main.sendToWindow('store:changed', main.getStoreSnapshot ? main.getStoreSnapshot() : store.store);
-      })
-      .finally(() => {
-        localMcpOwnershipPromise = null;
-      });
-  }
-  return localMcpOwnershipPromise;
-}
-const localCodexAccount = new LocalCodexAccountOwner({
-  store,
+const localCodexAccount = new LocalCodexAccount({
   runtime: {
     status: () => processManager.getManagementAccountStatus(),
     mutate: (request) => processManager.mutateManagement(request),
-  },
-  legacy: {
-    status: codexStatus,
-    login: () => loginWithBrowser((url) => void shell.openExternal(url)),
-    link: (onCode) => loginWithDeviceFlow({ onCode }),
-    logout: codexLogout,
   },
 });
 const routineBridge = new RoutineBridge(main.sendToWindow);
@@ -407,46 +198,13 @@ const scheduledTaskManager = new ScheduledTaskManager({
   sendToWindow: main.sendToWindow,
   // Composed snapshot for broadcasts — read at call time; getStoreSnapshot
   // is assigned after ProjectManager boots.
-  getSnapshot: () => (main.getStoreSnapshot ? main.getStoreSnapshot() : store.store),
+  getSnapshot: () => store.store,
 });
 const scheduledTaskChannels = [
   ...registerScheduledTaskHandlers(main.ipc, () => scheduledTaskManager),
   ...routineBridge.registerIpc(main.ipc),
 ];
 scheduledTaskManager.start();
-
-// Resident agents (docs/resident-agents-plan.md): the roster of named,
-// persistent work agents. Rides ProcessManager for lifecycle; durable
-// data lives in projects-db (docs/residents-in-projects-db-plan.md).
-const residentAgentManager = new ResidentAgentManager({
-  store,
-  repo: asyncRepo,
-  processManager,
-  sendToWindow: main.sendToWindow,
-  // Live UI updates: MainProcessManager suppresses the automatic
-  // store:changed broadcast once the SQLite snapshot provider is set, so
-  // this manager broadcasts its own writes with the MERGED snapshot
-  // (project keys included). Read at call time — getStoreSnapshot is
-  // assigned after ProjectManager boots.
-  getSnapshot: () => (main.getStoreSnapshot ? main.getStoreSnapshot() : store.store),
-});
-registerResidentHandlers(main.ipc, () => residentAgentManager);
-// chat-v1's internal binding (docs/chat-v1-plan.md): messaging methods under
-// their wire names, resolved against the same manager.
-registerChatHandlers(main.ipc, () => residentAgentManager);
-residentAgentManager.start();
-
-// Automations: user-defined event rules (PR event / channel message /
-// schedule) that wake a resident with a standing instruction.
-const automationManager = new AutomationManager({
-  store,
-  deliver: (agentId, detail) => residentAgentManager.deliverAutomation(agentId, detail),
-  subscribeChatEvents: residentAgentManager.subscribeChatEvents,
-  sendToWindow: main.sendToWindow,
-  getSnapshot: () => (main.getStoreSnapshot ? main.getStoreSnapshot() : store.store),
-});
-const automationChannels = registerAutomationHandlers(main.ipc, () => automationManager);
-automationManager.start();
 
 // Create ConsoleManager — proxies terminal:* IPC into omni serve's
 // WebSocket. Constructed after ProcessManager because it needs the
@@ -457,137 +215,15 @@ const [consoleManager, cleanupConsole] = createConsoleManager({
   processManager,
 });
 
-const chatCleanup = new ChatCleanupRunner({
-  read: async () => {
-    await processManager.recoverAbandonedRuntimes();
-    return store.get('chatCleanupJobs') ?? [];
-  },
-  acknowledge: (id) =>
-    store.set(
-      'chatCleanupJobs',
-      (store.get('chatCleanupJobs') ?? []).filter((job) => job.id !== id)
-    ),
-  cleanup: async (tab) => {
-    assertCleanupOwner(tab.runtimeOwner);
-    await cleanupRemovedChat(tab, {
-      disposeTerminals: (id) => consoleManager.disposeAllForTab(id),
-      stop: (id) => processManager.retire(id),
-      deleteSnapshot,
-      isSnapshotProtected: (ref) =>
-        protectedSnapshotsFromTabs(store.get('codeTabs') ?? []).some((claim) => claim.snapshotRef === ref),
-    });
-  },
-});
-main.cleanupRemovedChat = (tab) => chatCleanup.runOne(tab);
-chatCleanup.start();
+main.cleanupRemovedChat = (tab) =>
+  cleanupRemovedChat(tab, {
+    disposeTerminals: (id) => consoleManager.disposeAllForTab(id),
+    stop: (id) => processManager.retire(id),
+  });
 
-// Protected set = the same open-tab snapshots as the GC keep set below; the
-// tab-close cascade persists the pruned codeTabs before its snapshot:delete,
-// so the guard only ever blocks deletes of snapshots still open in the UI.
-registerSnapshotHandlers(main.ipc, {
-  getProtectedSnapshots: () => protectedSnapshotsFromTabs(store.get('codeTabs') ?? []),
-});
-
-// Sandboxes tab (docs/sandboxes-tab-plan.md Phase 2): profile discovery +
-// container inventory. Both modules are Electron-free; this shell injects
-// its paths and ownership providers.
-registerProfileCatalogHandlers(main.ipc, {
-  bundledDir: getBundledProfilesDir(),
-  userDir: join(OMNI_CONFIG_DIR, 'sandbox'),
-  getAvailableProfileNames: () => store.get('availableSandboxProfiles'),
-});
-registerSandboxInventoryHandlers(main.ipc, {
-  ...defaultSandboxInventoryDeps(),
-  getProcessOwners: () => [
-    ...processOwnersFromState(
-      processManager.getContainerOwners(),
-      store.get('codeTabs') ?? [],
-      residentAgentManager.getDurableSnapshot().residentAgents
-    ),
-    ...suspendedSessionOwners(store.get('codeTabs') ?? []),
-  ],
-});
-
-// Startup environment GC. Code tabs cascade-delete on remove; this sweep
-// catches stale conversation workspaces older than 14 days (and anything
-// orphaned by a crashed cascade). Protected set = every code tab's
-// snapshotRef plus every resident's durable workspace (residents park for
-// arbitrarily long stretches; their delete path retires the workspace
-// explicitly). Best-effort; failures don't block boot.
-void (async () => {
-  try {
-    const keep = new Set<string>();
-    for (const tab of store.get('codeTabs') ?? []) {
-      if (tab.snapshotRef) {
-        keep.add(tab.snapshotRef);
-      }
-    }
-    for (const resident of residentAgentManager.getDurableSnapshot().residentAgents) {
-      keep.add(`resident-${resident.id}`);
-    }
-    const deleted = await gcStaleSnapshots({ keep, ttlMs: DEFAULT_CHAT_SNAPSHOT_TTL_MS });
-    if (deleted.length > 0) {
-      console.log(`[snapshot-gc] deleted ${deleted.length} stale snapshot(s)`);
-    }
-  } catch (err) {
-    console.error('[snapshot-gc] failed:', err);
-  }
-})();
-const [projectManager, cleanupProject] = createProjectManager({
-  ipc: main.ipc,
-  sendToWindow: main.sendToWindow,
-  store,
-  processManager,
-  appControlManager,
-  // Async repo backs the cached projection; sync repo drives the change-watcher.
-  repo: asyncRepo,
-  changeSeqRepo: repo,
-  // Resident durable keys ride EVERY snapshot this manager builds or
-  // broadcasts — a project-data broadcast without them would clobber the
-  // roster in the renderer's mirrored store.
-  snapshotExtras: () => residentAgentManager.getDurableSnapshot(),
-  // Ticket assigned to a resident (`agent:<id>`) → assignment wakeup.
-  onAssign: (assignee, ticket) => {
-    const residentId = parseResidentPrincipal(assignee);
-    if (!residentId) {
-      return;
-    }
-    const project = projectManager.getStoreSnapshot().projects.find((p) => p.id === ticket.projectId);
-    residentAgentManager.deliverAssignment(residentId, {
-      id: ticket.id,
-      title: ticket.title,
-      ...(project ? { projectLabel: project.label } : {}),
-    });
-  },
-});
-// Wire up the store snapshot provider so MainProcessManager serves project data
-// from SQLite. Resident durable keys ride along via ProjectManager's
-// snapshotExtras, so this single snapshot is complete everywhere it's used.
-main.getStoreSnapshot = () => projectManager.getStoreSnapshot();
-// Watched-PR poller: state flips persist through the links' owners; review
-// verdicts / merges on ticket-linked PRs wake the assigned resident.
-const [, cleanupPrWatcher] = createPullRequestWatcher({
-  getSnapshot: () => projectManager.getStoreSnapshot(),
-  resolveGitToken: (id) => secretStore.getGitToken(id),
-  fetchFn: ((input, init) => net.fetch(input as string, init)) as typeof globalThis.fetch,
-  updateTicket: (ticketId, patch) => projectManager.updateTicket(ticketId, patch),
-  setGlobalLinks: (links) => store.set('pullRequestLinks', links),
-  onEvent: (ev) => {
-    // Team visibility first: every PR event lands in #system regardless of
-    // whether anyone wakes — the Activity feed is the complete record.
-    residentAgentManager.postSystemNotice(pullRequestSystemLine(ev));
-    const residentId = ev.assignee ? parseResidentPrincipal(ev.assignee) : null;
-    if (residentId) {
-      residentAgentManager.deliverPullRequestEvent(residentId, pullRequestEventDetail(ev));
-    }
-    // User-defined rules see every PR event, ticket-linked or not.
-    automationManager.onPullRequestEvent(ev);
-  },
-});
-const [, cleanupExtensions] = createExtensionManager({
+const [, cleanupProject] = createProjectManager({
   ipc: main.ipc,
   store,
-  sendToWindow: main.sendToWindow,
 });
 const [browserManager, cleanupBrowser] = createBrowserManager({
   ipc: main.ipc,
@@ -613,7 +249,6 @@ const [, cleanupPermissions] = createPermissionsManager({
 const WSL_BACKEND_SECRET_ID = 'wsl-backend-secret';
 const [wslBackend, cleanupWslBackend] = createWslBackendManager({
   store,
-  sendToWindow: main.sendToWindow,
   launcherVersion: app.getVersion(),
   secrets: {
     getSecret: async () => (await secretStore.getGitToken(WSL_BACKEND_SECRET_ID)) ?? null,
@@ -621,73 +256,8 @@ const [wslBackend, cleanupWslBackend] = createWslBackendManager({
     deleteSecret: () => secretStore.deleteGitToken(WSL_BACKEND_SECRET_ID),
   },
 });
-const { cleanup: cleanupPlatform, refreshPolicy: refreshPlatformPolicy } = registerPlatformIpc({
-  ipc: main.ipc,
-  sendToWindow: main.sendToWindow,
-  store,
-  fetchFn: (input, init) => net.fetch(input as string, init),
-});
-
-// Keep ProcessManager's platform client in sync with auth state.
-// On sign-in/sign-out, the platform client is updated so new sandboxes
-// use the correct mode without requiring an app restart.
-const platformFetchFn = (input: string | URL | Request, init?: RequestInit) => net.fetch(input as string, init);
-
-/** Attach onTokenRefresh so refreshed access tokens are persisted to the store. */
-const withTokenPersistence = (client: ReturnType<typeof createPlatformClient>) => {
-  if (client) {
-    client.onTokenRefresh = (newAccessToken) => {
-      const current = store.get('platform');
-      if (current) {
-        store.set('platform', { ...current, accessToken: newAccessToken });
-      }
-    };
-  }
-  return client;
-};
-
-const syncPlatformClients = (platform?: Parameters<typeof createPlatformClient>[0]) => {
-  const client = withTokenPersistence(createPlatformClient(platform, platformFetchFn));
-  processManager.platformClient = client;
-  return client;
-};
-let platformClient = syncPlatformClients(store.get('platform'));
-store.onDidChange('platform', (newVal) => {
-  platformClient = syncPlatformClients(newVal);
-});
-
-// Background workspace sync manager — like OneDrive for project workspaces.
-const syncManager = new WorkspaceSyncManager({
-  fetchFn: platformFetchFn,
-  platformClient,
-  manifestDir: OMNI_CONFIG_DIR,
-  onStatusChange: (projectId, status) => {
-    main.sendToWindow('workspace-sync:status-changed', projectId, status);
-  },
-});
-store.onDidChange('platform', () => {
-  syncManager.setPlatformClient(platformClient);
-});
-
-// On startup, refresh platform policy if already signed in.
-// This ensures sandbox profiles are up-to-date with the latest entitlements.
-void refreshPlatformPolicy();
-
 main.ipc.handle('main-process:get-status', () => main.getStatus());
 
-// Workspace sync IPC handlers
-main.ipc.handle('workspace-sync:start', (_, projectId, workspaceDir) => {
-  return syncManager.startSync(projectId, workspaceDir);
-});
-main.ipc.handle('workspace-sync:stop', (_, projectId) => {
-  return syncManager.stopSync(projectId);
-});
-main.ipc.handle('workspace-sync:get-status', (_, projectId) => {
-  return syncManager.getStatus(projectId);
-});
-main.ipc.handle('workspace-sync:get-share-name', (_, projectId) => {
-  return syncManager.getShareName(projectId);
-});
 main.ipc.handle('omni-install-process:get-status', () => omniInstall.getStatus());
 
 // Local voice (Option A): launcher-side STT/TTS via the ONNX sidecar. Works in
@@ -723,18 +293,12 @@ async function cleanup() {
   }
   isShuttingDown = true;
 
-  cleanupPlatform();
-  cleanupReverseRpc();
-  cleanupComputeReverse();
-  cleanupTunnelReverse();
   // Non-persistent mode: kills the wsl.exe child, terminating the in-distro
   // daemon. Persistent mode: only stops timers/loops — the daemon keeps
   // running and is adopted on the next boot.
   cleanupWslBackend();
-  await syncManager.dispose();
   const results = await Promise.allSettled([
     cleanupConsole(),
-    chatCleanup.dispose(),
     cleanupAppControl(),
     cleanupOmniInstall(),
     (async () => {
@@ -744,17 +308,8 @@ async function cleanup() {
         ipcMain.removeHandler(channel);
       }
     })(),
-    (async () => {
-      automationManager.stop();
-      for (const channel of automationChannels) {
-        ipcMain.removeHandler(channel);
-      }
-    })(),
-    residentAgentManager.cleanup(),
     cleanupProcessManager(),
-    Promise.resolve(cleanupPrWatcher()),
     cleanupProject(),
-    cleanupExtensions(),
     cleanupBrowser(),
     cleanupDownloads(),
     cleanupPermissions(),
@@ -768,7 +323,6 @@ async function cleanup() {
   } else {
     console.debug('Successfully cleaned up all processes');
   }
-  closeProjectDb();
   main.cleanup();
 }
 
@@ -782,10 +336,6 @@ app.on('ready', () => {
   // convention-based fallbacks cover the not-yet-installed case.
   void refreshProductRuntimeInfo();
 
-  // Register artifact: protocol handler for serving ticket artifact files
-  // URL format: artifact://file/{ticketId}/{relativePath}
-  // We use a dummy hostname ("file") because URL spec lowercases hostnames,
-  // which corrupts case-sensitive ticket IDs like nanoid.
   // MCP Apps sandbox proxy. Serves the vendored mcp-ui ``index.html``
   // (assets/mcp-sandbox/) at ``mcp-sandbox://app/index.html``. The
   // AppFrame iframe loads this URL to host a cross-origin sandbox for
@@ -835,51 +385,6 @@ app.on('ready', () => {
     }
   });
 
-  protocol.handle('artifact', async (request) => {
-    try {
-      const url = new URL(request.url);
-      // pathname = /file/{ticketId}/{relativePath...}  or  /{ticketId}/{relativePath...}
-      const segments = decodeURIComponent(url.pathname).split('/').filter(Boolean);
-      // Skip the dummy hostname segment if present
-      const startIdx = segments[0] === 'file' ? 1 : 0;
-      const ticketId = segments[startIdx];
-      const relativePath = segments.slice(startIdx + 1).join('/');
-      if (!ticketId || !relativePath) {
-        return new Response('Bad request', { status: 400 });
-      }
-      const artifactsRoot = getArtifactsDir(OMNI_CONFIG_DIR, ticketId);
-      const fullPath = resolve(artifactsRoot, relativePath);
-      // Path traversal protection
-      if (!fullPath.startsWith(artifactsRoot)) {
-        return new Response('Forbidden', { status: 403 });
-      }
-      // Container substrates write artifacts inside the sandbox, not to the
-      // host dir — materialize (docker cp into this exact layout) before
-      // serving so image/HTML previews work there too. Host profile: the
-      // file already exists and this resolves to it directly.
-      if (!existsSync(fullPath)) {
-        await projectManager.materializeArtifact(ticketId as TicketId, relativePath);
-      }
-      const upstream = await net.fetch(pathToFileURL(fullPath).toString());
-      // Strict CSP: artifacts are agent-generated content, never trusted to
-      // run scripts. `default-src 'none'` blocks script execution by default;
-      // we explicitly re-enable images, styles, fonts, and media so typical
-      // markdown/HTML artifacts still render.
-      const headers = new Headers(upstream.headers);
-      headers.set(
-        'Content-Security-Policy',
-        "default-src 'none'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:"
-      );
-      return new Response(upstream.body, {
-        status: upstream.status,
-        statusText: upstream.statusText,
-        headers,
-      });
-    } catch {
-      return new Response('Not found', { status: 404 });
-    }
-  });
-
   // WSL backend boot sequencing: provision → reap → spawn → health-wait
   // BEFORE the window exists, because the renderer's bootstrap URL
   // (main-process-manager.ts) derives from the port boot() persists into
@@ -913,36 +418,6 @@ app.on('ready', () => {
   void ensureDirectory(getDefaultWorkspaceDir())
     .then(() => ensureDirectory(getProjectsDir()))
     .catch((err) => console.warn('Failed to create workspace directories:', err));
-
-  void (async () => {
-    const { cleanupOrphanedContainers, pruneDockerResources } = await import('@/main/docker-orphan-cleanup');
-    const { sandboxStateContainerIds } = await import('@/main/sandbox-state');
-    const cleaned = await cleanupOrphanedContainers({
-      // Environments already materialized by this launcher may overlap the
-      // startup sweep, so resolve the live protected set immediately before
-      // each removal pass. Durable container sessions (state records) are
-      // NOT orphans — they're reattached on the session's next open.
-      getProtectedContainerIds: () => [...processManager.getAllContainerIds(), ...sandboxStateContainerIds()],
-    });
-    if (cleaned && cleaned.length > 0) {
-      main.sendToWindow('toast:show', {
-        level: 'info',
-        title: 'Cleaned up orphaned containers',
-        description: `Removed ${cleaned.length} Docker container${cleaned.length === 1 ? '' : 's'} from a previous session.`,
-      });
-    }
-
-    const reclaimed = await pruneDockerResources();
-    if (reclaimed && reclaimed !== '0B') {
-      main.sendToWindow('toast:show', {
-        level: 'info',
-        title: 'Docker storage reclaimed',
-        description: `Pruned unused Docker resources, reclaimed ${reclaimed}.`,
-      });
-    }
-  })().catch((error) => {
-    console.warn('Failed to clean up Docker resources:', error);
-  });
 });
 
 /**
@@ -1006,16 +481,7 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
 
 //#region Shared IPC handlers (config:*, util:*, skills:*)
 
-registerConfigHandlers(main.ipc, OMNI_CONFIG_DIR, {
-  beforeWrite: (filePath) => {
-    if (
-      store.get('mcpConfigOwnership') === 'omniagents' &&
-      resolve(filePath) === resolve(OMNI_CONFIG_DIR, 'mcp.json')
-    ) {
-      throw new Error('Omniagents owns mcp.json; use the canonical per-server MCP controls');
-    }
-  },
-});
+registerConfigHandlers(main.ipc, OMNI_CONFIG_DIR);
 registerUtilHandlers(main.ipc, {
   fetchFn: ((input, init) => net.fetch(input as string, init)) as typeof globalThis.fetch,
   launcherVersion: app.getVersion(),
@@ -1029,19 +495,12 @@ registerSettingsConfigHandlers(
   main.ipc,
   () => store,
   () => {
-    materializeDesktopConfig();
-    main.sendToWindow('store:changed', main.getStoreSnapshot ? main.getStoreSnapshot() : store.store);
+    writeDesktopEnvFile();
+    main.sendToWindow('store:changed', store.store);
   },
-  {},
   {
-    // Reading the legacy document must remain responsive while a cold
-    // management host starts. Ownership is transferred by the readiness hook
-    // above; this guard only blocks writes after the marker is durable.
-    beforeSetMcp: () => {
-      if (store.get('mcpConfigOwnership') === 'omniagents') {
-        throw new Error('Omniagents owns MCP configuration; use the canonical per-server MCP controls');
-      }
-    },
+    readModels: () => readLocalModels(OMNI_CONFIG_DIR),
+    saveModels: (_event, config) => writeLocalModels(OMNI_CONFIG_DIR, config),
   }
 );
 registerGitCredentialHandlers(
@@ -1049,36 +508,9 @@ registerGitCredentialHandlers(
   () => store,
   () => secretStore,
   () => {
-    main.sendToWindow('store:changed', main.getStoreSnapshot ? main.getStoreSnapshot() : store.store);
+    main.sendToWindow('store:changed', store.store);
   }
 );
-// Desktop has no teams — register the channels as no-ops (controlPlane undefined)
-// so the shared renderer's Teams UI resolves cleanly to "just you".
-registerTeamHandlers(main.ipc, undefined);
-const noTeamDefaults = { hasModels: false, hasMcp: false, hasEnv: false, hasNetwork: false };
-main.ipc.handle('team-settings:status', () => noTeamDefaults);
-main.ipc.handle('team-settings:publish-from-mine', () => noTeamDefaults);
-main.ipc.handle('team-settings:clear', () => noTeamDefaults);
-// Desktop has no teams — these resolve to "just you".
-main.ipc.handle('team:whoami', () => null);
-main.ipc.handle('team:leave', () => []);
-main.ipc.handle('team:rename', () => []);
-main.ipc.handle('team:delete', () => []);
-main.ipc.handle('team:transfer-ownership', () => []);
-registerMigrationHandlers(main.ipc, () => ({
-  get: () => store.get('pagesMigration') ?? null,
-  set: (value) => {
-    if (value === null) {
-      store.delete('pagesMigration');
-    } else {
-      store.set('pagesMigration', value);
-    }
-    // Renderer mirrors electron-store via `store:changed`; pushing the
-    // full snapshot keeps the migration banner reactive without a
-    // dedicated event channel.
-    main.getWindow()?.webContents.send('store:changed', store.store);
-  },
-}));
 
 //#endregion
 
@@ -1131,45 +563,19 @@ main.ipc.handle('util:open-external', (_, url) => shell.openExternal(url));
 
 //#region Codex (ChatGPT OAuth) handlers
 
-main.ipc.handle('codex:login', () => localCodexAccount.login());
 main.ipc.handle('codex:link', () => localCodexAccount.link((code) => main.sendToWindow('codex:device-code', code)));
 main.ipc.handle('codex:logout', () => localCodexAccount.logout());
-main.ipc.handle('codex:status', () => localCodexAccount.status());
 
 //#endregion
 
-//#region Cloud link (Electron ↔ deployed launcher via AAD device flow)
+//#region Remote backend link
 
 // Hoisted from the GitHub block below so both regions can fan store changes
 // out to the renderer.
-const broadcastStore = (): void =>
-  main.sendToWindow('store:changed', main.getStoreSnapshot ? main.getStoreSnapshot() : store.store);
-
-const cloudStatusFromStore = (): import('@/shared/types').CloudStatus => {
-  const backend = store.get('remoteBackend');
-  if (backend?.kind !== 'cloud') {
-    return { connected: false };
-  }
-  const live = entraStatus();
-  // Belt + suspenders: if the secret store has been cleared out (e.g. user
-  // wiped userData) treat the remoteBackend flag as stale and report
-  // disconnected so the renderer drops back to local mode after a restart.
-  if (!live.signedIn) {
-    return { connected: false };
-  }
-  return {
-    connected: true,
-    url: backend.url,
-    tenantId: backend.tenantId,
-    clientId: backend.clientId,
-    account: backend.account,
-  };
-};
-
-main.ipc.handle('cloud:status', () => cloudStatusFromStore());
+const broadcastStore = (): void => main.sendToWindow('store:changed', store.store);
 
 /** Restart the Electron app on a short delay so the IPC reply (the new
- *  ``CloudStatus``) flushes to the renderer first. The transport choice is
+ *  ``undefined``) flushes to the renderer first. The transport choice is
  *  baked into the BrowserWindow at creation via ``additionalArguments``, so
  *  flipping the remote backend requires a fresh process — not just a
  *  webContents reload. 200ms is enough for the response handshake without
@@ -1181,54 +587,10 @@ const restartAfterRemoteBackendChange = (): void => {
   }, 200);
 };
 
-main.ipc.handle('cloud:link', async (_, urlInput) => {
-  const url = String(urlInput ?? '')
-    .trim()
-    .replace(/\/+$/, '');
-  if (!url) {
-    throw new Error('Cloud URL is required');
-  }
-  // 1. Discover the cloud's AAD configuration. Public endpoint, no auth.
-  const discoverRes = await net.fetch(`${url}/.well-known/omni-cloud`);
-  if (!discoverRes.ok) {
-    throw new Error(`Cloud discovery failed (${discoverRes.status}). Is this a launcher URL?`);
-  }
-  const discovered = (await discoverRes.json()) as { tenantId?: string; clientId?: string };
-  if (!discovered.tenantId || !discovered.clientId) {
-    throw new Error('Cloud discovery returned no tenant/client id');
-  }
-  // 2. Drive the AAD device-code flow against the discovered tenant + client.
-  const result = await entraLoginWithDeviceFlow({
-    tenantId: discovered.tenantId,
-    clientId: discovered.clientId,
-    onCode: (code) => main.sendToWindow('cloud:device-code', code),
-  });
-  if (!result.signedIn) {
-    throw new Error('Cloud sign-in did not produce an account');
-  }
-  // 3. Persist the remoteBackend flag, then restart so the renderer picks up
-  //    the cloud transport on its next boot.
-  store.set('remoteBackend', {
-    kind: 'cloud',
-    url,
-    tenantId: discovered.tenantId,
-    clientId: discovered.clientId,
-    account: result.account,
-  });
-  broadcastStore();
-  const status = cloudStatusFromStore();
-  restartAfterRemoteBackendChange();
-  return status;
-});
-
-// Shared disconnect path for ALL remote-backend kinds (cloud, wsl, server):
-// clears the flag and restarts back into standalone-local mode. Entra logout
-// only applies to the cloud kind — wsl and server links never signed in.
-main.ipc.handle('cloud:unlink', async () => {
+// Shared disconnect path for every remote-backend kind (wsl, server): clears
+// the flag and restarts back into standalone-local mode.
+main.ipc.handle('remote-backend:unlink', async () => {
   const prev = store.get('remoteBackend');
-  if (prev?.kind === 'cloud') {
-    entraLogout();
-  }
   // A WSL daemon — persistent or not — must not outlive the link: reap it and
   // drop the durable secret so nothing keeps running (or listening) orphaned.
   if (prev?.kind === 'wsl') {
@@ -1239,69 +601,6 @@ main.ipc.handle('cloud:unlink', async () => {
   // The live renderer is still configured to use the (now broken) backend
   // transport — restart so it falls back to local Electron IPC.
   restartAfterRemoteBackendChange();
-});
-
-main.ipc.handle('cloud:get-access-token', async () => {
-  const backend = store.get('remoteBackend');
-  if (backend?.kind !== 'cloud') {
-    throw new Error('Not connected to a cloud');
-  }
-  return ensureFreshEntraToken(backend.tenantId, backend.clientId);
-});
-
-// Stable per-install machine identity used by the cloud's "computer-as-
-// sandbox" registry. Lives in `<configDir>/machine.json` so it survives
-// upgrades + electron-store resets. Renderer reads this once at boot to
-// invoke `machine:register` over the WS to the cloud.
-main.ipc.handle('cloud:get-machine-identity', () => {
-  return getOrCreateMachineIdentity(OMNI_CONFIG_DIR);
-});
-
-main.ipc.handle('cloud:set-machine-label', (_, label) => {
-  const next = String(label ?? '').trim() || 'Unnamed machine';
-  return renameMachine(OMNI_CONFIG_DIR, next);
-});
-
-// Wire the renderer → main reverse-RPC dispatcher (Phase 2). The cloud's
-// reverse-invoke frames hit the renderer's WS first; the renderer-side
-// shim (`renderer/services/compute.ts`) forwards them here so main-side
-// compute handlers can resolve them.
-const cleanupReverseRpc = wireReverseRpcRouter(main.ipc);
-
-// Computer-as-sandbox — main handles the cloud's compute:* reverse-RPCs by
-// standing up an `omni sandbox-host` exec server (the agent stays in the
-// cloud; only the sandbox backend runs here).
-const cleanupComputeReverse = wireComputeReverseHandlers();
-
-// Tunnel relay (Phase 3). Inbound WS frames from local omni-serve are
-// pushed to the renderer via this Electron IPC event; the renderer's
-// tunnel bridge re-emits them on the cloud WS via `tunnel:incoming`.
-const cleanupTunnelReverse = wireTunnelReverseHandlers((event) => {
-  main.sendToWindow('tunnel:emit-incoming', event);
-});
-
-// Fetch a WS auth token from the linked cloud's /api/ws-token. The renderer
-// can't do this directly: setting Authorization on a cross-origin GET trips
-// CORS preflight, and EasyAuth's 302 redirect for unauthenticated OPTIONS
-// requests fails the CORS check. Running the fetch in main bypasses CORS
-// entirely (Node's fetch is unrestricted) and returns the opaque WS token.
-main.ipc.handle('cloud:get-ws-token', async () => {
-  const backend = store.get('remoteBackend');
-  if (backend?.kind !== 'cloud') {
-    throw new Error('Not connected to a cloud');
-  }
-  const accessToken = await ensureFreshEntraToken(backend.tenantId, backend.clientId);
-  const res = await net.fetch(`${backend.url}/api/ws-token`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!res.ok) {
-    throw new Error(`Cloud ws-token fetch failed: ${res.status} ${res.statusText}`);
-  }
-  const data = (await res.json()) as { token?: string };
-  if (!data.token) {
-    throw new Error('Cloud ws-token response missing "token" field');
-  }
-  return data.token;
 });
 
 //#endregion
@@ -1346,24 +645,6 @@ main.ipc.handle('wsl:set-persistent', async (_, persistent) => {
 // one-shot (UAC; completion unobservable), 'distro' registers Ubuntu without
 // elevation. The card re-runs `wsl:detect` afterwards — no store change here.
 main.ipc.handle('wsl:install', (_, mode) => wslBackend.install(mode === 'platform' ? 'platform' : 'distro'));
-
-// Docker bootstrap inside the linked distro (Sandboxes → Health). Both run
-// as root via `wsl -u root` and end by re-running the docker check, so the
-// `wsl:status-changed` broadcast refreshes `status.docker`. Require an
-// active WSL link — without one the manager has no distro to target.
-const requireWslLink = (): void => {
-  if (store.get('remoteBackend')?.kind !== 'wsl') {
-    throw new Error('No WSL backend is linked');
-  }
-};
-main.ipc.handle('wsl:install-docker', () => {
-  requireWslLink();
-  return wslBackend.installDocker();
-});
-main.ipc.handle('wsl:start-docker', () => {
-  requireWslLink();
-  return wslBackend.startDocker();
-});
 
 //#endregion
 

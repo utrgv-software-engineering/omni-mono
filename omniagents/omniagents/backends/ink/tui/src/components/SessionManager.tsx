@@ -2,7 +2,8 @@ import { WorkspaceView } from "./WorkspaceView.js";
 import { useImmediateState } from "../hooks/useImmediateState.js";
 import { useKeyedSelection } from "../hooks/useKeyedSelection.js";
 import { useRequestScope } from "../hooks/useRequestScope.js";
-import { isReplyLost } from "../rpc/lifecycle.js";
+import { isReplyLost } from "@omniagents/client/lifecycle";
+import { ConversationOrganizationClient } from "@omniagents/client/rpc/conversation-organization";
 import React, {
   useCallback,
   useEffect,
@@ -10,16 +11,16 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Box, Text, useStdout } from "ink";
+import { Box, Text } from "ink";
+import { useTerminalSize } from "../hooks/useTerminalSize.js";
 import Spinner from "ink-spinner";
 import { useKeypress, type Key } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
-import type { RPCClient } from "../rpc/client.js";
+import type { RPCClient } from "@omniagents/client/rpc/client";
 import {
   filterRows,
   rowMeta,
   rowsFromSearch,
-  rowsFromSessions,
   rowsFromThreads,
   rowTitle,
   sortRows,
@@ -90,9 +91,7 @@ const SessionManagerContent = themedMemo<Props>(
     const operationPending = useRef(false);
     const leaving = useRef(false);
     const renameTarget = useRef<string | null>(null);
-    const { stdout } = useStdout();
-    const terminalHeight = stdout?.rows || 24;
-    const terminalWidth = stdout?.columns || 80;
+    const { rows: terminalHeight, columns: terminalWidth } = useTerminalSize();
     const windowSize = Math.max(4, terminalHeight - CHROME_ROWS);
 
     const [rows, setRows] = useState<SessionRow[]>([]);
@@ -111,16 +110,19 @@ const SessionManagerContent = themedMemo<Props>(
     // the grant at initialize, so feature-detection is a field read rather
     // than a -32013 round trip.
     //
-    // `isGranted` reads a mutable field, not React state, so it is only
-    // trustworthy once the handshake has landed. It has: the client
-    // assigns `negotiatedInitialization` before emitting `rpc_ready`, and
-    // App routes here only after `rpcReady`. Mount this screen earlier
-    // than that and every capability below silently reads false.
-    const organized = client?.isGranted("list_threads") ?? false;
-    const canSearch = client?.isGranted("search_threads") ?? false;
-    const canUpdate = client?.isGranted("update_thread") ?? false;
-    const canFork = client?.isGranted("fork_session") ?? false;
-    const canHold = client?.isGranted("set_session_hold") ?? false;
+    // The grants are a field read, only trustworthy once the handshake has
+    // landed; App routes here only after it has.
+    const granted = (operation: string) =>
+      client?.supportsExperimentalOperation(operation) ?? false;
+    const canSearch = granted("search_threads");
+    const canUpdate = granted("update_thread");
+    const canFork = granted("fork_session");
+    const canHold = granted("set_session_hold");
+    const conversations = useMemo(
+      () => (client ? new ConversationOrganizationClient(client) : null),
+      [client],
+    );
+    useEffect(() => () => conversations?.dispose(), [conversations]);
 
     // Relative ages go stale on a screen that can sit open; one minute is
     // the coarsest bucket `relativeTime` renders.
@@ -137,7 +139,7 @@ const SessionManagerContent = themedMemo<Props>(
      */
     const load = useCallback(
       async (query: string) => {
-        if (!client) {
+        if (!conversations) {
           // No transport: settle into a definite "nothing loaded" rather
           // than an eternal spinner the empty-check would wait behind.
           setLoading(false);
@@ -149,18 +151,15 @@ const SessionManagerContent = themedMemo<Props>(
         setError(null);
         try {
           let next: SessionRow[];
-          if (organized && query !== "" && canSearch) {
+          if (query !== "" && canSearch) {
             // Rank order is the server's; sorting it would discard the ranking.
             next = rowsFromSearch(
-              await client.searchThreads(query, { limit: 100 }),
+              await conversations.searchThreads(query, { limit: 100 }),
             );
-          } else if (organized) {
-            next = sortRows(
-              rowsFromThreads(await client.listThreads({ limit: 100 })),
-            );
-            if (query !== "") next = filterRows(next, query);
           } else {
-            next = sortRows(rowsFromSessions(await client.listSessions()));
+            next = sortRows(
+              rowsFromThreads(await conversations.listThreads({ limit: 100 })),
+            );
             if (query !== "") next = filterRows(next, query);
           }
           if (!current()) return;
@@ -173,7 +172,7 @@ const SessionManagerContent = themedMemo<Props>(
           if (current()) setLoading(false);
         }
       },
-      [client, organized, canSearch],
+      [conversations, canSearch],
     );
 
     // Initial load. `load` is stable for a given client/grant set.
@@ -210,11 +209,13 @@ const SessionManagerContent = themedMemo<Props>(
       const refetch = () => {
         void load(appliedQueryRef.current);
       };
-      client.on("thread_updated", refetch);
-      client.on("rpc_ready", refetch);
+      const offUpdated = client.on("thread_updated", refetch);
+      const offConnected = client.onConnectionState((connection) => {
+        if (connection === "connected") refetch();
+      });
       return () => {
-        client.off("thread_updated", refetch);
-        client.off("rpc_ready", refetch);
+        offUpdated();
+        offConnected();
       };
     }, [client, load]);
 
@@ -260,7 +261,7 @@ const SessionManagerContent = themedMemo<Props>(
     const requireOrganize = useCallback(
       (row: SessionRow | undefined): row is SessionRow => {
         if (!row) return false;
-        if (!row.organizable || !canUpdate) {
+        if (!canUpdate) {
           setStatusLine(
             "this server does not support organizing conversations",
           );
@@ -324,7 +325,9 @@ const SessionManagerContent = themedMemo<Props>(
       if (input === "p") {
         if (!requireOrganize(selected)) return true;
         void mutate(selected.pinned ? "unpinned" : "pinned", () =>
-          client!.updateThread(selected.id, { pinned: !selected.pinned }),
+          conversations!.updateThread(selected.id, {
+            pinned: !selected.pinned,
+          }),
         );
         return true;
       }
@@ -339,7 +342,7 @@ const SessionManagerContent = themedMemo<Props>(
         if (!requireOrganize(selected)) return true;
         const next = selected.archived ? "active" : "archived";
         void mutate(next === "archived" ? "archived" : "unarchived", () =>
-          client!.updateThread(selected.id, { status: next }),
+          conversations!.updateThread(selected.id, { status: next }),
         );
         return true;
       }
@@ -353,7 +356,7 @@ const SessionManagerContent = themedMemo<Props>(
         void (async () => {
           try {
             setStatusLine("forking…");
-            const result = await client!.forkSession(selected.id);
+            const result = await conversations!.forkSession(selected.id);
             if (!current() || leaving.current) return;
             const forked = result?.new_session_id;
             if (typeof forked === "string" && forked !== "") {
@@ -391,7 +394,10 @@ const SessionManagerContent = themedMemo<Props>(
         // RPC, and neither listing returns it), so a badge here would be
         // a guess. Placing the hold is idempotent, so re-pressing is safe.
         void mutate("retention hold placed", () =>
-          client!.setSessionHold(selected.id, true),
+          client!.request("set_session_hold", {
+            session_id: selected.id,
+            hold: true,
+          }),
         );
         return true;
       }
@@ -400,7 +406,9 @@ const SessionManagerContent = themedMemo<Props>(
           label: "delete",
           message: `Delete "${rowTitle(selected)}" and its history? This cannot be undone.`,
           run: async () => {
-            await client!.deleteSession(selected.id);
+            await client!.request("delete_session", {
+              session_id: selected.id,
+            });
           },
         });
         setMode("confirm");
@@ -466,7 +474,7 @@ const SessionManagerContent = themedMemo<Props>(
         // the id), which the protocol spells as an explicit null —
         // omitting the key would mean "leave it alone" instead.
         void mutate(title === "" ? "title cleared" : "renamed", () =>
-          client!.updateThread(id, {
+          conversations!.updateThread(id, {
             title: title === "" ? null : title,
           }),
         );
@@ -516,9 +524,9 @@ const SessionManagerContent = themedMemo<Props>(
           // Coalesced command keys are separate gestures; text fields receive the remaining text together.
           const chars = [...input];
           for (let i = 0; i < chars.length; i++) {
-            if (
-              !(modeRef.current === "list" || modeRef.current === "confirm")
-            ) {
+            if (!(
+              modeRef.current === "list" || modeRef.current === "confirm"
+            )) {
               dispatch(chars.slice(i).join(""), key);
               break;
             }
@@ -561,7 +569,7 @@ const SessionManagerContent = themedMemo<Props>(
           {appliedQuery !== "" && (
             <Text color={Theme.accentUser}>
               {"  "}
-              {canSearch && organized ? "search" : "filter"}: {appliedQuery}
+              {canSearch ? "search" : "filter"}: {appliedQuery}
             </Text>
           )}
         </Box>
@@ -619,7 +627,7 @@ const SessionManagerContent = themedMemo<Props>(
             <Text color={Theme.textChrome}>
               {appliedQuery === ""
                 ? "No conversations yet — press Tab to start one."
-                : `Nothing matches "${appliedQuery}" — Esc clears the ${canSearch && organized ? "search" : "filter"}.`}
+                : `Nothing matches "${appliedQuery}" — Esc clears the ${canSearch ? "search" : "filter"}.`}
             </Text>
           )}
         </Box>
@@ -659,20 +667,13 @@ const SessionManagerContent = themedMemo<Props>(
           <Box flexDirection="column" marginTop={1}>
             <Text color={Theme.textChrome}>
               ↑↓ select · enter open · tab new · /{" "}
-              {canSearch && organized ? "search" : "filter"} · d delete
+              {canSearch ? "search" : "filter"} · d delete
               {onExit ? " · esc back" : ""}
             </Text>
-            {organized ? (
-              <Text color={Theme.textChrome}>
-                p pin · r rename · a archive{canFork ? " · f fork" : ""}
-                {canHold ? " · h hold" : ""}
-              </Text>
-            ) : (
-              <Text color={Theme.textChrome}>
-                this server predates conversation organizing — pin/rename/fork
-                unavailable
-              </Text>
-            )}
+            <Text color={Theme.textChrome}>
+              p pin · r rename · a archive{canFork ? " · f fork" : ""}
+              {canHold ? " · h hold" : ""}
+            </Text>
           </Box>
         )}
       </Box>

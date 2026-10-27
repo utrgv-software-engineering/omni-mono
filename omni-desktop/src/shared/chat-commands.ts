@@ -1,22 +1,11 @@
+import { uuidv4 } from '@omniagents/client/util/uuid';
 import { nanoid } from 'nanoid';
 
 import { pruneConversations, upsertConversation } from '@/lib/chat-conversations';
-import { uuidv4 } from '@/lib/uuid';
-import type {
-  ChatConversation,
-  CodeLayoutMode,
-  CodeTab,
-  CodeTabId,
-  ProjectId,
-  StoreData,
-  TicketId,
-} from '@/shared/types';
+import type { ChatConversation, CodeTab, CodeTabId, ProjectId, StoreData } from '@/shared/types';
 import { isChatColumn } from '@/shared/types';
 
-type ChatState = Pick<
-  StoreData,
-  'codeTabs' | 'chatConversations' | 'activeCodeTabId' | 'codeLayoutMode' | 'chatCleanupJobs'
->;
+type ChatState = Pick<StoreData, 'codeTabs' | 'chatConversations' | 'activeCodeTabId'>;
 
 /** Synchronous, side-effect-free command reducer. Only the authority commits its patch. */
 function operations(initial: StoreData) {
@@ -29,27 +18,6 @@ function operations(initial: StoreData) {
       Object.assign(patch, { [key]: value });
     },
   };
-  const seedProfileName = (projectId: ProjectId | null | undefined): string => {
-    const projects = persistedStoreApi.getKey('projects') ?? [];
-    const project = projectId ? projects.find((p) => p.id === projectId) : undefined;
-    const inherited = project?.sandboxProfile;
-    if (typeof inherited === 'string' && inherited.length > 0) {
-      return inherited;
-    }
-    return persistedStoreApi.getKey('defaultProfileName') ?? 'host';
-  };
-
-  const resolveAvailableProfileName = (name: string): string => {
-    const available = persistedStoreApi.getKey('availableSandboxProfiles');
-    if (!available || available.length === 0 || available.includes(name)) {
-      return name;
-    }
-    return available[0] ?? 'host';
-  };
-
-  const resolveCodeTabProfileName = (projectId: ProjectId | null | undefined): string =>
-    resolveAvailableProfileName(seedProfileName(projectId));
-
   const codeApi = {
     ensureRoutineTab: (candidate: CodeTab, activate: boolean): CodeTab => {
       const tabs = persistedStoreApi.getKey('codeTabs') ?? [];
@@ -62,8 +30,8 @@ function operations(initial: StoreData) {
             routineSchedule: candidate.routineSchedule,
           }
         : // A stale window can pass the former tab after another window closed
-          // it. Reopening must mint a new consumer/workspace ownership identity.
-          { ...candidate, id: nanoid(), snapshotRef: uuidv4(), runtimeOwner: undefined };
+          // it. Reopening must mint a new consumer identity.
+          { ...candidate, id: nanoid() };
       persistedStoreApi.setKey(
         'codeTabs',
         existing ? tabs.map((tab) => (tab.id === existing.id ? result : tab)) : [...tabs, result]
@@ -76,10 +44,7 @@ function operations(initial: StoreData) {
     openFreshChat: (): void => {
       const tabs = persistedStoreApi.getKey('codeTabs') ?? [];
       const known = new Set((persistedStoreApi.getKey('chatConversations') ?? []).map((c) => c.sessionId));
-      const pristine = tabs.find(
-        (t) =>
-          !t.projectId && !t.customAppId && !t.ticketId && !t.routineId && (!t.sessionId || !known.has(t.sessionId))
-      );
+      const pristine = tabs.find((t) => !t.projectId && !t.routineId && (!t.sessionId || !known.has(t.sessionId)));
       if (pristine) {
         persistedStoreApi.setKey('activeCodeTabId', pristine.id);
         return;
@@ -92,9 +57,6 @@ function operations(initial: StoreData) {
         id: nanoid(),
         projectId: null,
         sessionId: uuidv4(),
-        snapshotRef: uuidv4(),
-        profileName: resolveCodeTabProfileName(null),
-        profileNameExplicit: false,
         createdAt: Date.now(),
       };
       const tabs = [...existingTabs, tab];
@@ -105,83 +67,25 @@ function operations(initial: StoreData) {
     removeTab: (tabId: CodeTabId): CodeTab | undefined => {
       const all = persistedStoreApi.getKey('codeTabs') ?? [];
       const tab = all.find((t) => t.id === tabId);
-      const jobs = persistedStoreApi.getKey('chatCleanupJobs') ?? [];
-      if (tab && !jobs.some((job) => job.id === tab.id)) {
-        persistedStoreApi.setKey('chatCleanupJobs', [...jobs, tab]);
-      }
       const tabs = all.filter((t) => t.id !== tabId);
       persistedStoreApi.setKey('codeTabs', tabs);
       if (persistedStoreApi.getKey('activeCodeTabId') === tabId) {
         persistedStoreApi.setKey('activeCodeTabId', tabs.at(-1)?.id ?? null);
       }
-      return tab ?? jobs.find((job) => job.id === tabId);
+      return tab;
     },
     setActiveTab: (tabId: CodeTabId) => {
       if (tabId === '__launcher__' || (persistedStoreApi.getKey('codeTabs') ?? []).some((tab) => tab.id === tabId)) {
         persistedStoreApi.setKey('activeCodeTabId', tabId);
       }
     },
-    setLayoutMode: (mode: CodeLayoutMode) => {
-      persistedStoreApi.setKey('codeLayoutMode', mode);
-    },
-    setSpacesColumnLayouts: (layouts: Record<string, { width?: number | null; expanded?: boolean }>): void => {
-      const tabs = (persistedStoreApi.getKey('codeTabs') ?? []).map((tab) => {
-        const column = layouts[tab.id];
-        const sidecar = layouts[`sidecar:${tab.id}`];
-        if (!column && !sidecar) {
-          return tab;
-        }
-
-        const next = { ...tab };
-        if (column) {
-          if (column.width === null) {
-            delete next.spacesWidth;
-          } else if (column.width !== undefined) {
-            next.spacesWidth = column.width;
-          }
-          if (column.expanded !== undefined) {
-            next.spacesExpanded = column.expanded;
-          }
-        }
-        if (sidecar) {
-          if (sidecar.width === null) {
-            delete next.spacesSidecarWidth;
-          } else if (sidecar.width !== undefined) {
-            next.spacesSidecarWidth = sidecar.width;
-          }
-          if (sidecar.expanded !== undefined) {
-            next.spacesSidecarExpanded = sidecar.expanded;
-          }
-        }
-        return next;
-      });
-      persistedStoreApi.setKey('codeTabs', tabs);
-    },
-    reorderTabs: (nextTabs: CodeTabId[]) => {
-      // Reorder identities only. Preserve new/filtered-out tabs, ignore closed
-      // IDs, deduplicate input and never copy stale renderer fields back.
-      const stored = persistedStoreApi.getKey('codeTabs') ?? [];
-      const incoming = new Set(nextTabs);
-      const byId = new Map(stored.map((tab) => [tab.id, tab]));
-      const preserved = stored.filter((t) => !incoming.has(t.id));
-      const ordered = [...incoming].flatMap((id) => (byId.has(id) ? [byId.get(id)!] : []));
-      persistedStoreApi.setKey('codeTabs', [...preserved, ...ordered]);
-    },
     setTabProject: (tabId: CodeTabId, projectId: ProjectId) => {
       const tabs = (persistedStoreApi.getKey('codeTabs') ?? []).map((t) => {
         if (t.id !== tabId) {
           return t;
         }
-        const profileName = t.profileNameExplicit
-          ? resolveAvailableProfileName(t.profileName ?? seedProfileName(projectId))
-          : resolveCodeTabProfileName(projectId);
         // Attaching a project is intent — it activates a lazy chat column.
-        const activated = { activatedAt: t.activatedAt ?? Date.now() };
-        const workspaceIdentity = { snapshotRef: uuidv4() };
-        if (profileName === t.profileName) {
-          return { ...t, projectId, profileName, ...activated, ...workspaceIdentity };
-        }
-        return { ...t, projectId, profileName, ...activated, ...workspaceIdentity };
+        return { ...t, projectId, activatedAt: t.activatedAt ?? Date.now() };
       });
       persistedStoreApi.setKey('codeTabs', tabs);
       const attached = tabs.find((tab) => tab.id === tabId);
@@ -215,12 +119,7 @@ function operations(initial: StoreData) {
       const tab: CodeTab = {
         id: nanoid(),
         projectId: conversation.projectId ?? null,
-        ...(conversation.ticketId ? { ticketId: conversation.ticketId } : {}),
-        ...(conversation.ticketTitle ? { ticketTitle: conversation.ticketTitle } : {}),
         sessionId: conversation.sessionId,
-        snapshotRef: uuidv4(),
-        profileName: conversation.profileName ?? resolveCodeTabProfileName(conversation.projectId),
-        profileNameExplicit: Boolean(conversation.profileName),
         createdAt: Date.now(),
         activatedAt: Date.now(),
       };
@@ -237,10 +136,7 @@ function operations(initial: StoreData) {
       const tab = (persistedStoreApi.getKey('codeTabs') ?? []).find((candidate) => candidate.sessionId === sessionId);
       const inferredContext: Partial<ChatConversation> = tab
         ? {
-            ...(tab.profileName ? { profileName: tab.profileName } : {}),
             ...(tab.projectId ? { projectId: tab.projectId } : {}),
-            ...(tab.ticketId ? { ticketId: tab.ticketId } : {}),
-            ...(tab.ticketTitle ? { ticketTitle: tab.ticketTitle } : {}),
           }
         : {};
       const { kept } = pruneConversations(
@@ -260,16 +156,13 @@ function operations(initial: StoreData) {
     },
     archiveTab: (tabId: CodeTabId, title?: string) => {
       const tab = (persistedStoreApi.getKey('codeTabs') ?? []).find((candidate) => candidate.id === tabId);
-      if (tab?.sessionId && !tab.customAppId) {
+      if (tab?.sessionId) {
         const indexed = (persistedStoreApi.getKey('chatConversations') ?? []).find(
           (candidate) => candidate.sessionId === tab.sessionId
         );
         codeApi.recordConversation(tab.sessionId, {
-          title: title ?? indexed?.title ?? tab.ticketTitle ?? tab.routineName ?? 'New chat',
-          ...(tab.profileName ? { profileName: tab.profileName } : {}),
+          title: title ?? indexed?.title ?? tab.routineName ?? 'New chat',
           ...(tab.projectId ? { projectId: tab.projectId } : {}),
-          ...(tab.ticketId ? { ticketId: tab.ticketId } : {}),
-          ...(tab.ticketTitle ? { ticketTitle: tab.ticketTitle } : {}),
         });
         const conversation = (persistedStoreApi.getKey('chatConversations') ?? []).find(
           (candidate) => candidate.sessionId === tab.sessionId
@@ -288,65 +181,6 @@ function operations(initial: StoreData) {
           conversation.sessionId === sessionId ? { ...conversation, archivedAt: undefined } : conversation
         )
       );
-    },
-    addTabForTicket: (
-      ticketId: TicketId,
-      projectId: ProjectId,
-      opts?: { ticketTitle?: string; workspaceDir?: string; profileName?: string }
-    ): CodeTab => {
-      const existingTabs = persistedStoreApi.getKey('codeTabs') ?? [];
-      const existing = existingTabs.find((t) => t.ticketId === ticketId);
-      if (existing) {
-        const nextExisting = {
-          ...existing,
-          ...(opts?.workspaceDir ? { workspaceDir: opts.workspaceDir } : {}),
-          ...(opts?.profileName ? { profileName: opts.profileName } : {}),
-          ...(opts?.workspaceDir && opts.workspaceDir !== existing.workspaceDir ? { snapshotRef: uuidv4() } : {}),
-        };
-        if (nextExisting.workspaceDir !== existing.workspaceDir || nextExisting.profileName !== existing.profileName) {
-          const updated = existingTabs.map((t) => (t.id === existing.id ? nextExisting : t));
-          persistedStoreApi.setKey('codeTabs', updated);
-        }
-        persistedStoreApi.setKey('activeCodeTabId', existing.id);
-        return nextExisting;
-      }
-      const tab: CodeTab = {
-        id: nanoid(),
-        projectId,
-        ticketId,
-        sessionId: uuidv4(),
-        snapshotRef: uuidv4(),
-        ticketTitle: opts?.ticketTitle,
-        workspaceDir: opts?.workspaceDir,
-        profileName: opts?.profileName ?? resolveCodeTabProfileName(projectId),
-        profileNameExplicit: Boolean(opts?.profileName),
-        createdAt: Date.now(),
-      };
-      const tabs = [...existingTabs, tab];
-      persistedStoreApi.setKey('codeTabs', tabs);
-      persistedStoreApi.setKey('activeCodeTabId', tab.id);
-      return tab;
-    },
-    addAppTab: (customAppId: string): CodeTab => {
-      const tab: CodeTab = {
-        id: nanoid(),
-        projectId: null,
-        sessionId: uuidv4(),
-        snapshotRef: uuidv4(),
-        customAppId,
-        profileName: resolveCodeTabProfileName(null),
-        profileNameExplicit: false,
-        createdAt: Date.now(),
-      };
-      const tabs = [...(persistedStoreApi.getKey('codeTabs') ?? []), tab];
-      persistedStoreApi.setKey('codeTabs', tabs);
-      return tab;
-    },
-    setTabAppId: (tabId: CodeTabId, customAppId: string) => {
-      const tabs = (persistedStoreApi.getKey('codeTabs') ?? []).map((t) =>
-        t.id === tabId ? { ...t, customAppId } : t
-      );
-      persistedStoreApi.setKey('codeTabs', tabs);
     },
     openSidecarApp: (tabId: CodeTabId, appId: string) => {
       if (appId === 'chat') {
@@ -416,13 +250,7 @@ function operations(initial: StoreData) {
       // JSON transports encode an undefined positional argument as null.
       sessionId = sessionId ?? undefined;
       const current = (persistedStoreApi.getKey('codeTabs') ?? []).find((tab) => tab.id === tabId);
-      if (
-        current?.projectId &&
-        current.sessionId &&
-        current.sessionId !== sessionId &&
-        !current.customAppId &&
-        !current.routineId
-      ) {
+      if (current?.projectId && current.sessionId && current.sessionId !== sessionId && !current.routineId) {
         codeApi.recordConversation(current.sessionId);
       }
       const tabs = (persistedStoreApi.getKey('codeTabs') ?? []).map((t) => {
@@ -437,27 +265,9 @@ function operations(initial: StoreData) {
           // greeting up, no sandbox until the first message.
           const { activatedAt: _reset, ...lazy } = t;
           void _reset;
-          return { ...lazy, sessionId, snapshotRef: uuidv4() };
+          return { ...lazy, sessionId };
         }
         return { ...t, sessionId };
-      });
-      persistedStoreApi.setKey('codeTabs', tabs);
-    },
-    setTabSnapshotRef: (tabId: CodeTabId, snapshotRef: string) => {
-      if ((persistedStoreApi.getKey('chatCleanupJobs') ?? []).some((job) => job.snapshotRef === snapshotRef)) {
-        throw new Error('This workspace is being removed');
-      }
-      const tabs = (persistedStoreApi.getKey('codeTabs') ?? []).map((t) =>
-        t.id === tabId ? { ...t, snapshotRef } : t
-      );
-      persistedStoreApi.setKey('codeTabs', tabs);
-    },
-    setTabProfile: (tabId: CodeTabId, profileName: string) => {
-      const tabs = (persistedStoreApi.getKey('codeTabs') ?? []).map((t) => {
-        if (t.id !== tabId) {
-          return t;
-        }
-        return { ...t, profileName, profileNameExplicit: true };
       });
       persistedStoreApi.setKey('codeTabs', tabs);
     },

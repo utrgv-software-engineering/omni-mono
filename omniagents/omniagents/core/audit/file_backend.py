@@ -10,7 +10,6 @@ emitted by the service, bridge, and SafeAgent layers.
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock

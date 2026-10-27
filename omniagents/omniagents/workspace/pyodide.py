@@ -506,10 +506,10 @@ class PyodideWorkspace(Workspace):
             return self.root
         candidate = PurePosixPath(path)
         if candidate.is_absolute():
-            full = PurePosixPath(os.path.normpath(str(candidate)))
+            full = PurePosixPath(posixpath.normpath(str(candidate)))
         else:
             full = PurePosixPath(
-                os.path.normpath(str(PurePosixPath(self.root) / candidate))
+                posixpath.normpath(str(PurePosixPath(self.root) / candidate))
             )
         # Defense in depth — disallow escape.
         try:

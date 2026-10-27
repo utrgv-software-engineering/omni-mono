@@ -1,7 +1,6 @@
 /**
- * Types for the app-control system: a registry of drivable webviews (built-in
- * browser, code-server, VNC desktop, and custom webview apps) that AI agents
- * can list and interact with via client tools.
+ * Types for the app-control system: a registry of drivable webviews (the
+ * built-in browser) that AI agents can list and interact with via client tools.
  *
  * Each live webview in the renderer registers itself with a stable `handleId`
  * so the main process can look up its `WebContents` and drive it via Electron
@@ -118,23 +117,11 @@ export type AppRegistrationPayload = {
  * Builtin kinds that are always considered controllable. Terminal + chat are
  * excluded because they have no web surface to snapshot or click on.
  */
-export const CONTROLLABLE_APP_KINDS: ReadonlySet<AppKind> = new Set<AppKind>([
-  'builtin-browser',
-  'builtin-code',
-  'builtin-desktop',
-  'webview',
-]);
+export const CONTROLLABLE_APP_KINDS: ReadonlySet<AppKind> = new Set<AppKind>(['builtin-browser']);
 
 export function isControllableKind(kind: AppKind): boolean {
   return CONTROLLABLE_APP_KINDS.has(kind);
 }
-
-/** Options accepted by `app:screenshot`. */
-export type AppScreenshotOptions = {
-  fullPage?: boolean;
-  /** Optional subdirectory under the artifacts root — usually a ticketId. */
-  artifactsSubdir?: string;
-};
 
 /** Mouse button accepted by app_click. */
 export type AppClickButton = 'left' | 'right' | 'middle';
@@ -142,14 +129,6 @@ export type AppClickButton = 'left' | 'right' | 'middle';
 // Convenience export used by unit tests and the variables-builder scope logic.
 export type AppScopeFilter = {
   tabId?: string;
-  allowGlobal: boolean;
-  /**
-   * Superuser scope — the headless global orchestrator. When true, the caller
-   * sees and can drive *every* column's apps (not just `tabId`'s), and apps are
-   * addressed by full `handleId` rather than bare `appId` (the same id exists in
-   * many columns). Implies cross-column visibility regardless of `tabId`.
-   */
-  allColumns?: boolean;
 };
 
 // Re-export so downstream files don't need a second import path.

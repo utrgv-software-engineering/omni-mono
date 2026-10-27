@@ -79,7 +79,10 @@ class TestUserMcpFixtureStager:
 
     def test_env_vars_points_xdg_at_staged_root(self, tmp_path: Path):
         stager = UserMcpFixtureStager(tmp_path, product_config_name="p")
-        assert stager.env_vars() == {"XDG_CONFIG_HOME": str(stager.xdg_root)}
+        assert stager.env_vars() == {
+            "XDG_CONFIG_HOME": str(stager.xdg_root),
+            "APPDATA": str(stager.xdg_root),
+        }
 
     def test_staged_config_visible_via_user_mcp_discovery(
         self, tmp_path: Path, monkeypatch

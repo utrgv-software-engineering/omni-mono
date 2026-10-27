@@ -27,7 +27,7 @@ import {
   pathExists,
 } from '@/main/util';
 import type { IIpcListener } from '@/shared/ipc-listener';
-import type { IpcRendererEvents, LogEntry, OmniInstallProcessStatus, WithTimestamp } from '@/shared/types';
+import type { IpcRendererEvents, OmniInstallProcessStatus, WithTimestamp } from '@/shared/types';
 
 const PYTHON_VERSION = '3.11';
 const MAX_INSTALL_LOGS = 5;
@@ -40,7 +40,6 @@ const stripAnsi = (s: string): string => s.replace(ANSI_CSI_RE, '');
 
 export class OmniInstallManager {
   private status: WithTimestamp<OmniInstallProcessStatus>;
-  private ipcLogger: (entry: WithTimestamp<LogEntry>) => void;
   private ipcRawOutput: (data: string) => void;
   private onStatusChange: (status: WithTimestamp<OmniInstallProcessStatus>) => void;
   private log: SimpleLogger;
@@ -53,11 +52,9 @@ export class OmniInstallManager {
   private installInProgress: Promise<void> | null = null;
 
   constructor(arg: {
-    ipcLogger: OmniInstallManager['ipcLogger'];
     ipcRawOutput: OmniInstallManager['ipcRawOutput'];
     onStatusChange: OmniInstallManager['onStatusChange'];
   }) {
-    this.ipcLogger = arg.ipcLogger;
     this.ipcRawOutput = arg.ipcRawOutput;
     this.onStatusChange = arg.onStatusChange;
     this.commandRunner = new CommandRunner();
@@ -289,44 +286,6 @@ export class OmniInstallManager {
           `Could not remove or rename ${targetPath}: ${(renameErr as Error).message}\r\n` +
             `The install will likely fail. Close any running Omni Code processes and try again.\r\n`
         )
-      );
-    }
-  };
-
-  // One-time migration: move the legacy Windows runtime dir to the new shorter
-  // path. Old: %APPDATA%\Omni Code\omni → New: %LOCALAPPDATA%\omni.
-  // If the new location already has a .venv, skip (user already migrated or
-  // did a fresh install). On failure, log and continue — startInstall will
-  // just do a fresh install at the new path.
-  private migrateWindowsRuntimeDir = async (): Promise<void> => {
-    const newDir = getOmniRuntimeDir();
-    const legacyDir = path.join(app.getPath('userData'), 'omni');
-
-    // Same path (e.g. dev override) — nothing to do.
-    if (path.resolve(newDir) === path.resolve(legacyDir)) {
-      return;
-    }
-
-    const legacyVenv = path.join(legacyDir, '.venv');
-    const newVenv = path.join(newDir, '.venv');
-
-    if (!(await pathExists(legacyVenv))) {
-      return;
-    }
-    if (await pathExists(newVenv)) {
-      this.log.info(c.gray('Legacy venv found but new location already populated — skipping migration\r\n'));
-      return;
-    }
-
-    this.log.info(c.cyan(`Migrating runtime from ${legacyDir} → ${newDir}...\r\n`));
-    try {
-      await fs.mkdir(path.dirname(newDir), { recursive: true });
-      await fs.rename(legacyDir, newDir);
-      this.log.info(c.gray('Migration complete\r\n'));
-    } catch (err) {
-      // rename fails across drives — fall back to letting startInstall do a fresh install.
-      this.log.warn(
-        c.yellow(`Could not migrate legacy runtime dir: ${(err as Error).message} — will reinstall at new location\r\n`)
       );
     }
   };
@@ -714,13 +673,6 @@ export class OmniInstallManager {
         return;
       }
 
-      // Migrate legacy Windows runtime dir (%APPDATA%\Omni Code\omni) to
-      // the new shorter path (%LOCALAPPDATA%\omni) if it exists and the new
-      // location doesn't. Avoids a redundant reinstall for existing users.
-      if (process.platform === 'win32') {
-        await this.migrateWindowsRuntimeDir();
-      }
-
       await fs.mkdir(getOmniRuntimeDir(), { recursive: true });
 
       // Sweep any .venv.broken.<ts> directories left behind by a prior
@@ -958,9 +910,6 @@ export const createOmniInstallManager = (arg: {
   const { ipc, sendToWindow } = arg;
 
   const omniInstallManager = new OmniInstallManager({
-    ipcLogger: (entry) => {
-      sendToWindow('omni-install-process:log', entry);
-    },
     ipcRawOutput: (data) => {
       sendToWindow('omni-install-process:raw-output', data);
     },

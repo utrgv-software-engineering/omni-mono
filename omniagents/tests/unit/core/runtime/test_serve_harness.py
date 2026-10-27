@@ -305,7 +305,10 @@ async def test_bring_up_declares_root_mount_layout_before_profile_init(
     )
 
     profile = SimpleNamespace(
-        raw={"client": {"type": "docker"}}, init=["echo profile-init"], services=[]
+        raw={"client": {"type": "docker"}},
+        build=[],
+        init=["echo profile-init"],
+        services=[],
     )
 
     await serve_harness.bring_up_session(
@@ -336,6 +339,47 @@ async def test_bring_up_declares_root_mount_layout_before_profile_init(
         state_path=None,
     )
     assert _init_execs() == ["echo profile-init"]
+
+
+@pytest.mark.asyncio
+async def test_a_fresh_container_that_fails_to_start_is_removed(monkeypatch):
+    """Starting materializes the workspace (it clones the sources); a fresh
+    container whose clone fails is destroyed, not left running."""
+    from unittest.mock import AsyncMock
+
+    from omniagents.core.runtime import serve_harness
+
+    class _Session:
+        state = SimpleNamespace(container_id="container-1")
+
+        async def start(self):
+            raise RuntimeError("git clone failed")
+
+    class _Client:
+        async def create(self, *, manifest, options, snapshot):
+            return _Session()
+
+    monkeypatch.setattr(
+        serve_harness,
+        "_build_sandbox",
+        lambda profile, *, sources: (_Client(), {}, SimpleNamespace(root="/workspace")),
+    )
+    monkeypatch.setattr(serve_harness, "_build_snapshot", lambda **kwargs: None)
+    monkeypatch.setattr(
+        serve_harness, "_scrub_workspace_snapshot", lambda session: None
+    )
+    teardown = AsyncMock()
+    monkeypatch.setattr(serve_harness, "teardown_session", teardown)
+
+    profile = SimpleNamespace(
+        raw={"client": {"type": "docker"}}, build=[], init=[], services=[]
+    )
+    with pytest.raises(RuntimeError, match="git clone failed"):
+        await serve_harness.bring_up_session(
+            profile=profile, sources_parsed=[], snapshot_ref="ref-1", snapshot_dir=None
+        )
+    teardown.assert_awaited_once()
+    assert teardown.await_args.kwargs["destroy"] is True
 
 
 @pytest.mark.asyncio
@@ -391,7 +435,9 @@ async def test_bring_up_applies_network_policy_for_docker(monkeypatch, tmp_path)
         serve_harness, "_resolve_service_urls", AsyncMock(return_value={})
     )
 
-    profile = SimpleNamespace(raw={"client": {"type": "docker"}}, init=[], services=[])
+    profile = SimpleNamespace(
+        raw={"client": {"type": "docker"}}, build=[], init=[], services=[]
+    )
 
     brought = await serve_harness.bring_up_session(
         profile=profile,
@@ -422,7 +468,7 @@ async def test_bring_up_applies_network_policy_for_docker(monkeypatch, tmp_path)
     # Non-docker targets get no iptables exec at all.
     execs.clear()
     profile_host = SimpleNamespace(
-        raw={"client": {"type": "unix_local"}}, init=[], services=[]
+        raw={"client": {"type": "unix_local"}}, build=[], init=[], services=[]
     )
     await serve_harness.bring_up_session(
         profile=profile_host,

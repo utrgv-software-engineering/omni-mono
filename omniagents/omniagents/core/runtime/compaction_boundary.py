@@ -28,6 +28,13 @@ def compaction_input_filter(session, service, max_input_tokens, strip_input):
         task.get_name() if task is not None else None
     )
 
+    async def unsaved_tail(data):
+        # The SDK builds a request as saved history + this turn's new input,
+        # and saves the new input only after the first model call. Whatever
+        # the request holds beyond what is saved must survive a rebuild from
+        # saved context, or the user's message never reaches the model.
+        return list(data.model_data.input[len(await session.get_items()) :])
+
     async def filter_input(data):
         nonlocal checkpoint_written, sdk_context
         if getattr(session, "_sdk_history", None) is not sdk_context:
@@ -47,10 +54,11 @@ def compaction_input_filter(session, service, max_input_tokens, strip_input):
             # SDK persistence defers compacting local tool results. Drain that
             # pressure here, before another model call, using saved outputs.
             if callable(getattr(native, "run_compaction", None)):
+                tail = await unsaved_tail(data)
                 await native.run_compaction({"compaction_mode": "input"})
                 if getattr(session, "_sdk_history", None) is not sdk_context:
                     sdk_context = session._sdk_history
-                    data.model_data.input = await session.get_items()
+                    data.model_data.input = [*await session.get_items(), *tail]
                     checkpoint_written = True
             return strip_input(data)
 
@@ -59,6 +67,7 @@ def compaction_input_filter(session, service, max_input_tokens, strip_input):
                 continue
             before = len(session.history)
             before_sdk_context = getattr(session, "_sdk_history", None)
+            tail = await unsaved_tail(data)
             boundary = checkpoint_boundary.set(True)
             try:
                 await hook(
@@ -85,7 +94,7 @@ def compaction_input_filter(session, service, max_input_tokens, strip_input):
             ):
                 # The SDK already prepared this request. Replace it as well as
                 # the durable context, or this request still sends old history.
-                data.model_data.input = await session.get_items()
+                data.model_data.input = [*await session.get_items(), *tail]
                 checkpoint_written = True
                 break
         return strip_input(data)

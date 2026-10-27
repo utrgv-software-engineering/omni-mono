@@ -1,150 +1,95 @@
 /**
- * React hook for managing RPC client connection and state
+ * The TUI's connection to the agent runtime: the shared OmniAgents GUI
+ * client (@omniagents/client), the same one the desktop and web UI use.
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import { RPCClient } from "../rpc/client.js";
+import { useEffect, useState } from "react";
+import { RPCClient } from "@omniagents/client/rpc/client";
+import { getSessionRegistry } from "@omniagents/client/session/session-registry";
+import { CLIENT_IDENTITY } from "../client-identity.js";
 import { useAppStore } from "../store/appStore.js";
 
 export interface UseRPCOptions {
   url: string;
   token?: string;
-  debug?: boolean;
 }
 
 export interface UseRPCResult {
   client: RPCClient | null;
   connected: boolean;
+  /** Connected and through the protocol handshake. */
   rpcReady: boolean;
   connecting: boolean;
   error: Error | null;
-  sendMessage: (
-    content: string,
-    sessionId?: string,
-  ) => Promise<{ run_id: string; session_id: string }>;
 }
 
-/**
- * Hook for managing RPC client lifecycle
- */
 export function useRPC(options: UseRPCOptions): UseRPCResult {
   const [client, setClient] = useState<RPCClient | null>(null);
-  const [connected, setConnected] = useState(false);
-  const [rpcReady, setRpcReady] = useState(false);
-  const [connecting, setConnecting] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
-
-  const clientRef = useRef<RPCClient | null>(null);
+  const [state, setState] = useState<{
+    connected: boolean;
+    connecting: boolean;
+    error: Error | null;
+  }>({ connected: false, connecting: true, error: null });
 
   useEffect(() => {
-    const rpcClient = new RPCClient({
-      url: options.url,
-      token: options.token,
-      debug: options.debug,
-    });
-
-    clientRef.current = rpcClient;
-
-    // Set up event listeners
-    rpcClient.on("connected", () => {
-      setConnected(true);
-      setConnecting(false);
-      setError(null);
-    });
-
-    rpcClient.on("rpc_ready", () => {
-      setRpcReady(true);
-      // Publish the negotiated handshake so components can feature-detect
-      // protocol-gated panels (grants) and route environment-scoped
-      // operations (agent_host). Re-runs on every reconnect handshake.
-      const init = rpcClient.initializeResult;
-      useAppStore.getState().actions.setServerInit(
-        init
-          ? {
-              protocolVersion: init.protocol_version,
-              grantedExperimental: [
-                ...init.capabilities.experimental_operations,
-              ],
-              agentHost: {
-                agentHostId: init.agent_host.agent_host_id,
-                defaultWorkspaceId:
-                  init.agent_host.default_workspace_id ?? null,
-                defaultEnvironmentId:
-                  init.agent_host.default_environment_id ?? null,
-              },
-            }
-          : null,
-      );
-    });
-
-    rpcClient.on("disconnected", () => {
-      setConnected(false);
-      setRpcReady(false);
-    });
-
-    rpcClient.on("error", (err: Error) => {
-      setError(err);
-      setConnecting(false);
-    });
-
-    rpcClient.on("reconnecting", () => {
-      setConnecting(true);
-    });
-
-    rpcClient.on(
-      "reconnect_failed",
-      (info?: { permanent?: boolean; attempts?: number }) => {
-        // Terminal failure: either a permanent rejection (auth, handshake)
-        // or the retry budget ran out. Distinct from transient
-        // "reconnecting" states, which keep `connecting` true.
-        const attempts = info?.attempts ?? 0;
-        const message =
-          attempts > 1
-            ? `Failed to reconnect to server (gave up after ${attempts} attempts)`
-            : "Connection rejected by server (not retryable)";
-        setError(new Error(message));
-        setConnecting(false);
-      },
-    );
-
-    // Connect
-    rpcClient.connect().catch((err) => {
-      setError(err);
-      setConnecting(false);
-    });
-
+    const rpcClient = new RPCClient(options.url, CLIENT_IDENTITY, options.token);
+    // The connection owns its conversations: they live and die with it.
+    const releaseSessions = getSessionRegistry(rpcClient).retain();
     setClient(rpcClient);
+    setState({ connected: false, connecting: true, error: null });
 
-    // Cleanup
-    return () => {
-      rpcClient.disconnect();
-      clientRef.current = null;
-    };
-  }, [options.url, options.token, options.debug]);
-
-  const sendMessage = useCallback(
-    async (
-      content: string,
-      sessionId?: string,
-    ): Promise<{ run_id: string; session_id: string }> => {
-      if (!clientRef.current) {
-        throw new Error("RPC client not initialized");
+    const off = rpcClient.onConnectionState((connection) => {
+      const connected = connection === "connected";
+      if (connected) {
+        // Components feature-detect protocol-gated panels from the grants
+        // and route environment-scoped operations through the agent host.
+        const init = rpcClient.initializeResult;
+        useAppStore.getState().actions.setServerInit(
+          init
+            ? {
+                protocolVersion: init.protocol_version,
+                grantedExperimental: [
+                  ...init.capabilities.experimental_operations,
+                ],
+                agentHost: {
+                  agentHostId: init.agent_host.agent_host_id,
+                  defaultWorkspaceId:
+                    init.agent_host.default_workspace_id ?? null,
+                  defaultEnvironmentId:
+                    init.agent_host.default_environment_id ?? null,
+                },
+              }
+            : null,
+        );
       }
-      return clientRef.current.startRun(
-        content,
-        clientRef.current.defaultEnvironmentSelection(),
-        sessionId,
-      );
-    },
-    [],
-  );
+      setState((previous) => ({
+        connected,
+        connecting:
+          connection === "connecting" || connection === "reconnecting",
+        error: connected ? null : previous.error,
+      }));
+    });
+
+    rpcClient.connect().catch((error: unknown) => {
+      setState({
+        connected: false,
+        connecting: false,
+        error: error instanceof Error ? error : new Error(String(error)),
+      });
+    });
+
+    return () => {
+      off();
+      releaseSessions();
+      rpcClient.dispose();
+    };
+  }, [options.url, options.token]);
 
   return {
     client,
-    connected,
-    rpcReady,
-    connecting,
-    error,
-    sendMessage,
+    connected: state.connected,
+    rpcReady: state.connected && !!client?.initializeResult,
+    connecting: state.connecting,
+    error: state.error,
   };
 }

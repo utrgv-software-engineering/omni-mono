@@ -4,5 +4,4 @@ tools:
 instructions: |
   Use `convert_to_markdown` to inspect rich-format files as Markdown, including
   PDFs, Word documents, slide decks, spreadsheets, HTML, ePub, and audio with
-  transcription. Use it after `download_file` when you need to read a remote
-  document.
+  transcription. A remote document has to be saved locally first.

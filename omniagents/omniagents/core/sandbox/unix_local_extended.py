@@ -172,17 +172,6 @@ class ExtendedUnixLocalSandboxSession(UnixLocalSandboxSession, PtyStreamingSessi
 class ExtendedUnixLocalSandboxClient(
     LifecycleSessionClientMixin, UnixLocalSandboxClient
 ):
-    def _make_inner_session(
-        self, state: UnixLocalSandboxSessionState
-    ) -> UnixLocalSandboxSession:
-        """Instantiate the backend session for *state*.
-
-        Subclass seam: :class:`~omniagents.core.sandbox.process_extended.
-        ProcessSandboxClient` overrides this to build its wrapped-exec
-        session (and stamp the omni-sandbox invocation config on it).
-        """
-        return ExtendedUnixLocalSandboxSession.from_state(state)
-
     async def create(
         self,
         *,
@@ -194,16 +183,12 @@ class ExtendedUnixLocalSandboxClient(
         # extended session class. The SDK's UnixLocalSandboxClient calls
         # ``UnixLocalSandboxSession.from_state`` directly with no override
         # seam; subclassing here is the cleanest swap.
-        import shutil
         import tempfile
-        from pathlib import Path
 
         from agents.sandbox.sandboxes.unix_local import (
             _DEFAULT_MANIFEST_ROOT,
             _DEFAULT_WORKSPACE_PREFIX,
         )
-
-        _ = shutil  # not used here; imports kept symmetric with parent
 
         resolved_options = options or UnixLocalSandboxClientOptions()
         workspace_root_owned = False
@@ -216,7 +201,6 @@ class ExtendedUnixLocalSandboxClient(
                 manifest = manifest.model_copy(
                     update={"root": workspace_dir}, deep=True
                 )
-            _ = Path(workspace_dir)
 
         session_id = uuid.uuid4()
         snapshot_id = str(session_id)
@@ -228,7 +212,7 @@ class ExtendedUnixLocalSandboxClient(
             workspace_root_owned=workspace_root_owned,
             exposed_ports=resolved_options.exposed_ports,
         )
-        inner = self._make_inner_session(state)
+        inner = ExtendedUnixLocalSandboxSession.from_state(state)
         return self._wrap_session(inner, instrumentation=self._instrumentation)
 
     async def resume(self, state: SandboxSessionState) -> SandboxSession:
@@ -236,5 +220,5 @@ class ExtendedUnixLocalSandboxClient(
             raise TypeError(
                 f"{type(self).__name__}.resume expects a UnixLocalSandboxSessionState"
             )
-        inner = self._make_inner_session(state)
+        inner = ExtendedUnixLocalSandboxSession.from_state(state)
         return self._wrap_session(inner, instrumentation=self._instrumentation)

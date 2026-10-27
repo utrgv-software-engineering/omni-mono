@@ -253,7 +253,6 @@ class EnqueueMessageParams(BaseModel):
     submission_id: str | None = None
     role: str | None = None
     input_content: list[Any] | None = None
-    trigger_run: bool | None = None
     variables: dict[str, Any] | None = None
     safe_tool_overrides: dict[str, Any] | None = None
     source: str | None = None

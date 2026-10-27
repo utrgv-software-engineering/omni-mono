@@ -45,6 +45,7 @@ from .model import (
     content_key,
     derive_item_id,
     derive_title,
+    provider_item_id,
     terminal_status_for_end_reason,
 )
 from .store import ConversationStore, get_conversation_store
@@ -166,7 +167,10 @@ class ConversationRecorder:
                 intent = entry["intent"]
                 message = entry["message"]
                 self.validate_projection(message, intent)
-                if intent.get("kind") == "queued_message":
+                if intent.get("kind") == "voice_transcript":
+                    recorded = self.record_voice_transcript(thread_id, message)
+                    self._settled(recorded)
+                elif intent.get("kind") == "queued_message":
                     recorded = self.record_queued_message(
                         thread_id,
                         queue_id=intent["queue_id"],
@@ -206,7 +210,16 @@ class ConversationRecorder:
     def validate_projection(cls, message: dict, intent: dict) -> None:
         kind = intent.get("kind")
         valid = intent.get("version") == 1
-        if kind in ("queued_message", "user_message"):
+        if kind == "voice_transcript":
+            metadata = message.get("omniagents") or {}
+            valid = valid and message.get("role") in ("user", "assistant")
+            valid = valid and metadata.get("source") == "voice:codex-live"
+            valid = valid and all(
+                isinstance(metadata.get(key), str) and metadata[key]
+                for key in ("live_call", "voice_id")
+            )
+            valid = valid and isinstance(message.get("content"), (str, list))
+        elif kind in ("queued_message", "user_message"):
             identity = intent.get(
                 "queue_id" if kind == "queued_message" else "natural_key"
             )
@@ -474,6 +487,7 @@ class ConversationRecorder:
         prompt: str | None,
         prompt_role: str | None,
         user_id: str | None = None,
+        attachments: list | None = None,
     ) -> Turn:
         self.ensure_thread(thread_id, user_id=user_id)
         now = _now()
@@ -512,7 +526,11 @@ class ConversationRecorder:
                 turn_id=turn_id,
                 status=ItemStatus.COMPLETED,
                 role=role,
-                content={"text": prompt, "origin": "prompt"},
+                content={
+                    "text": prompt,
+                    "origin": "prompt",
+                    **({"attachments": attachments} if attachments else {}),
+                },
                 source_ref={"event": "run_started", "run_id": turn_id},
             )
         turn = self._store.mutate_turn(
@@ -568,6 +586,12 @@ class ConversationRecorder:
         # to the run that is ending.
         for item in self._store.open_items(thread_id):
             if item.turn_id is not None and item.turn_id != turn_id:
+                continue
+            if item.kind == ItemKind.APPROVAL and item.content.get("worker_session_id"):
+                # Forwarded worker approvals belong to the child task, not
+                # whichever parent turn happens to be running when they arrive.
+                # Its resolution event lands the item; runtime reconciliation
+                # makes orphaned controls unavailable after process loss.
                 continue
             if item.long_lived:
                 # Deliberately outlives its turn; the owning subsystem
@@ -628,6 +652,7 @@ class ConversationRecorder:
         if not isinstance(run_id, str) or not run_id:
             return
         prompt = payload.get("prompt")
+        attachments = payload.get("attachments")
         self.open_turn(
             thread_id,
             run_id,
@@ -637,6 +662,7 @@ class ConversationRecorder:
                 if isinstance(payload.get("prompt_role"), str)
                 else None
             ),
+            attachments=attachments if isinstance(attachments, list) else None,
         )
 
     def _on_run_status(self, thread_id: str, payload: Dict[str, Any]) -> None:
@@ -671,7 +697,8 @@ class ConversationRecorder:
         the ``message_output`` payloads it received; neither is a
         server-side position the client could not reproduce.
         """
-        if isinstance(message_id, str) and message_id:
+        message_id = provider_item_id(message_id)
+        if message_id:
             return f"message:{message_id}"
         return f"message:{turn_id}:{content_key(content)}:{occurrence}"
 
@@ -686,6 +713,32 @@ class ConversationRecorder:
             and isinstance(item.get("id"), str)
             and bool(item["id"])
             and _checkpoint_kind(item) is None
+        )
+
+    def record_voice_transcript(self, thread_id: str, message: dict) -> Item:
+        """Project saved speech with identity distinct from delegated task output."""
+        from .adapter import _message_text
+
+        self.validate_projection(message, {"version": 1, "kind": "voice_transcript"})
+        metadata = message["omniagents"]
+        return self._append_item(
+            thread_id,
+            natural_key=f"voice:{metadata['live_call']}:{metadata['voice_id']}",
+            kind=(
+                ItemKind.USER_MESSAGE
+                if message["role"] == "user"
+                else ItemKind.AGENT_MESSAGE
+            ),
+            turn_id=None,
+            status=ItemStatus.COMPLETED,
+            role=message["role"],
+            content={"text": _message_text(message["content"])},
+            source_ref={
+                "event": "voice_transcript",
+                "voice_caption": True,
+                "live_call": metadata["live_call"],
+                "voice_id": metadata["voice_id"],
+            },
         )
 
     def record_persisted_message(
@@ -722,7 +775,9 @@ class ConversationRecorder:
     ) -> Optional[Item]:
         run_id = payload.get("run_id")
         content = payload.get("content")
-        if not isinstance(content, str):
+        # An empty assistant message (chat-completions providers send one
+        # beside each tool call) carries nothing to record.
+        if not isinstance(content, str) or not content.strip():
             return None
         turn_id = run_id if isinstance(run_id, str) else None
         message_id = payload.get("message_id")
@@ -1003,6 +1058,11 @@ class ConversationRecorder:
                 "arguments": payload.get("arguments"),
                 "call_id": call_id,
                 "source_call_id": payload.get("source_call_id"),
+                **{
+                    key: payload[key]
+                    for key in ("worker_id", "worker_session_id", "worker_run_id")
+                    if key in payload
+                },
             },
             source_ref={"event": "tool_approval_requested", "call_id": call_id},
         )
@@ -1121,6 +1181,11 @@ class ConversationRecorder:
                 "arguments": payload.get("arguments"),
                 "request_id": request_id,
                 "source_request_id": payload.get("source_request_id"),
+                **{
+                    key: payload[key]
+                    for key in ("worker_id", "worker_session_id", "worker_run_id")
+                    if key in payload
+                },
             },
             source_ref={"event": "mcp_approval_requested", "request_id": request_id},
         )
@@ -1521,34 +1586,37 @@ class ConversationRecorder:
     def record_reasoning(
         self, thread_id: str, *, run_id: str | None, item: Dict[str, Any]
     ) -> Optional[Item]:
-        """A model reasoning block, from the history-append path.
+        """A model reasoning block, recorded when the run streams it.
 
-        Reasoning has no notification — it is persisted straight to history
-        by the SDK — so without this hook the recorded model would hold no
-        reasoning at all while the legacy projection does, and the two
-        producers of one surface would disagree about the same conversation.
-        Recorded from ``Session.append_message`` for the same reason
-        compaction checkpoints are: the fact never reaches the broadcast
-        chokepoint.
+        Reasoning has no notification, so the bridge records it directly
+        from the SDK's stream event. That event arrives before the tool
+        calls the reasoning led to, which keeps the transcript in the order
+        the model produced it. The SDK writes the same block to history
+        only after those tools ran; see :meth:`record_persisted_reasoning`.
         """
-        summary = item.get("summary")
-        parts: list[str] = []
-        if isinstance(summary, list):
-            for entry in summary:
-                if isinstance(entry, str):
-                    parts.append(entry)
-                elif isinstance(entry, dict) and isinstance(entry.get("text"), str):
-                    parts.append(entry["text"])
-        text = "\n".join(parts)
-        reasoning_id = item.get("id")
+
+        def joined(entries: Any) -> str:
+            parts: list[str] = []
+            if isinstance(entries, list):
+                for entry in entries:
+                    if isinstance(entry, str):
+                        parts.append(entry)
+                    elif isinstance(entry, dict) and isinstance(entry.get("text"), str):
+                        parts.append(entry["text"])
+            return "\n".join(parts)
+
+        # The Responses API summarizes reasoning; chat-completions providers
+        # return it raw, as ``reasoning_text`` content with no summary.
+        text = joined(item.get("summary")) or joined(item.get("content"))
+        reasoning_id = provider_item_id(item.get("id"))
         key = (
             f"reasoning:{reasoning_id}"
-            if isinstance(reasoning_id, str) and reasoning_id
+            if reasoning_id
             else self._next_occurrence_key(
                 thread_id, f"reasoning:{run_id}:{content_key(text)}"
             )
         )
-        return self._append_item(
+        recorded = self._append_item(
             thread_id,
             natural_key=key,
             kind=ItemKind.REASONING,
@@ -1557,14 +1625,26 @@ class ConversationRecorder:
             role="assistant",
             content={
                 "summary": text,
-                **(
-                    {"reasoning_id": reasoning_id}
-                    if isinstance(reasoning_id, str)
-                    else {}
-                ),
+                **({"reasoning_id": reasoning_id} if reasoning_id else {}),
             },
-            source_ref={"event": "history_append", "run_id": run_id},
+            source_ref={"event": "reasoning", "run_id": run_id},
         )
+        self._settled(recorded)
+        return recorded
+
+    def record_persisted_reasoning(
+        self, thread_id: str, *, run_id: str | None, item: Dict[str, Any]
+    ) -> Optional[Item]:
+        """Record reasoning from the history write, when it is identifiable.
+
+        Covers a block whose stream event was never delivered. Only a
+        provider-minted id lets the two paths converge on one item; an
+        id-less block (chat-completions providers) is recorded by the
+        stream path alone, as id-less assistant messages are.
+        """
+        if not provider_item_id(item.get("id")):
+            return None
+        return self.record_reasoning(thread_id, run_id=run_id, item=item)
 
     @staticmethod
     def user_message_natural_key(

@@ -67,11 +67,6 @@ export function mostRecentMissedScheduledTaskRun(
   return missedRunAt;
 }
 
-export function normalizeScheduledTaskTime(value: string): string {
-  const [hour, minute] = parseTime(value);
-  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
-}
-
 function dateMatchesSchedule(date: Date, schedule: ScheduledTaskSchedule): boolean {
   if (schedule.kind === 'daily') {
     const day = date.getDay();

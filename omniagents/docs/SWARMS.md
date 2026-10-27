@@ -1,130 +1,84 @@
-# Task-scoped swarms
+# Workers and optional peer communication
 
-`swarms` is an opt-in capability pack built on the existing worker runtime.
-Select `swarms` instead of `workers` in an agent's `capabilities` list. Existing
-worker tools and schemas remain available. A product must
-install its usual `WorkerDefaults`; no second runtime or model configuration
-is needed. Regular Omni Code chat continues to select `workers`. Launcher residents
-automatically select `swarms` through a session capability profile.
+All new delegation uses the `workers` capability. `swarms` is a compatibility
+alias for that same toolset. Omni Code regular chats and residents both use it;
+there is no separate swarm creation, roster, shared objective or closure step.
 
-The owner creates a shared objective (`create_swarm`), registers named roles
-(`add_swarm_member`), then starts concrete assignments (`dispatch_swarm_member`).
-Define the roster first, then dispatch independent assignments in one turn.
-`get_swarm` shows member tasks, live worker status/results, and messages.
-Dispatching a finished member resumes its existing history and workspace.
-Dispatching a running member fails; use `message_swarm_member` to steer it.
+Use `spawn_worker(task, name?, role?, peer_communication=false, isolation?, allow_dirty?)`.
+Names are optional, unique within the parent session, and identify assignments.
+Keep the returned worker ID for status, messages, cancellation, resumption and
+workspace cleanup. Message the existing worker with `send_worker_message` for follow-up
+work; spawning the same name again is an error.
 
-Members inherit the normal product worker specification and receive only two
-additional tools: `swarm_member_context` and `swarm_member_message`. Their sender
-identity and group are host-bound closures, not user-controlled arguments.
-They can address other members by name or write to `owner`. Messages to running
-members are injected through the normal worker message path. Every message is
-also retained in the group's bounded mailbox. Planned/finished members read
-mail on their next dispatch; messages alone never wake agents. Owner messages
-are visible in `get_swarm`; normal worker completion wakes the owner.
+Work directly by default. Delegate when the assignment benefits from independent
+execution or review. The owner remains responsible for authorization, scope,
+review, integration and the final result. Parallel work alone does not require
+peer communication.
 
-The owner integrates results, calls `close_swarm` with the outcome, and cleans
-isolated workspaces with `cleanup_swarm_member` after reviewing/merging changes.
-Close refuses running members unless `cancel_running=true`. Close never deletes
-workspaces. Cleanup refuses running members and prevents further dispatch of
-that member. Failed dispatches retain the planned member for retry.
+## Communication
 
-## Scope and limits
+Every new worker receives two host-bound tools. The parent can additionally
+opt individual workers into peer communication at spawn time:
 
-- Swarm records are session-owned and host-process-local, including across
-  ordinary worker resumes. They do not survive host restart or resident daily
-  session rollover. Finish/integrate before that boundary; put durable outcomes
-  in projects or resident memory. Persisted worker transcripts alone do not
-  reconstruct a swarm.
-- Maximum 8 open groups per owner, 16 members per group, 200 messages per group.
-  Exhaustion is an explicit error, never silent mailbox truncation.
-- Names and roles are execution labels and instructions, not personalities.
-  Skills can be requested in the brief using the existing worker skills tool.
-  This version does not introduce per-member permission or capability policies.
-- Worker status, transcripts, completion notifications, isolation and approvals
-  follow the existing worker implementation. No new UI or resident settings
-  selector is needed: residents use swarms and regular chat uses workers.
-- Use this pack with a focused worker spec without recruitment/lifecycle tools,
-  as Omni Code already provides. Group members are not new residents.
+- `worker_context()`: discover opted-in siblings, including their names, roles,
+  assignments and status, and read your incoming/outgoing mailbox.
+- `worker_message(recipient, message)`: send to a discovered worker ID or
+  `"owner"`. The model cannot supply the sender or parent identity.
 
-## Resident migration and regular chat
+The boundary is the owning parent conversation, not the whole project or app.
+Workers that have not opted in and cleaned workers are unavailable as peers.
+Workers appear as they are spawned; a worker cannot address a future sibling
+before it exists. There is no shared goal requirement or separate team object.
+These tools do not grant recruitment or lifecycle control.
 
-The launcher adds `capability_profile: resident` to resident session variables
-on session creation/reconnection and identity refresh. Both Omni Code text and
-voice agent definitions declare:
+Messages are stored atomically in the parent's durable worker journal before
+best-effort delivery through the recipient's existing message queue. Retrying
+the same tool invocation deduplicates both admission and queue delivery.
+Delivery failure leaves the mailbox readable. Messages to the owner atomically enqueue a parent notification and wake it
+after its current run. Ordinary worker text and normal turn endings do not
+notify the parent. Failures still notify it automatically. Messages addressed
+to workers automatically start an idle recipient or wait until its active run
+ends, then execute in arrival order. No separate resume call is required.
+`close_worker` cancels active and queued work and rejects future messages.
+`resume_worker` remains available for explicit interrupted-run recovery.
 
-```yaml
-capability_profiles:
-  resident:
-    workers: swarms
-```
+Use `get_worker_status()` without an ID to discover all owned workers and their
+mail. With an ID it returns that worker's state, recent history and relevant
+messages. Parent guidance continues to use `send_worker_message`.
 
-The framework selects the profile's tools and instructions when building that
-session's agent. It copies the spec; it never changes the shared AgentHost's
-base definition. Regular sessions omit the profile and retain `workers`.
-Nested utility agents with no declared profiles retain their own capabilities.
-The profile must preserve the replaced pack's server-function and agent-tool
-configuration, since those are registered when the definition loads.
+Mailboxes admit at most 500 messages per parent, with at most 16,000 characters
+per message. Exhaustion returns an explicit error; it does not silently discard
+messages. Share useful findings and dependencies, not acknowledgments.
 
-This applies to existing residents on their next connection to an updated
-launcher/runtime, as well as newly created residents. No roster DB migration
-or user-facing switch is required. Update launcher, omni-code and omniagents
-together; this source change does not publish or install a new runtime release.
+## Persistence and compatibility
 
-Other products can still select `swarms` directly instead of `workers` in an
-agent's capability list. Worker-specific prompt guidance lives in the
-`workers` capability, so selecting `swarms` does not leave instructions for
-unavailable worker tools in the main agent prompt.
+Worker identity, child conversation, name, role, communication setting, mailbox
+and workspace association survive runtime restarts. Resumption reconstructs the
+bound communication tools from the durable recipe. Missing environments or
+changed worker definitions block resumption instead of silently replacing them.
 
-## Flutter Activity view
+Existing swarm records are not rewritten into a broader parent-wide group.
+Their recovered children retain the original swarm tools, membership and
+automatic end-of-run reports. New project-worker recipes use explicit messages.
+The owner can inspect historical membership and messages through
+`get_worker_status`, and use the ordinary worker ID lifecycle to resume, cancel
+or clean up existing workers. Existing standalone named-worker records remain
+recoverable too. Old tool implementations/registry names remain for legacy
+configurations; neither standard capability exposes them for new delegation.
 
-A resident's Activity tab shows swarm objectives, named roles and assignments,
-member status/results, member messages, and expandable worker transcripts.
-Other workers and agent-tool runs appear separately as delegated work.
+Existing `workers.list` and subagent events retain their legacy swarm fields
+for compatible clients. No new launcher settings or collaboration mode selector
+is needed. Update framework, Omni Code and launcher together; source changes
+do not publish or install a runtime release.
 
-`server_call("workers.list", session_id=...)` preserves its existing `snapshot`
-worker list and adds `subagents` (the merged observability snapshot) and `swarms`
-(session-owned group records). `ui.subagents.update` client requests include
-`swarms` alongside the existing `snapshot`; swarm mutations publish through the
-owning parent service even when a message originated in a member's service.
-Worker lifecycle events continue using the existing subagent bus.
+## Isolation and approvals
 
-Flutter requests client-function notifications, refreshes the overview on
-attachment/reconnect, and ignores stale responses from previous attachments.
-Expanded worker transcripts use paginated `list_items` reads and refresh on
-subagent events; reading them does not attach to worker approvals or start runs.
-The view remains read-only. Swarm records remain process-local, as noted above.
+Peer communication does not synchronize isolated files or merge worktrees.
+Assign non-overlapping file ownership. Review and integrate each worker's
+changes before explicit workspace cleanup.
 
-## Approvals
-
-Workers and swarm members use Guardian review by default, even when the owner
-uses manual approvals or the worker has an offline container. Explicit
-`safe_agent_options.skip_approvals: true` on the parent or worker enables
-auto-approval; enforced safety takes precedence. The review uses the worker's
-actual environment and the parent's configured Guardian model.
-
-Guardian denials return to the worker so it can adapt. Uncertain or failed
-reviews appear in the owning conversation's existing approval UI. They stay
-pending without a connected client, survive parent run completion for reconnect
-replay, and are dismissed when the waiting worker is cancelled. Resuming a
-worker retains its parent approval routing. The monitor never approves tool or
-MCP requests on the user's behalf.
-
-## Standalone workers
-
-The same capability also offers `dispatch_worker(name, task, role?, isolation?,
-allow_dirty?)` for one independent assignment, with no group or mailbox.
-Names are scoped to the owning session. Reusing a name resumes the same worker's
-history and isolation; optional role instructions persist unless replaced.
-Dispatching an already running worker fails. Workers cannot recruit other agents.
-
-`get_worker(name?)` returns one worker or the session's standalone workers,
-including results and workspace paths. `close_single_worker(name)` cancels while
-preserving history/files for resumption. `cleanup_single_worker(name)` removes
-an isolated workspace after review/integration and prevents further dispatch of
-that name. At most 16 uncleaned standalone workers are tracked per session.
-
-Standalone workers use the same Guardian policy and completion notifications as
-swarm members. Activity shows them in its existing delegated-worker list, outside
-swarm groups. Named records are process-local, like swarm records. Ordinary
-`workers` capability tools remain unchanged.
+Workers keep the existing provider scope and Guardian review; a worker's
+approvals are decided by its policy or the Guardian, which fails closed, and
+never wait on a person. Role instructions do not grant permissions or override credentials.
+Interrupted tool effects may be uncertain: inspect recorded results and files
+before deciding whether an action is safe to retry.

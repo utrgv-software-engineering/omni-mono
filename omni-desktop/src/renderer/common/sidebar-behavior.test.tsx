@@ -1,9 +1,9 @@
+import { Sidebar, SidebarMenu, SidebarProvider, SidebarTrigger } from '@omniagents/ui/sidebar';
 import { atom } from 'nanostores';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { Sidebar, SidebarMenu, SidebarProvider, SidebarTrigger } from '@/renderer/ds/ui/sidebar';
 import type { Project } from '@/shared/types';
 
 import { NavSection } from './NavSection';
@@ -11,22 +11,21 @@ import { NavSection } from './NavSection';
 const projectMocks = vi.hoisted(() => ({
   goToProject: vi.fn(),
   updateProject: vi.fn(),
-  renameProject: vi.fn(),
 }));
 
 vi.mock('@/renderer/features/Code/SessionsSection', () => ({
   ProjectSessionRows: () => <div data-testid="project-sessions">Session</div>,
 }));
 vi.mock('@/renderer/features/Projects/ProjectCreateDialog', () => ({ ProjectCreateDialog: () => null }));
-vi.mock('@/renderer/features/Tickets/state', () => ({
-  $needsYouByProject: atom({}),
-  $tickets: atom([]),
-  $ticketsView: atom({ kind: 'all' }),
-  ticketApi: projectMocks,
-  viewToNavValue: vi.fn(),
+vi.mock('@/renderer/features/Projects/view-state', () => ({
+  $projectView: atom(null),
+  goToProject: projectMocks.goToProject,
+}));
+vi.mock('@/renderer/features/Projects/state', () => ({
+  projectsApi: { updateProject: projectMocks.updateProject },
 }));
 
-import { ProjectRow } from '@/renderer/features/Tickets/ProjectsSection';
+import { ProjectRow } from '@/renderer/features/Projects/ProjectsSection';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -46,7 +45,6 @@ beforeEach(() => {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 });
   projectMocks.goToProject.mockClear();
   projectMocks.updateProject.mockClear();
-  projectMocks.renameProject.mockClear();
   Object.defineProperty(window, 'matchMedia', {
     configurable: true,
     value: vi.fn(() => ({
@@ -139,7 +137,7 @@ describe('sidebar behavior contracts', () => {
 
     render(
       <SidebarMenu>
-        <ProjectRow project={project} needsYou={2} selected={false} hasSessions={false} sessionTitles={new Map()} />
+        <ProjectRow project={project} selected={false} hasSessions={false} sessionTitles={new Map()} />
       </SidebarMenu>
     );
 
@@ -174,7 +172,7 @@ describe('sidebar behavior contracts', () => {
 
     render(
       <SidebarMenu>
-        <ProjectRow project={project} needsYou={0} selected={false} hasSessions sessionTitles={new Map()} />
+        <ProjectRow project={project} selected={false} hasSessions sessionTitles={new Map()} />
       </SidebarMenu>
     );
 

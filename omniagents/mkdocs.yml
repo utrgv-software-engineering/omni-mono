@@ -1,11 +1,11 @@
 site_name: OmniAgents
 site_description: A lightweight wrapper around OpenAI Agents with multiple interface modes
 site_author: Eric Martinez
-site_url: https://ericmartinez.github.io/omniagents/
+site_url: https://utrgv-software-engineering.github.io/omni-mono/omniagents/
 
-repo_name: utrgv-software-engineering/omniagents
-repo_url: https://github.com/utrgv-software-engineering/omniagents
-edit_uri: edit/main/docs/
+repo_name: utrgv-software-engineering/omni-mono
+repo_url: https://github.com/utrgv-software-engineering/omni-mono
+edit_uri: edit/dev/omniagents/docs/
 
 theme:
   name: material
@@ -88,4 +88,4 @@ nav:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/utrgv-software-engineering/omniagents
+      link: https://github.com/utrgv-software-engineering/omni-mono

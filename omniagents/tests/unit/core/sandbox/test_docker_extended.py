@@ -112,6 +112,20 @@ def test_no_network_mode_when_none_requested():
     assert "network_mode" not in docker.containers.create_calls[0]
 
 
+def test_the_host_is_reachable_as_host_docker_internal():
+    client, docker = _make_client()
+    _create(client)
+    assert docker.containers.create_calls[0]["extra_hosts"] == {
+        "host.docker.internal": "host-gateway"
+    }
+
+
+def test_an_offline_container_names_no_host():
+    client, docker = _make_client(network_mode="none")
+    _create(client)
+    assert "extra_hosts" not in docker.containers.create_calls[0]
+
+
 # --- user (container default identity override) ----------------------- #
 
 

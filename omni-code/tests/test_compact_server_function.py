@@ -47,7 +47,7 @@ def test_conventional_compaction_summarizer_is_active():
     assert compaction_summarizer() is not None
 
 
-def test_summarizer_runs_compactor_under_its_own_instructions(monkeypatch):
+def test_summarizer_runs_compactor_under_its_own_instructions(monkeypatch, tmp_path):
     """The conventional summarizer resolves the session's model through
     omni-code's store and runs the compactor utility agent under the
     agent's own packaged instructions — no framework injection."""
@@ -70,9 +70,24 @@ def test_summarizer_runs_compactor_under_its_own_instructions(monkeypatch):
 
     # The summarizer resolves through the framework's
     # resolve_service_model_runtime, which reads the store instance.
-    from omniagents.core.models import model_store
 
-    models = model_store()
+    from omniagents.core import models as models_module
+    from omniagents.core.models import ModelConfigStore
+
+    models = ModelConfigStore(config_dir=lambda: tmp_path, single_provider=True)
+    models.save_config(
+        {
+            "default": "local/gpt-4.1",
+            "providers": {
+                "local": {
+                    "type": "openai-compatible",
+                    "base_url": "http://localhost:11434/v1",
+                    "models": {"gpt-4.1": {"model": "gpt-4.1"}},
+                }
+            },
+        }
+    )
+    monkeypatch.setattr(models_module, "model_store", lambda: models)
 
     monkeypatch.setattr(
         models, "resolve_model_for_runtime", fake_resolve_model_for_runtime

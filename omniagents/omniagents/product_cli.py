@@ -21,8 +21,8 @@ so if the base command for a product is ``omni``, the update command is
 manifest in hand can call :func:`product_main` directly.
 
 :func:`product_main` always runs :func:`~omniagents.core.product.bootstrap_product`
-first, so every framework subsystem (model store dir, platform policy
-slug + credential store, codex token store, updater knobs) defaults from
+first, so every framework subsystem (model store dir, codex token store,
+updater knobs) defaults from
 the manifest's ``product:`` section. It then mounts the reserved
 subcommands from convention:
 
@@ -30,15 +30,14 @@ subcommands from convention:
   on the installed process-wide model store (a generic store rooted at
   the product config dir is installed when the product hasn't installed
   its own).
-- ``auth`` — platform login/logout/status plus the ``auth codex``
-  passthrough.
+- ``auth`` — the ``auth codex`` (ChatGPT) sign-in passthrough.
 - ``update`` — mounted ONLY when the manifest declares a
   ``product.update:`` block (:meth:`UpdaterConfig.from_product`).
 - ``sessions`` — the framework sessions CLI pinned to the product slug
   as project and the manifest's entrypoint agent as the default agent
   (:func:`run_product_sessions_command`, public so overrides can
   delegate).
-- ``serve`` / ``sandbox-host`` — the launcher serve contract
+- ``serve`` — the launcher serve contract
   (:mod:`omniagents.product_serve`): a long-lived sandbox-session agent
   server with the JSON readiness handshake, and the laptop half of
   computer-as-sandbox. See ``docs/serve-protocol.md``.
@@ -61,8 +60,8 @@ framework conventions:
   readable.
 - **Models bootstrap** — for products with an installed process-wide
   model store (built at bootstrap from the manifest's declared model
-  catalog): load the user model config, apply platform model
-  governance, export ``MODEL_NAME``, and when no models are configured
+  catalog): load the user model config, export ``MODEL_NAME``, and when
+  no models are configured
   run the interactive setup wizard — or, in embedded mode, print one
   ``{"error": ...}`` JSON line and exit 1.
 
@@ -83,8 +82,8 @@ named by ``cli.extensions`` may define:
   declaration order before any dispatch, each receiving the current
   argv (after any mutation by earlier preflights). A preflight may veto
   the run (``sys.exit``/``os.exec``) or return a modified argv; ``None``
-  keeps argv unchanged. Covers product-specific gates like governance
-  sandbox re-exec (first-run model wizards and embedded-mode
+  keeps argv unchanged. Covers product-specific gates like a sandbox
+  re-exec (first-run model wizards and embedded-mode
   interception are framework defaults now — see above).
 - ``COMMANDS: dict[str, Callable[[list[str]], int | None]]`` — extra
   subcommands (e.g. ``serve``) or overrides of reserved ones, each
@@ -136,7 +135,6 @@ RESERVED_COMMANDS = (
     "update",
     "sessions",
     "serve",
-    "sandbox-host",
     "describe",
 )
 
@@ -337,21 +335,13 @@ def _run_auth_command(args: List[str]) -> int:
 
         return run_codex_auth_command(args[1] if len(args) > 1 else "login")
 
-    if not args or args[0] in HELP_TOKENS:
-        prog = product_info().prog
-        print(
-            f"usage: {prog} auth <command>\n\n"
-            "Commands:\n"
-            "  login [url]    Authenticate with the management plane\n"
-            "  logout         Clear stored credentials\n"
-            "  status         Show current authentication status\n"
-            "  codex <cmd>    ChatGPT (Codex) sign-in: login|logout|status\n"
-        )
-        return 0
-
-    from omniagents.cli import run_platform_auth_command
-
-    return run_platform_auth_command(args)
+    prog = product_info().prog
+    print(
+        f"usage: {prog} auth <command>\n\n"
+        "Commands:\n"
+        "  codex <cmd>    ChatGPT (Codex) sign-in: login|logout|status\n"
+    )
+    return 0 if not args or args[0] in HELP_TOKENS else 2
 
 
 def _run_update_command(args: List[str]) -> int:
@@ -517,8 +507,7 @@ def _bootstrap_models(*, embedded: bool) -> None:
     Runs only for products with an installed process-wide model store —
     installed at :func:`bootstrap_product` from the manifest's declared
     model catalog (``paths.model_catalog``), or bound explicitly by the
-    product. Loads the user model config, applies platform model
-    governance when authenticated, exports ``MODEL_NAME`` from the
+    product. Loads the user model config, exports ``MODEL_NAME`` from the
     resolved runtime, and when no models are configured runs the
     interactive setup wizard — or, in embedded mode, prints a single
     ``{"error": ...}`` JSON line for the launcher and exits 1.
@@ -530,14 +519,6 @@ def _bootstrap_models(*, embedded: bool) -> None:
         return
 
     store.load_config()
-
-    # Apply platform model governance if authenticated.
-    try:
-        from omniagents.core.models.governed import apply_platform_model_governance
-
-        apply_platform_model_governance()
-    except Exception:
-        pass
 
     if "MODEL_NAME" not in os.environ:
         model_runtime = store.resolve_model_for_runtime()
@@ -574,7 +555,7 @@ def _print_top_level_help(
 ) -> None:
     prog = info.prog
     reserved: List[tuple[str, str]] = [
-        ("auth", "Authenticate with the management plane"),
+        ("auth", "ChatGPT (Codex) sign-in"),
         ("model", "Manage model configuration"),
         ("provider", "Manage provider configuration"),
     ]
@@ -582,7 +563,6 @@ def _print_top_level_help(
         reserved.append(("update", "Manage updates"))
     reserved.append(("sessions", "Inspect OmniAgents sessions"))
     reserved.append(("serve", "Run the agent server over a sandbox session"))
-    reserved.append(("sandbox-host", "Expose this machine as a remote sandbox"))
     reserved.append(("describe", "Print product metadata as JSON"))
 
     entries: List[tuple[str, str]] = [(prog, f"Launch the {info.label} chat")]
@@ -626,8 +606,7 @@ def product_main(project_path: Any, argv: Optional[List[str]] = None) -> int:
     manifest = _resolve_manifest_path(project_path)
 
     # Product identity first: everything after this — the extension
-    # module's own preflights (governance policy slug, credential
-    # store), the model store (config dir), the update notice — reads it
+    # module's own preflights, the model store (config dir), the update notice — reads it
     # through the framework defaults.
     info = bootstrap_product(manifest)
     cli_config = load_product_cli_config(manifest)
@@ -673,10 +652,6 @@ def product_main(project_path: Any, argv: Optional[List[str]] = None) -> int:
             from omniagents.product_serve import serve_main
 
             return serve_main(args[1:])
-        if head == "sandbox-host":
-            from omniagents.product_serve import sandbox_host_main
-
-            return sandbox_host_main(args[1:])
         if head == "describe":
             return run_product_describe_command(args[1:])
 

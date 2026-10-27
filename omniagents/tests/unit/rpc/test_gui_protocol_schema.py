@@ -1,6 +1,7 @@
 import hashlib
 import importlib
 import json
+import re
 from pathlib import Path
 import subprocess
 
@@ -82,7 +83,7 @@ def _validate_openrpc(path: Path) -> subprocess.CompletedProcess[str]:
             str(ROOT / "scripts/protocol/validate_openrpc.mjs"),
             str(path),
         ],
-        cwd=ROOT / "omniagents/backends/web/ui",
+        cwd=ROOT.parent / "packages/client",
         text=True,
         capture_output=True,
         check=False,
@@ -308,12 +309,6 @@ def test_generation_is_deterministic_and_checked_in():
         assert path.read_bytes() == content
 
 
-def test_ink_and_web_consume_identical_generated_protocol_maps():
-    web = ROOT / "omniagents/backends/web/ui/src/protocol/generated/gui-v2.ts"
-    ink = ROOT / "omniagents/backends/ink/tui/src/protocol/generated/gui-v2.ts"
-    assert ink.read_bytes() == web.read_bytes()
-
-
 def test_manifest_digest_matches_canonical_documents():
     manifest = _load(ROOT / "protocol/openrpc/v2/manifest.json")
     openrpc = (ROOT / "protocol/openrpc/v2/omniagents-gui-v2.json").read_bytes()
@@ -358,25 +353,67 @@ def test_catalog_requests_exist_on_real_agent_service():
     assert GUI_RPC_METHODS == catalog_requests
 
 
+def _shared_client_sources() -> list[Path]:
+    """The TypeScript every OmniAgents UI talks to the GUI protocol through.
+
+    Realtime voice speaks the separate /ws/realtime protocol (excluded from
+    the inventory), so its client is not scanned.
+    """
+    packages = ROOT.parent / "packages"
+    return sorted(
+        path
+        for package in ("client", "chat-ui")
+        for path in (packages / package / "src").rglob("*.ts*")
+        if ".test." not in path.name and "realtime" not in path.name
+    )
+
+
+def _tui_sources() -> list[Path]:
+    """The TUI's own requests and handlers, beside the shared client's."""
+    return sorted(
+        path
+        for path in (ROOT / "omniagents/backends/ink/tui/src").rglob("*.ts*")
+        if ".test." not in path.name
+        and "__tests__" not in path.parts
+        and "fixtures" not in path.parts
+    )
+
+
 def test_maintained_client_rpc_calls_are_cataloged():
-    paths = [
-        ROOT / "omniagents/backends/web/ui/src/rpc/client.ts",
-        ROOT / "omniagents/backends/ink/tui/src/rpc/client.ts",
-    ]
+    paths = [*_shared_client_sources(), *_tui_sources()]
     discovered = discover_client_rpc_calls(paths)
     catalog = {
         operation.name for operation in OPERATIONS if operation.kind == "request"
     }
     assert not missing_from_catalog(discovered, catalog)
-    assert {"start_run", "archive_session", "enqueue_message"} <= discovered
+    assert {"start_run", "update_thread", "enqueue_message"} <= discovered
+
+
+def _session_routed_notifications() -> set[str]:
+    """Notifications the shared client routes to its conversation sessions."""
+    source = (
+        ROOT.parent / "packages/client/src/session/session-registry.ts"
+    ).read_text()
+    table = re.search(r"const sessionEvents = \[(.*?)\] as const", source, re.S)
+    assert table, "sessionEvents table not found"
+    return set(re.findall(r"'([a-z_]+)'", table.group(1)))
 
 
 def test_maintained_notification_handlers_are_cataloged():
-    paths = [
-        ROOT / "omniagents/backends/web/ui/src/App.tsx",
-        ROOT / "omniagents/backends/ink/tui/src/hooks/useMessagesNew.ts",
-    ]
-    discovered = discover_notification_handlers(paths)
+    # The TUI's own `.on(` calls are mostly terminal streams (stdin `data`,
+    # stdout `resize`); its protocol subscriptions go through `client.on(`.
+    tui_handlers = {
+        name
+        for path in _tui_sources()
+        for name in re.findall(
+            r"client!?\??\.on\(\s*['\"]([a-z_]+)['\"]", path.read_text()
+        )
+    }
+    discovered = (
+        discover_notification_handlers(_shared_client_sources())
+        | tui_handlers
+        | _session_routed_notifications()
+    )
     catalog = {
         operation.name for operation in OPERATIONS if operation.kind != "request"
     }
@@ -479,7 +516,7 @@ def test_pinned_tool_outputs_include_optional_fields():
         ROOT / "omniagents/rpc/generated/gui_v2/schema_models.py"
     ).read_text()
     typescript_output = (
-        ROOT / "omniagents/backends/web/ui/src/protocol/generated/schema-types-v2.ts"
+        ROOT.parent / "packages/client/src/protocol/schema-types-v2.ts"
     ).read_text()
     assert "class ServerCall" in python_output
     assert "args: dict[str, Any] | None = None" in python_output

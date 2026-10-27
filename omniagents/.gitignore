@@ -86,3 +86,7 @@ node_modules/
 # MkDocs documentation
 site/
 .cache/
+
+# Saved evaluation runs and optimizations (examples) are local results
+**/evaluations/runs/
+**/evaluations/optimizations/

@@ -4,7 +4,7 @@ from agents import Agent
 from omniagents import Runner, function_tool
 from datetime import datetime
 import random
-import omniagents.studio.tracing as studio_tracing  # Import Studio for tracing
+from omniagents.core.tracing import local as studio_tracing
 
 INSTRUCTIONS = """You are a friendly assistant.\nUse `get_current_time` when a user asks for the current time.\nUse `flip_coin` when asked to flip a coin."""
 

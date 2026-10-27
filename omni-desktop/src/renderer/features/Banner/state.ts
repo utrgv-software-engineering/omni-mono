@@ -1,7 +1,7 @@
+import type { ConnectionState } from '@omniagents/client/lifecycle';
 import { atom, onMount, task } from 'nanostores';
 
 import { emitter, wsEmitter } from '@/renderer/services/ipc';
-import type { ConnectionState } from '@/shared/lifecycle';
 
 export const $launcherVersion = atom<string | null>(null);
 

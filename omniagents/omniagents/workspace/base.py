@@ -267,6 +267,10 @@ class Workspace(abc.ABC):
     @abc.abstractmethod
     async def is_dir(self, path: str) -> bool: ...
 
+    async def is_exec_dir(self, path: str) -> bool:
+        """Check a command working directory in this execution environment."""
+        return await self.is_dir(path)
+
     @abc.abstractmethod
     async def mkdir(
         self,

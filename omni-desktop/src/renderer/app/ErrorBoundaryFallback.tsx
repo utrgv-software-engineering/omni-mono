@@ -1,8 +1,7 @@
+import { Button } from '@omniagents/ui/button';
 import { memo } from 'react';
 import type { FallbackProps } from 'react-error-boundary';
 import { AssertionError } from 'tsafe';
-
-import { Button } from '@/renderer/ds/ui/button';
 
 const getMessage = (error: unknown) => {
   let errorMessage = '';

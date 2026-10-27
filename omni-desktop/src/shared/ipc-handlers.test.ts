@@ -61,16 +61,6 @@ describe('registerUtilHandlers — path validation', () => {
     await expect(ipc.invoke('util:get-is-directory', '/tmp/foo\0bar')).rejects.toThrow(/null byte/);
   });
 
-  it('util:get-is-file rejects null bytes', async () => {
-    const ipc = buildIpc();
-    await expect(ipc.invoke('util:get-is-file', '/tmp/foo\0bar')).rejects.toThrow(/null byte/);
-  });
-
-  it('util:get-path-exists rejects null bytes', async () => {
-    const ipc = buildIpc();
-    await expect(ipc.invoke('util:get-path-exists', '/tmp/foo\0bar')).rejects.toThrow(/null byte/);
-  });
-
   it('util:ensure-directory rejects excessively deep paths', async () => {
     const ipc = buildIpc();
     const tooDeep = `/${'a/'.repeat(MAX_USER_PATH_DEPTH + 5)}leaf`;

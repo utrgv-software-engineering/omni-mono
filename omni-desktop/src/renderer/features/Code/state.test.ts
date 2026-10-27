@@ -28,15 +28,14 @@ vi.mock('@/renderer/services/store', () => ({
 vi.mock('@/renderer/services/agent-process', () => ({
   $agentStatuses: { get: () => ({}), set: vi.fn() },
   $agentXTerms: { get: () => ({}), set: vi.fn() },
-  agentProcessApi: { start: vi.fn(), stop: vi.fn(), rebuild: vi.fn() },
+  agentProcessApi: { start: vi.fn(), stop: vi.fn() },
   clearStatus: vi.fn(),
   pollProcessStatus: vi.fn(),
   teardownTerminal: vi.fn(),
 }));
 
-vi.mock('@/renderer/features/Console/state', () => ({
-  destroyAllTerminalsForTab: vi.fn(),
-  forgetTerminalsForTab: vi.fn(),
+vi.mock('@/renderer/features/Console/desktop-terminals', () => ({
+  desktopTerminals: { forget: vi.fn() },
 }));
 
 vi.mock('@/renderer/constants', () => ({
@@ -58,21 +57,16 @@ const tab = (patch: Partial<CodeTab> = {}): CodeTab => ({
   id: 'tab-1',
   projectId: null,
   sessionId: 'session-1',
-  snapshotRef: 'snapshot-1',
-  profileName: 'host',
-  profileNameExplicit: false,
   createdAt: 1,
   ...patch,
 });
 
 const resetStore = (patch: Partial<StoreData> = {}) => {
   store = {
-    defaultProfileName: 'host',
     projects: [],
     codeTabs: [],
     chatConversations: [],
     activeCodeTabId: null,
-    availableSandboxProfiles: undefined,
     ...patch,
   } as StoreData;
   invoke.mockClear();
@@ -101,91 +95,6 @@ describe('code tab sandbox profile resolution', () => {
   beforeEach(() => {
     vi.resetModules();
     resetStore();
-  });
-
-  it('uses project sandbox over global default when no one-off override exists', async () => {
-    resetStore({
-      defaultProfileName: 'host',
-      projects: [project('project-1', 'devbox')],
-      codeTabs: [tab()],
-    });
-    const { codeApi } = await import('./state');
-
-    await codeApi.setTabProject('tab-1', 'project-1');
-
-    expect(store.codeTabs[0]).toMatchObject({
-      projectId: 'project-1',
-      profileName: 'devbox',
-      profileNameExplicit: false,
-    });
-  });
-
-  it('preserves an explicit one-off override when selecting a project', async () => {
-    resetStore({
-      defaultProfileName: 'host',
-      availableSandboxProfiles: ['host', 'devbox', 'platform'],
-      projects: [project('project-1', 'devbox')],
-      codeTabs: [tab({ profileName: 'platform', profileNameExplicit: true })],
-    });
-    const { codeApi } = await import('./state');
-
-    await codeApi.setTabProject('tab-1', 'project-1');
-
-    expect(store.codeTabs[0]).toMatchObject({
-      projectId: 'project-1',
-      profileName: 'platform',
-      profileNameExplicit: true,
-    });
-  });
-
-  it('falls back to a safe available profile when inherited choice is unavailable', async () => {
-    resetStore({
-      defaultProfileName: 'platform',
-      availableSandboxProfiles: ['remote'],
-      projects: [project('project-1', 'devbox')],
-      codeTabs: [tab()],
-    });
-    const { codeApi } = await import('./state');
-
-    await codeApi.setTabProject('tab-1', 'project-1');
-
-    expect(store.codeTabs[0]).toMatchObject({ projectId: 'project-1', profileName: 'remote' });
-  });
-
-  it('falls back to a safe available profile when one-off choice is unavailable', async () => {
-    resetStore({
-      defaultProfileName: 'host',
-      availableSandboxProfiles: ['remote'],
-      projects: [project('project-1', 'devbox')],
-      codeTabs: [tab({ profileName: 'platform', profileNameExplicit: true })],
-    });
-    const { codeApi } = await import('./state');
-
-    await codeApi.setTabProject('tab-1', 'project-1');
-
-    expect(store.codeTabs[0]).toMatchObject({
-      projectId: 'project-1',
-      profileName: 'remote',
-      profileNameExplicit: true,
-    });
-  });
-
-  it('sets created projects on the setup tab without replacing a one-off sandbox', async () => {
-    resetStore({
-      defaultProfileName: 'host',
-      availableSandboxProfiles: ['host', 'devbox', 'platform'],
-      projects: [project('created-project', 'devbox')],
-      codeTabs: [tab({ profileName: 'platform', profileNameExplicit: true })],
-    });
-    const { codeApi } = await import('./state');
-
-    await codeApi.setTabProject('tab-1', 'created-project');
-
-    expect(store.codeTabs[0]).toMatchObject({
-      projectId: 'created-project',
-      profileName: 'platform',
-      profileNameExplicit: true,
-    });
   });
 });
 
@@ -229,11 +138,9 @@ describe('chat columns and conversation history', () => {
     expect(store.codeTabs.find((item) => item.id === 'routine-tab')).toMatchObject({ routineId: 'routine-1' });
   });
 
-  it('archiveTab archives the transcript and removes its column snapshot', async () => {
+  it('archiveTab archives the transcript and removes its column', async () => {
     resetStore({
-      codeTabs: [
-        tab({ id: 'chat-tab', projectId: null, sessionId: 'sess-1', snapshotRef: 'snapshot-chat', activatedAt: 5 }),
-      ],
+      codeTabs: [tab({ id: 'chat-tab', projectId: null, sessionId: 'sess-1', activatedAt: 5 })],
       chatConversations: [{ sessionId: 'sess-1', title: 'Plan my week', lastActiveAt: 1 }],
     });
     const { codeApi } = await import('./state');
@@ -241,13 +148,9 @@ describe('chat columns and conversation history', () => {
     await codeApi.archiveTab('chat-tab', 'Plan my week');
 
     expect(store.codeTabs).toHaveLength(0);
-    // Runtime and snapshot cleanup now happen before the authoritative RPC
-    // replies; the renderer must not issue a second deletion.
-    expect(invoke).not.toHaveBeenCalledWith('snapshot:delete', 'snapshot-chat');
     expect(store.chatConversations[0]).toMatchObject({
       sessionId: 'sess-1',
       title: 'Plan my week',
-      profileName: 'host',
       archivedAt: expect.any(Number),
     });
   });
@@ -255,14 +158,11 @@ describe('chat columns and conversation history', () => {
   it('removeTab only removes technical columns and does not create session history', async () => {
     resetStore({
       codeTabs: [
-        tab({ id: 'fresh-chat', projectId: null, sessionId: 'sess-fresh', snapshotRef: 'snapshot-fresh' }),
+        tab({ id: 'fresh-chat', projectId: null, sessionId: 'sess-fresh' }),
         tab({
           id: 'proj-tab',
           projectId: 'p1',
           sessionId: 'sess-proj',
-          snapshotRef: 'snapshot-proj',
-          ticketId: 'ticket-1',
-          ticketTitle: 'Fix the sidebar',
         }),
       ],
     });
@@ -271,8 +171,6 @@ describe('chat columns and conversation history', () => {
     await codeApi.removeTab('fresh-chat');
     await codeApi.removeTab('proj-tab');
 
-    expect(invoke).not.toHaveBeenCalledWith('snapshot:delete', 'snapshot-fresh');
-    expect(invoke).not.toHaveBeenCalledWith('snapshot:delete', 'snapshot-proj');
     expect(store.chatConversations).toEqual([]);
   });
 
@@ -287,16 +185,13 @@ describe('chat columns and conversation history', () => {
 
   it('setTabSessionId resets a chat column to the lazy state on a fresh conversation', async () => {
     resetStore({
-      codeTabs: [
-        tab({ id: 'chat-tab', projectId: null, sessionId: 'old', snapshotRef: 'old-snapshot', activatedAt: 5 }),
-      ],
+      codeTabs: [tab({ id: 'chat-tab', projectId: null, sessionId: 'old', activatedAt: 5 })],
     });
     const { codeApi } = await import('./state');
 
     await codeApi.setTabSessionId('chat-tab', 'new');
 
     expect(store.codeTabs[0]).toMatchObject({ sessionId: 'new' });
-    expect(store.codeTabs[0]?.snapshotRef).not.toBe('old-snapshot');
     expect(store.codeTabs[0]?.activatedAt).toBeUndefined();
   });
 
@@ -319,18 +214,12 @@ describe('chat columns and conversation history', () => {
       sessionId: 'sess-1',
       title: 'x',
       lastActiveAt: 1,
-      profileName: 'devbox',
       projectId: 'project-1',
-      ticketId: 'ticket-1',
-      ticketTitle: 'Fix the sidebar',
     });
 
     expect(opened).toMatchObject({
       projectId: 'project-1',
       sessionId: 'sess-1',
-      profileName: 'devbox',
-      ticketId: 'ticket-1',
-      ticketTitle: 'Fix the sidebar',
     });
     expect(opened.activatedAt).toBeTypeOf('number');
   });
@@ -345,17 +234,5 @@ describe('chat columns and conversation history', () => {
 
     await codeApi.restoreConversation('sess-1');
     expect(store.chatConversations[0]?.archivedAt).toBeUndefined();
-  });
-
-  it('reorderTabs preserves records missing from a filtered input list', async () => {
-    const a = tab({ id: 'tab-a' });
-    const b = tab({ id: 'tab-b' });
-    const app = tab({ id: 'app-tab', customAppId: 'browser' });
-    resetStore({ codeTabs: [app, a, b] });
-    const { codeApi } = await import('./state');
-
-    await codeApi.reorderTabs([b, a]);
-
-    expect(store.codeTabs.map((t) => t.id)).toEqual(['app-tab', 'tab-b', 'tab-a']);
   });
 });

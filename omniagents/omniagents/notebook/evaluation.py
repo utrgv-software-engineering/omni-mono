@@ -1,28 +1,39 @@
 """Notebook-friendly evaluation API for omniagents.
 
-This module provides a simplified, progressive API for evaluating agents
-in Jupyter notebooks. It wraps the core evaluation primitives with a
-DataFrame-native, visually rich interface.
+A DataFrame-native, visually rich layer over the evaluation engine
+(:mod:`omniagents.core.eval.engine`) - the same engine ``omniagents eval
+suite run`` uses. Cases built here become ordinary scenario dicts
+(:meth:`EvalSuite.to_config` shows them), run through
+:func:`~omniagents.core.eval.engine.run_suite`, and come back as
+:class:`EvalResult` objects wrapping the engine's run records. Nothing about
+running, judging or scoring is implemented here, so a suite gives the same
+outcomes, metrics, intervals and manifest here as from the CLI.
+
+- ``EvalSuite.from_project(path)`` loads a project's ``evaluations/``
+  folder exactly as the CLI does; ``await suite.run()`` runs the project
+  agent, ``await suite.run(agent)`` an ``agents.Agent`` built in code.
+- ``EvalSuite("name").add(...)`` builds cases by hand.
 """
 
 from __future__ import annotations
 
-import asyncio
+import copy
+import dataclasses
 import html
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Tuple, Any, Callable, Dict, List, Optional, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
     import pandas as pd
 
-from agents import Agent, Runner as AgentRunner
 
 # Disable OpenAI tracing by default for notebook evaluation
 # Users can opt-in to tracing by setting it up explicitly before importing
 try:
-    from agents import set_trace_processors
+    from omniagents.core.tracing import set_processors
 
-    set_trace_processors([])
+    set_processors([])
 except ImportError:
     pass
 
@@ -33,16 +44,24 @@ from omniagents.core.evaluation.context import (
     pass_reason,
     fail_reason,
 )
-from omniagents.core.evaluation.registry import (
-    evaluation_measure,
-    run_measures as _run_measures,
-    get_measure,
-    _MEASURES,
+from omniagents.core.evaluation.expectations import (
+    check_expectations as _check_expectations,
+    check_expectations_async as _check_expectations_async,
+    has_expectations,
 )
+from omniagents.core.evaluation.registry import evaluation_measure
 from omniagents.core.eval.environment import (
     EvalEnvironment,
     EnvironmentContext,
     NoOpEnvironment,
+)
+from omniagents.core.eval.measure_tiers import DEFAULT_TIER, parse_measures
+from omniagents.core.eval.metrics import group_runs, run_passed, summarize_runs
+from omniagents.core.eval.simulated_user import SimulatedUser, UserPersona
+from omniagents.core.eval.targets import (
+    AgentTarget,
+    ProjectAgentTarget,
+    SdkAgentTarget,
 )
 
 # -----------------------------------------------------------------------------
@@ -142,7 +161,7 @@ class Turn:
 
 @dataclass
 class EvalResult:
-    """Result of a single agent evaluation."""
+    """One run of one case: a view over the engine's run record (``record``)."""
 
     input: str
     output: str
@@ -160,10 +179,13 @@ class EvalResult:
     )
     trial: int = 0  # Which repeat of the case this is (EvalSuite.run(repeats=N))
     metadata: Optional[Dict[str, Any]] = None  # The case's metadata, for slicing
+    record: Optional[Dict[str, Any]] = None  # The engine's run record, verbatim
 
     @property
     def answered(self) -> bool:
         """Whether the agent produced a final answer at all."""
+        if self.record is not None and "answered" in self.record:
+            return bool(self.record["answered"])
         return bool((self.output or "").strip())
 
     @property
@@ -367,206 +389,208 @@ class EvalResult:
         return f"EvalResult({status}, input={self.input[:30]!r}..., tools={self.tools_used})"
 
 
+def _input_display(record: Dict[str, Any]) -> str:
+    if record.get("type") == "synthetic":
+        return f"[Synthetic] {record.get('goal') or ''}"
+    prompts = record.get("prompts")
+    if isinstance(prompts, list):
+        shown = " → ".join(str(p) for p in prompts[:3])
+        if len(prompts) > 3:
+            shown += f" → ... ({len(prompts)} messages)"
+        return shown
+    return str(record.get("prompt") or "")
+
+
+def _turns_from_history(history: List[Dict[str, Any]]) -> List[Turn]:
+    """User and assistant turns, each assistant turn with the tools it called."""
+    from omniagents.core.evaluation.context import _extract_message_text
+
+    turns: List[Turn] = []
+    pending_tools: List[str] = []
+    for item in history:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "function_call" and item.get("name"):
+            pending_tools.append(str(item["name"]))
+            continue
+        role = item.get("role")
+        if role == "user":
+            turns.append(Turn(role="user", content=_extract_message_text(item)))
+            pending_tools = []
+        elif role == "assistant":
+            text = _extract_message_text(item)
+            if turns and turns[-1].role == "assistant":
+                # Several assistant messages in one answer read as one turn.
+                turns[-1].content = (turns[-1].content + "\n" + text).strip()
+                turns[-1].tools_used.extend(pending_tools)
+            else:
+                turns.append(
+                    Turn(role="assistant", content=text, tools_used=pending_tools)
+                )
+            pending_tools = []
+    return turns
+
+
+def _judge_result(name: str, output: Any) -> JudgeResult:
+    if not isinstance(output, dict) or "error" in output:
+        reason = (output or {}).get("error") if isinstance(output, dict) else output
+        return JudgeResult(
+            name=name,
+            passed=False,
+            reasoning=f"Judge error: {reason}",
+            raw_output=output,
+        )
+    answer = str(output.get("answer") or "")
+    score = output.get("score")
+    try:
+        score = max(0.0, min(1.0, float(score))) if score is not None else None
+    except (TypeError, ValueError):
+        score = None
+    return JudgeResult(
+        name=name,
+        passed=answer.strip().lower() == "pass",
+        reasoning=str(output.get("reasoning") or "No reasoning provided"),
+        score=score,
+        raw_output=output,
+    )
+
+
+def _result_from_record(
+    record: Dict[str, Any], judge_keys: List[str], tools: Optional[List[Any]]
+) -> EvalResult:
+    scenario = record.get("scenario_config") or {}
+    history = list(record.get("history") or [])
+    run_metadata = record.get("metadata") or {}
+    ctx = build_eval_context(
+        history=history,
+        tools=tools,
+        metadata={"scenario": scenario, **run_metadata},
+    )
+    expectations: Optional[List[ExpectationResult]] = None
+    for m in record.get("measures") or []:
+        if m.get("name") == "expectations":
+            expectations = [
+                ExpectationResult(c["name"], bool(c["passed"]), c.get("reason"))
+                for c in m.get("checks") or []
+            ]
+    judges = [
+        _judge_result(k, run_metadata[k]) for k in judge_keys if k in run_metadata
+    ]
+    error: Optional[str] = None
+    if record.get("error"):
+        err = record["error"]
+        error = err.get("message") if isinstance(err, dict) else str(err)
+    else:
+        agent_error = next(
+            (
+                m
+                for m in record.get("measures") or []
+                if m.get("name") == "_agent_error"
+            ),
+            None,
+        )
+        if agent_error is not None:
+            error = agent_error.get("reason")
+    synthetic = record.get("type") == "synthetic"
+    multi = synthetic or isinstance(record.get("prompts"), list)
+    return EvalResult(
+        input=_input_display(record),
+        output=record.get("final_assistant_text") or "",
+        passed=run_passed(record),
+        measures=[MeasureResult.from_dict(m) for m in record.get("measures") or []],
+        expectations=expectations,
+        judges=judges or None,
+        ctx=ctx,
+        history=history,
+        error=error,
+        name=scenario.get("name") or record.get("scenario"),
+        turns=_turns_from_history(history) if multi else None,
+        completion_reason=(
+            (record.get("user_completion_reason") or "max_turns") if synthetic else None
+        ),
+        trial=int(record.get("trial") or 0),
+        metadata=scenario.get("metadata"),
+        record=record,
+    )
+
+
+def _record_of(result: EvalResult) -> Dict[str, Any]:
+    """The run record behind ``result`` (synthesized for a hand-made result)."""
+    if result.record is not None:
+        return result.record
+    return {
+        "measures": [{"name": "passed", "passed": result.passed}],
+        "answered": result.answered,
+        "scenario_config": {
+            "name": result.name,
+            "metadata": result.metadata or {},
+        },
+    }
+
+
 # -----------------------------------------------------------------------------
 # Expectations DSL
 # -----------------------------------------------------------------------------
 
 
-async def check_expectations_async(
-    ctx: EvalContext, expect: Dict[str, Any]
-) -> List[ExpectationResult]:
-    """Check expectations against evaluation context (async version for verify support).
-
-    Expectation keys:
-        tool_called: str | list[str] - Tool(s) that should have been called
-        tool_not_called: str | list[str] - Tool(s) that should NOT have been called
-        tool_sequence: list[str] - Tools called in this order
-        tool_called_times: dict[str, int] - Tool call counts
-        response_contains: str | list[str] - Strings that should be in output
-        response_not_contains: str | list[str] - Strings that should NOT be in output
-        verify: dict - Expected state to verify against environment (requires EvalEnvironment)
-        passes: bool - Whether all measures should pass
-        measures: dict[str, bool] - Expected pass/fail for specific measures
-    """
-    # Run sync expectations first
-    results = check_expectations(ctx, expect)
-
-    # verify - async environment verification
-    if "verify" in expect:
-        verify_spec = expect["verify"]
-        if ctx.environment is None:
-            results.append(
-                ExpectationResult(
-                    name="verify",
-                    passed=False,
-                    reason="verify requires an EvalEnvironment but none was provided",
-                )
-            )
-        else:
-            try:
-                verify_result = await ctx.verify(verify_spec)
-                passed = verify_result.get("success", False)
-                details = verify_result.get("results", {})
-                reason = f"verification {'passed' if passed else 'failed'}"
-                if details:
-                    detail_str = ", ".join(
-                        f"{k}={v}" for k, v in list(details.items())[:3]
-                    )
-                    reason = f"{reason}: {detail_str}"
-                results.append(
-                    ExpectationResult(
-                        name="verify",
-                        passed=passed,
-                        reason=reason,
-                    )
-                )
-            except Exception as e:
-                results.append(
-                    ExpectationResult(
-                        name="verify",
-                        passed=False,
-                        reason=f"verification error: {str(e)}",
-                    )
-                )
-
-    return results
-
-
 def check_expectations(
     ctx: EvalContext, expect: Dict[str, Any]
 ) -> List[ExpectationResult]:
-    """Check expectations against evaluation context.
+    """Check ``expect``'s keys against ``ctx``.
 
-    Expectation keys:
-        tool_called: str | list[str] - Tool(s) that should have been called
-        tool_not_called: str | list[str] - Tool(s) that should NOT have been called
-        tool_sequence: list[str] - Tools called in this order
-        tool_called_times: dict[str, int] - Tool call counts
-        response_contains: str | list[str] - Strings that should be in output
-        response_not_contains: str | list[str] - Strings that should NOT be in output
-        passes: bool - Whether all measures should pass
-        measures: dict[str, bool] - Expected pass/fail for specific measures
-
-    Note: For 'verify' expectations (environment verification), use check_expectations_async.
+    The keys are those of :mod:`omniagents.core.evaluation.expectations`
+    (``tool_called``, ``tool_not_called``, ``tool_sequence``,
+    ``tool_called_times``, ``response_contains``, ``response_not_contains``);
+    ``verify`` needs :func:`check_expectations_async`. A case's ``expect``
+    is checked during a run by the builtin ``expectations`` measure, which
+    :meth:`EvalSuite.add` attaches when these keys are used.
     """
-    results: List[ExpectationResult] = []
+    return [
+        ExpectationResult(c["name"], c["passed"], c["reason"])
+        for c in _check_expectations(ctx, expect)
+    ]
 
-    # tool_called
-    if "tool_called" in expect:
-        tools = expect["tool_called"]
-        if isinstance(tools, str):
-            tools = [tools]
-        for tool in tools:
-            called = bool(ctx.tool_calls(tool))
-            results.append(
-                ExpectationResult(
-                    name=f"tool_called:{tool}",
-                    passed=called,
-                    reason=f"{tool} {'was' if called else 'was NOT'} called",
-                )
-            )
 
-    # tool_not_called
-    if "tool_not_called" in expect:
-        tools = expect["tool_not_called"]
-        if isinstance(tools, str):
-            tools = [tools]
-        for tool in tools:
-            called = bool(ctx.tool_calls(tool))
-            results.append(
-                ExpectationResult(
-                    name=f"tool_not_called:{tool}",
-                    passed=not called,
-                    reason=f"{tool} {'was' if called else 'was NOT'} called",
-                )
-            )
-
-    # tool_sequence
-    if "tool_sequence" in expect:
-        expected_seq = expect["tool_sequence"]
-        actual_calls = [c.name for c in ctx.tool_calls()]
-
-        # Check if expected sequence appears in order (not necessarily contiguous)
-        seq_idx = 0
-        for call_name in actual_calls:
-            if seq_idx < len(expected_seq) and call_name == expected_seq[seq_idx]:
-                seq_idx += 1
-
-        passed = seq_idx == len(expected_seq)
-        results.append(
-            ExpectationResult(
-                name=f"tool_sequence:{' → '.join(expected_seq)}",
-                passed=passed,
-                reason=f"actual: {' → '.join(actual_calls) if actual_calls else 'none'}",
-            )
-        )
-
-    # tool_called_times
-    if "tool_called_times" in expect:
-        for tool, expected_count in expect["tool_called_times"].items():
-            actual_count = len(ctx.tool_calls(tool))
-            passed = actual_count == expected_count
-            results.append(
-                ExpectationResult(
-                    name=f"tool_called_times:{tool}={expected_count}",
-                    passed=passed,
-                    reason=f"called {actual_count} time(s)",
-                )
-            )
-
-    # response_contains
-    if "response_contains" in expect:
-        needles = expect["response_contains"]
-        if isinstance(needles, str):
-            needles = [needles]
-        text = (
-            ctx.final_assistant_message.text.lower()
-            if ctx.final_assistant_message
-            else ""
-        )
-        for needle in needles:
-            found = needle.lower() in text
-            display_needle = needle[:30] + "..." if len(needle) > 30 else needle
-            results.append(
-                ExpectationResult(
-                    name=f"response_contains:{display_needle}",
-                    passed=found,
-                    reason=f"'{needle}' {'found' if found else 'NOT found'} in response",
-                )
-            )
-
-    # response_not_contains
-    if "response_not_contains" in expect:
-        needles = expect["response_not_contains"]
-        if isinstance(needles, str):
-            needles = [needles]
-        text = (
-            ctx.final_assistant_message.text.lower()
-            if ctx.final_assistant_message
-            else ""
-        )
-        for needle in needles:
-            found = needle.lower() in text
-            display_needle = needle[:30] + "..." if len(needle) > 30 else needle
-            results.append(
-                ExpectationResult(
-                    name=f"response_not_contains:{display_needle}",
-                    passed=not found,
-                    reason=f"'{needle}' {'found' if found else 'NOT found'} in response",
-                )
-            )
-
-    return results
+async def check_expectations_async(
+    ctx: EvalContext, expect: Dict[str, Any]
+) -> List[ExpectationResult]:
+    """:func:`check_expectations` plus ``verify`` against the context's environment."""
+    return [
+        ExpectationResult(c["name"], c["passed"], c["reason"])
+        for c in await _check_expectations_async(ctx, expect)
+    ]
 
 
 # -----------------------------------------------------------------------------
 # Test Suite
 # -----------------------------------------------------------------------------
 
+# Scenario keys a TestCase models as fields; everything else rides in ``extra``.
+_CASE_KEYS = (
+    "name",
+    "prompt",
+    "prompts",
+    "goal",
+    "persona",
+    "expect",
+    "measures",
+    "judges",
+    "tags",
+    "description",
+    "max_exchanges",
+    "metadata",
+)
+
 
 @dataclass
 class TestCase:
-    """A single test case in an evaluation suite."""
+    """A single test case in an evaluation suite: one scenario.
+
+    :meth:`to_scenario` is the scenario dict the engine runs - the same
+    shape as an entry in ``evaluations/scenarios/*.yml``.
+    """
+
+    __test__ = False  # not a pytest test class
 
     name: str
     input: Optional[str] = (
@@ -576,25 +600,154 @@ class TestCase:
     goal: Optional[str] = None  # Synthetic user goal
     persona: Optional[Dict[str, Any]] = None  # Synthetic user persona
     expect: Optional[Dict[str, Any]] = None
-    measures: Optional[List[str]] = None  # Per-case measures
+    # Measure names, or a tier-keyed dict ({"outcome": [...], "process": [...]})
+    measures: Optional[Union[List[str], Dict[str, List[str]]]] = None
     judges: Optional[List[Union[str, "Judge"]]] = None  # Per-case judges
     tags: Optional[List[str]] = None
     description: Optional[str] = None
-    max_exchanges: Optional[int] = None  # For multi-turn
+    max_exchanges: Optional[int] = None  # Synthetic: max user-agent exchanges
     metadata: Optional[Dict[str, Any]] = None  # Fields to slice results by
+    extra: Dict[str, Any] = field(default_factory=dict)  # Other scenario keys
 
     @property
     def is_multi_turn(self) -> bool:
         """Whether this is a multi-turn test case."""
         return self.prompts is not None or self.goal is not None
 
+    @classmethod
+    def from_scenario(cls, scenario: Dict[str, Any]) -> "TestCase":
+        """A case for a scenario dict from an evaluation config, kept verbatim."""
+        sc = copy.deepcopy(scenario)
+        judges = sc.get("judges")
+        extra = {k: v for k, v in sc.items() if k not in _CASE_KEYS}
+        if not isinstance(judges, list) and "judges" in sc:
+            extra["judges"] = judges
+        if extra.get("type") == "synthetic":
+            extra.pop("type")
+        return cls(
+            name=str(sc.get("name") or sc.get("id") or "scenario"),
+            input=sc.get("prompt"),
+            prompts=sc.get("prompts"),
+            goal=sc.get("goal"),
+            persona=sc.get("persona"),
+            expect=sc.get("expect"),
+            measures=sc.get("measures"),
+            judges=judges if isinstance(judges, list) else None,
+            tags=sc.get("tags"),
+            description=sc.get("description"),
+            max_exchanges=sc.get("max_exchanges"),
+            metadata=sc.get("metadata"),
+            extra=extra,
+        )
+
+    def to_scenario(
+        self,
+        *,
+        measures: Optional[List[str]] = None,
+        judges: Optional[List[Union[str, "Judge"]]] = None,
+        config_judges: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """The scenario dict for this case.
+
+        ``measures`` and ``judges`` are run-level additions
+        (:meth:`EvalSuite.run`), placed before the case's own. A notebook
+        :class:`Judge` contributes its ``<name>_agent`` measure (which also
+        selects the judge, by the engine's ``_agent`` convention); any other
+        judge named by string - one of ``config_judges``, the evaluation
+        config's - is listed under the scenario's ``judges``.
+        """
+        sc: Dict[str, Any] = copy.deepcopy(self.extra)
+        sc["name"] = self.name
+        if self.input is not None:
+            sc["prompt"] = self.input
+        if self.prompts is not None:
+            sc["prompts"] = list(self.prompts)
+        if self.goal is not None:
+            sc["type"] = "synthetic"
+            sc["goal"] = self.goal
+        for key in ("persona", "expect", "tags", "description", "metadata"):
+            value = getattr(self, key)
+            if value is not None:
+                sc[key] = copy.deepcopy(value)
+        if self.max_exchanges is not None:
+            sc["max_exchanges"] = self.max_exchanges
+
+        added: List[str] = list(measures or [])
+        config_judges: List[str] = []
+        for j in list(judges or []) + list(self.judges or []):
+            judge = _notebook_judge(j, config_judges or [])
+            if judge is None:
+                if j not in config_judges:
+                    config_judges.append(str(j))
+            else:
+                added.append(judge.measure_name)
+        if config_judges:
+            prior = sc.get("judges")
+            prior_list = prior if isinstance(prior, list) else []
+            sc["judges"] = prior_list + [
+                j for j in config_judges if j not in prior_list
+            ]
+
+        own_flat, _ = parse_measures(self.measures)
+        extra_measures = [
+            m for i, m in enumerate(added) if m not in added[:i] and m not in own_flat
+        ]
+        if isinstance(self.measures, dict):
+            tiers = copy.deepcopy(self.measures)
+            if extra_measures:
+                tiers[DEFAULT_TIER] = extra_measures + list(
+                    tiers.get(DEFAULT_TIER) or []
+                )
+            sc["measures"] = tiers
+        elif extra_measures or self.measures is not None:
+            sc["measures"] = extra_measures + list(self.measures or [])
+        return sc
+
+
+def _rate(block: Dict[str, Any]) -> Dict[str, Any]:
+    interval = block.get("interval") or [0.0, 0.0]
+    return {
+        "runs": block["runs"],
+        "passed": block["passed_runs"],
+        "pass_rate": block["value"] or 0.0,
+        "interval": (interval[0], interval[1]),
+        "answered": block["answered"],
+    }
+
 
 @dataclass
 class EvalSuiteResults:
-    """Results from running an evaluation suite."""
+    """Results from running an evaluation suite.
+
+    ``results`` are the runs; ``metrics``, ``stats`` and ``manifest`` are the
+    engine's aggregates, identical to what ``omniagents eval suite run``
+    records for the same scenarios. Rates here (``pass_rate``,
+    ``by_case()``, ``by_field()``) count a run as passed when every measure
+    on it passed - the rule results storage uses.
+    """
 
     suite: "EvalSuite"
     results: List[EvalResult]
+    data: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def runs(self) -> List[Dict[str, Any]]:
+        """The engine's run records."""
+        return [_record_of(r) for r in self.results]
+
+    @property
+    def metrics(self) -> List[Dict[str, Any]]:
+        """Configured metrics (``evaluation.metrics``), with intervals and slices."""
+        return list(self.data.get("metrics") or [])
+
+    @property
+    def stats(self) -> Dict[str, Any]:
+        return dict(self.data.get("stats") or {})
+
+    @property
+    def manifest(self) -> Optional[Dict[str, Any]]:
+        """What was run: agent, model, tools, hashes, selection, repeats."""
+        return self.data.get("manifest")
 
     @property
     def df(self) -> "pd.DataFrame":
@@ -622,41 +775,37 @@ class EvalSuiteResults:
 
         return pd.DataFrame(rows)
 
+    def _summary_block(self) -> Dict[str, Any]:
+        return _rate(summarize_runs(self.runs))
+
     @property
     def pass_rate(self) -> float:
-        """Fraction of tests that passed."""
-        if not self.results:
-            return 0.0
-        return sum(r.passed for r in self.results) / len(self.results)
+        """Fraction of runs that passed."""
+        return self._summary_block()["pass_rate"]
 
     @property
     def pass_rate_interval(self) -> Tuple[float, float]:
         """95% Wilson interval around :attr:`pass_rate`."""
-        from omniagents.core.eval.stats import wilson_interval
-
-        return wilson_interval(sum(r.passed for r in self.results), len(self.results))
+        return self._summary_block()["interval"]
 
     @property
     def answered_rate(self) -> float:
         """Fraction of runs that produced a final answer at all."""
-        if not self.results:
-            return 0.0
-        return sum(r.answered for r in self.results) / len(self.results)
+        block = self._summary_block()
+        return block["answered"] / block["runs"] if block["runs"] else 0.0
 
     @property
     def summary(self) -> Dict[str, Any]:
         """Summary statistics."""
-        passed = sum(r.passed for r in self.results)
-        failed = len(self.results) - passed
-        low, high = self.pass_rate_interval
+        block = self._summary_block()
         return {
             "suite_name": self.suite.name,
-            "total": len(self.results),
-            "passed": passed,
-            "failed": failed,
-            "pass_rate": self.pass_rate,
-            "interval": (low, high),
-            "answered": sum(r.answered for r in self.results),
+            "total": block["runs"],
+            "passed": block["passed"],
+            "failed": block["runs"] - block["passed"],
+            "pass_rate": block["pass_rate"],
+            "interval": block["interval"],
+            "answered": block["answered"],
         }
 
     def by_case(self) -> Dict[str, Dict[str, Any]]:
@@ -666,55 +815,27 @@ class EvalSuiteResults:
         with more, this is where a flaky case (some passes) separates from a
         broken one (none).
         """
-        from omniagents.core.eval.stats import wilson_interval
-
-        groups: Dict[str, List[EvalResult]] = {}
+        groups: Dict[str, List[Dict[str, Any]]] = {}
         for r in self.results:
-            groups.setdefault(r.name or "", []).append(r)
-        out: Dict[str, Dict[str, Any]] = {}
-        for name, rs in groups.items():
-            passed = sum(r.passed for r in rs)
-            out[name] = {
-                "runs": len(rs),
-                "passed": passed,
-                "pass_rate": passed / len(rs),
-                "interval": wilson_interval(passed, len(rs)),
-                "answered": sum(r.answered for r in rs),
-            }
-        return out
+            groups.setdefault(r.name or "", []).append(_record_of(r))
+        return {name: _rate(summarize_runs(rs)) for name, rs in groups.items()}
 
     def by_field(self, path: str) -> Dict[str, "EvalSuiteResults"]:
-        """Split results by a case metadata field, or by tag.
+        """Split results by a case field: a metadata key, or a scenario path.
 
-        ``path`` is a dotted key into each case's ``metadata``
-        (``"skin_tone"``, ``"patient.age_band"``); ``"tags"`` groups by every
-        tag a case carries. Each group is an :class:`EvalSuiteResults`, so
+        ``path`` is looked up in the case's ``metadata`` first
+        (``"skin_tone"``, ``"patient.age_band"``), then in the scenario itself
+        (``"expect.skin_tone"``, ``"tags"`` - one group per tag) - the same
+        lookup as a metric's ``slice_by``. Each group is an
+        :class:`EvalSuiteResults`, so
         ``results.by_field("skin_tone")["56"].pass_rate_interval`` is the
         subgroup's rate with its interval.
         """
-        groups: Dict[str, List[EvalResult]] = {}
-        for r in self.results:
-            if path == "tags":
-                case = next((c for c in self.suite.cases if c.name == r.name), None)
-                keys = list(case.tags or []) if case else []
-            else:
-                cur: Any = r.metadata or {}
-                for part in path.split("."):
-                    cur = cur.get(part) if isinstance(cur, dict) else None
-                keys = (
-                    []
-                    if cur is None
-                    else (
-                        [str(v) for v in cur]
-                        if isinstance(cur, (list, tuple))
-                        else [str(cur)]
-                    )
-                )
-            for key in keys:
-                groups.setdefault(key, []).append(r)
+        records = [_record_of(r) for r in self.results]
+        by_id = {id(rec): r for rec, r in zip(records, self.results)}
         return {
-            key: EvalSuiteResults(suite=self.suite, results=rs)
-            for key, rs in sorted(groups.items())
+            key: EvalSuiteResults(suite=self.suite, results=[by_id[id(x)] for x in rs])
+            for key, rs in group_runs(records, path).items()
         }
 
     def failures(self) -> List[EvalResult]:
@@ -723,10 +844,9 @@ class EvalSuiteResults:
 
     def by_tag(self, tag: str) -> "EvalSuiteResults":
         """Filter results by tag."""
-        filtered_cases = [c for c in self.suite.cases if c.tags and tag in c.tags]
-        case_names = {c.name for c in filtered_cases}
-        filtered_results = [r for r in self.results if r.name in case_names]
-        return EvalSuiteResults(suite=self.suite, results=filtered_results)
+        return self.by_field("tags").get(
+            tag, EvalSuiteResults(suite=self.suite, results=[])
+        )
 
     def breakdown(self, column: str) -> "pd.DataFrame":
         """Get pass rate breakdown by a metadata column.
@@ -884,6 +1004,20 @@ class EvalSuiteResults:
         return self.results[index]
 
 
+def _target_for(
+    agent: Any, *, max_turns: Optional[int], context: Any
+) -> Optional[AgentTarget]:
+    if agent is None:
+        return None
+    if isinstance(agent, AgentTarget):
+        return agent
+    if isinstance(agent, (str, Path)):
+        return ProjectAgentTarget(agent)
+    return SdkAgentTarget(
+        agent, max_turns=max_turns if max_turns is not None else 10, context=context
+    )
+
+
 class EvalSuite:
     """A named collection of test cases."""
 
@@ -891,6 +1025,47 @@ class EvalSuite:
         self.name = name
         self.description = description
         self.cases: List[TestCase] = []
+        # Set by from_project: the loaded project config, and its evaluation
+        # dict without scenarios (judges, metrics, defaults, environment).
+        self.project: Any = None
+        self.config: Dict[str, Any] = {}
+
+    @classmethod
+    def from_project(
+        cls,
+        project: Union[str, Path],
+        *,
+        select: Optional[str] = None,
+        exclude: Optional[str] = None,
+        split: Optional[str] = None,
+        agent: Optional[str] = None,
+    ) -> "EvalSuite":
+        """Load a project's ``evaluations/`` folder, exactly as the CLI does.
+
+        ``project`` is a ``project.yml`` or its directory; ``select``,
+        ``exclude``, ``split`` and ``agent`` are ``eval suite run``'s
+        ``--select``, ``--exclude``, ``--split`` and ``--agent``. The cases
+        are the scenarios verbatim; judges, metrics, defaults, the declared
+        environment and the project's ``measures.py`` all apply when the
+        suite runs. ``await suite.run()`` runs the project agent - the same
+        run as ``omniagents eval suite run`` - and ``suite.run(agent)`` an
+        agent built in code against the same scenarios.
+        """
+        from omniagents.core.eval.loader import load_eval_config
+
+        cfg = load_eval_config(
+            str(project), select=select, exclude=exclude, agent_key=agent, split=split
+        )
+        suite = cls(
+            name=str(cfg.agent_config.get("name") or cfg.project_root.name),
+            description=f"Evaluations of {cfg.agent_path}",
+        )
+        suite.project = cfg
+        suite.config = {k: v for k, v in cfg.config.items() if k != "scenarios"}
+        suite.cases = [
+            TestCase.from_scenario(sc) for sc in cfg.config.get("scenarios") or []
+        ]
+        return suite
 
     @classmethod
     def from_records(
@@ -909,9 +1084,6 @@ class EvalSuite:
     ) -> "EvalSuite":
         """Create an EvalSuite from a list of records (dicts).
 
-        This is a convenience method for creating test cases from datasets
-        without writing repetitive loop code.
-
         Args:
             records: List of dicts, each representing one test case
             input_fn: Function that takes a record and returns the input prompt
@@ -923,44 +1095,29 @@ class EvalSuite:
                     Defaults to "case_{index}"
             measures: Measures to run on all cases
             judges: Judges to run on all cases
-
-        Returns:
-            EvalSuite with one test case per record
+            metadata_fn: Optional function returning the fields to slice by
 
         Example:
-            # Create suite from MATH dataset
             suite = EvalSuite.from_records(
                 math_data[:100],
                 name="MATH Evaluation",
                 input_fn=lambda p: f"Question:\\n{p['problem']}\\n\\nAnswer:",
-                expect_fn=lambda p: {
-                    'expected_answer': p['answer'],
-                    'problem_type': p['type'],
-                    'problem_level': p['level'],
-                },
+                expect_fn=lambda p: {'expected_answer': p['answer']},
                 tags_fn=lambda p: [p['type'], p['level']],
                 measures=["correct_math_answer"],
             )
         """
         suite = cls(name=name, description=description)
-
         for i, record in enumerate(records):
-            case_name = name_fn(i, record) if name_fn else f"case_{i}"
-            input_text = input_fn(record)
-            expect = expect_fn(record) if expect_fn else None
-            tags = tags_fn(record) if tags_fn else None
-            metadata = metadata_fn(record) if metadata_fn else None
-
             suite.add(
-                name=case_name,
-                input=input_text,
-                expect=expect,
+                name=name_fn(i, record) if name_fn else f"case_{i}",
+                input=input_fn(record),
+                expect=expect_fn(record) if expect_fn else None,
                 measures=measures,
                 judges=judges,
-                tags=tags,
-                metadata=metadata,
+                tags=tags_fn(record) if tags_fn else None,
+                metadata=metadata_fn(record) if metadata_fn else None,
             )
-
         return suite
 
     def add(
@@ -987,31 +1144,38 @@ class EvalSuite:
             prompts: Multi-turn scripted prompts (list of user messages)
             goal: Synthetic user goal (for LLM-driven multi-turn)
             persona: Synthetic user persona info (dict)
-            max_exchanges: Max exchanges for multi-turn (default: 10)
-            expect: Expectations dict (see check_expectations)
-            measures: Custom measures to run for this case (in addition to suite-level)
-            judges: LLM judges to run for this case (in addition to suite-level)
+            max_exchanges: Max user-agent exchanges for a synthetic case (default: 10)
+            expect: Expectations dict (see check_expectations); other keys are
+                data for measures (``ctx.expect``)
+            measures: Measures to run for this case (in addition to run-level ones)
+            judges: LLM judges to run for this case (in addition to run-level ones)
             tags: Optional tags for filtering
             description: Optional description
             metadata: Fields to slice results by (``results.by_field("skin_tone")``)
+
+        The case's measures gain ``expectations`` when ``expect`` uses the
+        checked keys, and ``user_goal_achieved`` for a synthetic case (the
+        simulated user must say its goal was reached).
 
         Returns:
             self, for method chaining
 
         Examples:
-            # Single-turn
             suite.add("basic", "What's the weather?")
-
-            # Scripted multi-turn
             suite.add("booking_flow", prompts=["Book a room", "Tomorrow 2pm", "Confirm"])
-
-            # Synthetic multi-turn
             suite.add(
                 "synthetic_booking",
                 goal="Book a meeting room for tomorrow at 2pm",
                 persona={"name": "Alice", "department": "Engineering"},
             )
         """
+        if sum(x is not None for x in (input, prompts, goal)) != 1:
+            raise ValueError("Provide exactly one of: input, prompts, or goal")
+        case_measures = list(measures or [])
+        if has_expectations(expect) and "expectations" not in case_measures:
+            case_measures.append("expectations")
+        if goal is not None and "user_goal_achieved" not in case_measures:
+            case_measures.append("user_goal_achieved")
         self.cases.append(
             TestCase(
                 name=name,
@@ -1021,7 +1185,7 @@ class EvalSuite:
                 persona=persona,
                 max_exchanges=max_exchanges,
                 expect=expect,
-                measures=measures,
+                measures=case_measures or None,
                 judges=judges,
                 tags=tags,
                 description=description,
@@ -1030,124 +1194,175 @@ class EvalSuite:
         )
         return self
 
+    def to_config(
+        self,
+        *,
+        measures: Optional[List[str]] = None,
+        judges: Optional[List[Union[str, "Judge"]]] = None,
+        include_builtin_measures: Optional[bool] = None,
+        max_turns: Optional[int] = None,
+        repeats: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """The evaluation config :meth:`run` hands the engine.
+
+        The same shape as a project's merged ``evaluation`` block, so it can
+        be written to ``evaluations/evaluation.yml`` and run with the CLI.
+        ``include_builtin_measures`` (default: on for a hand-built suite,
+        off for :meth:`from_project`) adds ``tool_hallucination``;
+        ``max_turns`` and ``repeats`` set ``defaults.max_turns`` and
+        ``defaults.runs_per_prompt`` (a scenario's own ``runs_per_prompt``
+        still wins).
+        """
+        if include_builtin_measures is None:
+            include_builtin_measures = self.project is None
+        added = (["tool_hallucination"] if include_builtin_measures else []) + list(
+            measures or []
+        )
+        cfg = copy.deepcopy(self.config)
+        judge_cfgs = dict(cfg.get("judges") or {})
+        cfg["scenarios"] = [
+            case.to_scenario(
+                measures=added, judges=judges, config_judges=list(judge_cfgs)
+            )
+            for case in self.cases
+        ]
+        config_keys = list(judge_cfgs)
+        for case in self.cases:
+            for j in list(judges or []) + list(case.judges or []):
+                judge = _notebook_judge(j, config_keys)
+                if judge is not None:
+                    judge_cfgs[judge.name] = judge.to_config()
+        if judge_cfgs:
+            cfg["judges"] = judge_cfgs
+        defaults = dict(cfg.get("defaults") or {})
+        if max_turns is not None:
+            defaults["max_turns"] = int(max_turns)
+        if repeats is not None:
+            defaults["runs_per_prompt"] = max(1, int(repeats))
+        if defaults:
+            cfg["defaults"] = defaults
+        return cfg
+
     async def run(
         self,
-        agent: Agent,
+        agent: Any = None,
         *,
         measures: Optional[List[str]] = None,
         judges: Optional[List[Union[str, "Judge"]]] = None,
         environment: Optional["EvalEnvironment"] = None,
-        include_builtin_measures: bool = True,
+        include_builtin_measures: Optional[bool] = None,
         tags: Optional[List[str]] = None,
-        max_turns: int = 10,
+        max_turns: Optional[int] = None,
         show_progress: bool = True,
-        repeats: int = 1,
+        repeats: Optional[int] = None,
+        concurrency: int = 5,
+        include_unmeasured: Optional[bool] = None,
+        context: Any = None,
     ) -> EvalSuiteResults:
-        """Run all test cases against the agent.
+        """Run all test cases through the evaluation engine.
 
         Args:
-            agent: The agent to evaluate
-            measures: Additional measures to run
-            judges: LLM judges to run (applied to all cases)
-            environment: Optional EvalEnvironment for fixture management
-            include_builtin_measures: Include tool_hallucination etc.
-            tags: Only run cases with these tags (None = all)
-            max_turns: Maximum agent turns per case
+            agent: An ``agents.Agent`` (run with the SDK ``Runner``), a path
+                to an ``agent.yml``, or an
+                :class:`~omniagents.core.eval.targets.AgentTarget`. Optional
+                for a :meth:`from_project` suite, which then runs the
+                project agent.
+            measures: Additional measures to run on every case
+            judges: LLM judges to run on every case
+            environment: EvalEnvironment for fixture management (overrides
+                a project's declared environment)
+            include_builtin_measures: Add ``tool_hallucination`` (default:
+                on for a hand-built suite, off for a project suite)
+            tags: Only run cases with any of these tags (``--select tag:...``)
+            max_turns: Maximum agent turns per answer (``defaults.max_turns``;
+                an ``agents.Agent`` defaults to 10)
             show_progress: Show progress indicator
-            repeats: Run every case this many times. A model's output varies
-                run to run, so one run is one draw from a pass rate; with
-                repeats the result carries a rate per case (``by_case()``)
-                and each result's ``trial`` says which repeat it was.
+            repeats: Run every case this many times (``defaults.runs_per_prompt``;
+                default: the config's, else 1). Each result's ``trial`` says
+                which repeat it was; ``by_case()`` gives the rate per case.
+            concurrency: Runs in flight at once (the CLI's default is 5)
+            include_unmeasured: Run cases with no measures (default: yes for a
+                hand-built suite; no for a project suite, as ``eval suite run``
+                without ``--include-unmeasured``)
+            context: SDK run context for an ``agents.Agent``
 
         Returns:
             EvalSuiteResults with all test results
         """
-        # Filter cases by tags if specified
-        cases = self.cases
-        if tags:
-            cases = [c for c in cases if c.tags and any(t in c.tags for t in tags)]
-        repeats = max(1, int(repeats))
+        from omniagents.core.eval.engine import run_suite
+        from omniagents.core.eval.loader import filter_scenarios
+        from omniagents.core.eval.pipeline import run_evaluation_async
 
-        results: List[EvalResult] = []
-        total = len(cases) * repeats
+        cfg = self.to_config(
+            measures=measures,
+            judges=judges,
+            include_builtin_measures=include_builtin_measures,
+            max_turns=max_turns,
+            repeats=repeats,
+        )
+        tag_select = ",".join(f"tag:{t}" for t in tags) if tags else None
+        if tag_select:
+            cfg["scenarios"] = filter_scenarios(cfg["scenarios"], tag_select, None)
+        if include_unmeasured is None:
+            include_unmeasured = self.project is None
+        target = _target_for(agent, max_turns=max_turns, context=context)
+        if target is None and self.project is None:
+            raise ValueError("EvalSuite.run needs an agent (or EvalSuite.from_project)")
 
-        for i, (case, trial) in enumerate(
-            (c, t) for c in cases for t in range(repeats)
-        ):
-            if show_progress:
-                print(f"\rRunning {i + 1}/{total}: {case.name}...", end="", flush=True)
+        state = {"done": 0, "total": 0}
 
-            # Merge suite-level measures with per-case measures
-            case_measures = list(measures) if measures else []
-            if case.measures:
-                for m in case.measures:
-                    if m not in case_measures:
-                        case_measures.append(m)
-
-            # Merge suite-level judges with per-case judges
-            case_judges: List[Union[str, "Judge"]] = list(judges) if judges else []
-            if case.judges:
-                for j in case.judges:
-                    # Avoid duplicates by name
-                    j_name = j if isinstance(j, str) else j.name
-                    existing_names = [
-                        (jj if isinstance(jj, str) else jj.name) for jj in case_judges
-                    ]
-                    if j_name not in existing_names:
-                        case_judges.append(j)
-
-            # Run evaluation using the unified evaluate() function
-            if case.is_multi_turn:
-                if case.goal:
-                    # Synthetic multi-turn
-                    result = await evaluate(
-                        agent,
-                        goal=case.goal,
-                        persona=case.persona,
-                        max_exchanges=case.max_exchanges or 10,
-                        measures=case_measures if case_measures else None,
-                        judges=case_judges if case_judges else None,
-                        environment=environment,
-                        expect=case.expect,
-                        include_builtin_measures=include_builtin_measures,
-                        name=case.name,
-                    )
-                else:
-                    # Scripted multi-turn
-                    result = await evaluate(
-                        agent,
-                        prompts=case.prompts,
-                        max_exchanges=case.max_exchanges or 10,
-                        measures=case_measures if case_measures else None,
-                        judges=case_judges if case_judges else None,
-                        environment=environment,
-                        expect=case.expect,
-                        include_builtin_measures=include_builtin_measures,
-                        name=case.name,
-                    )
-            else:
-                # Single-turn evaluation
-                result = await evaluate(
-                    agent,
-                    case.input,
-                    measures=case_measures if case_measures else None,
-                    judges=case_judges if case_judges else None,
-                    environment=environment,
-                    expect=case.expect,
-                    include_builtin_measures=include_builtin_measures,
-                    max_turns=max_turns,
-                    name=case.name,
+        def _progress(ev: Dict[str, Any]) -> None:
+            if not show_progress:
+                return
+            if ev.get("event") == "start":
+                state["total"] = int(ev.get("total") or 0)
+            elif ev.get("event") == "progress":
+                state["done"] += 1
+                print(
+                    f"\rRunning {state['done']}/{state['total']}: {ev.get('scenario')}...",
+                    end="",
+                    flush=True,
                 )
 
-            result.trial = trial
-            result.metadata = case.metadata
-            results.append(result)
+        if self.project is not None:
+            selects = [s for s in (self.project.select, tag_select) if s]
+            project = dataclasses.replace(
+                self.project, select=",".join(selects) if selects else None
+            )
+            data = await run_evaluation_async(
+                eval_config=project,
+                target=target,
+                eval_cfg=cfg,
+                environment=environment,
+                include_unmeasured=include_unmeasured,
+                progress_cb=_progress,
+                concurrency=concurrency,
+                include_history=True,
+            )
+        else:
+            assert target is not None
+            data = await run_suite(
+                target,
+                cfg,
+                environment=environment,
+                include_unmeasured=include_unmeasured,
+                progress_cb=_progress,
+                concurrency=concurrency,
+                include_history=True,
+                selection={"select": tag_select},
+            )
 
+        tools = (
+            list(getattr(target.agent, "tools", None) or [])
+            if isinstance(target, SdkAgentTarget)
+            else None
+        )
+        judge_keys = list((cfg.get("judges") or {}).keys())
+        results = [_result_from_record(rec, judge_keys, tools) for rec in data["runs"]]
         if show_progress:
             passed = sum(r.passed for r in results)
-            print(f"\rCompleted: {passed}/{total} passed" + " " * 20)
-
-        return EvalSuiteResults(suite=self, results=results)
+            print(f"\rCompleted: {passed}/{len(results)} passed" + " " * 20)
+        return EvalSuiteResults(suite=self, results=results, data=data)
 
     def __len__(self) -> int:
         return len(self.cases)
@@ -1178,11 +1393,6 @@ def measure(
             if ctx.tool_calls("dangerous_tool"):
                 return {"passed": False, "reason": "Called dangerous tool"}
             return {"passed": True}
-
-        # Explicitly prevent overwriting (stricter, like production code):
-        @measure(overwrite=False)
-        def strict_measure(ctx):
-            return {"passed": True}
     """
     return evaluation_measure(func, name=name, overwrite=overwrite)
 
@@ -1194,30 +1404,40 @@ def measure(
 # Global registry of judges
 _JUDGES: Dict[str, "Judge"] = {}
 
+_JUDGE_OUTPUT_SCHEMA = {
+    "properties": {
+        "reasoning": {"type": "string"},
+        "answer": {"type": "string", "enum": ["Pass", "Fail"]},
+        "score": {"type": "number"},
+    },
+    "required": ["reasoning", "answer", "score"],
+}
+
+_JUDGE_RETURN_FORMAT = """Return a JSON object with:
+- "answer": "Pass" if the criteria is met, "Fail" otherwise
+- "reasoning": A brief explanation of your judgment (1-2 sentences)
+- "score": A score from 0.0 to 1.0 indicating how well the criteria was met"""
+
 
 class Judge:
     """An LLM-based judge for evaluating agent outputs.
 
-    Judges use an LLM to evaluate whether an agent's response meets
-    specified criteria. This is useful for subjective quality checks
-    that can't be expressed as simple rules.
+    A judge is an ``evaluation.judges`` entry built in code: :meth:`to_config`
+    is the config the engine runs, and creating one registers the measure
+    ``<name>_agent`` that passes when the judge answers ``Pass`` (the same
+    convention a project's judges follow).
 
     Example:
-        # Simple criteria-based judge
         quality = Judge(
             "quality",
             criteria="The response is helpful, accurate, and well-formatted",
         )
-
-        # Use in evaluation
         result = await evaluate(agent, "Hello", judges=[quality])
 
-        # Or with custom instructions
         expert = Judge(
             "domain_expert",
             instructions='''You are an expert meteorologist.
-            Evaluate if the weather information is accurate and complete.
-            Consider: temperature units, humidity, wind speed, conditions.''',
+            Evaluate if the weather information is accurate and complete.''',
         )
     """
 
@@ -1236,10 +1456,11 @@ class Judge:
         Args:
             name: Unique name for this judge
             criteria: Simple criteria description (generates instructions automatically)
-            instructions: Full custom instructions for the judge (overrides criteria)
-            model: Model to use for judging (default: gpt-4.1-mini for speed/cost)
+            instructions: Full custom instructions for the judge (overrides criteria);
+                they should ask for the JSON ``{"answer": "Pass"|"Fail", "reasoning", "score"}``
+            model: Model to use for judging
             include_tools: Include tool calls in judge input
-            include_history: Include full conversation history (default: just final output)
+            include_history: Include the conversation history (default: just final output)
         """
         self.name = name
         self.criteria = criteria
@@ -1248,8 +1469,23 @@ class Judge:
         self.include_tools = include_tools
         self.include_history = include_history
 
-        # Register globally
+        # Register globally, with the measure that scores it.
         _JUDGES[name] = self
+        key = name
+
+        def _judge_measure(ctx: EvalContext) -> Dict[str, Any]:
+            judge = ctx.judge_result(key)
+            if judge is None:
+                output = ctx.metadata.get(key)
+                return fail_reason(f"{key} judge did not run", output=output)
+            return judge.to_result()
+
+        evaluation_measure(_judge_measure, name=self.measure_name, overwrite=True)
+
+    @property
+    def measure_name(self) -> str:
+        """The measure that passes when this judge answers ``Pass``."""
+        return f"{self.name}_agent"
 
     def _build_instructions(self) -> str:
         """Build the judge agent instructions."""
@@ -1261,42 +1497,42 @@ class Judge:
 
 **Criteria:** {self.criteria}
 
-Evaluate the agent's response and return a JSON object with:
-- "passed": true if the criteria is met, false otherwise
-- "reasoning": A brief explanation of your judgment (1-2 sentences)
-- "score": Optional score from 0.0 to 1.0 indicating how well the criteria was met
+{_JUDGE_RETURN_FORMAT}
 
 Be strict but fair. Focus on whether the core criteria is satisfied."""
 
-        return """You are an evaluation judge. Evaluate the AI agent's response for quality and correctness.
+        return f"""You are an evaluation judge. Evaluate the AI agent's response for quality and correctness.
 
-Return a JSON object with:
-- "passed": true if the response is good, false otherwise
-- "reasoning": A brief explanation of your judgment
-- "score": Optional score from 0.0 to 1.0"""
+{_JUDGE_RETURN_FORMAT}"""
 
-    def _build_prompt(
-        self,
-        user_input: str,
-        agent_output: str,
-        tools_used: List[str],
-        history: Optional[List[Dict[str, Any]]] = None,
-    ) -> str:
-        """Build the prompt to send to the judge."""
-        parts = [f"**User Input:** {user_input}", f"**Agent Response:** {agent_output}"]
-
-        if self.include_tools and tools_used:
-            parts.append(f"**Tools Used:** {', '.join(tools_used)}")
-
-        if self.include_history and history:
-            # Simplified history representation
-            history_str = "\n".join(
-                f"- {item.get('role', 'unknown')}: {str(item.get('content', ''))[:200]}"
-                for item in history[:10]  # Limit to first 10 items
+    def _template(self) -> str:
+        """The judge's input template (rendered by the engine's judge runner)."""
+        parts = ["**User Input:** {{ user_input }}", "**Agent Response:** {{ text }}"]
+        if self.include_tools:
+            parts.append(
+                "{% if tools_used %}**Tools Used:** {{ tools_used | join(', ') }}{% endif %}"
             )
-            parts.append(f"**Conversation History:**\n{history_str}")
-
+        if self.include_history:
+            parts.append(
+                "{% if history %}**Conversation History:**\n"
+                "{% for item in history[:10] %}- {{ item.get('role', 'unknown') }}: "
+                "{{ (item.get('content', '') | string)[:200] }}\n{% endfor %}{% endif %}"
+            )
         return "\n\n".join(parts)
+
+    def to_config(self) -> Dict[str, Any]:
+        """This judge as an ``evaluation.judges`` entry."""
+        return {
+            "agent": {
+                "name": f"Judge: {self.name}",
+                "model": self.model,
+                "instructions": self._build_instructions(),
+                "output_type": "dict",
+                "output_type_strict": True,
+                "output_schema": copy.deepcopy(_JUDGE_OUTPUT_SCHEMA),
+            },
+            "input": {"source": "final_assistant_text", "template": self._template()},
+        }
 
     async def evaluate(
         self,
@@ -1305,70 +1541,40 @@ Return a JSON object with:
         tools_used: List[str],
         history: Optional[List[Dict[str, Any]]] = None,
     ) -> JudgeResult:
-        """Run the judge on an agent's output.
+        """Run the judge on one exchange outside a suite.
 
         Args:
             user_input: The original user input
             agent_output: The agent's final output
             tools_used: List of tool names that were called
-            history: Optional conversation history
+            history: Optional conversation history (built from the other
+                arguments when omitted)
 
         Returns:
             JudgeResult with pass/fail and reasoning
         """
-        from typing_extensions import TypedDict
+        from omniagents.core.eval.pipeline import run_judge
 
-        class JudgeOutput(TypedDict):
-            passed: bool
-            reasoning: str
-            score: float
-
-        judge_agent = Agent(
-            name=f"Judge: {self.name}",
-            instructions=self._build_instructions(),
-            model=self.model,
-            output_type=JudgeOutput,
+        if history is None:
+            history = [{"role": "user", "content": user_input}]
+            history += [
+                {
+                    "type": "function_call",
+                    "name": t,
+                    "call_id": f"call_{i}",
+                    "arguments": "{}",
+                }
+                for i, t in enumerate(tools_used)
+            ]
+            history.append({"role": "assistant", "content": agent_output})
+        output = await run_judge(
+            self.name,
+            self.to_config(),
+            scenario={"name": self.name},
+            history=history,
+            base_dir=Path.cwd(),
         )
-
-        prompt = self._build_prompt(user_input, agent_output, tools_used, history)
-
-        try:
-            result = await AgentRunner.run(judge_agent, prompt, max_turns=1)
-            output = result.final_output
-
-            if isinstance(output, dict):
-                passed = bool(output.get("passed", False))
-                reasoning = str(output.get("reasoning", "No reasoning provided"))
-                score = output.get("score")
-                if score is not None:
-                    try:
-                        score = float(score)
-                        score = max(0.0, min(1.0, score))  # Clamp to 0-1
-                    except (TypeError, ValueError):
-                        score = None
-            else:
-                # Try to parse as pass/fail from string
-                output_str = str(output).lower()
-                passed = "pass" in output_str and "fail" not in output_str
-                reasoning = str(output)
-                score = None
-
-            return JudgeResult(
-                name=self.name,
-                passed=passed,
-                reasoning=reasoning,
-                score=score,
-                raw_output=output,
-            )
-
-        except Exception as e:
-            return JudgeResult(
-                name=self.name,
-                passed=False,
-                reasoning=f"Judge error: {str(e)}",
-                score=None,
-                raw_output=None,
-            )
+        return _judge_result(self.name, output)
 
     def __repr__(self) -> str:
         criteria_preview = (
@@ -1377,6 +1583,17 @@ Return a JSON object with:
             else self.criteria
         )
         return f"Judge({self.name!r}, criteria={criteria_preview!r})"
+
+
+def _notebook_judge(
+    judge: Union[str, "Judge"], config_judges: List[str]
+) -> Optional["Judge"]:
+    """The notebook :class:`Judge` a reference means (``None``: a config judge)."""
+    if not isinstance(judge, str):
+        return judge
+    if judge in config_judges:
+        return None
+    return _JUDGES.get(judge)
 
 
 def get_judge(name: str) -> Judge:
@@ -1393,26 +1610,14 @@ async def run_judges(
     tools_used: List[str],
     history: Optional[List[Dict[str, Any]]] = None,
 ) -> List[JudgeResult]:
-    """Run multiple judges and collect results.
-
-    Args:
-        judges: List of judge names or Judge instances
-        user_input: The original user input
-        agent_output: The agent's final output
-        tools_used: Tools that were called
-        history: Optional conversation history
-
-    Returns:
-        List of JudgeResult objects
-    """
+    """Run several judges on one exchange (see :meth:`Judge.evaluate`)."""
     results: List[JudgeResult] = []
-
     for judge in judges:
         if isinstance(judge, str):
             judge = get_judge(judge)
-        result = await judge.evaluate(user_input, agent_output, tools_used, history)
-        results.append(result)
-
+        results.append(
+            await judge.evaluate(user_input, agent_output, tools_used, history)
+        )
     return results
 
 
@@ -1421,19 +1626,13 @@ async def run_judges(
 # -----------------------------------------------------------------------------
 
 
-class SyntheticUser:
+class SyntheticUser(SimulatedUser):
     """A simulated user that role-plays to achieve a goal.
 
-    Uses an LLM to generate realistic user responses based on a goal and
-    optional persona information. The conversation continues until the
-    goal is achieved, the user gives up, or max exchanges is reached.
-
-    Note: You typically don't create SyntheticUser directly. Instead, use
-    the `goal` and `persona` parameters of `evaluate()`:
-
-        result = await evaluate(agent,
-            goal="Book a meeting room for tomorrow at 2pm",
-            persona={"name": "Alice", "email": "alice@example.com"})
+    The engine's :class:`~omniagents.core.eval.simulated_user.SimulatedUser`
+    with a goal-first constructor. You typically don't create one directly;
+    ``evaluate(agent, goal=..., persona=...)`` and ``suite.add(goal=...)``
+    run a synthetic scenario, which builds its simulated user itself.
     """
 
     def __init__(
@@ -1444,421 +1643,26 @@ class SyntheticUser:
         initial_message: Optional[str] = None,
         instructions: Optional[str] = None,
         model: str = "gpt-4.1",
+        agent_description: str = "an AI assistant",
     ):
-        """Create a synthetic user.
-
-        Args:
-            goal: What the user is trying to accomplish
-            persona: Optional dict of user info (name, email, preferences, etc.)
-            initial_message: Optional specific first message (otherwise generated)
-            instructions: Optional custom system prompt (overrides default)
-            model: Model to use for generating responses
-        """
-        self.goal = goal
-        self.persona = persona or {}
-        self.initial_message = initial_message
-        self.instructions = instructions
-        self.model = model
-        self._agent: Optional[Agent] = None
-        self._history: List[Dict[str, str]] = []
-        self._completed = False
-        self._completion_reason: Optional[str] = None
-
-    def _build_system_prompt(self, agent_name: str) -> str:
-        """Build the system prompt for the simulated user."""
-        if self.instructions:
-            return self.instructions
-
-        # Build persona info block
-        info_lines = []
-        for key, value in self.persona.items():
-            label = key.replace("_", " ").title()
-            info_lines.append(f"- {label}: {value}")
-        info_block = (
-            "\n".join(info_lines)
-            if info_lines
-            else "- No specific information provided"
+        super().__init__(
+            UserPersona(
+                goal=goal,
+                info=dict(persona or {}),
+                initial_message=initial_message,
+                instructions=instructions,
+            ),
+            agent_description=agent_description,
+            model=model,
         )
 
-        return f"""You are a simulated user interacting with an AI assistant called "{agent_name}".
-
-## Your Goal
-{self.goal}
-
-## Your Information
-{info_block}
-
-## Instructions
-1. Respond naturally to the assistant's questions and messages
-2. Provide your information when asked (based on what you know above)
-3. Stay in character throughout the conversation
-4. If the assistant asks for confirmation of correct details, confirm them
-5. If the assistant provides incorrect information, politely correct them
-
-## Completion
-- When your goal has been achieved (e.g., task confirmed), end your message with [DONE]
-- If you've been trying for several turns and the assistant cannot help, end with [GIVE_UP]
-- Do NOT say [DONE] until you have received confirmation that your goal was accomplished
-
-## Important
-- You are the USER, not the assistant
-- Keep responses concise and natural
-- Don't explain what you're doing, just do it
-"""
-
-    def _get_agent(self, agent_name: str) -> Agent:
-        """Get or create the underlying LLM agent."""
-        if self._agent is None:
-            self._agent = Agent(
-                name="SyntheticUser",
-                instructions=self._build_system_prompt(agent_name),
-                model=self.model,
-            )
-        return self._agent
-
     @property
-    def completed(self) -> bool:
-        """Whether the user has signaled completion."""
-        return self._completed
-
-    @property
-    def completion_reason(self) -> Optional[str]:
-        """Why the user completed: 'done', 'give_up', or None."""
-        return self._completion_reason
-
-    async def get_initial_message(self, agent_name: str = "Assistant") -> str:
-        """Get the user's first message to start the conversation."""
-        if self.initial_message:
-            self._history.append({"role": "assistant", "content": self.initial_message})
-            return self.initial_message
-
-        # Generate an initial message based on the goal
-        prompt = f"""Based on your goal, write a natural opening message to start the conversation.
-Your goal: {self.goal}
-
-Write only the message, nothing else. Be natural and conversational."""
-
-        result = await AgentRunner.run(self._get_agent(agent_name), prompt, max_turns=1)
-        response = str(result.final_output or "")
-        self._history.append({"role": "assistant", "content": response})
-        return response
-
-    async def respond(
-        self, assistant_message: str, agent_name: str = "Assistant"
-    ) -> str:
-        """Generate the user's response to the assistant's message."""
-        if self._completed:
-            return "[DONE] (already completed)"
-
-        # Add the real agent's message to history
-        self._history.append({"role": "user", "content": assistant_message})
-
-        # Generate response with full conversation context
-        result = await AgentRunner.run(
-            self._get_agent(agent_name),
-            self._history.copy(),
-            max_turns=1,
-        )
-        response = str(result.final_output or "")
-        self._history.append({"role": "assistant", "content": response})
-
-        # Check for completion signals
-        response_upper = response.upper()
-        if "[DONE]" in response_upper or "[GOAL_ACHIEVED]" in response_upper:
-            self._completed = True
-            self._completion_reason = "done"
-        elif "[GIVE_UP]" in response_upper:
-            self._completed = True
-            self._completion_reason = "give_up"
-
-        return response
-
-    def reset(self) -> None:
-        """Reset the user for a new conversation."""
-        self._history = []
-        self._completed = False
-        self._completion_reason = None
-        self._agent = None
+    def goal(self) -> str:
+        return self.persona.goal
 
     def __repr__(self) -> str:
         goal_preview = self.goal[:40] + "..." if len(self.goal) > 40 else self.goal
         return f"SyntheticUser(goal={goal_preview!r})"
-
-
-async def _evaluate_multi_turn(
-    agent: Agent,
-    user: Union[SyntheticUser, List[str]],
-    *,
-    max_exchanges: int,
-    measure_names: List[str],
-    judges: Optional[List[Union[str, Judge]]],
-    environment: Optional[EvalEnvironment],
-    expect: Optional[Dict[str, Any]],
-    include_builtin_measures: bool,
-    name: Optional[str],
-) -> EvalResult:
-    """Run a multi-turn evaluation (internal implementation)."""
-    turns: List[Turn] = []
-    all_history: List[Dict[str, Any]] = []
-    all_tools_used: List[str] = []
-    error: Optional[str] = None
-    completion_reason: Optional[str] = None
-    final_output = ""
-    ctx: Optional[EvalContext] = None
-    env_context: Optional[EnvironmentContext] = None
-    measure_results: List[MeasureResult] = []
-    expectation_results: Optional[List[ExpectationResult]] = None
-
-    agent_name = agent.name if hasattr(agent, "name") and agent.name else "Assistant"
-
-    # Build scenario dict for environment
-    goal = user.goal if isinstance(user, SyntheticUser) else None
-    scenario = {"name": name, "expect": expect, "goal": goal}
-
-    try:
-        # Setup environment if provided
-        if environment is not None:
-            env_context = await environment.setup(scenario)
-
-        if isinstance(user, list):
-            # Scripted multi-turn: list of user messages
-            prompts = user
-            conversation_input: List[Dict[str, Any]] = []
-
-            for i, user_msg in enumerate(prompts):
-                if i >= max_exchanges:
-                    completion_reason = "max_turns"
-                    break
-
-                # Add user message
-                turns.append(Turn(role="user", content=user_msg))
-                conversation_input.append({"role": "user", "content": user_msg})
-
-                # Run agent
-                run_result = await AgentRunner.run(
-                    agent,
-                    conversation_input.copy(),
-                    max_turns=10,
-                )
-
-                # Extract assistant response
-                assistant_output = str(run_result.final_output or "")
-                final_output = assistant_output
-
-                # Get tools used in this turn
-                turn_tools: List[str] = []
-                if hasattr(run_result, "new_items"):
-                    for item in run_result.new_items:
-                        if (
-                            hasattr(item, "type")
-                            and item.type == "function_call_output"
-                        ):
-                            if hasattr(item, "name"):
-                                turn_tools.append(item.name)
-                        elif hasattr(item, "call_id"):
-                            # Tool call item - get name from the call
-                            if hasattr(item, "name"):
-                                turn_tools.append(item.name)
-
-                # Try to get tool names from the run result
-                if hasattr(run_result, "to_input_list"):
-                    new_items = run_result.to_input_list()
-                    for item in new_items:
-                        if (
-                            isinstance(item, dict)
-                            and item.get("type") == "function_call"
-                        ):
-                            tool_name = item.get("name", "")
-                            if tool_name and tool_name not in turn_tools:
-                                turn_tools.append(tool_name)
-
-                all_tools_used.extend(turn_tools)
-                turns.append(
-                    Turn(
-                        role="assistant",
-                        content=assistant_output,
-                        tools_used=turn_tools,
-                    )
-                )
-
-                # Update conversation for next turn
-                if hasattr(run_result, "to_input_list"):
-                    conversation_input = run_result.to_input_list()
-                else:
-                    conversation_input.append(
-                        {"role": "assistant", "content": assistant_output}
-                    )
-
-                all_history = conversation_input.copy()
-
-            completion_reason = completion_reason or "done"
-
-        else:
-            # Synthetic multi-turn: SyntheticUser
-            synthetic_user = user
-            synthetic_user.reset()
-
-            # Get initial message from synthetic user
-            user_msg = await synthetic_user.get_initial_message(agent_name)
-            turns.append(Turn(role="user", content=user_msg))
-            conversation_input = [{"role": "user", "content": user_msg}]
-
-            for exchange in range(max_exchanges):
-                # Run agent
-                run_result = await AgentRunner.run(
-                    agent,
-                    conversation_input.copy(),
-                    max_turns=10,
-                )
-
-                # Extract assistant response
-                assistant_output = str(run_result.final_output or "")
-                final_output = assistant_output
-
-                # Get tools used in this turn
-                turn_tools: List[str] = []
-                if hasattr(run_result, "to_input_list"):
-                    new_items = run_result.to_input_list()
-                    for item in new_items:
-                        if (
-                            isinstance(item, dict)
-                            and item.get("type") == "function_call"
-                        ):
-                            tool_name = item.get("name", "")
-                            if tool_name and tool_name not in turn_tools:
-                                turn_tools.append(tool_name)
-
-                all_tools_used.extend(turn_tools)
-                turns.append(
-                    Turn(
-                        role="assistant",
-                        content=assistant_output,
-                        tools_used=turn_tools,
-                    )
-                )
-
-                # Update conversation
-                if hasattr(run_result, "to_input_list"):
-                    conversation_input = run_result.to_input_list()
-                else:
-                    conversation_input.append(
-                        {"role": "assistant", "content": assistant_output}
-                    )
-
-                # Check if synthetic user is done
-                if synthetic_user.completed:
-                    completion_reason = synthetic_user.completion_reason
-                    break
-
-                # Get next user response
-                if exchange < max_exchanges - 1:
-                    user_msg = await synthetic_user.respond(
-                        assistant_output, agent_name
-                    )
-                    turns.append(Turn(role="user", content=user_msg))
-                    conversation_input.append({"role": "user", "content": user_msg})
-
-                    if synthetic_user.completed:
-                        completion_reason = synthetic_user.completion_reason
-                        break
-
-            if not completion_reason:
-                completion_reason = "max_turns"
-
-            all_history = conversation_input.copy()
-
-        # Build evaluation context from full history
-        ctx = build_eval_context(
-            history=all_history,
-            tools=agent.tools if hasattr(agent, "tools") else [],
-            agent=agent,
-            metadata={
-                "scenario": scenario,
-                "environment_context": env_context.data if env_context else {},
-            },
-        )
-
-        # Wire environment into context for verify() and get_env_data()
-        if environment is not None and env_context is not None:
-            ctx._environment = environment
-            ctx._environment_context = env_context
-
-        # Run measures BEFORE teardown (so they can access environment state)
-        if measure_names and ctx:
-            raw_results = _run_measures(ctx, measure_names)
-            measure_results = [MeasureResult.from_dict(r) for r in raw_results]
-
-        # Check expectations BEFORE teardown (verify needs database state)
-        if expect and ctx:
-            if "verify" in expect:
-                expectation_results = await check_expectations_async(ctx, expect)
-            else:
-                expectation_results = check_expectations(ctx, expect)
-
-    except Exception as e:
-        error = str(e)
-
-    finally:
-        # Always teardown environment
-        if environment is not None and env_context is not None:
-            try:
-                await environment.teardown(env_context)
-            except Exception as teardown_err:
-                teardown_msg = f"teardown failed: {teardown_err}"
-                if error:
-                    error = f"{error}; {teardown_msg}"
-                else:
-                    error = teardown_msg
-
-    # Run judges
-    judge_results: Optional[List[JudgeResult]] = None
-    if judges:
-        # For multi-turn, use the full conversation as context
-        first_user_msg = turns[0].content if turns else ""
-        judge_results = await run_judges(
-            judges=judges,
-            user_input=first_user_msg,
-            agent_output=final_output,
-            tools_used=list(set(all_tools_used)),
-            history=all_history,
-        )
-
-    # Determine pass/fail
-    passed = True
-    if error:
-        passed = False
-    elif measure_results and not all(m.passed for m in measure_results):
-        passed = False
-    elif expectation_results and not all(e.passed for e in expectation_results):
-        passed = False
-    elif judge_results and not all(j.passed for j in judge_results):
-        passed = False
-    # For synthetic, goal not achieved = fail
-    elif isinstance(user, SyntheticUser) and completion_reason != "done":
-        passed = False
-
-    # Build input string for display
-    if isinstance(user, list):
-        input_display = " → ".join(user[:3])
-        if len(user) > 3:
-            input_display += f" → ... ({len(user)} messages)"
-    else:
-        input_display = f"[Synthetic] {user.goal}"
-
-    return EvalResult(
-        input=input_display,
-        output=final_output,
-        passed=passed,
-        measures=measure_results,
-        expectations=expectation_results,
-        judges=judge_results,
-        ctx=ctx,
-        history=all_history,
-        error=error,
-        name=name,
-        turns=turns,
-        completion_reason=completion_reason,
-    )
 
 
 # -----------------------------------------------------------------------------
@@ -1867,7 +1671,7 @@ async def _evaluate_multi_turn(
 
 
 async def evaluate(
-    agent: Agent,
+    agent: Any,
     input: Optional[str] = None,
     *,
     # Multi-turn: scripted
@@ -1888,10 +1692,7 @@ async def evaluate(
 ) -> EvalResult:
     """Evaluate an agent with a single test case.
 
-    This function runs ONE test case and returns ONE result. For running
-    multiple test cases, use EvalSuite.
-
-    There are three modes:
+    A one-case :class:`EvalSuite` run once. There are three modes:
 
     **Single-turn**: Provide `input` - one prompt, one response.
 
@@ -1902,252 +1703,58 @@ async def evaluate(
     an LLM role-plays as a user trying to achieve the goal.
 
     Args:
-        agent: The agent to evaluate
-
-        # Input modes (mutually exclusive)
+        agent: The agent to evaluate (see :meth:`EvalSuite.run`)
         input: Single-turn prompt
         prompts: Multi-turn scripted conversation (list of user messages)
         goal: Multi-turn synthetic user goal
         persona: Synthetic user persona info (used with goal)
-
-        # Shared options
         expect: Expectations dict (tool_called, response_contains, verify, etc.)
         measures: Custom measures to run (by name)
         judges: LLM judges to run (Judge instances or names)
         environment: EvalEnvironment for fixture management
-        include_builtin_measures: Include tool_hallucination measure
+        include_builtin_measures: Include the tool_hallucination measure
         name: Name for this test case
-
-        # Turn limits
         max_turns: Maximum agent turns (tool calls) per response
-        max_exchanges: Maximum user-agent exchanges for multi-turn
+        max_exchanges: Maximum user-agent exchanges for a synthetic conversation
 
     Returns:
         EvalResult with pass/fail status, measures, expectations, etc.
 
     Examples:
-        # Single-turn
         result = await evaluate(agent, "What's the weather?")
-
-        # Single-turn with expectations
         result = await evaluate(agent, "Weather in Paris?",
                                 expect={"tool_called": "get_weather"})
-
-        # Multi-turn scripted
         result = await evaluate(agent,
             prompts=["Book a room", "Tomorrow 2pm", "Confirm"],
             expect={"tool_called": "create_booking"})
-
-        # Multi-turn synthetic
         result = await evaluate(agent,
             goal="Book a meeting room for tomorrow at 2pm",
             persona={"name": "Alice", "email": "alice@example.com"})
-
-        # With judges
-        quality = Judge("quality", criteria="Response is helpful")
-        result = await evaluate(agent, "Hello", judges=[quality])
-
-        # With environment
-        result = await evaluate(agent,
-            goal="Book a room",
-            environment=BookingEnv(),
-            expect={"verify": {"booking_created": True}})
-
-        # For multiple test cases, use EvalSuite:
-        suite = EvalSuite("My Tests")
-        suite.add("weather", "Weather?", expect={"tool_called": "get_weather"})
-        suite.add("booking", prompts=["Book a room", ...])
-        results = await suite.run(agent)
     """
-    # Validate input modes are mutually exclusive
-    modes_provided = sum(
-        [
-            input is not None,
-            prompts is not None,
-            goal is not None,
-        ]
+    suite = EvalSuite(name or "evaluate")
+    suite.add(
+        name or "case",
+        input,
+        prompts=prompts,
+        goal=goal,
+        persona=persona,
+        max_exchanges=max_exchanges if goal is not None else None,
+        expect=expect,
+        measures=measures,
+        judges=judges,
     )
-
-    if modes_provided == 0:
-        raise ValueError("Must provide one of: input, prompts, or goal")
-    if modes_provided > 1:
-        raise ValueError("Only one of input, prompts, or goal can be provided")
-
-    # Build measure list
-    measure_names: List[str] = []
-    if include_builtin_measures and "tool_hallucination" in _MEASURES:
-        measure_names.append("tool_hallucination")
-    if measures:
-        measure_names.extend(measures)
-
-    # Route to appropriate handler
-    if input is not None:
-        # Single-turn
-        return await _evaluate_single_turn(
-            agent=agent,
-            input_text=input,
-            measure_names=measure_names,
-            judges=judges,
-            environment=environment,
-            expect=expect,
-            name=name,
-            max_turns=max_turns,
-        )
-    elif prompts is not None:
-        # Multi-turn scripted
-        return await _evaluate_multi_turn(
-            agent=agent,
-            user=prompts,
-            max_exchanges=max_exchanges,
-            measure_names=measure_names,
-            judges=judges,
-            environment=environment,
-            expect=expect,
-            include_builtin_measures=include_builtin_measures,
-            name=name,
-        )
-    else:
-        # Multi-turn synthetic
-        synthetic_user = SyntheticUser(goal=goal, persona=persona)
-        return await _evaluate_multi_turn(
-            agent=agent,
-            user=synthetic_user,
-            max_exchanges=max_exchanges,
-            measure_names=measure_names,
-            judges=judges,
-            environment=environment,
-            expect=expect,
-            include_builtin_measures=include_builtin_measures,
-            name=name,
-        )
-
-
-async def _evaluate_single_turn(
-    agent: Agent,
-    input_text: str,
-    measure_names: List[str],
-    judges: Optional[List[Union[str, Judge]]],
-    environment: Optional[EvalEnvironment],
-    expect: Optional[Dict[str, Any]],
-    name: Optional[str],
-    max_turns: int,
-) -> EvalResult:
-    """Run a single-turn evaluation with optional environment support."""
-    error: Optional[str] = None
-    output = ""
-    history: List[Dict[str, Any]] = []
-    ctx: Optional[EvalContext] = None
-    measure_results: List[MeasureResult] = []
-    expectation_results: Optional[List[ExpectationResult]] = None
-    judge_results: Optional[List[JudgeResult]] = None
-    tools_used: List[str] = []
-    env_context: Optional[EnvironmentContext] = None
-
-    # Build scenario dict for environment setup
-    scenario = {"input": input_text, "name": name, "expect": expect}
-
-    try:
-        # Setup environment if provided
-        if environment is not None:
-            env_context = await environment.setup(scenario)
-
-        # Run the agent
-        run_result = await AgentRunner.run(agent, input=input_text, max_turns=max_turns)
-
-        # Extract output and history
-        output = str(run_result.final_output or "")
-
-        # Get history from result
-        if hasattr(run_result, "to_input_list"):
-            history = run_result.to_input_list()
-        elif hasattr(run_result, "new_items"):
-            # Convert items to input list format
-            history = [
-                item.to_input_item()
-                for item in run_result.new_items
-                if hasattr(item, "to_input_item")
-            ]
-
-        # Build evaluation context
-        ctx = build_eval_context(
-            history=history,
-            tools=agent.tools if hasattr(agent, "tools") else [],
-            agent=agent,
-            metadata={
-                "scenario": scenario,
-                "environment_context": env_context.data if env_context else {},
-            },
-        )
-
-        # Wire environment into context for verify() and get_env_data()
-        if environment is not None and env_context is not None:
-            ctx._environment = environment
-            ctx._environment_context = env_context
-
-        # Get tools used for judges
-        tools_used = [c.name for c in ctx.tool_calls() if c.name]
-
-        # Run measures
-        if measure_names:
-            raw_results = _run_measures(ctx, measure_names)
-            measure_results = [MeasureResult.from_dict(r) for r in raw_results]
-
-        # Check expectations (use async version if verify is present)
-        if expect:
-            if "verify" in expect:
-                expectation_results = await check_expectations_async(ctx, expect)
-            else:
-                expectation_results = check_expectations(ctx, expect)
-
-        # Run judges
-        if judges:
-            judge_results = await run_judges(
-                judges=judges,
-                user_input=input_text,
-                agent_output=output,
-                tools_used=tools_used,
-                history=history,
-            )
-
-    except Exception as e:
-        error = str(e)
-
-    finally:
-        # Always teardown environment
-        if environment is not None and env_context is not None:
-            try:
-                await environment.teardown(env_context)
-            except Exception as teardown_err:
-                # Append teardown error to existing error or set it
-                teardown_msg = f"teardown failed: {teardown_err}"
-                if error:
-                    error = f"{error}; {teardown_msg}"
-                else:
-                    error = teardown_msg
-
-    # Determine overall pass/fail
-    passed = True
-    if error:
-        passed = False
-    elif measure_results and not all(m.passed for m in measure_results):
-        passed = False
-    elif expectation_results and not all(e.passed for e in expectation_results):
-        passed = False
-    elif judge_results and not all(j.passed for j in judge_results):
-        passed = False
-
-    return EvalResult(
-        input=input_text,
-        output=output,
-        passed=passed,
-        measures=measure_results,
-        expectations=expectation_results,
-        judges=judge_results,
-        ctx=ctx,
-        history=history,
-        error=error,
-        name=name,
+    results = await suite.run(
+        agent,
+        environment=environment,
+        include_builtin_measures=include_builtin_measures,
+        max_turns=max_turns,
+        show_progress=False,
+        concurrency=1,
     )
+    result = results.results[0]
+    if name is None:
+        result.name = None
+    return result
 
 
 # -----------------------------------------------------------------------------

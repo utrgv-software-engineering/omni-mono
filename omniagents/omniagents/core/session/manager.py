@@ -8,6 +8,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Any
 
+from omniagents.core.conversation.model import provider_item_id
 from omniagents.core.debug import Debug
 from .event_log import MemoryEventLogStore, SessionEventLog
 from .history_db import (
@@ -21,7 +22,7 @@ from .history_db import (
     append_message as db_append_message,
     get_user_messages,
     get_session_metadata,
-    get_session_user_id,
+    get_session_owner,
     session_exists,
     update_session_metadata,
 )
@@ -40,10 +41,7 @@ __all__ = [
 class QueuedItem:
     """A message queued for serialized processing on a session.
 
-    Two flavours:
-    - ``trigger_run=False``: append to history, no run.
-    - ``trigger_run=True``:  ``start_run`` with this content (which itself
-      appends the prompt and drives a turn).
+    Every accepted message starts a turn when the session is available.
 
     Each item carries a stable ``id`` so clients can target it for
     cancellation/edit while it's still in the queue.
@@ -52,7 +50,6 @@ class QueuedItem:
     content: str
     input_content: Any | None = None
     role: str = "user"
-    trigger_run: bool = False
     variables: Optional[Dict[str, Any]] = None
     safe_tool_overrides: Optional[Dict[str, Any]] = None
     source: Optional[str] = None
@@ -60,6 +57,7 @@ class QueuedItem:
     enqueued_at: float = field(default_factory=time.time)
     state: str = "pending"
     error: str | None = None
+    worker_reports: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         """JSON-safe wire shape for ``list_queue`` and ``queue_changed``."""
@@ -68,13 +66,13 @@ class QueuedItem:
             "content": self.content,
             "input_content": self.input_content,
             "role": self.role,
-            "trigger_run": self.trigger_run,
             "variables": self.variables,
             "safe_tool_overrides": self.safe_tool_overrides,
             "source": self.source,
             "enqueued_at": self.enqueued_at,
             "state": self.state,
             "error": self.error,
+            **({"worker_reports": self.worker_reports} if self.worker_reports else {}),
         }
 
 
@@ -693,17 +691,13 @@ def _materialize_conversation_thread(session: Any) -> Any:
 def _record_reasoning_item(session: Any, recorder: Any, message: dict) -> None:
     """Promote a persisted reasoning block into a canonical Item.
 
-    Reasoning is the one conversation element with no notification: the SDK
-    writes it straight to history, so it never reaches the broadcast
-    chokepoint the domain recorder listens on. Without this hook a recorded
-    thread would carry no reasoning while a projected one does — the two
-    producers of the same read surface disagreeing about the same
-    conversation.
+    The bridge records reasoning as it streams; this covers a block whose
+    stream event never arrived (see ``record_persisted_reasoning``).
     """
     if recorder is None or not _is_reasoning(message):
         return
     try:
-        recorder.record_reasoning(
+        recorder.record_persisted_reasoning(
             session.id,
             run_id=getattr(session, "active_run_id", None),
             item=message,
@@ -742,7 +736,7 @@ class Session:  # noqa: D101
         self.owner_lookup_failed: bool = False
         if session_id:
             try:
-                self.user_id = get_session_user_id(
+                self.user_id = get_session_owner(
                     session_id, project_slug=project_slug, agent_slug=agent_slug
                 )
             except Exception:
@@ -854,8 +848,7 @@ class Session:  # noqa: D101
         # automated notifications (bash jobs exiting, workers
         # completing, webhooks) call AgentService.enqueue_notification
         # instead of enqueue_message. This projects the durable notification
-        # buffer, coalesced into ONE combined QueuedItem (trigger_run=
-        # True, role="assistant") by _notification_flusher at the next
+        # buffer, coalesced into ONE combined QueuedItem (role="assistant") by _notification_flusher at the next
         # safe boundary: active run ends, short debounce when idle, or
         # immediately when a real user message is enqueued.
         self.pending_notifications: list[dict] = []
@@ -910,6 +903,10 @@ class Session:  # noqa: D101
         # was clear the guard belongs HERE, at the single point every
         # history write passes through, rather than at each call site.
         recorder = _materialize_conversation_thread(self)
+        if "id" in message and provider_item_id(message.get("id")) is None:
+            # The SDK's placeholder for providers without Responses ids
+            # names nothing; stored, it made every reply look like the first.
+            message = {key: value for key, value in message.items() if key != "id"}
         if message.get("type") in ("function_call", "function_call_output"):
             run_id = getattr(self, "active_run_id", None)
             if isinstance(run_id, str) and run_id:
@@ -975,25 +972,6 @@ class Session:  # noqa: D101
                 Debug.log(
                     f"[session] message projection pending recovery for {self.id!r}"
                 )
-
-    # ------------------------------------------------------------------
-    # Session variables — mutable, persisted, broadcast-on-change dict
-    # accessible to tools, prompts, and server functions. The free-form
-    # contextvars store for the session. Tools read via
-    # ``omniagents.core.session.helpers.session_variables(ctx)`` and
-    # server functions read directly via ``session.variables``.
-    # ------------------------------------------------------------------
-
-    def get_variable(self, key: str, default: Any = None) -> Any:
-        """Return ``session.variables[key]`` or ``default`` if missing."""
-        vars_dict = self.variables if isinstance(self.variables, dict) else None
-        if not vars_dict:
-            return default
-        return vars_dict.get(key, default)
-
-    def set_variable(self, key: str, value: Any, *, persist: bool = True) -> None:
-        """Set a single variable. Persists by default."""
-        self.update_variables({key: value}, persist=persist)
 
     # ------------------------------------------------------------------
     # Periodic tick — fires an ``enqueue_notification`` on the running

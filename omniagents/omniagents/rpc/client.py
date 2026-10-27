@@ -4,7 +4,7 @@ import contextlib
 import asyncio
 from importlib.metadata import version
 import platform
-from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Awaitable, Callable, Dict, List, Optional, TYPE_CHECKING
 
 from pydantic import ValidationError
 
@@ -66,7 +66,7 @@ class _ClientProxy:
     def __init__(self, client: "JsonRpcClient") -> None:
         self._client = client
 
-    def __getattr__(self, name: str) -> Callable[..., asyncio.Future]:
+    def __getattr__(self, name: str) -> Callable[..., Awaitable[Any]]:
         async def _call(**kwargs):
             return await self._client.call(name, **kwargs)
 

@@ -2,8 +2,8 @@
 #
 # The image is omni-code's OWN eval image, built from evaluations/Dockerfile
 # and published by .github/workflows/build-eval-image.yml. It carries exactly
-# the toolchain the fixtures/scenarios exercise (git/rg/jq, python+uv,
-# node+npm, ruby+bundler, chromium libs, iptables) — the launcher's desktop
+# the toolchain the fixtures/scenarios exercise (git/rg, python+uv,
+# iptables) — the launcher's desktop
 # devbox (omni-code-sandbox-work / omni-launcher-devbox) is a different
 # product surface and is deliberately NOT used here.
 #

@@ -506,16 +506,13 @@ class TestRemoteAgentLifecycle:
 # Cross-language consistency
 # ---------------------------------------------------------------------------
 
-WEB_LIFECYCLE = ROOT / "omniagents/backends/web/ui/src/rpc/lifecycle.ts"
-INK_LIFECYCLE = ROOT / "omniagents/backends/ink/tui/src/rpc/lifecycle.ts"
+# The TypeScript twin every OmniAgents UI uses (@omniagents/client).
+TS_LIFECYCLE = ROOT.parent / "packages/client/src/lifecycle.ts"
 
 
 class TestTypescriptTwins:
-    def test_web_and_ink_lifecycle_modules_are_identical(self):
-        assert WEB_LIFECYCLE.read_bytes() == INK_LIFECYCLE.read_bytes()
-
     def test_typescript_defaults_match_python_policy(self):
-        source = WEB_LIFECYCLE.read_text()
+        source = TS_LIFECYCLE.read_text()
         match = re.search(
             r"DEFAULT_LIFECYCLE_POLICY: LifecyclePolicy = \{(.*?)\}",
             source,
@@ -544,7 +541,7 @@ class TestTypescriptTwins:
             RETRYABLE_RPC_ERROR_CODES,
         )
 
-        source = WEB_LIFECYCLE.read_text()
+        source = TS_LIFECYCLE.read_text()
 
         def ts_set(name: str) -> frozenset[int]:
             match = re.search(

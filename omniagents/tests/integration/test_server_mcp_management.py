@@ -80,7 +80,6 @@ def env(tmp_path, monkeypatch):
     config_home = tmp_path / "xdg"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
     monkeypatch.setenv("APPDATA", str(config_home))  # Windows config root
-    monkeypatch.delenv("OMNIAGENTS_MCP_STORE_DURABILITY", raising=False)
     monkeypatch.delenv("OMNIAGENTS_MANAGED_MCP_SERVERS", raising=False)
     project_root = tmp_path / "project"
     project_root.mkdir()
@@ -473,32 +472,21 @@ def oauth_rs():
     their own HTTP clients, so the fixture must be reachable over real
     loopback HTTP rather than an in-memory ASGI transport.
     """
-    import socket
-    import threading
-
     import uvicorn
 
-    with socket.socket() as probe_sock:
-        probe_sock.bind(("127.0.0.1", 0))
-        port = probe_sock.getsockname()[1]
-    base = f"http://127.0.0.1:{port}"
+    from omniagents.core.utils.serving import BackgroundServer, bind_socket
+
+    # The app embeds its own base URL, so bind first and build it on the
+    # port the socket holds.
+    sock = bind_socket("127.0.0.1", 0)
+    base = f"http://127.0.0.1:{sock.getsockname()[1]}"
     state: dict = {}
-    config = uvicorn.Config(
-        make_fake_oauth_app(state, base=base),
-        host="127.0.0.1",
-        port=port,
-        log_level="error",
-    )
-    server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    deadline = time.time() + 10
-    while not server.started and time.time() < deadline:
-        time.sleep(0.02)
-    assert server.started, "fake OAuth server failed to start"
+    server = BackgroundServer(
+        uvicorn.Config(make_fake_oauth_app(state, base=base), log_level="error"),
+        sock,
+    ).start(timeout=10)
     yield SimpleNamespace(base=base, server_url=f"{base}/mcp", state=state)
-    server.should_exit = True
-    thread.join(timeout=5)
+    server.stop()
 
 
 def test_oauth_flow_to_url_handoff_and_completion_over_ws(env, oauth_rs):

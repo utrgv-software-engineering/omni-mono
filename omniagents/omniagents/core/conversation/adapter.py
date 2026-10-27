@@ -261,7 +261,22 @@ def project_thread(
             completed_at=updated_at or None,
             revision=0,
             content=content,
-            source_ref={"history_index": history_index},
+            source_ref={
+                "history_index": history_index,
+                **(
+                    {
+                        "voice_caption": True,
+                        "live_call": raw["omniagents"]["live_call"],
+                        "voice_id": raw["omniagents"]["voice_id"],
+                    }
+                    if kind in (ItemKind.USER_MESSAGE, ItemKind.AGENT_MESSAGE)
+                    and (raw.get("omniagents") or {}).get("source")
+                    == "voice:codex-live"
+                    and (raw.get("omniagents") or {}).get("live_call")
+                    and (raw.get("omniagents") or {}).get("voice_id")
+                    else {}
+                ),
+            },
             source="adapter",
         )
         items.append(item)

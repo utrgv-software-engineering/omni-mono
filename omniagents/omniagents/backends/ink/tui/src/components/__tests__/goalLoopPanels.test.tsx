@@ -1,86 +1,33 @@
 import React from "react";
-import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
 import stripAnsi from "strip-ansi";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { KeypressProvider } from "../../contexts/KeypressContext.js";
-import { useAppStore, type LoopTaskSnapshot } from "../../store/appStore.js";
+import type { LoopTaskSnapshot } from "@omniagents/client/session/panel-types";
+import { useAppStore } from "../../store/appStore.js";
 import { goalActions } from "../GoalPanel.js";
 import { describeSchedule, orderLoops } from "../LoopPanel.js";
+import { cleanup, render } from "ink-testing-library";
 
-class TestStdout extends PassThrough {
-  frames: string[] = [];
-  isTTY = true;
-  columns = 100;
-  rows = 30;
-  constructor() {
-    super();
-    this.setEncoding("utf8");
-    this.on("data", (chunk) => {
-      if (typeof chunk === "string") this.frames.push(chunk);
-    });
-  }
-  lastFrame(): string {
-    for (let i = this.frames.length - 1; i >= 0; i -= 1) {
-      const frame = stripAnsi(this.frames[i] ?? "");
-      if (frame.trim()) return frame;
-    }
-    return "";
-  }
-}
-class FakeStdin extends EventEmitter {
-  isTTY = true;
-  private queue: string[] = [];
-  setRawMode() {}
-  setEncoding() {}
-  resume() {}
-  pause() {}
-  read() {
-    return this.queue.shift() ?? null;
-  }
-  unref() {}
-  ref() {}
-  press(sequence: string) {
-    this.queue.push(sequence);
-    this.emit("readable");
-  }
-}
+const plain = (frame?: string) => stripAnsi(frame ?? "");
+
 const settle = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 
-type Render = (typeof import("ink"))["render"];
-let inkRender: Render;
 let GoalPanel: (typeof import("../GoalPanel.js"))["GoalPanel"];
 let LoopPanel: (typeof import("../LoopPanel.js"))["LoopPanel"];
-const instances: Array<ReturnType<Render>> = [];
 const initial = useAppStore.getState();
 
 beforeAll(async () => {
-  inkRender = (await import("ink")).render;
   ({ GoalPanel } = await import("../GoalPanel.js"));
   ({ LoopPanel } = await import("../LoopPanel.js"));
 });
 afterEach(() => {
-  while (instances.length) {
-    const instance = instances.pop();
-    instance?.unmount();
-    instance?.cleanup();
-  }
+  cleanup();
   useAppStore.setState(initial, true);
 });
 
 function mount(node: React.ReactNode) {
-  const stdout = new TestStdout();
-  const stdin = new FakeStdin();
-  const instance = inkRender(<KeypressProvider>{node}</KeypressProvider>, {
-    stdout: stdout as unknown as NodeJS.WriteStream,
-    stdin: stdin as unknown as NodeJS.ReadStream,
-    debug: true,
-    exitOnCtrlC: false,
-    patchConsole: false,
-  });
-  instances.push(instance);
-  return { stdout, stdin };
+  return render(<KeypressProvider>{node}</KeypressProvider>);
 }
 
 const loop = (
@@ -168,16 +115,16 @@ describe("panels", () => {
     });
     const onAction = vi.fn(async () => ({ message: "stopped" }));
     const onUnfocus = vi.fn();
-    const { stdin, stdout } = mount(
+    const { stdin, lastFrame } = mount(
       <GoalPanel focused onUnfocus={onUnfocus} onAction={onAction} />,
     );
     await settle();
-    expect(stdout.lastFrame()).toContain("ship it");
-    expect(stdout.lastFrame()).toContain("p pause");
-    stdin.press("s");
+    expect(plain(lastFrame())).toContain("ship it");
+    expect(plain(lastFrame())).toContain("p pause");
+    stdin.write("s");
     await settle();
     expect(onAction).toHaveBeenCalledWith("stop");
-    stdin.press("");
+    stdin.write("");
     await settle(120);
     expect(onUnfocus).toHaveBeenCalled();
   });
@@ -191,7 +138,7 @@ describe("panels", () => {
       ]);
     const onStop = vi.fn(async () => ({}));
     const onClear = vi.fn(async () => ({}));
-    const { stdin, stdout } = mount(
+    const { stdin, lastFrame } = mount(
       <LoopPanel
         focused
         onUnfocus={() => undefined}
@@ -200,19 +147,19 @@ describe("panels", () => {
       />,
     );
     await settle();
-    expect(stdout.lastFrame()).toContain("prompt l1");
-    stdin.press("[B");
+    expect(plain(lastFrame())).toContain("prompt l1");
+    stdin.write("[B");
     await settle();
-    stdin.press("x");
+    stdin.write("x");
     await settle();
     expect(onStop).toHaveBeenCalledWith("l2");
-    stdin.press("c");
+    stdin.write("c");
     await settle();
     expect(onClear).toHaveBeenCalled();
   });
 
   it("renders a hint, not nothing, when there is no goal", async () => {
-    const { stdout } = mount(
+    const { lastFrame } = mount(
       <GoalPanel
         focused
         onUnfocus={() => undefined}
@@ -220,6 +167,6 @@ describe("panels", () => {
       />,
     );
     await settle();
-    expect(stdout.lastFrame()).toContain("/goal <text> starts one");
+    expect(plain(lastFrame())).toContain("/goal <text> starts one");
   });
 });

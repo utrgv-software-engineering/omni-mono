@@ -1278,28 +1278,14 @@ support fails with a **typed** error, never a generic `-32603`.
 
 ### Methods
 
-- `account_status()` → `{ providers: [AccountSnapshot], selected_provider,
-  mutation_persistence }` —
+- `account_status()` → `{ providers: [AccountSnapshot], selected_provider }` —
   redacted state of every provider: `state`
   (`signed_in`/`signed_out`/`error`), `source` (`oauth`/`rpc`/`env`),
   `identity` (`account_id`, `plan`, `email` when derivable), typed
   `capabilities`, and the last stored auth error. **Never contains
-  credential material.**
-
-  `mutation_persistence` is a redacted deployment capability:
-
-  ```json
-  {
-    "codex_oauth": { "durable": true, "scope": "host" },
-    "pending_logins": { "durable": false, "scope": "process" }
-  }
-  ```
-
-  `codex_oauth.durable` is `true` only when the host explicitly attests
-  `OMNIAGENTS_CODEX_STORE_DURABILITY=host`. Absent or unrecognized values
-  fail closed to `{ "durable": false, "scope": null }`; store writability
-  alone is not treated as evidence. The capability exposes neither a path
-  nor credential material.
+  credential material.** Pending logins (login ids, device codes, PKCE
+  verifiers) are process-local: a restarted server begins a fresh OAuth
+  exchange.
 - `account_usage(provider?)` → `{ providers: [...] }` — plan, rate-limit
   windows (`used_percent`, `window_minutes`, `resets_at` epoch seconds),
   capture timestamp, and workspace `notices` when available. For the
@@ -1342,16 +1328,11 @@ support fails with a **typed** error, never a generic `-32603`.
 Completed ChatGPT/Codex OAuth credentials are stored in `codex.json` inside
 the installed product's config directory (or the host's explicit Codex store
 directory), with owner-only `0600` permissions. Successful login and refresh
-replace that file; logout deletes it. A host that ensures this directory
-survives AgentHost process replacement may set
-`OMNIAGENTS_CODEX_STORE_DURABILITY=host`, allowing clients to rely on login
-and logout remaining effective after a process restart.
+replace that file; logout deletes it, so both survive a process restart.
 
-The attestation covers only completed Codex OAuth credentials. Pending device
-codes, browser login ids, OAuth state, and PKCE verifiers are intentionally
-process-only and must be restarted after reconnect. RPC-installed API keys and
-`selected_provider` are also process-only and are not represented by the
-`codex_oauth` capability.
+Pending device codes, browser login ids, OAuth state, and PKCE verifiers are
+intentionally process-only and must be restarted after reconnect.
+RPC-installed API keys and `selected_provider` are also process-only.
 
 ### `account_changed` notification (server → client)
 
@@ -1452,7 +1433,7 @@ protect the product config directory as credential-bearing storage.
 ### Management & discovery methods
 
 - `mcp_list_servers(session_id?)` → `{ servers: [McpServerSnapshot],
-  user_mcp_allowed, write_target, mutation_persistence }`. Each snapshot:
+  user_mcp_allowed, write_target, managed_servers }`. Each snapshot:
   `server_name`, `source`, `transport`
   (`stdio`/`http`/`sse`/`streamable_http`), redacted `params`,
   `server_options`, `enabled` (+`disabled_reason`), `read_only`
@@ -1462,23 +1443,9 @@ protect the product config directory as credential-bearing storage.
   appended (`source: "session"`) and the request is authorized by
   session ownership.
 
-  `mutation_persistence` is a redacted deployment capability:
-
-  ```json
-  {
-    "user_config": { "durable": true, "scope": "host" },
-    "oauth_tokens": { "durable": true, "scope": "host" },
-    "pending_auth": { "durable": false, "scope": "process" },
-    "managed_servers": ["omni-projects"]
-  }
-  ```
-
-  The first two guarantees are `true` only for the exact host attestation
-  `OMNIAGENTS_MCP_STORE_DURABILITY=host`; absent or unrecognized values fail
-  closed to `{ "durable": false, "scope": null }`. Managed-server names are
-  the only host-store metadata added to this capability—no path, configured
-  value, or credential is included. The pre-existing `write_target` remains
-  for stable compatibility and is not evidence of durability.
+  `managed_servers` lists the host-managed server names
+  (`OMNIAGENTS_MANAGED_MCP_SERVERS`); no path, configured value, or
+  credential is included.
 - `mcp_get_server(server_name, refresh?)` → the full snapshot plus
   discovery detail: `tools`, `resources`, `resource_templates`,
   `prompts` (MCP-spec shapes via `model_dump`; treat unknown fields as
@@ -1533,9 +1500,9 @@ contract per server:
 
 `status.origin` records what drove the last transition
 (`session:<id8>`, `probe`, `reload`, `auth`, `kill_switch`).
-Status, probes, and `disable_mcp_server` kill switches are process-only and
-are not covered by `mutation_persistence`; kill switches deliberately remain
-non-durable until a symmetric enable/disable product contract exists.
+Status, probes, and `disable_mcp_server` kill switches are process-only;
+kill switches deliberately remain non-durable until a symmetric
+enable/disable product contract exists.
 
 ### `mcp_server_status_changed` notification (server → client)
 

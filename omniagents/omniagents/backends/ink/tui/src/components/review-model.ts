@@ -1,7 +1,7 @@
 // Presentation logic for the Review screen. Pure and unit-testable
 // (same split as ./git-model / ./strip-model).
 
-import type { GitDiffHunk } from "../rpc/client.js";
+import type { GitDiffHunk } from "@omniagents/client/rpc/git";
 import { Theme } from "../theme.js";
 import type { DiffViewLine } from "./git-model.js";
 

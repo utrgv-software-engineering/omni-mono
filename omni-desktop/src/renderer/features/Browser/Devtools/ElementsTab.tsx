@@ -4,10 +4,10 @@
  * for understanding what `app_snapshot` refs correspond to while iterating
  * on an automation script.
  */
+import { Button } from '@omniagents/ui/button';
 import { ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';
 
-import { Button } from '@/renderer/ds/ui/button';
 import { emitter } from '@/renderer/services/ipc';
 import type { AppHandleId, AxNode } from '@/shared/app-control-types';
 

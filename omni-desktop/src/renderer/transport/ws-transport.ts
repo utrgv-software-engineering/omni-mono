@@ -7,7 +7,8 @@ import {
   ReconnectController,
   WS_CLOSE_FORBIDDEN,
   WS_CLOSE_UNAUTHENTICATED,
-} from '@/shared/lifecycle';
+} from '@omniagents/client/lifecycle';
+
 import type { TransportEmitter, TransportListener } from '@/shared/transport';
 import type { IpcEvents, IpcRendererEvents } from '@/shared/types';
 
@@ -31,22 +32,7 @@ type EventMessage = {
   args: unknown[];
 };
 
-/**
- * Cloud→client reverse-invoke. The transport routes it to a handler registered
- * via {@link WsTransportEmitter.addReverseHandler} and sends back the response
- * (or error) as a `reverse-response`. Used for the cloud's
- * `compute:start-session`, `compute:tunnel-*`, etc. callbacks.
- */
-type ReverseInvokeMessage = {
-  type: 'reverse-invoke';
-  id: number;
-  channel: string;
-  args: unknown[];
-};
-
-type ServerMessage = ResponseMessage | EventMessage | ReverseInvokeMessage;
-
-export type ReverseHandler = (...args: unknown[]) => unknown | Promise<unknown>;
+type ServerMessage = ResponseMessage | EventMessage;
 
 type PendingRequest = {
   resolve: (value: unknown) => void;
@@ -58,7 +44,7 @@ type PendingRequest = {
  * retry budget. Browser server-mode talks to the user's own launcher server
  * (loopback / trusted LAN) where every outage is "the server is restarting" —
  * the ws-token is short-TTL and re-fetched per dial, so even auth-flavored
- * close codes are transient there. Remote backends (cloud / WSL / self-hosted
+ * close codes are transient there. Remote backends (WSL / self-hosted
  * server, i.e. `StoreData.remoteBackend` set) use the standard 10-attempt
  * budget instead, where auth close codes are deterministic rejections.
  */
@@ -67,45 +53,26 @@ const LOCAL_LIFECYCLE_POLICY: LifecyclePolicy = {
   reconnectMaxAttempts: Number.POSITIVE_INFINITY,
 };
 
-/** Active team id (teams/cloud mode); sent as ?team= so the server scopes the session. */
-const ACTIVE_TEAM_KEY = 'omni-active-team';
-
-import { uuidv4 } from '@/lib/uuid';
-
-/** Persisted active team, or null until the user picks one (defaults to their personal team). */
-export function getActiveTeamId(): string | null {
-  return localStorage.getItem(ACTIVE_TEAM_KEY);
-}
-
-/** Set the active team and reconnect the socket so the server re-scopes the session. */
-export function setActiveTeamId(teamId: string): void {
-  localStorage.setItem(ACTIVE_TEAM_KEY, teamId);
-  // A full reload is the simplest correct reconnect: it re-dials /ws with the
-  // new ?team= and re-hydrates every store from the new scope.
-  location.reload();
-}
+import { uuidv4 } from '@omniagents/client/util/uuid';
 
 /**
- * Optional cloud-link configuration. When set, ``WsTransportEmitter`` opens
- * the WebSocket against the cloud at *baseUrl* and delegates ws-token
- * acquisition to *getWsToken* (which runs in the Electron main process —
- * it has the Entra access token and can call ``/api/ws-token`` without
- * tripping CORS preflight that the renderer's cross-origin fetch would).
- * Browser server-mode leaves the config unset and keeps the same-origin
- * fetch behaviour.
+ * Optional remote-backend configuration. When set, ``WsTransportEmitter``
+ * opens the WebSocket against *baseUrl* and delegates ws-token acquisition
+ * to *getWsToken* (which runs in the Electron main process, free of the
+ * renderer's CORS sandbox). Browser server-mode leaves the config unset and
+ * keeps the same-origin fetch behaviour.
  */
 export type WsTransportConfig = {
-  /** Absolute origin of the cloud launcher, e.g. ``https://omni.example.com``. */
+  /** Absolute origin of the backend, e.g. ``http://my-server:3001``. */
   baseUrl: string;
-  /** Resolver for a fresh WS auth token. In Electron cloud mode this crosses
-   *  the preload bridge to main, which fetches /api/ws-token with a Bearer. */
+  /** Resolver for a fresh WS auth token; crosses the preload bridge to main. */
   getWsToken: () => Promise<string>;
 };
 
 /**
  * WebSocket-based transport emitter. Two modes:
  *   - Browser server-mode: same-origin /api/ws-token + ws://<host>/ws.
- *   - Cloud-linked Electron: absolute baseUrl + Bearer header to the cloud,
+ *   - Remote-linked Electron: absolute baseUrl, token minted/fetched by main,
  *     WS upgrade against the same host.
  */
 export class WsTransportEmitter implements TransportEmitter {
@@ -113,8 +80,6 @@ export class WsTransportEmitter implements TransportEmitter {
   private nextId = 1;
   private pending = new Map<number, PendingRequest>();
   private listeners = new Map<string, Set<(...args: unknown[]) => void>>();
-  /** Reverse-RPC handlers — server can invoke these via `reverse-invoke`. */
-  private reverseHandlers = new Map<string, ReverseHandler>();
   private readonly reconnect: ReconnectController;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private connectionState: ConnectionState = { state: 'connecting' };
@@ -131,29 +96,26 @@ export class WsTransportEmitter implements TransportEmitter {
   // Keep the ID across socket reconnects; a new document rehydrates durable
   // chat state through a new transport instead of stealing another window.
   private sessionId = uuidv4();
-  // Shared storage chooses the scope of a NEW document, never a reconnect.
-  private readonly teamId = getActiveTeamId();
   private authToken: string | null = null;
-  private readonly cloud: WsTransportConfig | null;
+  private readonly remote: WsTransportConfig | null;
   private readonly wsHost: string;
-  /** Subscribers to (re)connection events. Used by main-ws-client to re-
-   *  register the machine identity after a reconnect (Phase 6). */
+  /** Subscribers to (re)connection events. */
   private connectListeners = new Set<() => void>();
 
-  constructor(cloud?: WsTransportConfig) {
-    this.cloud = cloud ?? null;
-    // Remote-linked (cloud / WSL / self-hosted server) → standard 10-attempt
-    // budget with terminal state; local server-mode → infinite retries.
-    this.reconnect = new ReconnectController(cloud ? DEFAULT_LIFECYCLE_POLICY : LOCAL_LIFECYCLE_POLICY);
+  constructor(remote?: WsTransportConfig) {
+    this.remote = remote ?? null;
+    // Remote-linked (WSL / self-hosted server) → standard 10-attempt budget
+    // with terminal state; local server-mode → infinite retries.
+    this.reconnect = new ReconnectController(remote ? DEFAULT_LIFECYCLE_POLICY : LOCAL_LIFECYCLE_POLICY);
     // Pre-compute the WS host once. For browser mode use ``location.host``
-    // (the SPA's origin); for cloud-linked Electron the renderer is loaded
+    // (the SPA's origin); for remote-linked Electron the renderer is loaded
     // from a file:// URL so ``location`` is useless and we derive the host
-    // from cloud.baseUrl.
-    if (cloud) {
+    // from remote.baseUrl.
+    if (remote) {
       try {
-        this.wsHost = new URL(cloud.baseUrl).host;
+        this.wsHost = new URL(remote.baseUrl).host;
       } catch {
-        throw new Error(`WsTransportEmitter: invalid cloud baseUrl: ${cloud.baseUrl}`);
+        throw new Error(`WsTransportEmitter: invalid baseUrl: ${remote.baseUrl}`);
       }
     } else {
       this.wsHost = location.host;
@@ -162,9 +124,9 @@ export class WsTransportEmitter implements TransportEmitter {
   }
 
   private isHttps(): boolean {
-    if (this.cloud) {
+    if (this.remote) {
       try {
-        return new URL(this.cloud.baseUrl).protocol === 'https:';
+        return new URL(this.remote.baseUrl).protocol === 'https:';
       } catch {
         return false;
       }
@@ -176,11 +138,10 @@ export class WsTransportEmitter implements TransportEmitter {
     if (this.authToken) {
       return this.authToken;
     }
-    // Cloud-linked Electron: delegate to main (cross-origin fetch + Bearer
-    // would trip CORS preflight; EasyAuth's redirect on the OPTIONS request
-    // fails it). Browser server-mode: same-origin cookie auth.
-    if (this.cloud) {
-      this.authToken = await this.cloud.getWsToken();
+    // Remote-linked Electron: delegate to main (no CORS there). Browser
+    // server-mode: same-origin fetch.
+    if (this.remote) {
+      this.authToken = await this.remote.getWsToken();
       return this.authToken;
     }
     const res = await fetch('/api/ws-token', { credentials: 'same-origin' });
@@ -203,9 +164,7 @@ export class WsTransportEmitter implements TransportEmitter {
 
   private getWsUrl(token: string): string {
     const protocol = this.isHttps() ? 'wss:' : 'ws:';
-    const team = this.teamId;
-    const teamParam = team ? `&team=${encodeURIComponent(team)}` : '';
-    return `${protocol}//${this.wsHost}/ws?sessionId=${encodeURIComponent(this.sessionId)}&token=${encodeURIComponent(token)}${teamParam}`;
+    return `${protocol}//${this.wsHost}/ws?sessionId=${encodeURIComponent(this.sessionId)}&token=${encodeURIComponent(token)}`;
   }
 
   private async connect(): Promise<void> {
@@ -239,8 +198,7 @@ export class WsTransportEmitter implements TransportEmitter {
       }
       this.messageQueue = [];
 
-      // Notify subscribers so they can replay setup work (e.g. re-register
-      // the machine identity with the cloud — see Phase 6).
+      // Notify subscribers so they can replay setup work.
       for (const cb of this.connectListeners) {
         try {
           cb();
@@ -275,8 +233,6 @@ export class WsTransportEmitter implements TransportEmitter {
             listener(...msg.args);
           }
         }
-      } else if (msg.type === 'reverse-invoke') {
-        void this.dispatchReverseInvoke(ws, msg);
       }
     };
 
@@ -307,7 +263,7 @@ export class WsTransportEmitter implements TransportEmitter {
     if (this.connectionState.state === 'closed') {
       return;
     }
-    const permanent = this.cloud !== null && classifyCloseCode(closeCode) === 'permanent';
+    const permanent = this.remote !== null && classifyCloseCode(closeCode) === 'permanent';
     const decision = this.reconnect.recordFailure({ permanent });
     if (!decision.retry) {
       this.enterTerminalState(closeCode, reason);
@@ -414,27 +370,9 @@ export class WsTransportEmitter implements TransportEmitter {
   }
 
   /**
-   * Register a handler for a reverse-RPC channel — the cloud may dispatch
-   * `reverse-invoke` frames on it and the handler's return value is sent
-   * back as `reverse-response`. Only one handler per channel; re-registering
-   * replaces the previous one.
-   *
-   * Returns an unsubscriber that removes the handler.
-   */
-  addReverseHandler(channel: string, handler: ReverseHandler): () => void {
-    this.reverseHandlers.set(channel, handler);
-    return () => {
-      const current = this.reverseHandlers.get(channel);
-      if (current === handler) {
-        this.reverseHandlers.delete(channel);
-      }
-    };
-  }
-
-  /**
    * Subscribe to (re)connect events. Fires immediately on each successful
    * `ws.onopen`. Used by callers that need to replay setup work after a
-   * reconnect (Phase 6: re-register the machine identity with the cloud).
+   * reconnect.
    */
   onConnect(cb: () => void): () => void {
     this.connectListeners.add(cb);
@@ -483,29 +421,6 @@ export class WsTransportEmitter implements TransportEmitter {
       } catch (err) {
         console.error('[ws-transport] state listener threw:', err);
       }
-    }
-  }
-
-  private async dispatchReverseInvoke(origin: WebSocket, msg: ReverseInvokeMessage): Promise<void> {
-    const handler = this.reverseHandlers.get(msg.channel);
-    const respond = (payload: { result?: unknown; error?: string }): void => {
-      const out = JSON.stringify({ type: 'reverse-response', id: msg.id, ...payload });
-      // Send only when the WS is still open — closing mid-flight is the
-      // cloud's problem to recover from (it'll time out and surface
-      // host-offline).
-      if (this.ws === origin && origin.readyState === WebSocket.OPEN) {
-        origin.send(out);
-      }
-    };
-    if (!handler) {
-      respond({ error: `No reverse handler for channel: ${msg.channel}` });
-      return;
-    }
-    try {
-      const result = await handler(...(msg.args ?? []));
-      respond({ result });
-    } catch (err) {
-      respond({ error: err instanceof Error ? err.message : String(err) });
     }
   }
 }

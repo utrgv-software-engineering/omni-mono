@@ -1,6 +1,5 @@
 import React, { useLayoutEffect } from "react";
-import { PassThrough } from "node:stream";
-import { render } from "ink";
+import { render } from "ink-testing-library";
 import { expect, it, vi } from "vitest";
 import { KeypressProvider } from "../../contexts/KeypressContext.js";
 import { useKeypress, type Key } from "../useKeypress.js";
@@ -25,19 +24,10 @@ it("installs the newly focused handler before layout effects can deliver input",
     }, [active]);
     return null;
   }
-  const stdout = new PassThrough();
-  stdout.resume();
   const instance = render(
     <KeypressProvider>
       <Prompt active={false} />
     </KeypressProvider>,
-    {
-      stdout: stdout as unknown as NodeJS.WriteStream,
-      stderr: stdout as unknown as NodeJS.WriteStream,
-      debug: true,
-      exitOnCtrlC: false,
-      patchConsole: false,
-    },
   );
   try {
     await vi.waitFor(() => expect(committed).toHaveBeenCalledWith(false));
@@ -50,7 +40,5 @@ it("installs the newly focused handler before layout effects can deliver input",
     expect(handled).toHaveBeenCalledWith("y", {});
   } finally {
     instance.unmount();
-    instance.cleanup();
-    stdout.destroy();
   }
 });
