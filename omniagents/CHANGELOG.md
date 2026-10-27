@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-27
+
 ### Added
+- Persistent Docker environments for personal and pipelined factories: preserve installed dependencies and working files across restarts, refresh credentials on reconnect, and support full-filesystem backup, restore, and explicit reset.
+- Scoped memory and Library artifact capabilities, with authorization-aware access for agents and integrations.
+- Live voice integration, shared chat UI updates, and stronger authentication and authorization across factory runtimes and delegated agents.
 - Sandbox profiles take `build:`: shell commands built into the profile's docker image once, cached as `omniagents-profile:<digest>` of the base image and the steps (`omniagents.core.sandbox.images`). `omni serve` and container evaluations start from that image, so toolchain installs no longer run in every container; `init:` still runs at each start.
 - **Agents can build on a base**: `extends: <folder>` in an `agent.yml` names a folder (relative to the project root) holding an `agent.yml`. The agent's own keys override the base's, its `capabilities` add to the base's, and its instructions render into the base's `{{ role }}` slot; includes and context factories resolve from both folders. `paths.context` lists folders whose `@context_factory` functions any agent can name. See `docs/guide/defining-agents.md`.
 - **Skill folders that belong to an agent definition**: an agent sees its own `agents/<name>/skills/`, the `skills/` of any base it extends, and the project's `paths.skills` folders (default `skills/`), after the workspace's own skills and only for that agent (a sub-agent called as a tool lists and loads its own). `AgentSpec.skill_roots`, `omniagents.core.skills.agent_skill_roots`.
