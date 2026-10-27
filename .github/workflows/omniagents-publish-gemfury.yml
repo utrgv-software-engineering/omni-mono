@@ -4,6 +4,11 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      release_ref:
+        description: Existing release tag or commit to build (defaults to the selected ref)
+        required: false
+        type: string
 
 defaults:
   run:
@@ -15,12 +20,16 @@ jobs:
     runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_ref || github.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
+      - name: Use the lockfile npm version
+        run: npm install -g npm@11.6.2
       - run: python -m pip install build
       - run: make package-build
       - run: "python -m pip install --no-deps --only-binary=:all: dist/*.whl"
@@ -36,12 +45,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ inputs.release_ref || github.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
+      - name: Use the lockfile npm version
+        run: npm install -g npm@11.6.2
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
