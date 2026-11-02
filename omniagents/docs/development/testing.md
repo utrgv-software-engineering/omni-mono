@@ -315,6 +315,29 @@ def test_with_temp_file():
         os.unlink(temp_path)
 ```
 
+## Dependency upgrades
+
+The Python Tests workflow runs `dependency-compatibility` twice: once from
+`uv.lock`, and once after resolving newer versions within the declared bounds.
+Changes to either workspace's Python dependencies or the root lockfile trigger
+this job. Both legs exercise real MCP subprocesses, OAuth and elicitation,
+compaction and retry behavior, tool-output guardrails, and Workplace MCP services.
+
+The supported runtime uses Agents SDK 0.24, OpenAI 3.41, and MCP 2.3, with
+minor-version bounds around the tested adapter contracts. LiteLLM and Blaxel
+are not supported extras and are excluded from `all`; neither is required to
+use OpenAI models, Docker, or QuickSand.
+
+An upgrade is ready only after the compatibility jobs and the broader Python
+suite pass. Compare failures against the current dependency baseline. Retain
+frozen lockfile installs for deployment; a successful resolver or core-only
+suite is insufficient evidence for releasing an upgrade.
+
+The MCP 2 adapter supports legacy initialization and modern discovery, preserves
+wire-format aliases, and routes both legacy elicitation and modern input-required
+rounds through the existing user-input protocol. Tests cover accept, decline,
+and cancel over real subprocess connections in both protocol modes.
+
 ## Next Steps
 
 - [Contributing](contributing.md) - Development guidelines

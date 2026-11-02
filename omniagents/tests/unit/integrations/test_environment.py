@@ -205,3 +205,46 @@ def test_personal_workspace_is_reattached_and_detached_not_destroyed(
     assert [c.kwargs["durable"] for c in up.await_args_list] == [True, True, False]
     assert [c.kwargs["destroy"] for c in down.await_args_list] == [False, False, True]
     assert [c.kwargs["detach"] for c in down.await_args_list] == [True, True, False]
+
+
+def test_shared_mount_is_injected_for_both_backends(monkeypatch, tmp_path):
+    import asyncio
+    from omniagents.integrations.environment import RunEnvironments
+    from omniagents.core.runtime import serve_harness
+    from omniagents.core.sandbox import profiles
+
+    monkeypatch.delenv("LIBRARY_FILES_HOST_PATH", raising=False)
+    monkeypatch.setenv("SHARED_FILES_HOST_PATH", str(tmp_path / "shared"))
+    original = profiles.resolve_profile
+    monkeypatch.setattr(
+        profiles,
+        "resolve_profile",
+        lambda **kwargs: original(config_dir=tmp_path / "config", **kwargs),
+    )
+    captured = []
+
+    async def bring_up(**kwargs):
+        captured.append(kwargs["profile"].raw["client"]["binds"])
+        raise RuntimeError("inspected")
+
+    monkeypatch.setattr(serve_harness, "bring_up_session", bring_up)
+
+    async def run():
+        for backend in ("docker", "quicksand"):
+            profile = tmp_path / (backend + ".yml")
+            profile.write_text(
+                "version: 1\nclient:\n  type: "
+                + backend
+                + "\noptions:\n  image: ubuntu\n"
+            )
+            try:
+                async with RunEnvironments(profile, None).sandbox():
+                    pass
+            except RuntimeError as exc:
+                assert str(exc) == "inspected"
+
+    asyncio.run(run())
+    assert (
+        captured
+        == [[{"source": str(tmp_path / "shared"), "target": "/workspace/Shared"}]] * 2
+    )

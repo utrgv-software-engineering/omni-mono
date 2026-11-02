@@ -10,6 +10,7 @@
     "./activity-presentation": "./src/activity-presentation.tsx",
     "./ai-types": "./src/ai-types.ts",
     "./browser-chat": "./src/browser-chat.tsx",
+    "./components/omni-avatar/planet": "./src/components/omni-avatar/planet.ts",
     "./components/*": "./src/components/*.tsx",
     "./components/ai": "./src/components/ai/index.ts",
     "./greeting": "./src/greeting.ts",

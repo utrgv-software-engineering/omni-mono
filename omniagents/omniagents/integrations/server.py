@@ -147,6 +147,12 @@ def parse_integrations(entries: Any) -> List[Config]:
         except ValueError as exc:
             logger.warning("integrations: slack is off: %s", exc)
             continue
+        if os.environ.get("OMNIAGENTS_EVENT_GATEWAY") == "1":
+            entry["delivery"] = "http"
+            entry["signing_secret"] = os.environ.get("SLACK_SIGNING_SECRET", "")
+            entry["token"] = os.environ.get(
+                "OMNIAGENTS_GATEWAY_SLACK_TOKEN", entry.get("token", "")
+            )
         app_token = entry.get("app_token") or None
         signing_secret = entry.get("signing_secret") or None
         delivery = entry.get("delivery") or ("socket" if app_token else "http")
@@ -189,7 +195,13 @@ def mount_integrations(
     from .schedule import ScheduleSource, project_schedules
 
     schedules = project_schedules(Path(manifest).parent)
-    if not configs and not schedules and not data.get("memory") and not architecture:
+    if (
+        not configs
+        and not schedules
+        and not data.get("memory")
+        and not architecture
+        and not os.environ.get("SHARED_FILES_HOST_PATH")
+    ):
         return None
 
     from omniagents.core.paths import get_home_dir
@@ -228,7 +240,7 @@ def mount_integrations(
         if not await _authorized(request):
             return Response(status_code=401)
         service = app.state.agent_service
-        busy = store.running() + len(service.active_run_ids())
+        busy = store.unsettled() + len(service.active_run_ids())
         busy += sum(
             item.state == "pending"
             for session in service.active_sessions()
@@ -239,6 +251,13 @@ def mount_integrations(
                 "architecture": architecture or "specialist",
                 "session_id": PERSONAL_SESSION if architecture == "personal" else None,
                 "busy": busy,
+                "version": os.environ.get("FACTORY_VERSION"),
+                "release_protocol": 1,
+                "event_gateway": os.environ.get("OMNIAGENTS_EVENT_GATEWAY") == "1",
+                "release_paused": bool(
+                    getattr(service, "_release_gate", None)
+                    and service._release_gate.paused
+                ),
             }
         )
 
@@ -259,6 +278,51 @@ def mount_integrations(
         shared_session=PERSONAL_SESSION if architecture == "personal" else None,
     )
     app.state.event_intake = intake
+    from omniagents.core.runtime.release_gate import ReleaseGate
+
+    service = app.state.agent_service
+    gate = ReleaseGate(
+        lambda: (
+            len(service.active_run_ids())
+            + len(intake._tasks)
+            + store.unsettled()
+            + sum(
+                item.state == "pending"
+                for session in service.active_sessions()
+                for item in session.message_queue
+            )
+        )
+    )
+    pending_release = os.environ.get("FACTORY_RELEASE_PENDING")
+    if pending_release and Path(pending_release).is_file():
+        gate.owner = Path(pending_release).read_text().strip()
+        gate.until = float("inf")  # Candidate cannot accept work before verification.
+    service._release_gate = intake.release_gate = gate
+    app.router.on_startup.append(intake.resume_received)
+
+    async def release_lease(request: Request):
+        import hmac
+
+        expected = os.environ.get("OMNIAGENTS_AGENT_HOST_CONTROL_TOKEN", "")
+        supplied = request.headers.get("authorization", "")
+        if not expected or not hmac.compare_digest(supplied, "Bearer " + expected):
+            return Response(status_code=403)
+        try:
+            if request.method == "POST":
+                return JSONResponse({"lease": gate.acquire(), "expires_in": 120})
+            body = await request.json()
+            gate.release(body.get("lease"))
+            if pending_release:
+                Path(pending_release).unlink(missing_ok=True)
+            return JSONResponse({"ok": True})
+        except RuntimeError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=409)
+        except (ValueError, AttributeError):
+            return JSONResponse({"detail": "Invalid release lease"}, status_code=409)
+
+    app.add_api_route(
+        "/integrations/release-lease", release_lease, methods=["POST", "DELETE"]
+    )
     # The factory's version, from whoever runs it (the supervisor: the commit it promoted).
     intake.version = os.environ.get("FACTORY_VERSION") or None
     from omniagents.core.project.runtime import build_spec_from_project
@@ -335,6 +399,9 @@ def mount_integrations(
     from .memory import mount_memory_route
 
     mount_memory_route(app, intake)
+    from .shared import mount_shared_route
+
+    mount_shared_route(app, intake, _authorized)
     from omniagents.core.memory.extract import shutdown as shutdown_memory
 
     app.router.on_shutdown.append(shutdown_memory)
@@ -761,12 +828,21 @@ def _attach_factory_workspace(app, project, resources, environments, principal):
         / f"{project.product.slug}.personal-sandbox.json",
     )
 
+    from .desktop import mount_desktop
+
+    active_workspace = None
+    mount_desktop(app, lambda: active_workspace, principal)
+
     async def start_workspace():
+        nonlocal active_workspace
         sandbox = await context.__aenter__()
+        active_workspace = sandbox
         owner = await principal()
         sandbox.register(resources, owner_user_id=owner.user_id if owner else None)
 
     async def stop_workspace():
+        nonlocal active_workspace
+        active_workspace = None
         await context.__aexit__(None, None, None)
 
     app.router.on_startup.insert(0, start_workspace)

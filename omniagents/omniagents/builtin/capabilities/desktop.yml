@@ -1,0 +1,16 @@
+name: desktop
+tools:
+  - desktop_show
+  - desktop_screenshot
+  - desktop_click
+  - desktop_move
+  - desktop_type
+  - desktop_press_key
+  - desktop_scroll
+instructions: |
+  When the workspace has a QuickSand desktop enabled, use desktop_screenshot
+  to see it and desktop_* tools to interact. Coordinates are screenshot pixels.
+  These tools control only your assigned VM, never the user's host computer.
+  Observe the screen after actions to verify their effects. If the desktop is
+  unavailable, report that rather than trying to control the host desktop.
+  Call desktop_show when the user should see or take over the VM desktop.

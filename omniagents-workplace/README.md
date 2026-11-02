@@ -40,17 +40,31 @@ would in the real services; agents act as apps.
   tool call, a Web API call, a clone or push) as it happens, with its
   request and response, so you can see what a factory did and how.
 
-**Actions** run a repository's workflow files (`.github/workflows/*.yml`)
-on this machine: their steps run here, in a fresh checkout of the commit,
-with this machine's tools. A job's containers and services are not used;
-`actions/checkout`, `setup-python` and `setup-node` have local stand-ins,
-and other actions are skipped (the log says so). `runs-on: self-hosted`
-jobs run on the workplace's self-hosted runner, in the repositories an admin
-allows (the repository's Settings → Runners).
-Triggers, branch and path filters, matrices, `needs`, `if`, outputs,
-re-runs, cancelling and `workflow_dispatch` work as on GitHub.
+**Actions** use pinned `nektos/act` to execute workflows at the run's commit.
+Workplace records triggers, logs and checks; act handles actions, expressions,
+matrices, containers and services. Docker mode uses a private Docker-in-Docker
+controller; QuickSand mode runs act and Docker inside a VM. Factory runtime
+jobs stay outside tool VMs through a restricted bridge. See [workflow execution](docs/actions.md).
 
-## Run it
+
+An optional [Coolify deployment service](docs/coolify.md) runs in Docker or a
+persistent QuickSand VM for local deployment practice.
+
+## Install and run
+
+The published `omniagents-workplace` Python package includes the compiled web UI,
+MCP reference schemas, Canvas support code, and optional example seeds. Users do
+not need Node/npm, a JavaScript build, or the omni-mono checkout to serve it.
+Install from the package index configured for your organization:
+
+```sh
+uv tool install omniagents-workplace
+```
+
+Git is still required for repository operations. The factory runtime is a
+separate `omniagents` installation; installing Workplace alone does not start an
+agent. QuickSand workflow execution is available through the `[quicksand]` extra.
+
 
 ```bash
 omniagents-workplace serve            # http://127.0.0.1:7300
@@ -65,6 +79,12 @@ the organization (its Slack workspace, GitHub organization and Linear
 workspace) and make the first account, an admin. From **People** an admin
 adds people; each gets an invite link to choose a password with (a new link
 resets a password). A person is in all three services under one username.
+
+Azure deployments can optionally enable [Microsoft sign-in through App Service
+Easy Auth](docs/azure-easy-auth.md). Local login remains the default; external
+identities must be explicitly linked to existing accounts.
+The proposed [Azure web/compute deployment plan](docs/azure-web-compute-plan.md)
+describes future App Service, PostgreSQL, and private-VM support.
 
 Password changes revoke all existing browser sessions and outstanding invite
 links, then issue a new session to the person changing the password. Invite
@@ -487,3 +507,191 @@ Backups retain the encrypted connection data and its key. The `restore` command,
 which is also used for staging replay, removes GitHub connection settings and
 credentials and starts with self-improvement off: reconnect explicitly afterward.
 Do not point a staging runtime directly at an unmodified production backup.
+
+## QuickSand workflow jobs
+
+`--workflows quicksand` runs ordinary CI jobs in disposable VMs with their own
+Docker Engine. Explicit factory runtime actions keep the agent process on the
+host and route its tools into separate QuickSand VMs. The host Docker socket is
+not shared. See [setup, runtime boundaries and tests](docs/quicksand-runner.md).
+
+## Build a distributable package
+
+From the omni-mono checkout, with Node/npm and Python available:
+
+```sh
+uv run --project omniagents-workplace --group dev python omniagents-workplace/scripts/build_package.py
+```
+
+This installs the locked npm dependencies, builds the current UI, replaces the
+packaged assets, and produces a source archive and wheel in
+`omniagents-workplace/dist`. Use `--skip-install` to reuse an existing npm install,
+or `--assets-only` for frontend/backend development. `make build` delegates to
+the same Python command. No publishing or version change happens during a build.
+
+Python distribution builds fail if the UI is absent or its entry assets are
+missing. The source archive includes the compiled UI, so building a wheel from
+that archive does not require Node or sibling npm workspaces. For a release,
+always use the build command above to refresh assets from the current source.
+
+Verify the wheel in a fresh environment outside the checkout:
+
+```sh
+uv venv /tmp/workplace-package-check
+uv pip install --python /tmp/workplace-package-check/bin/python omniagents-workplace/dist/omniagents_workplace-0.1.0-py3-none-any.whl
+/tmp/workplace-package-check/bin/python -I omniagents-workplace/scripts/check_installed.py
+```
+
+On Windows, use a temporary directory and its `Scripts/python.exe` instead.
+The check serves the installed UI and every asset, checks the CLI, and verifies
+bundled schemas and seed workflows without installing the framework.
+
+`make publish` retains the existing clean, synchronized `main` branch guard and
+uploads the built distributions to Gemfury using `FURY_USER` and `FURY_TOKEN`.
+
+## Multiple factories
+
+`manage` runs one Workplace installation with shared sign-in and separate factories:
+
+```sh
+omniagents-workplace manage --data ~/.local/share/omni-factories --port 7300
+```
+
+Open the setup link printed in the terminal. In **Factories**, choose **New factory**,
+enter a name and a project directory containing `project.yml`, and choose Personal
+or Pipelined. Each factory needs its own non-overlapping project directory. Use
+**Start** to launch it, **Open** to enter its Workplace, and **Access** to invite
+people and assign factory roles. **Account → Factories** returns to the picker.
+Two tabs can use different factories simultaneously.
+
+To start agent runtimes, install `omniagents[sandbox-quicksand]` into the same
+Python environment as Workplace. Local runtimes use the project's
+`sandbox_profile_quicksand.yml` (or a QuickSand `sandbox_profile_default.yml`).
+Each gets its own persistent VM, runtime home, provider sign-in, config, logs,
+Library and Workplace database. Configure GitHub and model accounts inside each
+factory. Nothing is imported from an existing single-factory installation.
+Factory processes started through the UI restart with the installation; **Stop**
+disables that factory's automatic startup. Process failures appear in the picker;
+logs are in `DATA/factories/ID/runtime.log`.
+
+Workflow execution is off unless a clean QuickSand runner image is supplied:
+
+```sh
+omniagents-workplace manage --data ~/.local/share/omni-factories \
+  --workflow-quicksand-image /path/to/clean-runner
+```
+
+Use the [QuickSand workflow-runner instructions](../omniagents/docs/guide/quicksand.md)
+to prepare the image. It may be shared; each job gets a disposable writable VM.
+Trusted agent-runtime jobs use the credentials and tool profile of their factory.
+There is no host-shell workflow fallback in managed mode.
+
+For deployment, set `--host` and `--public-url` for your listener and HTTPS reverse
+proxy. `--sandbox-url` defaults to `http://10.0.2.101:7300`; the generated profiles
+forward that guest port to the installation's actual listener port. Run one
+installation process per data directory. The installation lock rejects a second
+process using the same data. Back up the entire data directory together with its
+project directories while the installation is stopped.
+
+See [the isolation design](docs/multiple-factories.md) for the boundaries. Existing
+`serve` and `up` commands keep their single-factory behavior.
+
+### Hosted factories with Docker
+
+The installation host can instead supervise separate Docker runtime containers:
+
+```sh
+omniagents-workplace manage --data /data/installation \
+  --public-url https://your-workplace.example \
+  --internal-url http://workplace:7300 --host 0.0.0.0 \
+  --docker-image your-factory-image --docker-network your-factory-network \
+  --docker-host-data /host/path/to/installation \
+  --workflow-image your-workflow-image --template /factory-template
+```
+
+The host needs the Docker CLI/socket. `--docker-host-data` is the Docker host's
+path corresponding to `--data` inside the installation container. Each runtime
+mounts only its own factory directory and gets its own credentials, runtime home,
+project copy and persistent tool sandbox. Configure a separate sandbox-facing
+port with `--sandbox-port` and `--sandbox-url` to expose only git/upload services
+to tool containers. Workflow shell jobs use disposable Docker containers.
+
+With `--template`, **New factory** creates a clean project copy; users need only
+a name and architecture. Provider credentials and installation state are not
+copied from the template.
+
+For an existing deployment, `Installation.adopt` registers its stopped Workplace
+data and Docker runtime without recreating either. It imports identities and
+sessions into the installation registry and preserves factory-local IDs, provider
+credentials, chat, Library and memory. Old machine endpoints remain aliases for
+that original factory only. The registry and new factory directories under
+`DATA/installation` are included in the existing Workplace backup operation.
+Keep the deployment's installation Compose override on subsequent deployments.
+
+Factory provider events pass through a [durable Workplace gateway](docs/event-gateway.md).
+It persists accepted events in each factory's database and retries runtime delivery
+across restarts. Provider stand-ins keep their own delivery semantics; Slack Socket
+Mode ingestion lives in Workplace. This does not queue chat submissions or guarantee
+delivery while Workplace itself is unavailable.
+
+### Guest review links
+
+Canvas and Library owners (and factory admins) can use **Share → Create link**
+to let a stakeholder review an item without a Workplace account. Guests enter a
+self-reported name when they first comment. Canvas supports pinned comments and
+replies; Library pages and documents have comment threads too. Feedback is saved
+with the item, and does **not** enqueue an agent run. Agents can read it on request
+using Canvas `list_comments` or Library `artifact_comments`.
+
+Share links show the current version of one item. **Share → Revoke** disables a
+link, including its file URLs; deleting the item disables all its links. A link
+is a bearer credential: anyone who receives it can read and comment on that item.
+Guest names are attribution, not verified account identities. Guests cannot edit,
+resolve, delete, browse version history, or access the rest of Workplace.
+
+Workplace serves `robots.txt` with `Disallow: /`, sends `X-Robots-Tag: noindex,
+nofollow, noimageindex`, and sets the equivalent HTML metadata. Share credentials
+live in the URL fragment and are required by the review API; an ordinary crawler
+request only receives the generic page shell. File responses are non-cacheable
+and links use `no-referrer`. Robots directives guide cooperative crawlers; they
+are not access control or a guarantee against someone copying shared content.
+
+### Shared files and folder workflows
+
+**Shared** is a file browser for the current factory. Upload files or folders,
+including drag-and-drop; create, rename, move, delete, preview, and download them.
+Folder downloads are ZIPs. **Use in chat** adds the sandbox path and current file
+revision to the chat composer without sending it.
+
+The files live in the factory's persistent `shared/` directory and appear at
+`/workspace/Shared` in both Docker and QuickSand sandboxes. Agent-created files
+appear in the same browser. Files, upload journals, workflow configuration, and
+change records are included in Workplace backups. Each factory has its own data;
+Shared requires a signed-in factory member and is separate from guest review links.
+Managed installations configure the host path automatically. For a standalone
+runtime, configure `SHARED_FILES_HOST_PATH` and make that host directory accessible
+at the same path inside the runtime container, as with `LIBRARY_FILES_HOST_PATH`.
+
+Uploads and sandbox edits record changes without starting agents by default.
+Admins can open **Workflows** to select a folder, filename patterns, change types,
+and instructions, then explicitly enable a workflow. One upload batch produces
+one invocation per matching workflow. Folder creation alone does not run a file
+workflow. Agent-originated changes are excluded unless explicitly enabled; keep
+workflow outputs outside their watched input folders to avoid loops.
+
+Events go through the durable Workplace gateway and normal factory automation
+intake, including retry and delivery deduplication. Personal factories use their
+shared generalist conversation; pipelined factories use the normal automation
+entrypoint. Pending deliveries are cancelled if the workflow is disabled, deleted,
+or edited before delivery. The workflow dialog shows recent changes and delivery
+status; agent execution appears in the existing factory run history.
+
+Events identify paths and revisions, not historical copies of file contents.
+Agents must check the current file revision when acting on an older event. Direct
+sandbox writes are observed after they stabilize; agents should publish completed
+files with an atomic rename. Workflow folder paths are explicit: update a rule if
+you move its watched folder.
+
+Backups check available capacity before starting and retain disk headroom while
+copying. A failed backup removes only its own incomplete output; completed backups
+keep the configured retention policy.

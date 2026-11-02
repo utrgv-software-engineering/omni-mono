@@ -92,6 +92,7 @@ from omniagents.core.session.event_log import (
     stamp_session_event,
 )
 from omniagents.core.session.manager import QueuedItem
+from omniagents.core.runtime.release_gate import admission
 from omniagents.core.runtime.bridge import stream_agent
 from omniagents.core.agents.builder import _default_build_agent
 from omniagents.core.agents.mcp import (
@@ -2357,7 +2358,7 @@ class AgentService(RpcMethodsBase):
         for res in resources_attr:
             if hasattr(res, "model_dump"):
                 try:
-                    out.append(res.model_dump(mode="json"))
+                    out.append(res.model_dump(mode="json", by_alias=True))
                     continue
                 except Exception:
                     pass
@@ -2401,7 +2402,11 @@ class AgentService(RpcMethodsBase):
         for content in contents_attr:
             if hasattr(content, "model_dump"):
                 try:
-                    out.append(content.model_dump(mode="json", exclude_none=True))
+                    out.append(
+                        content.model_dump(
+                            mode="json", by_alias=True, exclude_none=True
+                        )
+                    )
                     continue
                 except Exception:
                     pass
@@ -4026,6 +4031,7 @@ class AgentService(RpcMethodsBase):
                     },
                 )
 
+    @admission
     async def start_run(
         self,
         prompt: str,
@@ -4872,6 +4878,17 @@ class AgentService(RpcMethodsBase):
         # What the prompt carried besides text (image thumbnails, file
         # names), so the transcript shows what was sent.
         attachments = describe_attachments(content)
+        # Keep notification provenance out of model input, but preserve it in
+        # both the live run event and its canonical prompt item.
+        from omniagents.core.session import queue_inbox
+
+        notifications = []
+        dispatch = queue_inbox.current_dispatch.get()
+        if dispatch and dispatch[0] == sess.id:
+            for entry in queue_inbox.entries(self._queue_store(sess), sess.id):
+                if entry["item"]["id"] == dispatch[1]:
+                    notifications = entry["item"].get("notifications", [])
+                    break
         await self._broadcast_session(
             sess,
             "run_started",
@@ -4880,6 +4897,7 @@ class AgentService(RpcMethodsBase):
                 "session_id": sess.id,
                 "prompt": prompt,
                 "prompt_role": prompt_role,
+                **({"notifications": notifications} if notifications else {}),
                 **({"attachments": attachments} if attachments else {}),
             },
             track_live=True,
@@ -6840,6 +6858,7 @@ class AgentService(RpcMethodsBase):
     #  serializes cleanly against user-initiated runs.
     # ------------------------------------------------------------------
 
+    @admission
     async def enqueue_message(
         self,
         session_id: str,
@@ -7391,6 +7410,14 @@ class AgentService(RpcMethodsBase):
         def make_item(items):
             return QueuedItem(
                 content=self._format_notification_batch(items),
+                notifications=[
+                    {
+                        key: item[key]
+                        for key in ("source", "content", "worker")
+                        if key in item
+                    }
+                    for item in items
+                ],
                 role="assistant",
                 source="notifications:batch",
                 safe_tool_overrides=self._merge_notification_safe_tool_overrides(items),

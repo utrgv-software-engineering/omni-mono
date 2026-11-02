@@ -89,7 +89,7 @@ export type ChatSessionEvent =
   | { type: 'STOP_FAILED'; run_id: string }
   | { type: 'APPROVAL_DECIDED'; request_id: string; value: 'yes' | 'always' | 'no' }
   // Server events
-  | { type: 'RUN_STARTED'; run_id: string; session_id?: string; prompt?: string; prompt_role?: string }
+  | { type: 'RUN_STARTED'; run_id: string; session_id?: string; prompt?: string; prompt_role?: string; notifications?: import('../transcript/worker-messages').Notification[] }
   | { type: 'RUN_END'; session_id?: string; run_id?: string }
   | { type: 'MESSAGE_OUTPUT'; content: string; session_id?: string; message_id?: string; run_id?: string }
   | {
@@ -308,7 +308,7 @@ export const chatSessionMachine = setup({
       if (dup) {
         return { items: context.items };
       }
-      const msg: ChatMessage = { type: 'chat', role, content: text };
+      const msg: ChatMessage = { type: 'chat', role, content: text, notifications: e.notifications };
       if (role === 'assistant') {
         // Assistant-role wakeup prompts are recorded canonically as
         // agent_message items with a turn_id, so after reload they fold

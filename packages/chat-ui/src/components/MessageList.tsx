@@ -1,3 +1,7 @@
+import { WorkerMessage } from './WorkerMessage';
+import { workerMessageParts, type WorkerMessage as WorkerReport } from '@omniagents/client/transcript/worker-messages';
+import { useChatHost } from '../host';
+import { presentationFromArtifact } from '../lib/presentation';
 import { AppRenderer } from '@mcp-ui/client';
 import type { CallToolResult, ReadResourceResult } from '@modelcontextprotocol/sdk/types.js';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
@@ -116,8 +120,10 @@ export function MessageList({
   onSubmitMessage,
   onStageContext,
   onOpenReview,
+  onOpenWorker,
 }: {
   items: MessageItem[];
+  onOpenWorker?: (worker: WorkerReport) => void;
   greeting?: string;
   statusText?: string;
   thinking?: boolean;
@@ -204,7 +210,7 @@ export function MessageList({
       <div className="flex-1 relative">
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="mx-auto max-w-full sm:max-w-2xl text-center px-6">
-            <div className="text-2xl sm:text-4xl font-normal tracking-tight text-foreground font-serif">{greeting}</div>
+            <div className="text-2xl sm:text-4xl font-normal tracking-tight text-foreground font-sans">{greeting}</div>
             <motion.div
               initial={{ height: 0, opacity: 0 }}
               animate={welcomeText ? { height: 'auto', opacity: 1 } : { height: 0, opacity: 0 }}
@@ -270,6 +276,14 @@ export function MessageList({
               );
             }
             if (m.type === 'chat') {
+              const parts = workerMessageParts(m);
+              if (parts) return <div key={key} className="flex min-w-0 flex-col gap-2">
+                {parts.map((part, index) => part.worker
+                  ? <WorkerMessage key={part.worker.message_id ?? index}
+                      worker={part.worker}
+                      onOpenTranscript={onOpenWorker ? () => onOpenWorker(part.worker!) : undefined} />
+                  : <MessageBubble key={index} messageKey={key + ':' + index} role="assistant" content={part.content} />)}
+              </div>;
               return (
                 <MessageBubble
                   key={key}
@@ -542,6 +556,8 @@ function InlineArtifact({
   onSubmitMessage?: (text: string) => void | Promise<void>;
   onStageContext?: (source: string, text: string) => void;
 }) {
+  const host = useChatHost();
+  const presentation = presentationFromArtifact(item);
   const [copied, setCopied] = useState(false);
   const [maximized, setMaximized] = useState(false);
   const portalTarget = useContext(ArtifactPortalContext);
@@ -572,6 +588,14 @@ function InlineArtifact({
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [maximized]);
+
+  if (presentation) return (
+    <div data-artifact-id={item.artifact_id}>
+      <Button variant="outline" onClick={() => host.presentView?.(presentation)} disabled={!host.presentView}>
+        {presentation.title} <span aria-hidden="true">↗</span>
+      </Button>
+    </div>
+  );
 
   const canPortal = maximized && portalTarget !== null;
 

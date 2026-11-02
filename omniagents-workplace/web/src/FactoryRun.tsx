@@ -1,3 +1,4 @@
+import { factoryUrl } from "./factory-scope";
 // One of the factory's runs, as the agents did it: its sessions (its own, and
 // those of the agents it called as tools) through the shared chat UI,
 // read-only, live while it runs. The workplace proxies the factory's agent
@@ -32,7 +33,7 @@ const host: ChatHost = {
 /** A connection to an agent's runtime on the factory, through the workplace. */
 function AgentRuntime({ agent, children }: { agent: string; children: React.ReactNode }) {
   const connection = useMemo(
-    () => ({ baseUrl: `${window.location.origin}/workplace/api/factory/runtime/agents/${agent}/` }),
+    () => ({ baseUrl: factoryUrl(`${window.location.origin}/workplace/api/factory/runtime/agents/${agent}/`) }),
     [agent],
   );
   return (

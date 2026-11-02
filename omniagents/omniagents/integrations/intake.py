@@ -128,6 +128,8 @@ class EventIntake:
         self.version: Optional[str] = None
         #: Records the pull requests each run opened or worked on (``links.PullRequestLinks``).
         self.links: Optional["PullRequestLinks"] = None
+        self.release_gate = None
+        self.automation_sources = {}
 
     async def accept(self, event: IncomingEvent) -> bool:
         """Record ``event`` and start processing it; ``False`` for a redelivery."""
@@ -165,9 +167,24 @@ class EventIntake:
         while self._tasks:
             await asyncio.gather(*list(self._tasks), return_exceptions=True)
 
+    async def resume_received(self):
+        for event_id, event in self.store.received_events():
+            task = asyncio.create_task(self._process(event_id, event))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+
     async def _process(self, event_id: int, event: IncomingEvent) -> None:
+        if self.release_gate:
+            # Events are acknowledged only after durable storage. A replacement
+            # runtime resumes these received events with its new configuration.
+            await self.release_gate.wait()
         try:
-            matched = matching_automations(list_automations(self.project_root), event)
+            source = self.automation_sources.get(event.provider)
+            matched = (
+                source(event)
+                if source
+                else matching_automations(list_automations(self.project_root), event)
+            )
         except Exception as exc:  # a malformed automation file
             logger.exception("integrations: reading automations failed")
             self.store.set_status(event_id, "failed", str(exc))

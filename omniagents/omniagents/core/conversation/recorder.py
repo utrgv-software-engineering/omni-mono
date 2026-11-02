@@ -488,6 +488,7 @@ class ConversationRecorder:
         prompt_role: str | None,
         user_id: str | None = None,
         attachments: list | None = None,
+        notifications: list | None = None,
     ) -> Turn:
         self.ensure_thread(thread_id, user_id=user_id)
         now = _now()
@@ -529,6 +530,7 @@ class ConversationRecorder:
                 content={
                     "text": prompt,
                     "origin": "prompt",
+                    **({"notifications": notifications} if notifications else {}),
                     **({"attachments": attachments} if attachments else {}),
                 },
                 source_ref={"event": "run_started", "run_id": turn_id},
@@ -663,6 +665,11 @@ class ConversationRecorder:
                 else None
             ),
             attachments=attachments if isinstance(attachments, list) else None,
+            notifications=(
+                payload.get("notifications")
+                if isinstance(payload.get("notifications"), list)
+                else None
+            ),
         )
 
     def _on_run_status(self, thread_id: str, payload: Dict[str, Any]) -> None:

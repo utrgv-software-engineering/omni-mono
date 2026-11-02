@@ -246,7 +246,7 @@ OPTIONAL_FIELDS = {
     "report_incident": ("disable_tools", "disable_mcp_servers"),
     "export_session": ("redact",),
     "message_output": ("is_final", "message_id"),
-    "run_started": ("prompt", "prompt_role"),
+    "run_started": ("prompt", "prompt_role", "notifications"),
     "run_status": ("attempt", "total", "next_delay"),
     "tool_result": ("metadata",),
     "token": (
@@ -548,6 +548,7 @@ OBJECT_FIELDS = {
 #: to three stable methods, so the exception is declared per operation and
 #: stays visible here rather than being smuggled in as a renamed wire field.
 OPERATION_FIELD_TYPES = {
+    ("run_started", "notifications"): "array",
     ("start_run", "content"): "message_content",
     ("enqueue_message", "input_content"): "array",
     ("item_updated", "content"): "object",

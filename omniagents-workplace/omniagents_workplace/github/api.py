@@ -93,6 +93,13 @@ class RepoSettings(BaseModel):
     required_checks: Optional[Dict[str, List[str]]] = None
 
 
+class WorkflowConfiguration(BaseModel):
+    variables: Optional[Dict[str, Optional[str]]] = None
+    secrets: Optional[Dict[str, Optional[str]]] = None
+    approve_workflows: Optional[List[str]] = None
+    revoke_workflows: Optional[List[str]] = None
+
+
 class DeleteRepo(BaseModel):
     #: The repository's full name, typed to confirm.
     confirm: str
@@ -173,6 +180,44 @@ def github_ui_router(
             return state.repo(owner, name)
         except GitHubError as exc:
             _fail(exc)
+
+    @r.get("/repos/{owner}/{name}/workflow-settings")
+    def workflow_settings(owner: str, name: str, request: Request):
+        admin(request)
+        from .workflow_settings import WorkflowSettings
+
+        return WorkflowSettings(state.root.parent).public(
+            repo_of(owner, name).full_name
+        )
+
+    @r.put("/repos/{owner}/{name}/workflow-settings")
+    def save_workflow_settings(
+        owner: str, name: str, body: WorkflowConfiguration, request: Request
+    ):
+        admin(request)
+        from .workflow_settings import WorkflowSettings
+
+        try:
+            return WorkflowSettings(state.root.parent).configure(
+                repo_of(owner, name),
+                variables=body.variables,
+                credentials=body.secrets,
+                approve_workflows=body.approve_workflows,
+                revoke_workflows=body.revoke_workflows,
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
+    @r.post("/repos/{owner}/{name}/workflow-settings/release-token")
+    def release_token(owner: str, name: str, request: Request):
+        admin(request)
+        from .workflow_settings import WorkflowSettings
+
+        return {
+            "token": WorkflowSettings(state.root.parent).rotate_release_token(
+                repo_of(owner, name).full_name
+            )
+        }
 
     def issue_of(repo: Repo, number: int) -> Issue:
         try:

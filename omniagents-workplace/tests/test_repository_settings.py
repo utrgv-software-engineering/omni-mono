@@ -525,3 +525,56 @@ def test_repository_search_is_remote_scoped_and_paginated(setup, monkeypatch):
     assert response.json()["has_more"]
     assert response.json()["repositories"][0]["full_name"] == "my-org/needle"
     assert len(paths) == 2
+
+
+def test_provider_selections_survive_switches_and_new_login(setup, monkeypatch):
+    w, client, owner = setup
+    assert (
+        client.put(
+            "/workplace/api/repositories", json=body(repositories=["initech/app"])
+        ).status_code
+        == 200
+    )
+    connect_fake(w, owner)
+    monkeypatch.setattr(
+        w.repository_settings,
+        "github",
+        lambda path, **kw: {
+            "login": "new-user",
+            "default_branch": "main",
+            "permissions": {"push": True},
+        },
+    )
+    assert (
+        client.put(
+            "/workplace/api/repositories",
+            json=body(provider="github", repositories=["real/private"]),
+        ).status_code
+        == 200
+    )
+    saved = client.get("/workplace/api/repositories").json()
+    assert saved["selections"] == {
+        "standin": ["initech/app"],
+        "github": ["real/private"],
+    }
+    assert (
+        client.put(
+            "/workplace/api/repositories",
+            json=body(repositories=saved["selections"]["standin"]),
+        ).status_code
+        == 200
+    )
+    assert client.get("/workplace/api/repositories/view").json()["repositories"] == [
+        "initech/app"
+    ]
+    assert (
+        "initech/factory" in w.github.repos
+    )  # Deselecting never deletes repository data.
+    from omniagents_workplace.repository_settings import RepositorySettings
+
+    assert RepositorySettings(w).public()["selections"] == saved["selections"]
+    response = client.put(
+        "/workplace/api/repositories/github/token", json={"token": "github_pat_new"}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["selections"] == {"standin": ["initech/app"], "github": []}

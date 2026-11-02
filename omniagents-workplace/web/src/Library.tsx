@@ -1,3 +1,5 @@
+import { ShareButton, ArtifactFeedback } from "./Sharing";
+import { factoryUrl } from "./factory-scope";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import {
@@ -101,7 +103,7 @@ function Preview({ entry }: { entry: Entry }) {
         ) : entry.preview ? (
           <iframe
             title={`${entry.title} thumbnail`}
-            src={entry.preview.src}
+            src={factoryUrl(entry.preview.src)}
             sandbox="allow-scripts"
             tabIndex={-1}
             loading="lazy"
@@ -213,6 +215,7 @@ export function LibraryApp({
   }
   const actions = (entry: Entry) => (
     <>
+      {(account.admin || entry.owner_id === account.id) && <ShareButton kind={entry.kind === "canvas" ? "canvas" : "artifact"} id={entry.id} />}
       <Button
         variant="ghost"
         size="icon"
@@ -243,7 +246,7 @@ export function LibraryApp({
   );
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 p-4 md:p-8">
+      <div className={id ? "flex min-w-0 flex-col gap-6 p-4 md:p-6" : "workplace-page flex flex-col gap-6"}>
         <header className="flex flex-wrap items-center gap-3">
           {id && (
             <Button
@@ -295,20 +298,7 @@ export function LibraryApp({
           </div>
         ) : id ? (
           opened ? (
-            opened.kind === "page" ? (
-              <iframe
-                key={opened.view + opened.updated_at}
-                className="library-page"
-                title={opened.title}
-                src={opened.view}
-                sandbox="allow-scripts"
-                referrerPolicy="no-referrer"
-              />
-            ) : (
-              <article className="library-document library-document-full">
-                <ReactMarkdown>{opened.markdown}</ReactMarkdown>
-              </article>
-            )
+            <><ArtifactContent artifact={opened} /><ArtifactFeedback id={opened.id} account={account} /></>
           ) : (
             <Skeleton className="h-96 w-full" />
           )
@@ -486,5 +476,15 @@ export function LibraryApp({
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+
+export function ArtifactContent({ artifact, embedded = false }: { artifact: LibraryArtifact; embedded?: boolean }) {
+  return artifact.kind === "page" ? (
+    <iframe key={artifact.id + artifact.updated_at} className={embedded ? "h-full min-h-0 w-full flex-1 border-0" : "library-page"}
+      title={artifact.title} src={factoryUrl(artifact.view)} sandbox="allow-scripts" referrerPolicy="no-referrer" />
+  ) : (
+    <article className="library-document library-document-full"><ReactMarkdown>{artifact.markdown}</ReactMarkdown></article>
   );
 }

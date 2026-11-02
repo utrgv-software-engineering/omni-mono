@@ -5,7 +5,7 @@
     "../packages/client/src/protocol/gui-v2.ts",
     "../packages/client/src/protocol/schema-types-v2.ts"
   ],
-  "canonical_sha256": "ce951c6dbd76846cbe94c8ce89859d77f16f6024f5d5afc67e64c57da17ea015",
+  "canonical_sha256": "25bc7be67e21f0a66e7d4be547dda5d7c76b562c506fc1868d484e0f599897e1",
   "generator": "scripts.protocol.generate_gui_protocol",
   "generator_version": "2",
   "protocol_version": "2.0.0",

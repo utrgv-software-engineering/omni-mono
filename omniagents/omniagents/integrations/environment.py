@@ -1,13 +1,11 @@
-"""Factory sandboxes: disposable per run, or persistent for personal mode.
+"""Factory sandboxes: persistent when a state path is supplied.
 
-Warp runs every agent in its runner's sandbox with the factory's
-repositories in reach. Here each automation run gets a fresh sandbox from
-the project's sandbox profile (``paths.sandbox_profile``, else
-``sandbox_profile_default.yml`` beside ``project.yml``, under the product's
-user layers such as ``<config>/sandbox/default.yml``), brought up the way
-``omni serve`` brings up a profile's sandbox, with the github integration's
-repositories cloned at ``/workspace/<name>``. The sandbox is removed when
-the run ends; work that outlives a run lives in branches and pull requests.
+Personal and pipelined factories retain their sandbox across restarts.
+Persistent repository paths include a stable provider/repository hash, so
+switching GitHub providers never reuses another provider's checkout.
+``/workspace/.omni-repositories.json`` lists active paths and preparation
+errors. Previous checkouts remain on disk, including uncommitted work.
+Disposable callers keep the legacy ``/workspace/<name>`` layout.
 
 ``project.yml``::
 
@@ -30,6 +28,7 @@ from __future__ import annotations
 import base64
 import copy
 import dataclasses
+import hashlib
 import logging
 import os
 import tempfile
@@ -60,13 +59,23 @@ class GitHubConfig:
     def resolved_token(self) -> Optional[str]:
         return self.token or os.environ.get(self.token_env) or None
 
-    def sources(self) -> List[Dict[str, Any]]:
-        """The repositories as sandbox sources, one at ``/workspace/<name>`` each."""
+    def sources(self, *, persistent: bool = False) -> List[Dict[str, Any]]:
+        """Return sources; persistent paths distinguish provider and full repo name."""
         return [
             {
                 "kind": "git-remote",
                 "repoUrl": f"{GITHUB}{repository}",
-                "mountName": repository.rsplit("/", 1)[-1],
+                "mountName": (
+                    repository.rsplit("/", 1)[-1]
+                    + "--"
+                    + hashlib.sha256(
+                        (
+                            (self.git_url or GITHUB).rstrip("/") + "/" + repository
+                        ).encode()
+                    ).hexdigest()[:16]
+                    if persistent
+                    else repository.rsplit("/", 1)[-1]
+                ),
                 # Sent to git_url as a header instead (git_environment).
                 **({} if self.git_url else {"auth": {"tokenEnv": self.token_env}}),
             }
@@ -145,7 +154,18 @@ class RunSandbox:
 class RunEnvironments:
     """Project sandboxes; a saved state path opts into personal persistence."""
 
-    def __init__(self, profile_path: Path, github: Optional[GitHubConfig]) -> None:
+    def __init__(
+        self,
+        profile_path: Path,
+        github: Optional[GitHubConfig],
+        *,
+        explicit_profile: bool = False,
+        library_root: Optional[str] = None,
+        shared_root: Optional[str] = None,
+    ) -> None:
+        self.library_root = library_root
+        self.shared_root = shared_root
+        self.explicit_profile = explicit_profile
         self.profile_path = Path(profile_path)
         self.github = github or GitHubConfig()
 
@@ -173,15 +193,29 @@ class RunEnvironments:
             # (<config>/sandbox/default.yml): where a deployment says which
             # network sandboxes join.
             profile = resolve_profile(
-                workspace_dir=Path(scratch), default_profile_path=self.profile_path
+                workspace_dir=Path(scratch),
+                default_profile_path=self.profile_path,
+                explicit_path=self.profile_path if self.explicit_profile else None,
             )
-            if state_path and (profile.raw.get("client") or {}).get("type") != "docker":
+            if state_path and (profile.raw.get("client") or {}).get("type") not in {
+                "docker",
+                "quicksand",
+            }:
                 raise ValueError(
-                    "The persistent personal workspace requires a Docker profile"
+                    "The persistent factory workspace requires a Docker or QuickSand profile"
                 )
             git_environment = self.github.git_environment()
-            library_root = os.environ.get("LIBRARY_FILES_HOST_PATH")
-            if git_environment or library_root:
+            library_root = (
+                self.library_root
+                if self.library_root is not None
+                else os.environ.get("LIBRARY_FILES_HOST_PATH")
+            )
+            shared_root = (
+                self.shared_root
+                if self.shared_root is not None
+                else os.environ.get("SHARED_FILES_HOST_PATH")
+            )
+            if git_environment or library_root or shared_root:
                 raw = copy.deepcopy(profile.raw)
                 values = _manifest_env_values(raw)
                 if values is not None:
@@ -197,6 +231,16 @@ class RunEnvironments:
                         binds.append(
                             {"source": library_root, "target": "/workspace/Library"}
                         )
+                if shared_root:
+                    if not os.path.isabs(shared_root):
+                        raise ValueError(
+                            "SHARED_FILES_HOST_PATH must be an absolute host directory"
+                        )
+                    binds = raw.setdefault("client", {}).setdefault("binds", [])
+                    if not any(b.get("target") == "/workspace/Shared" for b in binds):
+                        binds.append(
+                            {"source": shared_root, "target": "/workspace/Shared"}
+                        )
                 profile = dataclasses.replace(profile, raw=raw)
 
             async def prepare_persistent(session):
@@ -206,7 +250,7 @@ class RunEnvironments:
                     session, self.github, run_as=_run_as_exec_user(profile.raw)
                 )
 
-            sources = self.github.sources()
+            sources = self.github.sources(persistent=state_path is not None)
             brought = await bring_up_session(
                 profile=profile,
                 sources_parsed=sources,

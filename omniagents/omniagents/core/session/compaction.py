@@ -341,7 +341,7 @@ def _atomic_compaction_session_cls(base: type) -> type:
                     session._sdk_compaction_in_progress = False
 
             async def _replace_underlying_session_items(
-                self, *, output_items, previous_items
+                self, *, output_items, previous_items, wrapper=None
             ):
                 if not output_items:
                     raise RuntimeError(
@@ -362,9 +362,14 @@ def _atomic_compaction_session_cls(base: type) -> type:
                 replace = getattr(self.underlying_session, "replace_sdk_items", None)
                 if callable(replace):
                     await replace(output_items)
+                    self._deferred_response_id = None
+                    if wrapper is not None:
+                        wrapper._session_compaction_completed = True
                 else:
                     await super()._replace_underlying_session_items(
-                        output_items=output_items, previous_items=previous_items
+                        output_items=output_items,
+                        previous_items=previous_items,
+                        wrapper=wrapper,
                     )
 
         _atomic_session_cls_cache[base] = AtomicCompactionSession

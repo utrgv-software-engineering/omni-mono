@@ -204,7 +204,9 @@ class DockerSpace(Space):
         ids = listed.stdout.split() if listed.returncode == 0 else []
         if ids:
             subprocess.run(
-                [docker, "rm", "--force", *ids], capture_output=True, text=True
+                [docker, "rm", "--force", "--volumes", *ids],
+                capture_output=True,
+                text=True,
             )
         return len(ids)
 

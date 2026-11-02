@@ -446,6 +446,32 @@ class EventStore:
                 out.append(run)
         return out
 
+    def received_events(self):
+        """Undispatched durable events, including arrivals during a release lease."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT e.*, x.filters, x.context, x.control FROM events e "
+                "JOIN event_details x ON x.event_id=e.id WHERE e.status='received' "
+                "AND NOT EXISTS (SELECT 1 FROM dispatches d WHERE d.event_id=e.id) ORDER BY e.id"
+            ).fetchall()
+        return [
+            (
+                row["id"],
+                IncomingEvent(
+                    provider=row["provider"],
+                    event=row["event"],
+                    delivery_id=row["delivery_id"],
+                    payload=json.loads(row["payload"]),
+                    thread_key=row["thread_key"],
+                    filters=json.loads(row["filters"]),
+                    received_at=row["received_at"],
+                    context=row["context"],
+                    control=row["control"],
+                ),
+            )
+            for row in rows
+        ]
+
     def events_since(self, since: float) -> List[IncomingEvent]:
         """The events received at or after ``since`` that started runs, oldest first,
         as they came (for replaying them into another factory)."""

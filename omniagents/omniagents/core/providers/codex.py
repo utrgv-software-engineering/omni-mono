@@ -835,7 +835,7 @@ def build_codex_openai_client(tokens: Optional[Dict[str, Any]] = None) -> Any:
 
     Returns ``None`` when the caller isn't signed in to Codex.
     """
-    import httpx
+    import httpx2 as httpx
     from openai import AsyncOpenAI
 
     tokens = tokens or load_tokens()

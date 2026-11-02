@@ -1,3 +1,9 @@
+import { BookMarked, ExternalLink, Plus, Search, Settings2 } from "lucide-react";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@omniagents/ui/input-group";
+import { Empty, EmptyHeader, EmptyTitle, EmptyDescription } from "@omniagents/ui/empty";
+import { PreviewSetup } from "./PreviewSetup";
+import { factoryBase } from "./factory-scope";
+import { factoryFetch } from "./factory-scope";
 import { useEffect, useState } from "react";
 import { Button } from "@omniagents/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@omniagents/ui/dialog";
@@ -10,6 +16,7 @@ import { toast } from "sonner";
 
 type Provider = "standin" | "github";
 type Settings = {
+  selections: Record<Provider, string[]>;
   provider: Provider; repositories: string[]; factory_repository: string | null;
   client_id: string; callback_url: string; webhook_url: string; webhook_configured: boolean;
   self_improvement: boolean; connected_as: string | null; oauth_configured: boolean;
@@ -19,7 +26,7 @@ type DeviceResult = DeviceLogin | { status: "connected"; settings: Settings };
 type RepositoryPage = { repositories: Repository[]; page: number; has_more: boolean; limited: boolean; incomplete: boolean };
 type Repository = { full_name: string; html_url: string };
 export async function repositoryRequest<T>(path = "", method = "GET", body?: unknown, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(`/workplace/api/repositories${path}`, {
+  const response = await factoryFetch(`/workplace/api/repositories${path}`, {
     method, signal, headers: { "Content-Type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
@@ -28,7 +35,8 @@ export async function repositoryRequest<T>(path = "", method = "GET", body?: unk
   return value as T;
 }
 
-export function RepositoriesDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+export type RepositoryDialogMode = "connection" | "repositories" | "factory";
+export function RepositoriesDialog({ open, onOpenChange, mode = "connection" }: { open: boolean; onOpenChange: (open: boolean) => void; mode?: RepositoryDialogMode }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [available, setAvailable] = useState<Repository[]>([]);
   const [repositorySearch, setRepositorySearch] = useState("");
@@ -51,13 +59,13 @@ export function RepositoriesDialog({ open, onOpenChange }: { open: boolean; onOp
     setSettings(null);
     setClientSecret(""); setWebhookSecret("");
     repositoryRequest<Settings>().then(value => { setSettings(value); setClientId(value.client_id); }).catch(e => setError(e.message));
-  }, [open]);
+  }, [open, mode]);
   useEffect(() => {
     setRepositorySearch(""); setRepositoryPage(1);
   }, [open, settings?.provider, settings?.connected_as, connectionRevision]);
   useEffect(() => {
     setAvailable([]); setRepositoryResult(null); setRepositoryError("");
-    if (!open || !settings || (settings.provider === "github" && !settings.connected_as)) {
+    if (!open || mode !== "repositories" || !settings || (settings.provider === "github" && !settings.connected_as)) {
       setRepositoriesLoading(false); return;
     }
     const controller = new AbortController();
@@ -72,7 +80,7 @@ export function RepositoriesDialog({ open, onOpenChange }: { open: boolean; onOp
     const timer = repositorySearch.trim() ? setTimeout(load, 400) : null;
     if (!timer) load();
     return () => { controller.abort(); if (timer) clearTimeout(timer); };
-  }, [open, settings?.provider, settings?.connected_as, connectionRevision, repositorySearch, repositoryPage]);
+  }, [open, mode, settings?.provider, settings?.connected_as, connectionRevision, repositorySearch, repositoryPage]);
   useEffect(() => {
     if (!device) return;
     const path = `/github/device/${device.id}`;
@@ -102,12 +110,14 @@ export function RepositoriesDialog({ open, onOpenChange }: { open: boolean; onOp
   };
   return <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
-      <DialogHeader><DialogTitle>Repositories</DialogTitle><DialogDescription>GitHub access and factory self-improvement.</DialogDescription></DialogHeader>
+      <DialogHeader><DialogTitle>{mode === "connection" ? "Connection settings" : mode === "factory" ? "Self-improvement" : "Manage repositories"}</DialogTitle><DialogDescription>{mode === "connection" ? "Choose a provider and connect your account." : mode === "factory" ? "Link the factory’s repository to enable self-improvement PRs." : "Choose the repositories available in the agent workspace."}</DialogDescription></DialogHeader>
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       {settings && <FieldGroup>
-        <Field><FieldLabel htmlFor="repository-provider">Provider</FieldLabel>
+        {mode === "connection" && <><Field><FieldLabel htmlFor="repository-provider">Provider</FieldLabel>
           <NativeSelect id="repository-provider" value={settings.provider} disabled={busy} onChange={e => {
-            setError(""); setSettings({ ...settings, provider: e.target.value as Provider, repositories: [], factory_repository: null, self_improvement: false });
+            const provider = e.target.value as Provider;
+            const selections = { ...settings.selections, [settings.provider]: settings.repositories };
+            setError(""); setSettings({ ...settings, selections, provider, repositories: selections[provider] ?? [], factory_repository: null, self_improvement: false });
           }}><NativeSelectOption value="standin">GitHub stand-in</NativeSelectOption><NativeSelectOption value="github">GitHub</NativeSelectOption></NativeSelect>
         </Field>
         {settings.provider === "github" && <Field>
@@ -166,8 +176,9 @@ export function RepositoriesDialog({ open, onOpenChange }: { open: boolean; onOp
             })}>Save GitHub App</Button>
           </FieldGroup>
         </details>}
-        <Field><FieldLabel>Workspace repositories</FieldLabel>
-          <FieldDescription>Select repositories to check out in the agent workspace.</FieldDescription>
+        </>}
+        {mode === "repositories" && <Field><FieldLabel>Workspace repositories</FieldLabel>
+          <FieldDescription>{settings.provider === "github" && !settings.connected_as ? "Connect GitHub in Connection settings to choose repositories." : "Select repositories to check out in the agent workspace."}</FieldDescription>
           <Input type="search" aria-label="Search repositories" placeholder="Search repositories…" value={repositorySearch} onChange={e => { setRepositorySearch(e.target.value); setRepositoryPage(1); }} />
           {repositoriesLoading && <FieldDescription role="status">Loading repositories…</FieldDescription>}
           {repositoryError && <FieldDescription role="alert">{repositoryError}</FieldDescription>}
@@ -188,8 +199,8 @@ export function RepositoriesDialog({ open, onOpenChange }: { open: boolean; onOp
             <span className="text-sm text-muted-foreground">Page {repositoryPage}</span>
             <Button variant="outline" disabled={repositoriesLoading || !repositoryResult?.has_more} onClick={() => setRepositoryPage(p => p + 1)}>Next</Button>
           </div>
-        </Field>
-        <Field><FieldLabel htmlFor="factory-repository">Factory repository</FieldLabel>
+        </Field>}
+        {mode === "factory" && <><Field><FieldLabel htmlFor="factory-repository">Factory repository</FieldLabel>
           <NativeSelect id="factory-repository" value={settings.factory_repository || ""} disabled={busy} onChange={e => setSettings({ ...settings, factory_repository: e.target.value || null, self_improvement: false })}>
             <NativeSelectOption value="">None</NativeSelectOption>
             {settings.repositories.map(name => <NativeSelectOption key={name} value={name}>{name}</NativeSelectOption>)}
@@ -198,6 +209,7 @@ export function RepositoriesDialog({ open, onOpenChange }: { open: boolean; onOp
         <Field orientation="horizontal"><Switch id="self-improvement" checked={settings.self_improvement} disabled={busy || !settings.factory_repository || (settings.provider === "github" && !settings.connected_as)} onCheckedChange={checked => setSettings({ ...settings, self_improvement: checked })} />
           <FieldLabel htmlFor="self-improvement">Self-improvement</FieldLabel>
         </Field>
+        </>}
         <Button disabled={busy || !!device || (settings.provider === "github" && !settings.connected_as)} onClick={() => void act(async () => {
           const { provider, repositories, factory_repository, self_improvement } = settings;
           setSettings(await repositoryRequest<Settings>("", "PUT", { provider, repositories, factory_repository, self_improvement }));
@@ -210,19 +222,64 @@ export function RepositoriesDialog({ open, onOpenChange }: { open: boolean; onOp
   </Dialog>;
 }
 
-export function RepositoryView({ standin, admin, onSettings }: { standin: React.ReactNode; admin: boolean; onSettings: () => void }) {
+export function RepositoryView({ standin, admin, onSettings }: { standin: (repositories: string[]) => React.ReactNode; admin: boolean; onSettings: (mode: RepositoryDialogMode) => void }) {
   const [value, setValue] = useState<{ provider: Provider; repositories: string[] } | null>(null);
   const [error, setError] = useState("");
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(0);
+  const [previewRepository, setPreviewRepository] = useState<string | null>(null);
   useEffect(() => {
-    const load = () => { repositoryRequest<{provider: Provider; repositories: string[]}>("/view").then(setValue).catch(e => setError(e.message)); };
+    let controller: AbortController;
+    const load = () => {
+      controller?.abort(); controller = new AbortController();
+      const signal = controller.signal;
+      setError("");
+      repositoryRequest<{provider: Provider; repositories: string[]}>("/view", "GET", undefined, signal)
+        .then(result => { if (!signal.aborted) { setValue(result); setPage(0); } })
+        .catch(e => { if (!signal.aborted) setError(e.message); });
+    };
     load(); window.addEventListener("repository-settings-changed", load);
-    return () => window.removeEventListener("repository-settings-changed", load);
+    return () => { controller.abort(); window.removeEventListener("repository-settings-changed", load); };
   }, []);
-  if (error) return <p role="alert" className="p-6">{error}</p>;
-  if (!value) return null;
-  if (value.provider === "standin") return <>{standin}</>;
-  return <section className="flex flex-1 flex-col gap-4 p-6">
-    <div className="flex items-center justify-between"><h1 className="text-lg font-semibold">Repositories</h1>{admin && <Button variant="outline" onClick={onSettings}>Settings</Button>}</div>
-    {!admin ? <p>Repository access requires an administrator account.</p> : value.repositories.length ? value.repositories.map(name => <a key={name} className="underline underline-offset-4" href={`https://github.com/${name}`} target="_blank" rel="noreferrer">{name}</a>) : <p className="text-sm text-muted-foreground">No repositories selected.</p>}
-  </section>;
+  if (value?.provider === "standin") return <div className="flex min-h-0 flex-1 flex-col">
+    {admin && <div className="flex shrink-0 flex-wrap justify-end gap-2 border-b px-4 py-2"><Button variant="outline" onClick={() => onSettings("connection")}>Connection settings</Button><Button onClick={() => onSettings("repositories")}>Manage repositories</Button></div>}
+    {standin(value.repositories)}
+  </div>;
+  const repositories = (value?.repositories ?? []).filter(name => name.toLowerCase().includes(query.trim().toLowerCase())).sort((a,b) => a.localeCompare(b));
+  const pageSize = 20;
+  const shown = repositories.slice(page * pageSize, (page + 1) * pageSize);
+  return <main className="min-h-0 flex-1 overflow-auto">
+    <div className="workplace-page flex flex-col gap-6">
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-xl font-semibold">Repositories</h1>
+        {admin && <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" onClick={() => onSettings("connection")}><Settings2 data-icon="inline-start" />Connection settings</Button>
+          <Button onClick={() => onSettings("repositories")}><Plus data-icon="inline-start" />Manage repositories</Button>
+        </div>}
+      </header>
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      {!value ? <p role="status" className="text-sm text-muted-foreground">{error ? "Unable to load repositories." : "Loading repositories…"}</p> : !admin ? <Empty><EmptyHeader><EmptyTitle>Administrator access required</EmptyTitle><EmptyDescription>Ask a factory administrator to manage repository access.</EmptyDescription></EmptyHeader></Empty> : <>
+        <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
+          <InputGroup className="min-w-0 flex-1"><InputGroupAddon><Search /></InputGroupAddon><InputGroupInput type="search" aria-label="Search connected repositories" placeholder="Search connected repositories" value={query} onChange={e => {setQuery(e.target.value);setPage(0);}} /></InputGroup>
+        </div>
+        {shown.length ? <ul className="divide-y divide-border">
+          {shown.map(name => {
+            const slash = name.lastIndexOf("/");
+            return <li key={name} className="flex flex-col items-stretch gap-3 py-4 sm:flex-row sm:items-center sm:gap-4">
+              <div className="flex min-w-0 flex-1 items-center gap-3">
+                <BookMarked className="size-5 shrink-0 text-muted-foreground" />
+                <div className="min-w-0"><p className="truncate text-xs text-muted-foreground">{name.slice(0,slash)}</p><a className="block truncate text-sm font-medium hover:underline" href={`https://github.com/${name}`} target="_blank" rel="noreferrer">{name.slice(slash+1)}</a></div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2 pl-8 sm:pl-0">
+                {factoryBase() && <Button variant="outline" size="sm" aria-label={`PR previews for ${name}`} onClick={() => setPreviewRepository(name)}>PR previews</Button>}
+                <Button asChild variant="ghost" size="sm"><a href={`https://github.com/${name}`} target="_blank" rel="noreferrer" aria-label={`Open ${name} on GitHub`}>Open on GitHub<ExternalLink data-icon="inline-end" /></a></Button>
+              </div>
+            </li>;
+          })}
+        </ul> : <Empty><EmptyHeader><EmptyTitle>{query ? "No matching repositories" : "No repositories connected"}</EmptyTitle><EmptyDescription>{query ? "Try another repository or organization name." : "Add repositories to make them available to the factory."}</EmptyDescription></EmptyHeader></Empty>}
+        {repositories.length > pageSize && <nav aria-label="Repository pages" className="flex items-center justify-between gap-3"><span className="text-sm text-muted-foreground">{page*pageSize+1}–{Math.min((page+1)*pageSize,repositories.length)} of {repositories.length}</span><div className="flex gap-2"><Button variant="outline" disabled={!page} onClick={() => setPage(p=>p-1)}>Previous</Button><Button variant="outline" disabled={(page+1)*pageSize>=repositories.length} onClick={() => setPage(p=>p+1)}>Next</Button></div></nav>}
+      </>}
+    </div>
+    <PreviewSetup repository={previewRepository} onClose={() => setPreviewRepository(null)} />
+  </main>;
 }

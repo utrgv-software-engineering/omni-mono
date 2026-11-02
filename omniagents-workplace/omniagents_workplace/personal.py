@@ -38,6 +38,7 @@ class PersonalConnection:
         self.pending: dict[int, asyncio.Future] = {}
         self.serial = 0
         self.connect_lock = asyncio.Lock()
+        self.messages = None
 
     async def connect(self):
         async with self.connect_lock:
@@ -203,8 +204,14 @@ class PersonalConnection:
             "state_events": snapshot.get("state_events") or [],
         }
 
-    async def send(self, text: str, submission_id: str):
-        return await self.call(
+    async def send(
+        self, text: str, submission_id: str, *, author=None, input_content=None
+    ):
+        if author is not None and self.messages is not None:
+            self.messages.publish(
+                self.session_id, submission_id, "user", author, text, input_content
+            )
+        result = await self.call(
             "enqueue_message",
             {
                 "session_id": self.session_id,
@@ -212,8 +219,29 @@ class PersonalConnection:
                 "role": "user",
                 "source": "workplace:personal",
                 "submission_id": submission_id,
+                **(
+                    {"input_content": input_content}
+                    if input_content is not None
+                    else {}
+                ),
+                **(
+                    {
+                        "variables": {
+                            "workplace_sender": author,
+                            "workplace_conversation": self.session_id,
+                        }
+                    }
+                    if author
+                    else {}
+                ),
             },
         )
+
+        if result.get("ok") is False:
+            raise HTTPException(
+                409, result.get("reason") or "The message was not queued"
+            )
+        return result
 
     async def stop(self, run_id: str):
         state = await self.state()
@@ -278,9 +306,16 @@ class PersonalConnection:
 
 
 class PersonalConversations:
-    def __init__(self, store):
+    def __init__(self, store, *, architecture=None):
         self.store = store
-        self.architecture = os.environ.get("FACTORY_ARCHITECTURE", "specialist")
+        from .chat_messages import ChatMessages
+
+        self.messages = ChatMessages(store)
+        self.architecture = (
+            architecture
+            if architecture is not None
+            else os.environ.get("FACTORY_ARCHITECTURE", "specialist")
+        )
         if self.architecture not in {"personal", "specialist"}:
             raise ValueError("FACTORY_ARCHITECTURE must be personal or specialist")
         self.deleting: set[str] = set()
@@ -339,21 +374,14 @@ class PersonalConversations:
                     if current is None:
                         return None
                     if current.get("auto_title"):
+                        published = self.messages.page(chat["id"], limit=100)[
+                            "messages"
+                        ]
                         first = next(
-                            (
-                                item
-                                for item in state["items"]
-                                if item.get("kind") == "user_message"
-                            ),
-                            None,
+                            (m for m in published if m["role"] == "user"), None
                         )
-                        text = (
-                            (first.get("content") or {}).get("text", "")
-                            if first
-                            else ""
-                        )
+                        text = first["text"] if first else ""
                         if isinstance(text, str) and text.strip():
-                            text = re.sub(r"^\[[^\]\n]+\]\n", "", text).strip()
                             title = " ".join(text.split())[:60]
                             if title:
                                 current = self.update(chat["id"], {"title": title})
@@ -387,6 +415,7 @@ class PersonalConversations:
                 )
             await connection.call("delete_session", {"session_id": sid})
             self.store.delete("personal.chat", sid)
+            self.messages.delete(sid)
             self.connections.pop(sid, None)
             await connection.close()
         finally:
@@ -422,6 +451,7 @@ class PersonalConversations:
                 key,
                 PersonalConnection(url, token, session_id, "factory-personal"),
             )
+        self.connections[session_id][1].messages = self.messages
         return self.connections[session_id][1]
 
     async def close(self):

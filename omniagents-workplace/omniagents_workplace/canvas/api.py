@@ -72,6 +72,33 @@ def runtime() -> bytes:
     )
 
 
+def canvas_response(content: bytes, kind: str, request: Request) -> Response:
+    origin = f"{request.url.scheme}://{request.url.netloc}"
+    policy = (
+        "sandbox allow-scripts; default-src 'none'; "
+        f"script-src {origin} 'unsafe-eval'; "
+        # Designs can use bundled assets or HTTPS font/style providers.
+        # Restricting these to Google silently changes their appearance.
+        f"style-src {origin} 'unsafe-inline' https:; "
+        f"font-src {origin} https: data:; "
+        f"img-src {origin} data: blob: https:; media-src {origin} data: blob:; "
+        "connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'"
+    )
+    return Response(
+        content,
+        media_type=kind,
+        headers={
+            "Content-Security-Policy": policy,
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
+            # Sandboxed boards have an opaque origin. Their bundled fonts
+            # need CORS even though they share the capability-protected URL.
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "private, max-age=60",
+        },
+    )
+
+
 def canvas_router(
     state: CanvasState, base_url: Callable[[], str], member_of: Callable[[Any], str]
 ) -> APIRouter:
@@ -93,27 +120,6 @@ def canvas_router(
 
     # -- boards, as pages ------------------------------------------------------------
 
-    def _sandboxed(content: bytes, kind: str, request: Request) -> Response:
-        origin = f"{request.url.scheme}://{request.url.netloc}"
-        policy = (
-            "sandbox allow-scripts; default-src 'none'; "
-            f"script-src {origin} 'unsafe-eval'; "
-            f"style-src {origin} 'unsafe-inline' https://fonts.googleapis.com; "
-            "font-src https://fonts.gstatic.com data:; "
-            f"img-src {origin} data: blob: https:; media-src {origin} data: blob:; "
-            "connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'"
-        )
-        return Response(
-            content,
-            media_type=kind,
-            headers={
-                "Content-Security-Policy": policy,
-                "X-Content-Type-Options": "nosniff",
-                "Referrer-Policy": "no-referrer",
-                "Cache-Control": "private, max-age=60",
-            },
-        )
-
     @r.get("/canvas/view/{canvas_id}/{key}/{version}/{path:path}")
     def view(canvas_id: str, key: str, version: int, path: str, request: Request):
         canvas = state.canvases.get(canvas_id)
@@ -123,9 +129,11 @@ def canvas_router(
             file = state.read(canvas, path, version)
         except CanvasError:
             if path == "support.js":
-                return _sandboxed(runtime(), "text/javascript; charset=utf-8", request)
+                return canvas_response(
+                    runtime(), "text/javascript; charset=utf-8", request
+                )
             return Response(status_code=404)
-        return _sandboxed(file.content, media_type(path), request)
+        return canvas_response(file.content, media_type(path), request)
 
     # -- the UI's API -------------------------------------------------------------------
 
@@ -174,6 +182,10 @@ def canvas_router(
             "body": c.body,
             "author": name(c.author_id),
             "author_id": c.author_id,
+            "guest": bool(
+                state.members.get(c.author_id)
+                and state.members[c.author_id].kind == "guest"
+            ),
             "at": c.created_at,
             "board": c.board,
             "x": c.x,

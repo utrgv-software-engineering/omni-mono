@@ -3,3 +3,6 @@ node_modules/
 # Local browser verification and deployment planning
 .playwright-cli/
 /8020-factory-deployment-plan.md
+
+# Installation-specific operational notes and release examples
+/.local/deployments/

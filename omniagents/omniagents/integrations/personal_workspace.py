@@ -56,9 +56,10 @@ async def refresh_environment(session, github, *, run_as=None):
     )
     if result.exit_code:
         raise RuntimeError("Could not clear the previous sandbox GitHub credential")
-    await asyncio.to_thread(
-        inner._container.update, restart_policy={"Name": "unless-stopped"}
-    )
+    if getattr(session.state, "type", None) == "docker":
+        await asyncio.to_thread(
+            inner._container.update, restart_policy={"Name": "unless-stopped"}
+        )
 
 
 def read_state(path):
@@ -84,10 +85,14 @@ def write_state(path, value):
 
 def backup(state_path, destination, *, keep=3):
     """Save the entire writable filesystem/image; bind mounts have their own backup."""
-    import docker
-
     state_path, destination = Path(state_path), Path(destination)
     record = read_state(state_path)
+    if record.get("backend") == "quicksand":
+        from .quicksand_maintenance import backup as backup_vm
+
+        return backup_vm(record, destination, keep=keep)
+    import docker
+
     target = destination / (
         time.strftime("personal-%Y%m%dT%H%M%SZ", time.gmtime())
         + "-"
@@ -239,12 +244,16 @@ async def adopt(state_path, container_id, project_path):
         return container.id
 
 
-def restore(state_path, source):
+def restore(state_path, source, *, vm_root=None):
+    source = Path(source)
+    record = read_state(source / "state.json")
+    if record.get("backend") == "quicksand":
+        from .quicksand_maintenance import restore as restore_vm
+
+        return restore_vm(state_path, source, vm_root=vm_root)
     import docker
     from docker.types import Mount
 
-    source = Path(source)
-    record = read_state(source / "state.json")
     metadata = json.loads((source / "container.json").read_text())
     if Path(state_path).exists():
         raise SystemExit("Reset the current workspace before restoring another")
@@ -293,6 +302,11 @@ def main():
     parser.add_argument("--source", type=Path)
     parser.add_argument("--container")
     parser.add_argument("--project", type=Path)
+    parser.add_argument(
+        "--vm-root",
+        type=Path,
+        help="QuickSand restore destination; match the profile state_dir",
+    )
     parser.add_argument("--keep", type=int, default=3)
     parser.add_argument("--confirm-reset", action="store_true")
     args = parser.parse_args()
@@ -313,12 +327,20 @@ def main():
             elif args.action == "restore":
                 if not args.source:
                     parser.error("restore requires --source")
-                print(restore(args.state, args.source))
+                print(restore(args.state, args.source, vm_root=args.vm_root))
             else:
                 if not args.confirm_reset or not args.to:
                     parser.error(
                         "reset requires --confirm-reset and --to for the mandatory backup"
                     )
+                if read_state(args.state).get("backend") == "quicksand":
+                    from .quicksand_maintenance import reset
+
+                    saved = reset(args.state, args.to, keep=args.keep)
+                    print(
+                        f"Workspace reset. Backup: {saved}. Start the factory to create a fresh workspace."
+                    )
+                    return
                 saved = backup(args.state, args.to, keep=args.keep)
                 import docker
 

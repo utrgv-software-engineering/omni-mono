@@ -6,6 +6,7 @@ const workplace = process.env.WORKPLACE_URL || 'http://localhost:7300'
 
 export default defineConfig({
   plugins: [tailwindcss(), react()],
+  build: { rollupOptions: { input: { main: 'index.html', extension: 'extension.html' } } },
   // streamdown (the chat UI's markdown) lazy-loads inner chunks; optimizing
   // it up front keeps chunk hashes stable for an open page (as Studio does).
   optimizeDeps: {

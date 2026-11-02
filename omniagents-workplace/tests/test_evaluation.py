@@ -121,7 +121,7 @@ async def test_scenario_exports_its_own_memory_and_canvas_credentials(
     )
 
     class Environments:
-        def __init__(self, *args):
+        def __init__(self, *args, **kwargs):
             pass
 
         @asynccontextmanager

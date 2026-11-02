@@ -155,32 +155,21 @@ class PersonalRpcPolicy:
                 raise ValueError("Personal uses the factory's workspace")
             text_key = "prompt" if method == "start_run" else "content"
             text = params.get(text_key)
-            if not isinstance(text, str) or len(text) > 20000:
-                raise ValueError("Message text must be at most 20000 characters")
-            params[text_key] = f"[{self.username}]\n{text}"
+            if not isinstance(text, str):
+                raise ValueError("Message text must be a string")
             content_key = "content" if method == "start_run" else "input_content"
             content = params.get(content_key)
-            if content is not None:
-                if isinstance(content, list):
-                    params[content_key] = [
-                        {"type": "input_text", "text": f"[{self.username}]"},
-                        *content,
-                    ]
-                elif isinstance(content, str):
-                    params[content_key] = f"[{self.username}]\n{content}"
-                else:
-                    raise ValueError("Invalid message content")
-            params.pop("variables", None)
-            if method == "enqueue_message":
-                params.pop("environment_selection", None)
-                params.pop("prompt", None)
-                params["source"] = "workplace:personal"
-                params["role"] = "user"
-            else:
-                for key in ("source", "role", "input_content"):
-                    params.pop(key, None)
-                params["environment_selection"] = {"mode": "inherit"}
-            return None, True
+            if content is not None and not isinstance(content, (str, list)):
+                raise ValueError("Invalid message content")
+            submission = params.get("submission_id")
+            if not isinstance(submission, str) or not submission:
+                raise ValueError("A stable submission ID is required")
+            result = await self.connection.send(
+                text, submission, author=self.username, input_content=content
+            )
+            if method == "start_run":
+                return {**result, "run_id": result.get("run_id", "")}, False
+            return result, False
         if method == "stop_run":
             self.fields(params, {"run_id"})
             return await self.connection.stop(params.get("run_id")), False
@@ -229,6 +218,33 @@ class PersonalRpcPolicy:
                 ),
                 False,
             )
+        if (
+            method == "list_items"
+            and params.get("thread_id") != self.connection.session_id
+        ):
+            # Workers belong to this selected conversation. Permit only a
+            # read of their retained transcript, never session setup or writes.
+            self.fields(
+                {k: v for k, v in params.items() if k != "thread_id"},
+                _FIELDS[method] - {"thread_id"},
+            )
+            workers = await self.connection.call(
+                "server_call",
+                {
+                    "function": "workers.list",
+                    "args": {},
+                    "session_id": self.connection.session_id,
+                },
+            )
+            if not any(
+                w.get("session_id") == params.get("thread_id")
+                and w.get("parent_session_id") == self.connection.session_id
+                for w in workers.get("snapshot", [])
+            ):
+                raise ValueError(
+                    "Only workers belonging to the selected chat are available"
+                )
+            return await self.connection.call(method, params), False
         if method in _FIELDS:
             self.fields(params, _FIELDS[method])
             return None, True

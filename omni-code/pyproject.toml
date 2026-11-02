@@ -5,7 +5,7 @@ description = "Omni Code: a full‑stack coding agent built with OmniAgents"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "omniagents[all]==0.7.40",
+    "omniagents[all]==0.8.0",
 ]
 
 [tool.pytest.ini_options]

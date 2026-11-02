@@ -1,3 +1,5 @@
+import { appTransport } from "./extensions/transport";
+import { factoryFetch, factoryUrl } from "./factory-scope";
 // The workplace server's UI API (/workplace/api) and its live stream.
 
 export interface SlackUser {
@@ -122,6 +124,8 @@ export interface Person {
 }
 
 export interface Session {
+  azure_auth?: { login_url: string; logout_url: string } | null;
+  installation?: boolean;
   account: Person | null;
   setup: boolean;
   organization: string | null;
@@ -199,7 +203,7 @@ export interface AppSettings {
 }
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/workplace/api${path}`, {
+  const response = await factoryFetch(`/workplace/api${path}`, {
     ...init,
     headers: { "Content-Type": "application/json", ...init?.headers },
   });
@@ -960,7 +964,7 @@ export const linear = {
     const form = new FormData();
     form.set("file", file);
     form.set("title", file.name);
-    const response = await fetch(
+    const response = await factoryFetch(
       `/workplace/api/linear/issues/${identifier}/attachments`,
       { method: "POST", body: form },
     );
@@ -1135,7 +1139,7 @@ export const api = {
     form.set("file", body.file);
     form.set("comment", body.comment);
     if (body.thread_ts) form.set("thread_ts", body.thread_ts);
-    const response = await fetch("/workplace/api/slack/files", {
+    const response = await factoryFetch("/workplace/api/slack/files", {
       method: "POST",
       body: form,
     });
@@ -1287,7 +1291,8 @@ export type StreamEvent =
 
 /** Subscribe to the workplace's changes; reconnects on its own. */
 export function subscribe(onEvent: (event: StreamEvent) => void): () => void {
-  const source = new EventSource("/workplace/api/stream");
+  if (appTransport()) return appTransport()!.subscribe(onEvent);
+  const source = new EventSource(factoryUrl("/workplace/api/stream"));
   source.addEventListener("ready", () => onEvent({ type: "ready" }));
   source.addEventListener("slack", (e) =>
     onEvent({ type: "slack", data: JSON.parse((e as MessageEvent).data) }),
@@ -1351,6 +1356,7 @@ export interface CanvasSummary {
 }
 
 export interface CanvasComment {
+  guest?: boolean;
   id: string;
   body: string;
   author: string | null;
@@ -1485,6 +1491,12 @@ export interface FactoryModelState {
   } | null;
   factory_error: string | null;
 }
+
+export const factorySecrets = {
+  get: () => call<{ configured: string[] }>("/factory/secrets"),
+  save: (values: Record<string, string | null>) =>
+    put<{ configured: string[] }>("/factory/secrets", { values }),
+};
 
 export const factoryModel = {
   get: () => call<FactoryModelState>("/factory/model"),

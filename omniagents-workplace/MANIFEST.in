@@ -1,3 +1,14 @@
 recursive-include omniagents_workplace/static *
 recursive-include omniagents_workplace/reference *.json
 recursive-include omniagents_workplace/seeds *
+
+include scripts/build_package.py
+include scripts/check_installed.py
+include omniagents_workplace/canvas/support.js
+include omniagents_workplace/github/staging_check.sh
+global-exclude *.py[cod]
+global-exclude __pycache__
+
+include scripts/factory_release_*.py
+include docs/factory-releases.md
+include docs/event-gateway.md

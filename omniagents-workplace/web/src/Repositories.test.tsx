@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { RepositoriesDialog } from "./Repositories";
+import { RepositoriesDialog, RepositoryView } from "./Repositories";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let root: Root;
@@ -32,6 +32,7 @@ const select = async (id: string, value: string) => { await act(async () => {
 const button = (name: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === name)!;
 
 it("requires a linked repository and explicit opt-in", async () => {
+  await act(async () => { root.render(<RepositoriesDialog open mode="factory" onOpenChange={() => {}} />); });
   const toggle = () => document.getElementById("self-improvement") as HTMLButtonElement;
   expect(toggle().disabled).toBe(true);
   await select("factory-repository", "org/factory");
@@ -43,11 +44,9 @@ it("requires a linked repository and explicit opt-in", async () => {
 });
 
 it("switching providers clears the old target and keeps self-improvement off", async () => {
-  await select("factory-repository", "org/factory");
-  await act(async () => (document.getElementById("self-improvement") as HTMLButtonElement).click());
   await select("repository-provider", "github");
-  expect((document.getElementById("self-improvement") as HTMLButtonElement).disabled).toBe(true);
-  expect((document.getElementById("factory-repository") as HTMLSelectElement).value).toBe("");
+  expect(document.getElementById("self-improvement")).toBeNull();
+  expect(document.getElementById("factory-repository")).toBeNull();
   expect(button("Connect GitHub").disabled).toBe(true);
   expect(document.getElementById("github-client-secret")?.getAttribute("type")).toBe("password");
   expect(document.querySelector('input[aria-label="Callback URL"]')).not.toBeNull();
@@ -85,6 +84,40 @@ it("shows a device code and loads the connected account after approval", async (
     await act(async () => vi.advanceTimersByTimeAsync(1000));
     expect(document.body.textContent).toContain("Connected as device-user");
     expect(document.getElementById("github-device-code")).toBeNull();
-    expect((document.getElementById("self-improvement") as HTMLButtonElement).getAttribute("aria-checked")).toBe("false");
+    expect(document.getElementById("self-improvement")).toBeNull();
   } finally { vi.useRealTimers(); }
+});
+
+it("restores the previous provider's repository selection without re-enabling self-improvement", async () => {
+  await select("repository-provider", "github");
+  await select("repository-provider", "standin");
+  expect(document.getElementById("repo-org/factory")).toBeNull();
+  await act(async () => button("Save").click());
+  expect(calls.find(c => c.method === "PUT")?.body).toEqual({provider:"standin", repositories:["org/factory"], factory_repository:null, self_improvement:false});
+});
+
+it("keeps selection in its own dialog and preserves selected repositories", async () => {
+  await act(async () => { root.render(<RepositoriesDialog open mode="repositories" onOpenChange={() => {}} />); });
+  expect(document.getElementById("repo-org/factory")?.getAttribute("aria-checked")).toBe("true");
+  expect(document.getElementById("repository-provider")).toBeNull();
+  expect(document.getElementById("self-improvement")).toBeNull();
+  await act(async () => button("Save").click());
+  expect(calls.find(c => c.method === "PUT")?.body).toMatchObject({repositories:["org/factory"]});
+});
+
+it("searches and paginates connected repositories and opens focused settings", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => ({ok:true,json:async()=>({provider:"github",repositories:Array.from({length:25},(_,i)=>`org/project-${String(i).padStart(2,"0")}`)})})));
+  const onSettings=vi.fn();
+  await act(async()=>root.render(<RepositoryView admin onSettings={onSettings} standin={()=>null} />));
+  expect(container.querySelectorAll("li").length).toBe(20);
+  await act(async()=>button("Next").click());
+  expect(container.querySelectorAll("li").length).toBe(5);
+  const input=container.querySelector('input[type="search"]') as HTMLInputElement;
+  await act(async()=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value")!.set!.call(input,"project-01");input.dispatchEvent(new Event("input",{bubbles:true}));});
+  expect(container.querySelectorAll("li").length).toBe(1);
+  expect(container.querySelector('a[aria-label="Open org/project-01 on GitHub"]')?.getAttribute("href")).toBe("https://github.com/org/project-01");
+  await act(async()=>button("Connection settings").click());
+  expect(onSettings).toHaveBeenLastCalledWith("connection");
+  await act(async()=>button("Manage repositories").click());
+  expect(onSettings).toHaveBeenLastCalledWith("repositories");
 });

@@ -877,6 +877,7 @@ export interface GetRunDiff {
 }
 export interface Initialized {}
 export interface RunStarted {
+  notifications?: unknown[];
   prompt?: string;
   prompt_role?: string;
   run_id: string;

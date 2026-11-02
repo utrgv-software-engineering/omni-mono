@@ -1,4 +1,11 @@
-import { App } from "@omniagents/chat-ui/App";
+import type { Presentation } from "@omniagents/chat-ui/lib/presentation";
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@omniagents/ui/resizable";
+import { Monitor } from "lucide-react";
+import { ChatViewer } from "./ChatViewer";
+import { useDesktopAvailable } from "./Desktop";
+import type { Person } from "./api";
+import { factoryFetch, factoryUrl, factoryStorageKey } from "./factory-scope";
+import { PublishedChat } from "./PublishedChat";
 import { type ChatHost, ChatHostProvider } from "@omniagents/chat-ui/host";
 import { RPCClientProvider } from "@omniagents/chat-ui/rpc-context";
 import { UiConfigProvider } from "@omniagents/chat-ui/ui-config";
@@ -70,20 +77,20 @@ const selectedKey = "workplace.chat.selected";
 const seenKey = "workplace.chat.seen";
 function saved<T>(key: string, fallback: T): T {
   try {
-    return JSON.parse(localStorage.getItem(key) || "null") ?? fallback;
+    return JSON.parse(localStorage.getItem(factoryStorageKey(key)) || "null") ?? fallback;
   } catch {
     return fallback;
   }
 }
 function remember(key: string, value: unknown) {
   try {
-    localStorage.setItem(key, JSON.stringify(value));
+    localStorage.setItem(factoryStorageKey(key), JSON.stringify(value));
   } catch {
     /* Storage may be disabled. */
   }
 }
 async function request(path = "", method = "GET", body?: unknown) {
-  const response = await fetch(`/workplace/api/personal/chats${path}`, {
+  const response = await factoryFetch(`/workplace/api/personal/chats${path}`, {
     method,
     headers: { "Content-Type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -93,7 +100,19 @@ async function request(path = "", method = "GET", body?: unknown) {
   return data;
 }
 
-export function PersonalApp() {
+export function PersonalApp({ account }: { account: Person }) {
+  const [panelTabs, setPanelTabs] = useState<Record<string, string>>({});
+  const [views, setViews] = useState<Record<string, Presentation | undefined>>({});
+  const [split, setSplit] = useState(() => window.matchMedia("(min-width: 1024px)").matches);
+  const desktopAvailable = useDesktopAvailable(true);
+  useEffect(() => {
+    const media = window.matchMedia("(min-width: 1024px)");
+    const update = () => setSplit(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+  const present = useCallback((id: string, value: Presentation) => setViews(previous => ({ ...previous, [id]: value })), []);
+
   const [chats, setChats] = useState<Chat[]>([]);
   const [selected, setSelected] = useState(
     () =>
@@ -209,6 +228,9 @@ export function PersonalApp() {
   }
 
   const current = chats.find((chat) => chat.id === selected);
+  const view = views[selected];
+  const closeViewer = () => setViews(previous => ({ ...previous, [selected]: undefined }));
+  const viewer = view ? <ChatViewer chatId={selected} tab={panelTabs[selected] || "activity"} onTab={tab => setPanelTabs(previous => ({...previous, [selected]: tab}))} value={view} account={account} onClose={closeViewer} onPresent={value => present(selected, value)} /> : null;
   const sessionId = loaded && current ? selected : undefined;
   useEffect(() => {
     if (sessionId) setOpened(previous => previous.includes(sessionId) ? previous : [...previous, sessionId]);
@@ -365,7 +387,11 @@ export function PersonalApp() {
           </SheetContent>
         </Sheet>
       )}
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      <ResizablePanelGroup orientation="horizontal">
+      <ResizablePanel id="chat" minSize={split ? "320px" : "0px"}>
+      <div className="relative flex min-h-0 min-w-0 h-full flex-col">
+        {desktopAvailable && <Button className="absolute right-3 top-3 z-10" variant="ghost" size="icon-sm" aria-label="Open desktop"
+          onClick={() => present(selected, { kind: "desktop", title: "Desktop", presentation_id: crypto.randomUUID(), issued_at: Date.now() })}><Monitor /></Button>}
         {loaded && (
           <div className="absolute left-3 top-3 z-10 max-w-[40%]">
             <Button
@@ -395,12 +421,21 @@ export function PersonalApp() {
           </div>
         ) : sessionId ? (
           <div className="relative min-h-0 flex-1">
-            {opened.filter(id => chats.some(chat => chat.id === id)).map(id => <ConversationView key={id} sessionId={id} active={id === sessionId} />)}
+            {opened.filter(id => chats.some(chat => chat.id === id)).map(id => <ConversationView key={id} sessionId={id} active={id === sessionId} showAvatar={!views[id]} onPresent={present} />)}
           </div>
         ) : (
           <p className="p-4 text-sm text-muted-foreground">Connecting…</p>
         )}
       </div>
+      </ResizablePanel>
+      {split && view && <><ResizableHandle withHandle /><ResizablePanel id="viewer" defaultSize={view.kind === "activity" ? "380px" : "50%"} minSize="360px">{viewer}</ResizablePanel></>}
+      </ResizablePanelGroup>
+      {!split && <Sheet open={!!view} onOpenChange={open => { if (!open) closeViewer(); }}>
+        <SheetContent side="right" showCloseButton={false} className="w-full max-w-none gap-0 p-0 sm:max-w-none" aria-describedby={undefined}>
+          <SheetHeader className="sr-only"><SheetTitle>{view?.title || "Viewer"}</SheetTitle></SheetHeader>
+          {viewer}
+        </SheetContent>
+      </Sheet>}
       <Dialog
         open={!!editing}
         onOpenChange={(open) => {
@@ -493,11 +528,12 @@ export function PersonalApp() {
 }
 
 
-const ConversationView = memo(function ConversationView({ sessionId, active }: { sessionId: string; active: boolean }) {
-  const connection = useMemo(() => ({ baseUrl: `${window.location.origin}/workplace/api/personal/chats/${encodeURIComponent(sessionId)}/runtime/?minimal=true`, realtime: true }), [sessionId]);
+const ConversationView = memo(function ConversationView({ sessionId, active, showAvatar, onPresent }: { sessionId: string; active: boolean; showAvatar: boolean; onPresent: (id: string, value: Presentation) => void }) {
+  const conversationHost = useMemo(() => ({ ...host, presentView: (value: Presentation) => onPresent(sessionId, value) }), [sessionId, onPresent]);
+  const connection = useMemo(() => ({ baseUrl: factoryUrl(`${window.location.origin}/workplace/api/personal/chats/${encodeURIComponent(sessionId)}/runtime/?minimal=true`), realtime: true }), [sessionId]);
   return <div className="absolute inset-0 min-h-0" style={{ visibility: active ? "visible" : "hidden" }} aria-hidden={!active} inert={!active}>
-    <ChatHostProvider host={host}><TooltipProvider delayDuration={300}><UiConfigProvider connection={connection}><RPCClientProvider identity={identity}>
-      <App sessionId={sessionId} active={active} omniAvatar defaultVoiceCaptions={false} />
+    <ChatHostProvider host={conversationHost}><TooltipProvider delayDuration={300}><UiConfigProvider connection={connection}><RPCClientProvider identity={identity}>
+      <PublishedChat sessionId={sessionId} active={active} showAvatar={showAvatar} onPresent={value => onPresent(sessionId, value)} />
     </RPCClientProvider></UiConfigProvider></TooltipProvider></ChatHostProvider>
   </div>;
 });

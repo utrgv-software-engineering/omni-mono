@@ -69,4 +69,18 @@ describe("the canvas runtime", () => {
     expect(doc.documentElement.getAttribute("data-dc-ready")).toBe("failed");
     expect(doc.body.textContent).toContain("did not run: nope");
   });
+
+  it("preserves values and colors from component logic nested inside the board", () => {
+    const doc = mount(`<html><body><x-dc>
+      <strong style="color:{{color}}">{{total}}</strong>
+      <script type="text/x-dc" data-props='{"total":69}'>
+        class Component extends DCLogic {
+          renderVals() { return { total: this.props.total, color: '#facc15' }; }
+        }
+      </script>
+    </x-dc></body></html>`);
+    expect(doc.querySelector("strong")?.textContent).toBe("69");
+    expect(doc.querySelector("strong")?.style.color).toBe("rgb(250, 204, 21)");
+    expect(doc.documentElement.getAttribute("data-dc-ready")).toBe("");
+  });
 });

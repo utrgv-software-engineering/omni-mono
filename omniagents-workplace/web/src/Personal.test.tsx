@@ -2,22 +2,27 @@
 import { act, useEffect, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { ChatHost } from "@omniagents/chat-ui/host";
+import type { Person } from "./api";
 import { PersonalApp } from "./Personal";
 
-const { app, config, unmounted } = vi.hoisted(() => ({
+const { app, config, unmounted, hosts } = vi.hoisted(() => ({
+  hosts: [] as ChatHost[],
   app: vi.fn(),
   config: vi.fn(),
   unmounted: vi.fn(),
 }));
-vi.mock("@omniagents/chat-ui/App", () => ({
-  App: (props: { sessionId: string }) => {
+vi.mock("./ChatViewer", () => ({ ChatViewer: ({ value, onClose }: { value: {kind:string;title:string}; onClose:()=>void }) => <section data-viewer={value.kind}>{value.title}<button onClick={onClose}>Close viewer</button></section> }));
+vi.mock("./Desktop", () => ({ useDesktopAvailable: () => false, Desktop: () => <div>Desktop</div> }));
+vi.mock("./PublishedChat", () => ({
+  PublishedChat: (props: { sessionId: string }) => {
     useEffect(() => () => unmounted(props.sessionId), [props.sessionId]);
     app(props);
     return <div>Shared chat</div>;
   },
 }));
 vi.mock("@omniagents/chat-ui/host", () => ({
-  ChatHostProvider: ({ children }: { children: ReactNode }) => children,
+  ChatHostProvider: ({ host, children }: { host: ChatHost; children: ReactNode }) => { hosts.push(host); return children; },
 }));
 vi.mock("@omniagents/chat-ui/rpc-context", () => ({
   RPCClientProvider: ({ children }: { children: ReactNode }) => children,
@@ -55,6 +60,8 @@ const button = (name: string) =>
   )!;
 beforeEach(() => {
   vi.clearAllMocks();
+  hosts.length = 0;
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   const storage = new Map<string, string>();
   vi.stubGlobal("localStorage", {
     getItem: (key: string) => storage.get(key) ?? null,
@@ -98,12 +105,12 @@ afterEach(() => {
   container.remove();
   vi.unstubAllGlobals();
 });
-it("embeds the shared chat with a registered session and retained viewport", async () => {
-  await act(async () => root.render(<PersonalApp />));
+it("embeds the public chat with a registered session and retained viewport", async () => {
+  await act(async () => root.render(<PersonalApp account={{ id: "admin", admin: true } as Person} />));
   expect(app).toHaveBeenCalledWith({
     sessionId: "factory-personal",
-    omniAvatar: true,
-    defaultVoiceCaptions: false,
+    showAvatar: true,
+    onPresent: expect.any(Function),
     active: true,
   });
   expect(config).toHaveBeenCalledWith({
@@ -117,14 +124,14 @@ it("does not connect on authorization failure and can retry", async () => {
     ok: false,
     json: async () => ({ detail: "Admin access required" }),
   } as Response);
-  await act(async () => root.render(<PersonalApp />));
+  await act(async () => root.render(<PersonalApp account={{ id: "admin", admin: true } as Person} />));
   expect(app).not.toHaveBeenCalled();
   expect(container.textContent).toContain("Admin access required");
   await act(async () => button("Retry").click());
   expect(app).toHaveBeenCalled();
 });
 it("creates a side chat immediately without a naming dialog and closes mobile navigation", async () => {
-  await act(async () => root.render(<PersonalApp />));
+  await act(async () => root.render(<PersonalApp account={{ id: "admin", admin: true } as Person} />));
   await act(async () => button("Show chats").click());
   expect(document.body.textContent).not.toContain("Conversations with Omni");
   expect(document.body.textContent).not.toContain("Archived");
@@ -142,7 +149,7 @@ it("creates a side chat immediately without a naming dialog and closes mobile na
 });
 it("keeps desktop navigation open when switching and remembers the selected chat", async () => {
   wide = true;
-  await act(async () => root.render(<PersonalApp />));
+  await act(async () => root.render(<PersonalApp account={{ id: "admin", admin: true } as Person} />));
   await act(async () => button("Show chats").click());
   await act(async () => button("Planning").click());
   expect(
@@ -161,14 +168,14 @@ it("prefers a direct link over the remembered selection and falls back from a de
     JSON.stringify("personal-side"),
   );
   window.history.replaceState(null, "", "/personal?chat=factory-personal");
-  await act(async () => root.render(<PersonalApp />));
+  await act(async () => root.render(<PersonalApp account={{ id: "admin", admin: true } as Person} />));
   expect(app).toHaveBeenCalledWith(
     expect.objectContaining({ sessionId: "factory-personal", active: true }),
   );
   await act(async () => root.unmount());
   root = createRoot(container);
   window.history.replaceState(null, "", "/personal?chat=deleted");
-  await act(async () => root.render(<PersonalApp />));
+  await act(async () => root.render(<PersonalApp account={{ id: "admin", admin: true } as Person} />));
   expect(app).toHaveBeenCalledWith(
     expect.objectContaining({ sessionId: "factory-personal", active: true }),
   );
@@ -178,7 +185,7 @@ it("restores the remembered chat without a URL selection", async () => {
     "workplace.chat.selected",
     JSON.stringify("personal-side"),
   );
-  await act(async () => root.render(<PersonalApp />));
+  await act(async () => root.render(<PersonalApp account={{ id: "admin", admin: true } as Person} />));
   expect(app).toHaveBeenCalledWith(
     expect.objectContaining({ sessionId: "personal-side", active: true }),
   );
@@ -191,7 +198,7 @@ it("shows unread and attention indicators and a conditional archive section", as
     archived: true,
     waiting: true,
   });
-  await act(async () => root.render(<PersonalApp />));
+  await act(async () => root.render(<PersonalApp account={{ id: "admin", admin: true } as Person} />));
   await act(async () => button("Show chats").click());
   expect(
     document.querySelector('[aria-label="Unread activity"]'),
@@ -201,4 +208,27 @@ it("shows unread and attention indicators and a conditional archive section", as
   expect(
     JSON.parse(localStorage.getItem("workplace.chat.seen")!)["personal-side"],
   ).toBe("new-result");
+});
+
+
+it("replaces the single viewer, closes it, and scopes it to its chat", async () => {
+  wide = true;
+  await act(async () => root.render(<PersonalApp account={{ id: "admin", admin: true } as Person} />));
+  const host = hosts[0];
+  const common = { title: "Plan", id: "abc", presentation_id: "one", issued_at: Date.now() };
+  await act(async () => host.presentView?.({ ...common, kind: "artifact" }));
+  expect(app).toHaveBeenLastCalledWith(expect.objectContaining({showAvatar:false}));
+  expect(document.querySelectorAll("[data-viewer]")).toHaveLength(1);
+  expect(document.querySelector("[data-viewer]")?.getAttribute("data-viewer")).toBe("artifact");
+  await act(async () => host.presentView?.({ ...common, kind: "desktop", title: "Desktop" }));
+  expect(document.querySelectorAll("[data-viewer]")).toHaveLength(1);
+  expect(document.querySelector("[data-viewer]")?.getAttribute("data-viewer")).toBe("desktop");
+  await act(async () => button("Show chats").click());
+  await act(async () => button("Planning").click());
+  expect(document.querySelector("[data-viewer]")).toBeNull();
+  await act(async () => button("Main Chat").click());
+  expect(document.querySelector("[data-viewer]")?.getAttribute("data-viewer")).toBe("desktop");
+  await act(async () => button("Close viewer").click());
+  expect(app).toHaveBeenLastCalledWith(expect.objectContaining({showAvatar:true}));
+  expect(document.querySelector("[data-viewer]")).toBeNull();
 });

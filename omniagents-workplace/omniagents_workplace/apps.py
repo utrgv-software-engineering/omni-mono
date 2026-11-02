@@ -20,6 +20,8 @@ connects with: its MCP servers, tokens, git remote and webhook secrets.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import os
 import secrets
 import string
@@ -431,8 +433,14 @@ class AppRegistry:
             "MEMORY_MCP_TOKEN": app.memory_token,
             "MEMORY_WEBHOOK_SECRET": app.memory_webhook_secret,
             "MEMORY_AGENT_STORE": w.memory.provision(app.id, "agent"),
+            "SHARED_FILES_HOST_PATH": w.environ.get("SHARED_FILES_HOST_PATH")
+            or (
+                str(Path(w.environ["LIBRARY_FILES_HOST_PATH"]).parent / "shared")
+                if w.environ.get("LIBRARY_FILES_HOST_PATH")
+                else str(w.shared.root.resolve())
+            ),
             "LIBRARY_API_URL": f"{base}/library/api",
-            "LIBRARY_FILES_HOST_PATH": os.environ.get("LIBRARY_FILES_HOST_PATH")
+            "LIBRARY_FILES_HOST_PATH": w.environ.get("LIBRARY_FILES_HOST_PATH")
             or str(w.library.root.resolve()),
             "CANVAS_MCP_URL": f"{base}/canvas/mcp",
             "CANVAS_MCP_TOKEN": (
@@ -453,7 +461,12 @@ class AppRegistry:
         # A member's own app must never inherit the factory's real GitHub identity.
         config = w.factory_config.load() if w.factory_config else {}
         if (config.get("app") or {}).get("username") == app.username:
+            env.update(w.factory_secrets.environment())
             env.update(w.repository_settings.environment())
+            env.update(w.event_gateway.environment())
+            if w.environ.get("COOLIFY_MCP_URL"):
+                env["COOLIFY_MCP_URL"] = w.environ["COOLIFY_MCP_URL"]
+                env["COOLIFY_MCP_TOKEN"] = app.memory_token
             env["FACTORY_SETTINGS_TOKEN"] = app.memory_token
             env["FACTORY_BOOTSTRAP_TOKEN"] = (
                 w.github.users[app.github_login].token or ""

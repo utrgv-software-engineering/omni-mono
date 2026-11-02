@@ -9734,6 +9734,13 @@
           }
         },
         {
+          "name": "notifications",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v2.schema.json#/$defs/run_started/properties/notifications"
+          }
+        },
+        {
           "name": "seq",
           "required": false,
           "schema": {

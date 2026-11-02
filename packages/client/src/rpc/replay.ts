@@ -147,6 +147,8 @@ export class SessionReplayCoordinator {
   private registered = new Set<string>();
   private resuming = new Set<string>();
   private pendingRetry = new Set<string>();
+  private retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private retryAttempts = new Map<string, number>();
   private needsResync = new Set<string>();
   private buffered = new Map<string, ReplayedEvent[]>();
   private generations = new Map<string, number>();
@@ -182,6 +184,7 @@ export class SessionReplayCoordinator {
 
   /** Stop reconnect recovery for a session the UI no longer owns. */
   unregisterSession(sessionId: string): void {
+    this.clearRetry(sessionId);
     this.generations.set(sessionId, (this.generations.get(sessionId) ?? 0) + 1);
     this.resuming.delete(sessionId);
     this.registered.delete(sessionId);
@@ -203,6 +206,7 @@ export class SessionReplayCoordinator {
    * reset the transcript on every cycle.
    */
   completeResync(sessionId: string, streamId: string | null = null, lastSeq = 0): void {
+    this.clearRetry(sessionId);
     this.generations.set(sessionId, (this.generations.get(sessionId) ?? 0) + 1);
     this.resuming.delete(sessionId);
     const adopted = streamId === null ? this.resyncCursors.get(sessionId) : undefined;
@@ -220,6 +224,7 @@ export class SessionReplayCoordinator {
 
   /** Fence older replay reads while an authoritative snapshot is fetched. */
   beginSnapshot(sessionId: string): void {
+    this.clearRetry(sessionId);
     this.generations.set(sessionId, (this.generations.get(sessionId) ?? 0) + 1);
     this.resuming.delete(sessionId);
     this.needsResync.add(sessionId);
@@ -233,6 +238,7 @@ export class SessionReplayCoordinator {
    * ``completeResync``.
    */
   requireResync(sessionId: string): void {
+    this.clearRetry(sessionId);
     if (this.needsResync.has(sessionId)) {
       return;
     }
@@ -309,7 +315,48 @@ export class SessionReplayCoordinator {
     await Promise.all(resumes);
   }
 
+  /** Cancel recovery when its owning connection is permanently released. */
+  dispose(): void {
+    for (const sessionId of this.trackers.keys()) {
+      this.unregisterSession(sessionId);
+    }
+  }
+
+  private clearRetry(sessionId: string): void {
+    const timer = this.retryTimers.get(sessionId);
+    if (timer !== undefined) clearTimeout(timer);
+    this.retryTimers.delete(sessionId);
+    this.retryAttempts.delete(sessionId);
+  }
+
+  private scheduleRetry(sessionId: string): void {
+    const attempt = this.retryAttempts.get(sessionId) ?? 0;
+    if (attempt >= 3) {
+      // Replay itself may be broken while ordinary reads still work. Reload
+      // authoritative state; its existing error UI handles a failed snapshot.
+      this.requireResync(sessionId);
+      return;
+    }
+    this.retryAttempts.set(sessionId, attempt + 1);
+    this.retryTimers.set(
+      sessionId,
+      setTimeout(
+        () => {
+          this.retryTimers.delete(sessionId);
+          const tracker = this.trackers.get(sessionId);
+          if (!tracker || this.resuming.has(sessionId) || this.needsResync.has(sessionId)) return;
+          this.resuming.add(sessionId);
+          void this.runResume(sessionId, tracker);
+        },
+        1000 * 2 ** attempt
+      )
+    );
+  }
+
   private async runResume(sessionId: string, tracker: ReplayTracker): Promise<void> {
+    const timer = this.retryTimers.get(sessionId);
+    if (timer !== undefined) clearTimeout(timer);
+    this.retryTimers.delete(sessionId);
     const generation = this.generations.get(sessionId) ?? 0;
     let outcome: 'success' | 'retry' | 'resync' = 'success';
     try {
@@ -321,6 +368,7 @@ export class SessionReplayCoordinator {
         this.deliver(event.method, event.params);
       }
       this.pendingRetry.delete(sessionId);
+      this.clearRetry(sessionId);
     } catch (err) {
       if (generation !== (this.generations.get(sessionId) ?? 0)) {
         return;
@@ -340,8 +388,8 @@ export class SessionReplayCoordinator {
       } else {
         // A transport failure while resuming is not evidence that the durable
         // cursor is invalid. Keep both the cursor and held live events for the
-        // next successful reconnect instead of force-advancing or asking the
-        // host to perform an unnecessary full-state rebuild.
+        // next retry without requiring another live event or a disconnect.
+        // Never advance past events that have not been applied.
         outcome = 'retry';
         this.pendingRetry.add(sessionId);
       }
@@ -349,6 +397,7 @@ export class SessionReplayCoordinator {
     const held = this.buffered.get(sessionId) ?? [];
     this.resuming.delete(sessionId);
     if (outcome === 'retry') {
+      this.scheduleRetry(sessionId);
       return;
     }
     this.buffered.delete(sessionId);

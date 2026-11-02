@@ -1402,6 +1402,7 @@ class RunStartedParams(BaseModel):
     session_id: str
     prompt: str | None = None
     prompt_role: str | None = None
+    notifications: list[Any] | None = None
     seq: int | None = None
     stream_id: str | None = None
 

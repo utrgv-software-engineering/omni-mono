@@ -1,3 +1,5 @@
+import { AppImage, AppVideo } from "./extensions/Media";
+import { factoryUrl } from "./factory-scope";
 import { useState } from "react";
 
 import { Button } from "@omniagents/ui/button";
@@ -202,28 +204,28 @@ export function MessageRow({
             file.mimetype.startsWith("image/") ? (
               <a
                 key={file.id}
-                href={file.url_private}
+                href={factoryUrl(file.url_private)}
                 target="_blank"
                 rel="noreferrer"
                 className="mt-1 block w-fit"
               >
-                <img
-                  src={file.url_private}
+                <AppImage
+                  src={factoryUrl(file.url_private)}
                   alt={file.alt_txt || file.title}
                   className="max-h-72 max-w-md rounded-md border"
                 />
               </a>
             ) : file.mimetype.startsWith("video/") ? (
-              <video
+              <AppVideo
                 key={file.id}
-                src={file.url_private}
+                src={factoryUrl(file.url_private)}
                 controls
                 className="mt-1 max-h-72 max-w-md rounded-md border"
               />
             ) : (
               <a
                 key={file.id}
-                href={file.url_private}
+                href={factoryUrl(file.url_private)}
                 target="_blank"
                 rel="noreferrer"
                 className="mt-1 block text-sm text-sky-600 underline"

@@ -27,7 +27,7 @@ from importlib import resources
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from mcp import types
-from mcp.server.lowlevel import Server
+from ..mcp_server import tool_server, current_request
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 from ..wire import Wire
@@ -174,13 +174,13 @@ class GitHubMCP:
         self._definitions: List[Dict[str, Any]] = reference["tools"]
         self._toolsets: Dict[str, str] = reference.get("toolsets") or {}
         info = reference.get("serverInfo") or {}
-        self.server = Server(
+        self.server = tool_server(
             info.get("name", "github-mcp-server"),
+            list_tools=self._list_tools,
+            call_tool=self._call_tool,
             version=info.get("version"),
             instructions=reference.get("instructions"),
         )
-        self.server.list_tools()(self._list_tools)
-        self.server.call_tool(validate_input=False)(self._call_tool)
         self.manager = StreamableHTTPSessionManager(
             self.server, json_response=False, stateless=True
         )
@@ -218,7 +218,7 @@ class GitHubMCP:
         return self.state.user_for_token(auth[7:].strip())
 
     def _request(self) -> Tuple[User, Dict[str, str]]:
-        request = self.server.request_context.request
+        request = current_request()
         headers = {k.lower(): v for k, v in request.headers.items()} if request else {}
         user = self._caller(headers)
         if user is None:

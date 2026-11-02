@@ -178,6 +178,14 @@ def accept_message(journal, sender, recipient, message, operation_id):
                     "source": "worker.message",
                     "enqueued_at": row["created_at"],
                     "worker_message_id": row["id"],
+                    "worker": {
+                        "id": sender,
+                        "session_id": rows[sender].get("session_id"),
+                        "name": rows[sender]["recipe"].get("name") or sender,
+                        "task": rows[sender]["task"],
+                        "message": message,
+                        "message_id": row["id"],
+                    },
                 }
             )
             row["delivery"] = "message_queued"

@@ -1,3 +1,4 @@
+import { parseNotifications } from '../transcript/worker-messages';
 import { adaptCanonicalConversationItem } from '../rpc/canonical-chat-history';
 import type { RPCClient } from '../rpc/client';
 import { ConversationClient } from '../rpc/conversation';
@@ -13,6 +14,24 @@ export function wireSessionTranscript(session: ConversationSession, client: RPCC
   const actor = { getSnapshot: () => session.actor.getSnapshot(), send: session.receive };
   const conversations = new ConversationClient(client);
   const plansAndDiffs = new PlansAndDiffsClient(client);
+  // Reconnect can replay hundreds of item/run events in one frame. Keep
+  // their follow-up reads below the RPC limit so hydration can also proceed.
+  const readLanes = Array.from({ length: 4 }, () => Promise.resolve());
+  let nextReadLane = 0;
+  const readEvent = <T>(read: () => Promise<T>): Promise<T> => {
+    const lane = nextReadLane++ % readLanes.length;
+    const result = readLanes[lane]!.then(() => {
+      if (session.disposed) {
+        throw new Error('Conversation connection was closed');
+      }
+      return read();
+    });
+    readLanes[lane] = result.then(
+      () => {},
+      () => {}
+    );
+    return result;
+  };
   const planDiffRecovery = new PlanDiffRecovery(plansAndDiffs, conversations, () =>
     client.supportsExperimentalFeature('plansAndDiffs')
   );
@@ -70,6 +89,7 @@ export function wireSessionTranscript(session: ConversationSession, client: RPCC
         // a fake user message.
         prompt: typeof p?.prompt === 'string' ? p.prompt : undefined,
         prompt_role: typeof p?.prompt_role === 'string' ? p.prompt_role : undefined,
+        notifications: parseNotifications(p?.notifications),
       });
     }),
 
@@ -84,11 +104,13 @@ export function wireSessionTranscript(session: ConversationSession, client: RPCC
         session_id: threadId || undefined,
       });
       if (threadId && client.supportsExperimentalFeature('plansAndDiffs')) {
-        void planDiffRecovery
-          // run_end exposes a run_id, not the canonical conversation
-          // turn_id accepted by get_run_diff. Ask for the authoritative
-          // latest completed turn instead of assuming those identities match.
-          .recoverLatestRunDiff(threadId)
+        void readEvent(() =>
+          planDiffRecovery
+            // run_end exposes a run_id, not the canonical conversation
+            // turn_id accepted by get_run_diff. Ask for the authoritative
+            // latest completed turn instead of assuming those identities match.
+            .recoverLatestRunDiff(threadId)
+        )
           .then((recovered) => adoptRecoveredItems(threadId, recovered))
           .catch(() => {
             // The canonical transcript and reconnect recovery remain the
@@ -319,8 +341,7 @@ export function wireSessionTranscript(session: ConversationSession, client: RPCC
       if (!threadId || !itemId || actor.getSnapshot().context.sessionId !== threadId) {
         return;
       }
-      void conversations
-        .getItem(threadId, itemId)
+      void readEvent(() => conversations.getItem(threadId, itemId))
         .then((item) => {
           if (
             session.disposed ||

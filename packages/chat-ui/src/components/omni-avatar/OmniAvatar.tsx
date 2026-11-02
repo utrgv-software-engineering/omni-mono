@@ -27,11 +27,13 @@ export function OmniAvatar({
   waiting,
   working,
   voice,
+  onClick,
 }: {
   online: boolean;
   waiting: boolean;
   working: boolean;
   voice: RealtimeVoice;
+  onClick?: () => void;
 }) {
   const node = useRef<HTMLSpanElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -89,10 +91,20 @@ export function OmniAvatar({
   }, []);
   return (
     <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex flex-col items-center">
+      {onClick && (
+        <button
+          type="button"
+          onClick={onClick}
+          aria-label="Open activity"
+          className="pointer-events-auto absolute top-0 size-26 rounded-full focus-visible:outline focus-visible:outline-ring"
+        />
+      )}
       <span ref={node} role="img" aria-label="Omni" className="block size-26">
         <canvas ref={canvas} aria-hidden="true" className="block size-full" />
       </span>
-      <span className="relative -mt-[22px] rounded-full bg-foreground px-3 py-[3px] text-sm leading-5 font-medium text-background">Omni</span>
+      <span className="relative -mt-[22px] rounded-full bg-foreground px-3 py-[3px] text-sm leading-5 font-medium text-background">
+        Omni
+      </span>
     </div>
   );
 }

@@ -1344,10 +1344,19 @@ class McpServerManager:
         snapshot = _ProbeSnapshot(captured_at=_utcnow())
         init_result = getattr(server, "server_initialize_result", None)
         if init_result is not None:
-            snapshot.server_info = _dump_model(getattr(init_result, "serverInfo", None))
+            snapshot.server_info = _dump_model(
+                getattr(
+                    init_result, "server_info", getattr(init_result, "serverInfo", None)
+                )
+            )
             snapshot.capabilities = _dump_model(
                 getattr(init_result, "capabilities", None)
             )
+        session = getattr(server, "session", None)
+        discovery = getattr(session, "discover_result", None)
+        if init_result is None and discovery is not None:
+            snapshot.server_info = _dump_model(getattr(session, "server_info", None))
+            snapshot.capabilities = _dump_model(discovery.capabilities)
         capabilities = snapshot.capabilities or {}
         session = getattr(server, "session", None)
         try:
@@ -1367,7 +1376,11 @@ class McpServerManager:
             try:
                 listed = await session.list_resource_templates()
                 snapshot.resource_templates = _dump_model_list(
-                    getattr(listed, "resourceTemplates", [])
+                    getattr(
+                        listed,
+                        "resource_templates",
+                        getattr(listed, "resourceTemplates", []),
+                    )
                 )
                 snapshot.supported["resource_templates"] = True
             except Exception:

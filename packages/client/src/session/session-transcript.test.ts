@@ -182,3 +182,42 @@ it('says when a run fails instead of ending in silence', async () => {
     session.dispose();
   }
 });
+
+it('bounds replay reads so a long conversation does not exhaust the RPC queue', async () => {
+  const { fake, client } = fakeSessionClient();
+  const owner = new ConversationSession('long-history', client);
+  try {
+    await owner.load();
+    fake.supportsExperimentalFeature.mockReturnValue(true);
+    const gate = deferred<void>();
+    let active = 0;
+    let peak = 0;
+    let completed = 0;
+    fake.request.mockImplementation(async (method, params) => {
+      if (method !== 'get_item') throw new Error(`Unexpected ${method}`);
+      active++;
+      peak = Math.max(peak, active);
+      await gate.promise;
+      active--;
+      completed++;
+      return {
+        ...historyPage(owner.id, 'saved').items[0]!,
+        item_id: params.item_id,
+      };
+    });
+    for (let i = 0; i < 150; i++) {
+      owner.dispatch('item_updated', {
+        session_id: owner.id,
+        thread_id: owner.id,
+        item_id: `item-${i}`,
+        kind: 'agent_message',
+      });
+    }
+    await vi.waitFor(() => expect(active).toBe(4));
+    gate.resolve();
+    await vi.waitFor(() => expect(completed).toBe(150));
+    expect(peak).toBe(4);
+  } finally {
+    owner.dispose();
+  }
+});

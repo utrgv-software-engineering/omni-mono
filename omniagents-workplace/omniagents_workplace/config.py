@@ -114,13 +114,15 @@ def substitute(
 
 
 def load_config(
-    path: Path, credentials: Optional["Credentials"] = None
+    path: Path, credentials: Optional["Credentials"] = None, *, environ=None
 ) -> Dict[str, Any]:
     path = Path(path)
     if not path.is_file():
         raise ConfigError(f"No {path}")
     config = substitute(
-        yaml.safe_load(path.read_text(encoding="utf-8")) or {}, credentials=credentials
+        yaml.safe_load(path.read_text(encoding="utf-8")) or {},
+        credentials=credentials,
+        environ=environ,
     )
     if not isinstance(config, dict):
         raise ConfigError(f"{path}: a workplace config is a mapping")
@@ -255,15 +257,37 @@ def apply(
                 description=str(raw.get("description") or ""),
             )
             made.append(f"the app {app.name} ({app.username})")
+        # Provider implementations still POST normally. Only the factory's
+        # registered destinations change to its own durable gateway.
+        destinations = {}
+        if config.get("factory", {}).get("url") and config.get("event_gateway", {}).get(
+            "enabled", True
+        ):
+            for key, provider in (
+                ("github_webhook", "github"),
+                ("linear_webhook", "linear"),
+                ("memory_webhook", "memory"),
+                ("slack_request_url", "slack"),
+            ):
+                if raw.get(key):
+                    destinations[key] = w.event_gateway.endpoint(provider)
         w.apps.configure(
             app,
             name=raw.get("name"),
             description=raw.get("description"),
             slack_delivery=raw.get("slack_delivery"),
-            slack_request_url=raw.get("slack_request_url"),
-            github_webhook_url=raw.get("github_webhook"),
-            linear_webhook_url=raw.get("linear_webhook"),
-            memory_webhook_url=raw.get("memory_webhook"),
+            slack_request_url=destinations.get(
+                "slack_request_url", raw.get("slack_request_url")
+            ),
+            github_webhook_url=destinations.get(
+                "github_webhook", raw.get("github_webhook")
+            ),
+            linear_webhook_url=destinations.get(
+                "linear_webhook", raw.get("linear_webhook")
+            ),
+            memory_webhook_url=destinations.get(
+                "memory_webhook", raw.get("memory_webhook")
+            ),
         )
     except AccountError as exc:
         raise ConfigError(f"app: {exc.message}")
@@ -450,7 +474,8 @@ class FactoryConfig:
     environment's credentials), applied, and its factory's credentials
     written; in development, edited from the UI (its configuration page)."""
 
-    def __init__(self, path: Path, credentials: Optional[Credentials]):
+    def __init__(self, path: Path, credentials: Optional[Credentials], *, environ=None):
+        self.environ = environ
         self.path = Path(path).resolve()
         self.root = self.path.parent
         self.credentials = credentials
@@ -458,7 +483,7 @@ class FactoryConfig:
         self.env_file: Optional[Path] = None
 
     def load(self) -> Dict[str, Any]:
-        return load_config(self.path, self.credentials)
+        return load_config(self.path, self.credentials, environ=self.environ)
 
     def raw(self) -> Dict[str, Any]:
         """The file as written: ``${...}`` references unread."""
@@ -476,6 +501,7 @@ class FactoryConfig:
     def write_environment(self, workplace: "Workplace", *, config=None) -> None:
         """Refresh connection credentials without reapplying demo seed configuration."""
         config = self.load() if config is None else config
+        workplace.event_gateway.configure_destinations()
         app = workplace.apps.by_username(str(config.get("app", {}).get("username", "")))
         if config.get("env_file") and app is not None:
             self.env_file = self.root / str(config["env_file"])

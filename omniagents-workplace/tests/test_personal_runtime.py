@@ -11,6 +11,7 @@ def policy():
         SimpleNamespace(
             session_id="factory-personal",
             stop=AsyncMock(),
+            send=AsyncMock(return_value={"ok": True}),
             snapshot=AsyncMock(return_value={"attention": []}),
             decide=AsyncMock(),
         ),
@@ -72,19 +73,25 @@ async def test_native_start_and_queue_preserve_attribution(policy):
         content=[{"type": "input_text", "text": "hello"}],
         submission_id="receipt",
     )
-    assert reply is None
-    assert forward["params"]["prompt"] == "[alice]\nhello"
-    assert forward["params"]["content"][0]["text"] == "[alice]"
-    assert forward["params"]["environment_selection"] == {"mode": "inherit"}
-    forward, _ = await request(
+    assert forward is None and reply["result"]["ok"]
+    policy.connection.send.assert_awaited_once_with(
+        "hello",
+        "receipt",
+        author="alice",
+        input_content=[{"type": "input_text", "text": "hello"}],
+    )
+    forward, reply = await request(
         policy,
         "enqueue_message",
         session_id="factory-personal",
         content="next",
         source="spoof",
+        submission_id="next-id",
     )
-    assert forward["params"]["source"] == "workplace:personal"
-    assert forward["params"]["content"] == "[alice]\nnext"
+    assert forward is None and reply["result"]["ok"]
+    policy.connection.send.assert_awaited_with(
+        "next", "next-id", author="alice", input_content=None
+    )
 
 
 @pytest.mark.asyncio
@@ -200,6 +207,17 @@ def test_native_messages_reach_runtime_but_foreign_sessions_do_not(
 
     monkeypatch.setenv("FACTORY_ARCHITECTURE", "personal")
     monkeypatch.setattr(PersonalConnection, "connect", AsyncMock())
+
+    async def call(self, method, params):
+        import json, websockets
+
+        async with websockets.connect(self.url) as socket:
+            await socket.send(
+                json.dumps({"id": 17, "method": method, "params": params})
+            )
+            return json.loads(await socket.recv())["result"]
+
+    monkeypatch.setattr(PersonalConnection, "call", call)
     url, seen = upstream
     w = _workplace(tmp_path, url)
     try:
@@ -234,8 +252,11 @@ def test_native_messages_reach_runtime_but_foreign_sessions_do_not(
                 ws.send_json(
                     {"id": 2, "method": method, "params": {"session_id": sid, **params}}
                 )
-                assert ws.receive_json()["result"]["method"] == method
-        assert seen["paths"] == ["/agents/generalist/ws"]
+                assert ws.receive_json()["result"]["method"] == "enqueue_message"
+        assert seen["paths"] == ["/agents/generalist/ws"] * 3
+        page = client.get(f"/workplace/api/personal/chats/{sid}/feed").json()
+        assert [m["text"] for m in page["messages"]] == ["hello", "next"]
+        assert {m["author"] for m in page["messages"]} == {"bill"}
     finally:
         w.close()
 
@@ -277,9 +298,15 @@ async def test_side_chat_policy_binds_text_and_voice_to_selected_session():
         PersonalVoicePolicy,
     )
 
-    connection = SimpleNamespace(session_id="personal-side")
+    connection = SimpleNamespace(
+        session_id="personal-side", send=AsyncMock(return_value={"ok": True})
+    )
     for policy, method, content in [
-        (PersonalRpcPolicy(connection, "emm"), "enqueue_message", {"content": "hi"}),
+        (
+            PersonalRpcPolicy(connection, "emm"),
+            "enqueue_message",
+            {"content": "hi", "submission_id": "id"},
+        ),
         (
             PersonalVoicePolicy(connection, "emm"),
             "delegate",
@@ -301,4 +328,41 @@ async def test_side_chat_policy_binds_text_and_voice_to_selected_session():
                 "params": {"session_id": "personal-side", **content},
             }
         )
-        assert error is None and forward["params"]["session_id"] == "personal-side"
+        if method == "enqueue_message":
+            assert forward is None and error["result"]["ok"]
+            connection.send.assert_awaited_once_with(
+                "hi", "id", author="emm", input_content=None
+            )
+        else:
+            assert error is None and forward["params"]["session_id"] == "personal-side"
+
+
+@pytest.mark.asyncio
+async def test_worker_transcript_read_is_scoped_and_never_permits_worker_writes(policy):
+    policy.connection.call = AsyncMock(
+        side_effect=[
+            {
+                "snapshot": [
+                    {"session_id": "child", "parent_session_id": "factory-personal"}
+                ]
+            },
+            {"items": [], "total": 0},
+        ]
+    )
+    forward, reply = await request(policy, "list_items", thread_id="child", limit=200)
+    assert forward is None and reply["result"]["total"] == 0
+    for method, params in [
+        ("start_run", {"session_id": "child", "prompt": "hello"}),
+        ("resume_session", {"session_id": "child"}),
+        ("set_session_model", {"session_id": "child", "model": "other"}),
+    ]:
+        forward, reply = await request(policy, method, **params)
+        assert forward is None and "error" in reply
+    policy.connection.call = AsyncMock(
+        return_value={
+            "snapshot": [{"session_id": "foreign", "parent_session_id": "other"}]
+        }
+    )
+    for thread_id in ("foreign", "missing"):
+        forward, reply = await request(policy, "list_items", thread_id=thread_id)
+        assert forward is None and "error" in reply

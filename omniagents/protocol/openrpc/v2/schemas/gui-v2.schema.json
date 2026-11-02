@@ -3010,6 +3010,10 @@
     "run_started": {
       "additionalProperties": false,
       "properties": {
+        "notifications": {
+          "items": {},
+          "type": "array"
+        },
         "prompt": {
           "type": "string"
         },

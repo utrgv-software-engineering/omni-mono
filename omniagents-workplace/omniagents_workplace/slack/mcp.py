@@ -25,7 +25,7 @@ from importlib import resources
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from mcp import types
-from mcp.server.lowlevel import Server
+from ..mcp_server import tool_server, current_request
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 from ..wire import Wire
@@ -84,13 +84,13 @@ class SlackMCP:
         self.upload_url = upload_url or base_url
         reference = load_tool_definitions()
         self._definitions: List[Dict[str, Any]] = reference["tools"]
-        self.server: Server = Server(
+        self.server = tool_server(
             reference["server"]["name"],
+            list_tools=self._list_tools,
+            call_tool=self._call_tool,
             version=reference["server"]["version"],
             instructions=reference.get("instructions"),
         )
-        self.server.list_tools()(self._list_tools)
-        self.server.call_tool(validate_input=False)(self._call_tool)
         self.manager = StreamableHTTPSessionManager(
             self.server, json_response=False, stateless=True
         )
@@ -132,7 +132,7 @@ class SlackMCP:
         return app, self.ws.users[app.user]
 
     def _request_caller(self) -> Tuple[App, User]:
-        request = self.server.request_context.request
+        request = current_request()
         caller = (
             self._caller({k.lower(): v for k, v in request.headers.items()})
             if request

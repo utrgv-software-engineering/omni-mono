@@ -861,6 +861,7 @@ export class RPCClient {
       clearTimeout(timer);
     }
     this.ackTimers.clear();
+    this.replay.dispose();
     this.resyncListeners.clear();
     this.elicitations.dispose();
     this.disconnect();

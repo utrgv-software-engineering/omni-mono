@@ -1301,6 +1301,7 @@ class RunStarted(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    notifications: list[Any] | None = None
     prompt: str | None = None
     prompt_role: str | None = None
     run_id: str

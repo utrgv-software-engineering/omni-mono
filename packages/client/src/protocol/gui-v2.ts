@@ -651,6 +651,7 @@ export interface RunStartedParams {
   session_id: string;
   prompt?: string;
   prompt_role?: string;
+  notifications?: unknown[];
   seq?: number;
   stream_id?: string;
 }

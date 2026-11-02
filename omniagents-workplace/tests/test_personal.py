@@ -107,7 +107,8 @@ def test_messages_cannot_choose_identity_or_weaken_policy(personal):
         "enqueue_message",
         {
             "session_id": sid,
-            "content": "[bill]\n" + body["text"],
+            "content": body["text"],
+            "variables": {"workplace_sender": "bill", "workplace_conversation": sid},
             "submission_id": body["submission_id"],
             "role": "user",
             "source": "workplace:personal",
@@ -485,6 +486,10 @@ def test_auto_title_and_activity_from_actual_conversation(personal):
     chat = client.post(base, json={}).json()
     sid = chat["id"]
     client.get(base + "/" + sid)
+    client.post(
+        base + "/" + sid + "/messages",
+        json={"text": "Plan the next event", "submission_id": str(uuid.uuid4())},
+    )
     states[sid]["snapshot"]["items"] = [
         {
             "item_id": "msg",

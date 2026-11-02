@@ -7,7 +7,7 @@ import json
 import os
 from typing import Any
 
-import httpx
+import httpx2 as httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
@@ -78,13 +78,12 @@ class MemoryClient:
             async with streamable_http_client(self.config["url"], http_client=http) as (
                 read,
                 write,
-                _,
             ):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     result = await session.call_tool(name, arguments)
                     text = "".join(c.text for c in result.content if c.type == "text")
-        if result.isError:
+        if result.is_error:
             raise ValueError(text)
         return json.loads(text)
 

@@ -5,6 +5,9 @@ on:
     branches: [main, dev]
     paths:
       - 'omniagents/**'
+      - 'omniagents-workplace/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
       - 'packages/**'
       - 'package.json'
       - 'package-lock.json'
@@ -12,6 +15,9 @@ on:
   pull_request:
     paths:
       - 'omniagents/**'
+      - 'omniagents-workplace/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
       - 'packages/**'
       - 'package.json'
       - 'package-lock.json'
@@ -135,3 +141,46 @@ jobs:
           pytest -v \
             tests/integration/test_git_sandbox_substrate.py \
             tests/integration/test_fs_sandbox_substrate.py
+
+  dependency-compatibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        dependencies: [locked, latest-compatible]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+      - name: Install locked dependencies
+        working-directory: .
+        run: uv sync --frozen --package omniagents --extra dev --extra server --extra sandbox-docker
+      - name: Exercise newer compatible releases
+        if: matrix.dependencies == 'latest-compatible'
+        working-directory: .
+        run: uv sync --upgrade --package omniagents --extra dev --extra server --extra sandbox-docker
+      - name: Install Workplace from the same checkout
+        working-directory: .
+        run: uv pip install --no-deps -e ./omniagents-workplace
+      - name: Check SDK and MCP contracts
+        working-directory: .
+        run: |
+          .venv/bin/pytest -q --timeout=60 \
+            omniagents/tests/unit/mcp \
+            omniagents/tests/integration/test_server_mcp_management.py \
+            omniagents/tests/unit/core/providers/test_codex_compaction.py \
+            omniagents/tests/unit/core/runtime/test_compaction_boundary.py \
+            omniagents/tests/unit/core/session/test_compaction_retry.py \
+            omniagents/tests/unit/core/tools/test_javascript_lifecycle.py
+      - name: Check Workplace MCP services
+        working-directory: .
+        run: |
+          .venv/bin/pytest -q --timeout=60 \
+            omniagents-workplace/tests/test_memory.py \
+            omniagents-workplace/tests/test_canvas.py \
+            omniagents-workplace/tests/test_slack.py \
+            omniagents-workplace/tests/test_linear.py \
+            omniagents-workplace/tests/test_apps.py \
+            omniagents-workplace/tests/test_extensions.py

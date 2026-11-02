@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import httpx
+import httpx2
 import pytest
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
@@ -17,10 +18,14 @@ BOARDS = ["FHome.dc.html", "FAgents.dc.html", "FRuns.dc.html"]
 
 
 async def _mcp(base_url, calls, token):
-    http = httpx.AsyncClient(headers={"Authorization": f"Bearer {token}"})
-    async with http, streamable_http_client(
-        f"{base_url}/canvas/mcp", http_client=http
-    ) as (read, write, _):
+    http = httpx2.AsyncClient(headers={"Authorization": f"Bearer {token}"})
+    async with (
+        http,
+        streamable_http_client(f"{base_url}/canvas/mcp", http_client=http) as (
+            read,
+            write,
+        ),
+    ):
         async with ClientSession(read, write) as session:
             results = [await session.initialize()]
             for name, args in calls:
@@ -33,7 +38,7 @@ async def _mcp(base_url, calls, token):
 
 
 def _json(result):
-    assert not result.isError, result.content[0].text
+    assert not result.is_error, result.content[0].text
     return json.loads(result.content[0].text)
 
 
@@ -62,7 +67,7 @@ async def test_an_agent_reads_the_canvas_as_it_was_made(workplace_server):
         ],
         token,
     )
-    assert init.serverInfo.name == "canvas" and len(tools.tools) == 11
+    assert init.server_info.name == "canvas" and len(tools.tools) == 11
     assert _json(listed)["canvases"][0]["boards"] == BOARDS
     got = _json(got)
     assert got["version"] == 1 and got["index"]["title"] == "OmniAgents Studio redesign"
@@ -150,14 +155,14 @@ async def test_publishing_changes_some_files_and_refuses_stale_or_broken_ones(
         "url": f"{base_url}/canvas/{canvas.id}",
     }
     assert (
-        stale.isError
+        stale.is_error
         and "version 2" in stale.content[0].text
         and "merge" in stale.content[0].text
     )
-    assert no_file.isError and "not a file" in no_file.content[0].text
-    assert no_order.isError and '"order"' in no_order.content[0].text
+    assert no_file.is_error and "not a file" in no_file.content[0].text
+    assert no_order.is_error and '"order"' in no_order.content[0].text
     assert (
-        removed.isError and "FRuns.dc.html" in removed.content[0].text
+        removed.is_error and "FRuns.dc.html" in removed.content[0].text
     )  # the index still lists it
     assert [v["version"] for v in _json(versions)["versions"]] == [1, 2]
     # What was not sent kept its content.
@@ -266,6 +271,16 @@ def test_boards_are_served_sandboxed_to_people_who_can_see_them(workplace_server
     assert (
         policy.startswith("sandbox allow-scripts;") and "connect-src 'none'" in policy
     )
+    directives = dict(
+        part.strip().split(" ", 1) for part in policy.split(";") if part.strip()
+    )
+    # Typography and theme styles must work beyond Google Fonts, including
+    # font files published alongside a board. Scripts remain restricted.
+    assert "https:" in directives["style-src"].split()
+    assert "https:" in directives["font-src"].split()
+    assert base_url in directives["font-src"].split()
+    assert "https:" not in directives["script-src"].split()
+    assert page.headers["access-control-allow-origin"] == "*"
     runtime = httpx.get(f"{base_url}{detail['view']}support.js")
     assert runtime.status_code == 200 and b"class DCLogic" in runtime.content
     # Without the view key, nothing.
@@ -279,8 +294,9 @@ def test_boards_are_served_sandboxed_to_people_who_can_see_them(workplace_server
 def test_the_ui_moves_boards_renames_and_deletes(workplace_server):
     workplace, base_url = workplace_server
     canvas = _studio(workplace)
-    priya, marcus = signed_in(workplace, base_url, "priya"), signed_in(
-        workplace, base_url, "marcus"
+    priya, marcus = (
+        signed_in(workplace, base_url, "priya"),
+        signed_in(workplace, base_url, "marcus"),
     )
     index = priya.get(f"/workplace/api/canvas/canvases/{canvas.id}").json()["index"]
     index["boards"]["FAgents.dc.html"]["x"] = 3000

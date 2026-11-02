@@ -42,6 +42,7 @@ export type CanonicalItemEnvelope = {
 };
 
 export type ChatMessage = {
+  notifications?: import('./worker-messages').Notification[];
   /** Spoken transcript for the captions display preference, not task output. */
   voice_caption?: boolean;
   type: 'chat';

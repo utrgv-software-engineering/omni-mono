@@ -23,6 +23,28 @@ class RenameArtifact(BaseModel):
     title: str = Field(min_length=1, max_length=120)
 
 
+def artifact_response(data: bytes, path: str, request: Request, own: str):
+    # Opaque origin: no cookies, parent DOM, forms, popups, or navigation.
+    # Relative assets and fetches are allowed only inside this artifact.
+    csp = (
+        f"sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' {own}; "
+        f"style-src 'unsafe-inline' {own}; img-src data: blob: {own}; font-src data: {own}; "
+        f"media-src {own}; connect-src {own}; base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
+    )
+    mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
+    return Response(
+        data,
+        media_type=mime,
+        headers={
+            "Content-Security-Policy": csp,
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
+            "Cache-Control": "no-store",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
+
+
 def library_router(workplace):
     r = APIRouter()
     library = workplace.library
@@ -85,6 +107,21 @@ def library_router(workplace):
             raise HTTPException(401, "A valid app or member token is required")
         return member
 
+    @r.get("/library/api/canvases/{canvas_id}")
+    def agent_canvas(canvas_id: str, request: Request):
+        agent(request)
+        from ..canvas.state import CanvasError
+
+        try:
+            item = workplace.canvas.canvas(canvas_id)
+        except CanvasError as exc:
+            raise HTTPException(404, "Canvas not found") from exc
+        return {
+            "id": item.id,
+            "title": item.title,
+            "boards": list(workplace.canvas.index(item).get("order") or []),
+        }
+
     @r.get("/library/api/artifacts")
     def agent_list(request: Request):
         agent(request)
@@ -105,26 +142,8 @@ def library_router(workplace):
         if not hmac.compare_digest(view_key, key(item)):
             raise HTTPException(404, "No such file")
         data = library.read(item, path)
-        origin = f"{request.url.scheme}://{request.url.netloc}"
-        # Opaque origin: no cookies, parent DOM, forms, popups, or navigation.
-        # Relative assets and fetches are allowed only inside this artifact.
-        own = f"{origin}/library/view/{artifact_id}/{view_key}/"
-        csp = (
-            f"sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' {own}; "
-            f"style-src 'unsafe-inline' {own}; img-src data: blob: {own}; font-src data: {own}; "
-            f"media-src {own}; connect-src {own}; base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
-        )
-        mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
-        return Response(
-            data,
-            media_type=mime,
-            headers={
-                "Content-Security-Policy": csp,
-                "X-Content-Type-Options": "nosniff",
-                "Referrer-Policy": "no-referrer",
-                "Cache-Control": "no-store",
-                "Access-Control-Allow-Origin": "*",
-            },
-        )
+        prefix = getattr(request.state, "factory_prefix", "")
+        own = f"{request.url.scheme}://{request.url.netloc}{prefix}/library/view/{artifact_id}/{view_key}/"
+        return artifact_response(data, path, request, own)
 
     return r

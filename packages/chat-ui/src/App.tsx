@@ -1,3 +1,7 @@
+import { WorkerTranscript } from './components/WorkerTranscript';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@omniagents/ui/dialog';
+import type { WorkerMessage as WorkerReport } from '@omniagents/client/transcript/worker-messages';
+import { presentationFromArtifact, PresentationGate } from './lib/presentation';
 import { useVoiceCaptions } from './hooks/use-voice-captions';
 import { isVoiceCaption, visibleVoiceTranscript } from '@omniagents/client/transcript/voice-captions';
 import { OmniAvatar } from './components/omni-avatar/OmniAvatar';
@@ -521,6 +525,16 @@ function SessionView({
     }
   }, [session, bootState.ready, executionTarget, workspaceSupported]);
 
+  useEffect(() => {
+    if (!connected || !host.presentView) return;
+    const gate = new PresentationGate(Date.now());
+    return session.on('client_request', (event: any) => {
+      if (event?.function !== 'ui.add_artifact') return;
+      const value = presentationFromArtifact(event.args ?? {});
+      if (value && gate.accept(value, active)) host.presentView?.(value);
+    });
+  }, [session, connected, host.presentView, active]);
+
   // Derive artifact index from the items stream (artifacts are now inline in conversation)
   const visibleArtifacts = useMemo(() => {
     return items.filter((it): it is ArtifactItem => it.type === 'artifact');
@@ -570,6 +584,7 @@ function SessionView({
   // only successful completions so failures (error/cancelled) stay visible
   // until the user dismisses them. Agent-tool entries can't be dismissed —
   // the server ages their ended tail out of the snapshot.
+  const [workerTranscript, setWorkerTranscript] = useState<{ id: string; title: string }>();
   const visibleSubagents = useMemo(() => {
     const live = subagents.filter(
       (s) => !(s.status !== 'running' && s.worker_id && dismissedWorkerIds.has(s.worker_id))
@@ -1235,7 +1250,7 @@ function SessionView({
 
   const hasArtifacts = visibleArtifacts.length > 0;
   const headerActions = {
-    showArtifactsButton: hasArtifacts,
+    showArtifactsButton: hasArtifacts && !host.presentView,
     onArtifactsToggle: hasArtifacts ? () => setArtifactsPanelOpen((v) => !v) : undefined,
   };
 
@@ -1318,8 +1333,22 @@ function SessionView({
                 <div ref={setChatColumnEl} data-omni-avatar={omniAvatar || undefined} className="flex-1 min-h-0 min-w-0 overflow-x-hidden relative flex flex-col data-[omni-avatar=true]:[&_[data-testid=chat-transcript]]:pt-[120px]">
                   {omniAvatar && <OmniAvatar online={connected} waiting={pendingApproval || Boolean(pendingPlan)} working={runActive} voice={voice} />}
                   <ArtifactPortalProvider target={chatColumnEl}>
+                    <Dialog open={!!workerTranscript} onOpenChange={open => { if (!open) setWorkerTranscript(undefined); }}>
+                      <DialogContent className="flex h-[85vh] max-w-4xl flex-col overflow-hidden" aria-describedby={undefined}>
+                        <DialogHeader><DialogTitle>{workerTranscript?.title}</DialogTitle></DialogHeader>
+                        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                          {workerTranscript && <WorkerTranscript sessionId={workerTranscript.id} />}
+                        </div>
+                      </DialogContent>
+                    </Dialog>
                     <MessageList
                       items={mergedItems}
+                      onOpenWorker={readOnly ? undefined : (worker: WorkerReport) => {
+                        const entry = subagents.find(w => (w.worker_id ?? w.subagent_id) === worker.id);
+                        const id = worker.session_id || entry?.session_id;
+                        if (id) setWorkerTranscript({ id, title: worker.name });
+                        else host.notifyError('Transcript unavailable', 'This worker has no retained session.');
+                      }}
                       greeting={greeting}
                       suggestions={suggestions}
                       statusText={status}

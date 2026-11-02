@@ -48,6 +48,7 @@ profile mostly about container shape.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
@@ -170,8 +171,15 @@ def resolve_profile(
 
     When *explicit_path* is given, only the built-in default + the explicit
     file are merged — the user/project layers are skipped. This is the
-    "tests, scripting, debugging" path; the launcher should not use it.
+    "tests, scripting, debugging" path. `OMNIAGENTS_SANDBOX_PROFILE` selects
+    a complete base profile and skips user/project layers, unless an explicit
+    path was passed by the caller.
     """
+    if explicit_path is None and os.environ.get("OMNIAGENTS_SANDBOX_PROFILE"):
+        # Selecting a backend replaces the base as well as user layers: a
+        # Docker build section must not leak into an explicitly selected VM.
+        default_profile_path = product_default_profile_path()
+        explicit_path = default_profile_path
     if config_dir is None:
         from omniagents.core.product import product_info
 
@@ -215,6 +223,12 @@ def product_default_profile_path(manifest_path: Optional[Any] = None) -> Optiona
     ``sandbox_profile_default.yml`` when it exists — the layering
     omni-code's product resolver shim always applied.
     """
+    override = os.environ.get("OMNIAGENTS_SANDBOX_PROFILE")
+    if override:
+        selected = Path(override).expanduser().resolve()
+        if not selected.is_file():
+            raise ValueError(f"Sandbox profile does not exist: {selected}")
+        return selected
     if manifest_path is None:
         from omniagents.core.product import product_info
 

@@ -188,6 +188,7 @@ _FULL_CAPABILITIES = frozenset(
 _CONTAINED_CLIENT_TYPES = frozenset(
     {
         "docker",  # container
+        "quicksand",  # local VM
         "wasm",  # bashkit + pyodide: no syscalls, workspace-only FS reach
         "e2b",  # remote micro-VM / container providers
         "modal",
@@ -268,6 +269,12 @@ def sandbox_capabilities(profile_raw: dict[str, Any], brought: Any = None) -> fr
     offline = (
         # docker: no network stack at all.
         client.get("network_mode") == "none"
+        or (
+            client_type == "quicksand"
+            and (profile_raw.get("options") or {}).get("network_mode", "mounts_only")
+            != "full"
+            and not (profile_raw.get("options") or {}).get("host_services")
+        )
         # wasm: both runtimes obey one policy derived from the profile's
         # ``network`` block (bashkit curl/git builtins + pyodide js.fetch),
         # OFF by default. Uses the same boot-state resolver the session

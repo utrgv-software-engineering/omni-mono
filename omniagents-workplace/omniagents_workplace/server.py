@@ -128,9 +128,12 @@ class Workplace:
         resume: bool = True,
         run_workflows: bool = True,
         workflow_container: Optional["ContainerSettings"] = None,
+        workflow_quicksand=None,
+        workflow_agent_profile=None,
         self_hosted_runner: Optional["ContainerSettings"] = None,
         internal_url: Optional[str] = None,
         environment: str = "development",
+        environ: Optional[Dict[str, str]] = None,
     ):
         """``sandbox_url`` is where a factory's sandboxes reach the workplace
         (default: ``host.docker.internal`` on ``base_url``'s port); paths in
@@ -139,12 +142,13 @@ class Workplace:
         interrupted stay as they are). ``run_workflows`` runs repositories' workflow files on
         this machine (``github/actions.py``)."""
         # Absolute: git runs from other directories (a clone, an import) with paths under it.
+        self.environ = os.environ if environ is None else dict(environ)
         self.data_dir = Path(data_dir).resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.base_url = base_url
         self.additional_origins = tuple(
             value.strip()
-            for value in os.environ.get("WORKPLACE_ALLOWED_ORIGINS", "").split(",")
+            for value in self.environ.get("WORKPLACE_ALLOWED_ORIGINS", "").split(",")
             if value.strip()
         )
         #: Where a factory beside the workplace reaches it (its apps' environment); else ``base_url``.
@@ -178,6 +182,8 @@ class Workplace:
                 workflow_container,
                 self_hosted_runner,
                 instance=self.instance,
+                quicksand=workflow_quicksand,
+                agent_profile=workflow_agent_profile,
             )
         self.github_json = Serializer(self.github, lambda: self.base_url)
         self.webhooks = WebhookDelivery(self.github, self.github_json, self.wire)
@@ -225,7 +231,7 @@ class Workplace:
                 15 if environment in ("production", "staging") else MIN_PASSWORD
             ),
             session_seconds=int(
-                os.environ.get(
+                self.environ.get(
                     "WORKPLACE_SESSION_SECONDS",
                     (
                         12 * 3600
@@ -236,9 +242,18 @@ class Workplace:
             ),
         )
         self.apps = AppRegistry(self, self.store)
+        from .event_gateway import EventGateway
+
+        self.event_gateway = EventGateway(self)
+        from .shared.state import Shared
+
+        self.shared = Shared(self)
         from .repository_settings import RepositorySettings
 
         self.repository_settings = RepositorySettings(self)
+        from .factory_secrets import FactorySecrets
+
+        self.factory_secrets = FactorySecrets(self)
         self.memory.remove_legacy_admin_grants(
             set(self.accounts.accounts),
             owned_stores={(a.owner_id, f"agent:{a.id}") for a in self.apps.active()},
@@ -918,7 +933,14 @@ class SignedIn:
                     return
             kind = headers.get("content-type", "")
             if method not in ("GET", "HEAD", "OPTIONS") and not (
-                kind.startswith("application/json")
+                (
+                    method == "PUT"
+                    and re.fullmatch(
+                        r"/workplace/api/shared/uploads/[a-f0-9]{32}/[0-9]+", path
+                    )
+                    and kind.startswith("application/octet-stream")
+                )
+                or kind.startswith("application/json")
                 or kind.startswith("multipart/form-data")
                 or headers.get("content-length", "0") == "0"
             ):
@@ -1027,10 +1049,20 @@ def create_app(
     """The workplace's app. ``sandbox_addresses`` are the local addresses
     sandboxes reach it on (Docker's bridge), and ``sandbox_ports`` the ports
     (a deployment's sandbox-only listener): those serve only git and uploads."""
+    from .extensions.api import WorkplaceApps
+    from .extensions.sandbox import AppSandboxOrigin
+
+    static_dir = static_dir or Path(
+        str(resources.files("omniagents_workplace").joinpath("static"))
+    )
+    extension_apps = WorkplaceApps(workplace, static_dir)
     ws = workplace.slack
     from .personal import PersonalConversations
 
-    personal = PersonalConversations(workplace.store)
+    personal = PersonalConversations(
+        workplace.store,
+        architecture=workplace.environ.get("FACTORY_ARCHITECTURE", "specialist"),
+    )
 
     @contextlib.asynccontextmanager
     async def lifespan(_app):
@@ -1039,11 +1071,14 @@ def create_app(
         workplace.webhooks.bind(loop)
         workplace.linear_hooks.bind(loop)
         workplace.memory_hooks.bind(loop)
+        workplace.event_gateway.configure_destinations()
+        workplace.event_gateway.start()
+        workplace.shared.start()
         scheduler = asyncio.create_task(_post_scheduled(ws))
         repository_refresh = asyncio.create_task(
             workplace.repository_settings.maintain()
         )
-        async with workplace.mcp.run(), workplace.github_mcp.run(), workplace.linear_mcp.run(), workplace.canvas_mcp.run(), workplace.memory_mcp.run():
+        async with workplace.mcp.run(), workplace.github_mcp.run(), workplace.linear_mcp.run(), workplace.canvas_mcp.run(), workplace.memory_mcp.run(), extension_apps.run():
             try:
                 yield
             finally:
@@ -1052,14 +1087,29 @@ def create_app(
                 with workplace.repository_settings.lock:
                     workplace.repository_settings.device.close()
                 await asyncio.gather(repository_refresh, return_exceptions=True)
+                await workplace.shared.close()
+                await workplace.event_gateway.close()
                 await workplace.memory_hooks.close()
                 await personal.close()
 
     app = FastAPI(title="OmniAgents Workplace", lifespan=lifespan)
+    from .crawl import NoIndex
+
     app.state.workplace = workplace
+    app.state.extension_apps = extension_apps
+    app.include_router(extension_apps.router())
+    app.router.routes.append(
+        Route(
+            "/workplace/api/extensions/mcp",
+            endpoint=extension_apps,
+            methods=["GET", "POST", "DELETE"],
+        )
+    )
     from .repository_settings import repository_router, RepositoryProviderBoundary
 
     app.include_router(repository_router(workplace))
+    app.include_router(workplace.factory_secrets.router())
+    app.include_router(workplace.event_gateway.router())
     app.add_middleware(RepositoryProviderBoundary, workplace=workplace)
     app.add_middleware(RequestLimits)
     app.add_middleware(
@@ -1071,6 +1121,13 @@ def create_app(
     # Added last, so it runs first: a sandbox never reaches the UI's API.
     app.add_middleware(
         SandboxBoundary, addresses=list(sandbox_addresses), ports=list(sandbox_ports)
+    )
+    app.add_middleware(NoIndex)
+    app.add_middleware(
+        AppSandboxOrigin,
+        static_dir=static_dir,
+        base_url=workplace.base_url,
+        configured=workplace.environ.get("WORKPLACE_APP_ORIGIN", ""),
     )
 
     @app.get("/up")
@@ -1111,6 +1168,12 @@ def create_app(
     )
     app.include_router(memory_router(workplace))
     app.include_router(library_router(workplace))
+    from .shared.api import shared_router
+
+    app.include_router(shared_router(workplace))
+    from .sharing import sharing_router
+
+    app.include_router(sharing_router(workplace))
     app.include_router(
         canvas_router(
             workplace.canvas, lambda: workplace.base_url, lambda account: account.id
@@ -1127,6 +1190,9 @@ def create_app(
             ),
         )
     )
+    from .github.release_evidence import release_evidence_router
+
+    app.include_router(release_evidence_router(workplace.github))
     app.include_router(git_router(workplace.github, workplace.wire))
     app.include_router(
         github_ui_router(workplace.github, workplace.github_json, workplace.webhooks)
@@ -1177,6 +1243,11 @@ def create_app(
     def _invite_url(token: str) -> str:
         return f"{workplace.base_url.rstrip('/')}/invite/{token}"
 
+    from .easy_auth import EasyAuth
+
+    azure_auth = EasyAuth(workplace.base_url)
+    azure_auth.install(app, workplace.accounts)
+
     # -- signing in --------------------------------------------------------------
 
     @app.get("/workplace/api/session")
@@ -1184,6 +1255,7 @@ def create_app(
         account = workplace.accounts.signed_in(request.cookies.get(SESSION_COOKIE))
         return {
             "account": person_json(account, private=True) if account else None,
+            "azure_auth": azure_auth.metadata(),
             "setup": workplace.accounts.needs_setup(),
             "organization": ws.name or None,
             # On this machine, a new workplace is set up without the printed link.
@@ -1191,7 +1263,8 @@ def create_app(
             and _on_this_machine(request),
             "environment": workplace.environment,
             # Development, as Jumpstart's /jumpstart: the factory's workplace.yml is edited here.
-            "configurable": workplace.environment == "development"
+            "configurable": not hasattr(workplace, "installation_factory_id")
+            and workplace.environment == "development"
             and workplace.factory_config is not None,
             # Served with a factory's workplace.yml: its model is configured here (admins).
             "factory": workplace.factory_config is not None,
@@ -1819,7 +1892,11 @@ def create_app(
 
     def _configurable(request: Request):
         admin(request)
-        if workplace.environment != "development" or workplace.factory_config is None:
+        if (
+            hasattr(workplace, "installation_factory_id")
+            or workplace.environment != "development"
+            or workplace.factory_config is None
+        ):
             raise HTTPException(
                 status_code=404,
                 detail="The configuration page is development's (bin/dev, "
@@ -2150,7 +2227,7 @@ def create_app(
                         }
                     )
         results = []
-        archive = _os.environ.get("EVALUATIONS_ARCHIVE")
+        archive = workplace.environ.get("EVALUATIONS_ARCHIVE")
         folder = Path(archive) / "benchmarks" if archive else None
         if folder is not None and folder.is_dir():
             for file in sorted(
@@ -2217,6 +2294,10 @@ def create_app(
             str(factory.get("auth_token") or "") or None,
         )
 
+    from .desktop import mount_desktop
+
+    mount_desktop(app, workplace, admin, _factory_endpoint, _cookie, SESSION_COOKIE)
+
     async def personal_connection(request: Request):
         account = admin(request)
         url, token = _factory_endpoint()
@@ -2231,6 +2312,55 @@ def create_app(
             return await operation
         except FactoryRpcError as exc:
             raise HTTPException(503, str(exc)) from exc
+
+    async def panel_workers(connection):
+        result = await personal_result(
+            connection.call(
+                "server_call",
+                {
+                    "function": "workers.list",
+                    "args": {},
+                    "session_id": connection.session_id,
+                },
+            )
+        )
+        return [
+            w
+            for w in result.get("snapshot", [])
+            if w.get("parent_session_id") == connection.session_id
+        ]
+
+    @app.get("/workplace/api/personal/chats/{chat_id}/agents")
+    async def personal_agents(request: Request):
+        connection = await personal_connection(request)
+        return {"agents": await panel_workers(connection)}
+
+    @app.get("/workplace/api/personal/chats/{chat_id}/activity")
+    async def personal_activity(request: Request, worker: str = "", cursor: str = ""):
+        connection = await personal_connection(request)
+        thread = connection.session_id
+        if worker:
+            workers = await panel_workers(connection)
+            match = next((w for w in workers if w.get("worker_id") == worker), None)
+            if match is None or not match.get("session_id"):
+                raise HTTPException(404, "Agent not found in this chat")
+            thread = match["session_id"]
+        params = {
+            "thread_id": thread,
+            "kinds": ["tool_call"],
+            "limit": 50,
+            "order": "desc",
+        }
+        if cursor:
+            params["cursor"] = cursor
+        result = await personal_result(connection.call("list_items", params))
+        # Pending decisions remain actionable, without exposing the runtime transcript.
+        attention = (
+            []
+            if worker
+            else (await personal_result(connection.snapshot()))["attention"]
+        )
+        return {**result, "attention": attention}
 
     @app.get("/workplace/api/personal/chats")
     async def personal_chats(request: Request):
@@ -2270,6 +2400,62 @@ def create_app(
         connection = await personal_connection(request)
         return await personal_result(connection.snapshot())
 
+    @app.get("/workplace/api/personal/chats/{chat_id}/feed")
+    async def personal_feed(chat_id: str, request: Request, after: int = 0):
+        # Reading public messages never requires a live agent or starts work.
+        admin(request)
+        if personal.architecture != "personal" or not personal.exists(chat_id):
+            raise HTTPException(404, "Chat not found")
+        if after < 0:
+            raise HTTPException(422, "Invalid cursor")
+        return personal.messages.page(chat_id, after)
+
+    def chat_publisher(request):
+        scheme, _, token = request.headers.get("authorization", "").partition(" ")
+        member = (
+            workplace.canvas.member_for_token(token)
+            if scheme.lower() == "bearer"
+            else None
+        )
+        if member is None or member.kind != "app":
+            raise HTTPException(401, "A factory app token is required")
+        if personal.architecture != "personal":
+            raise HTTPException(409, "Public Chat requires Personal mode")
+        return member
+
+    @app.post("/library/api/chat/messages")
+    async def publish_chat_message(request: Request):
+        member = chat_publisher(request)
+        body = await request.json()
+        if not isinstance(body, dict) or set(body) != {
+            "conversation",
+            "text",
+            "message_id",
+        }:
+            raise HTTPException(422, "Expected conversation, text and message_id")
+        chat = body["conversation"]
+        if not isinstance(chat, str) or not personal.exists(chat):
+            raise HTTPException(404, "Chat not found")
+        mid = body["message_id"]
+        if not isinstance(mid, str) or not mid or len(mid) > 200:
+            raise HTTPException(422, "Invalid message ID")
+        seq = personal.messages.publish(chat, mid, "assistant", member.id, body["text"])
+        return {"published": True, "conversation": chat, "message_id": mid, "seq": seq}
+
+    @app.get("/library/api/chat/conversations")
+    async def list_public_chats(request: Request):
+        chat_publisher(request)
+        return {"conversations": personal.chats()}
+
+    @app.get("/library/api/chat/messages")
+    async def read_chat_messages(request: Request, conversation: str, after: int = 0):
+        chat_publisher(request)
+        if not personal.exists(conversation):
+            raise HTTPException(404, "Chat not found")
+        if after < 0:
+            raise HTTPException(422, "Invalid cursor")
+        return personal.messages.page(conversation, after)
+
     @app.post("/workplace/api/personal/chats/{chat_id}/messages")
     @app.post("/workplace/api/personal/messages")
     async def personal_send(body: PersonalMessage, request: Request):
@@ -2278,8 +2464,9 @@ def create_app(
             raise HTTPException(422, "Write a message first.")
         return await personal_result(
             connection.send(
-                f"[{admin(request).username}]\n{body.text.strip()}",
+                body.text.strip(),
                 str(body.submission_id),
+                author=admin(request).username,
             )
         )
 
@@ -2809,7 +2996,8 @@ def _serve_ui(app: FastAPI, static_dir: Path) -> None:
                         "public, max-age=31536000, immutable"
                         if immutable
                         else "no-cache"
-                    )
+                    ),
+                    **({"Access-Control-Allow-Origin": "*"} if immutable else {}),
                 },
             )
         if index.is_file():

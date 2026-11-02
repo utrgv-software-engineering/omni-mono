@@ -320,7 +320,7 @@ def _connections_open(ws, app, params, request, delivery, base_url):
     ticket = delivery.issue_ticket(app)
     scheme = "wss" if request.url.scheme == "https" else "ws"
     return {
-        "url": f"{scheme}://{request.url.netloc}/slack/link/?ticket={ticket}&app_id={app.id}"
+        "url": f"{scheme}://{request.url.netloc}{getattr(request.state, 'factory_prefix', '')}/slack/link/?ticket={ticket}&app_id={app.id}"
     }
 
 

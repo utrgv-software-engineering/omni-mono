@@ -1,3 +1,4 @@
+import { parseNotifications } from '../transcript/worker-messages';
 import type {
   ArtifactMcpUi,
   Attachment,
@@ -167,6 +168,7 @@ export function adaptCanonicalConversationItem(item: ConversationItem): MessageI
         role: role(item.role, 'assistant'),
         content: stringValue(content.text) ?? '',
         message_id: stringValue(content.message_id),
+        notifications: parseNotifications(content.notifications),
         canonical,
       };
     case 'reasoning':

@@ -1,3 +1,7 @@
+import { FactorySecrets } from "./FactorySecrets";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@omniagents/ui/dialog";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem } from "@omniagents/ui/dropdown-menu";
+import { factoryUrl } from "./factory-scope";
 // The factory, as its engineers watch it: what it is doing now, what its pull
 // requests took (cost, human touches, time to ship) and where its spend goes.
 // Costs come from the factory's own prices (pricing.yml); on a ChatGPT
@@ -137,7 +141,7 @@ function Runs({
                   {run.source.link ? (
                     <a
                       className="text-sky-700 hover:underline dark:text-sky-300"
-                      href={run.source.link}
+                      href={factoryUrl(run.source.link)}
                     >
                       {run.source.provider} {run.source.event}
                     </a>
@@ -649,7 +653,8 @@ function Benchmarks({
   );
 }
 
-export function FactoryApp({ navigate }: { navigate: (p: string) => void }) {
+export function FactoryApp({ navigate, onConfigure, onModel, onSchedules }: { navigate: (p: string) => void; onConfigure?: () => void; onModel?: () => void; onSchedules?: () => void }) {
+  const [secretsOpen, setSecretsOpen] = useState(false);
   const [days, setDays] = useState(7);
   const [report, setReport] = useState<FactoryReport | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -674,7 +679,8 @@ export function FactoryApp({ navigate }: { navigate: (p: string) => void }) {
 
   const s = report?.summary;
   return (
-    <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-4 md:p-6">
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="workplace-page flex flex-col gap-6">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold">The factory</h1>
         <NativeSelect
@@ -687,6 +693,13 @@ export function FactoryApp({ navigate }: { navigate: (p: string) => void }) {
           <NativeSelectOption value="7">Last 7 days</NativeSelectOption>
           <NativeSelectOption value="30">Last 30 days</NativeSelectOption>
         </NativeSelect>
+        {onConfigure && <DropdownMenu><DropdownMenuTrigger asChild><Button className="ml-auto" variant="outline">Factory settings</Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuGroup>
+          {onModel && <DropdownMenuItem onSelect={onModel}>Model</DropdownMenuItem>}
+          {onSchedules && <DropdownMenuItem onSelect={onSchedules}>Schedules</DropdownMenuItem>}
+          <DropdownMenuItem onSelect={onConfigure}>Self-improvement</DropdownMenuItem>
+          {onModel && <DropdownMenuItem onSelect={() => setSecretsOpen(true)}>Secrets</DropdownMenuItem>}
+        </DropdownMenuGroup></DropdownMenuContent></DropdownMenu>}
+        <Dialog open={secretsOpen} onOpenChange={setSecretsOpen}><DialogContent><DialogHeader><DialogTitle>Factory secrets</DialogTitle><DialogDescription>Credentials available to this factory.</DialogDescription></DialogHeader>{secretsOpen && <FactorySecrets />}</DialogContent></Dialog>
       </div>
       {error && <p className="text-sm text-destructive">{error}</p>}
       {report && !report.priced && !error && (
@@ -778,6 +791,7 @@ export function FactoryApp({ navigate }: { navigate: (p: string) => void }) {
           <Runs runs={report.runs} navigate={navigate} onBenchmark={setBenchmarking} />
         </section>
       )}
+      </div>
     </div>
   );
 }

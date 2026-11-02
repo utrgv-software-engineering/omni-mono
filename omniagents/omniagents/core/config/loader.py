@@ -2382,7 +2382,7 @@ def load_agent_spec_from_yaml(
     #     run_as: "user"
     #     client:
     #       type is one of: unix_local | docker | e2b | modal | runloop |
-    #         daytona | blaxel | vercel | cloudflare
+    #         daytona | vercel | cloudflare
     #     options: { ... }
     #     manifest:
     #       entries: { ... }

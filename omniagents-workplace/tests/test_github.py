@@ -9,6 +9,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
+import httpx2
 import pytest
 import uvicorn
 from fastapi import FastAPI, Request
@@ -38,10 +39,10 @@ def git(*args, cwd=None):
 
 async def _mcp(base_url, calls, token=None, headers=TOOLSETS):
     token = token or factory_env(base_url)["GITHUB_MCP_TOKEN"]
-    http = httpx.AsyncClient(headers={"Authorization": f"Bearer {token}", **headers})
+    http = httpx2.AsyncClient(headers={"Authorization": f"Bearer {token}", **headers})
     async with http, streamable_http_client(
         f"{base_url}/github/mcp", http_client=http
-    ) as (read, write, _):
+    ) as (read, write):
         async with ClientSession(read, write) as session:
             results = [await session.initialize()]
             for name, args in calls:
@@ -58,7 +59,7 @@ def _text(result):
 
 
 def _json(result):
-    assert not result.isError, _text(result)
+    assert not result.is_error, _text(result)
     return json.loads(_text(result))
 
 
@@ -188,7 +189,7 @@ def test_an_apps_settings_name_where_the_factory_reaches_github(workplace_server
 async def test_mcp_serves_githubs_tools_by_toolset(workplace_server):
     _, base_url = workplace_server
     init, tools = await _mcp(base_url, [("tools/list", None)])
-    assert init.serverInfo.name == "github-mcp-server"
+    assert init.server_info.name == "github-mcp-server"
     assert "search_issues" in init.instructions
     assert len(tools.tools) == 50
     _, default = await _mcp(base_url, [("tools/list", None)], headers={})
@@ -244,7 +245,7 @@ async def test_mcp_reads_issues_as_github_answers(workplace_server):
     page = _json(listed)
     assert [i["number"] for i in page["issues"]] == [14, 12]
     assert page["issues"][0]["state"] == "OPEN" and page["totalCount"] == 2
-    assert missing.isError
+    assert missing.is_error
     assert _text(missing) == (
         f"failed to get issue: GET {base_url}/github/api/repos/acme/api-service/issues/99: "
         "404 Not Found []"
@@ -357,11 +358,11 @@ async def test_mcp_files_branches_and_a_pull_request(workplace_server):
     assert "+++ b/docs/pagination.md" in _text(diff)
     # GitHub refuses an approval from the pull request's own author.
     assert (
-        approve.isError
+        approve.is_error
         and _text(approve) == "Review Can not approve your own pull request"
     )
     assert (
-        again.isError
+        again.is_error
         and "A pull request already exists for acme:factory/12-pagination."
         in _text(again)
     )
@@ -437,7 +438,7 @@ async def test_mcp_review_threads_and_comments(workplace_server):
         == "pull request review comment successfully added to pending review"
     )
     assert (
-        bad_line.isError
+        bad_line.is_error
         and "The line number doesn't exist in the pull request diff" in _text(bad_line)
     )
     assert _text(submitted) == "pending pull request review successfully submitted"

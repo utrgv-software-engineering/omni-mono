@@ -1,3 +1,5 @@
+import { AppImage } from "./extensions/Media";
+import { factoryUrl } from "./factory-scope";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge } from "@omniagents/ui/badge";
@@ -1223,20 +1225,20 @@ function IssueView({ ctx, identifier }: { ctx: Ctx; identifier: string }) {
             <div key={a.id} className="group flex items-start gap-2">
               {(a.content_type ?? "").startsWith("image/") ? (
                 <a
-                  href={a.url}
+                  href={factoryUrl(a.url)}
                   target="_blank"
                   rel="noreferrer"
                   className="block w-fit"
                 >
-                  <img
-                    src={a.url}
+                  <AppImage
+                    src={factoryUrl(a.url)}
                     alt={a.title}
                     className="max-h-72 rounded-md border"
                   />
                 </a>
               ) : (
                 <a
-                  href={a.url}
+                  href={factoryUrl(a.url)}
                   target="_blank"
                   rel="noreferrer"
                   className="flex items-center gap-1 text-sm text-sky-600 underline"
@@ -3086,7 +3088,7 @@ function ProjectView({ ctx, id }: { ctx: Ctx; id: string }) {
             {project.links.map((l) => (
               <a
                 key={l.id}
-                href={l.url}
+                href={factoryUrl(l.url)}
                 target="_blank"
                 rel="noreferrer"
                 className="block truncate text-sky-600 underline"

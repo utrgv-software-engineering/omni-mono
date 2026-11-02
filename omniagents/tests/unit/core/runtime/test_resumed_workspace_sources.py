@@ -215,3 +215,72 @@ async def test_durable_resume_refuses_replacement_container(monkeypatch, tmp_pat
     cleanup.assert_awaited_once_with(session, [], destroy=True)
     session.start.assert_not_awaited()
     assert "original" in state.read_text()
+
+
+@pytest.mark.asyncio
+async def test_provider_roundtrip_preserves_work_and_reports_failed_repo(tmp_path):
+    import json
+    from omniagents.integrations.environment import GitHubConfig
+
+    root, session, original = fixture(tmp_path)
+    real = GitHubConfig(repositories=("team/project",))
+    standin = GitHubConfig(
+        repositories=("team/project",), git_url="http://workplace/github"
+    )
+    real_path = real.sources(persistent=True)[0]["mountName"]
+    standin_path = standin.sources(persistent=True)[0]["mountName"]
+    assert real_path != standin_path
+    assert (
+        real_path
+        != GitHubConfig(repositories=("other/project",)).sources(persistent=True)[0][
+            "mountName"
+        ]
+    )
+    entry = original.entries["new"]
+
+    def desired(name):
+        return original.model_copy(update={"entries": {name: entry}})
+
+    await _reconcile_resumed_sources(session, desired(real_path), retain_removed=True)
+    (root / real_path / "draft").write_text("unfinished work")
+    await _reconcile_resumed_sources(
+        session, desired(standin_path), retain_removed=True
+    )
+    (root / standin_path / "draft").write_text("stand-in work")
+    active = await _reconcile_resumed_sources(
+        session, desired(real_path), retain_removed=True
+    )
+    assert set(active.entries) == {real_path}
+    assert (root / real_path / "draft").read_text() == "unfinished work"
+    assert (root / standin_path / "draft").read_text() == "stand-in work"
+    assert (root / "old/file").read_text() == "uncommitted agent work"
+    assert session.applied == ["new", "new"]
+
+    session.fail_source = "new"
+    unavailable = original.model_copy(
+        update={"entries": {real_path: entry, "unavailable": entry}}
+    )
+    active = await _reconcile_resumed_sources(session, unavailable, retain_removed=True)
+    assert set(active.entries) == {real_path}
+    assert "unavailable" not in session.state.manifest.entries
+    status = json.loads((root / ".omni-repositories.json").read_text())
+    assert status == {"active": [real_path], "errors": {"unavailable": "RuntimeError"}}
+    session.fail_source = None
+    await _reconcile_resumed_sources(session, unavailable, retain_removed=True)
+    assert (root / "unavailable/syllabus.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_durable_conflict_reports_error_without_overwriting(tmp_path):
+    root, session, desired = fixture(tmp_path)
+    (root / "new").mkdir()
+    (root / "new/draft").write_text("untracked work")
+    active = await _reconcile_resumed_sources(session, desired, retain_removed=True)
+    assert set(active.entries) == {"old"}
+    assert (root / "new/draft").read_text() == "untracked work"
+    assert "new" not in session.state.manifest.entries
+    changed = desired.model_copy(update={"entries": {"old": desired.entries["new"]}})
+    active = await _reconcile_resumed_sources(session, changed, retain_removed=True)
+    assert not active.entries
+    assert (root / "old/file").read_text() == "uncommitted agent work"
+    assert session.applied == []
