@@ -460,7 +460,8 @@ administrators) has:
   steps), added for one agent or every agent, moved between the two, deleted
   with their folder.
 
-**Add agent** (beside the agent menu) takes a name, what it does, its template
+**Add agent** (at the bottom of Chat's agent list, and beside an agent page's
+agent menu) takes a name, what it does, its template
 and whether people can chat with it. A **template** (a base agents extend) has
 its own page under Templates in the agent menu: its instructions, settings
 file and shared skills.

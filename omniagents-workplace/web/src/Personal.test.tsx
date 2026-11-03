@@ -325,3 +325,41 @@ it("shows an empty state without connecting when there are no chats", async () =
   expect(app).not.toHaveBeenCalled();
   expect(container.textContent).toContain("No chats yet.");
 });
+
+it("adds an agent from Chat's agent list and opens its Main Chat", async () => {
+  wide = true;
+  const base = vi.mocked(fetch).getMockImplementation()!;
+  let agents = ["coordinator"];
+  vi.mocked(fetch).mockImplementation(async (url, options) => {
+    const path = String(url);
+    if (path.endsWith("/factory/definition"))
+      return { ok: true, json: async () => ({ bases: [{ key: "base", name: "Base" }], main: "a".repeat(40) }) } as Response;
+    if (path.endsWith("/definition/agent")) {
+      agents = ["coordinator", "designer"];
+      chats.push({ id: "main-designer", title: "Main Chat", archived: false, kind: "main", agent: "designer" });
+      return { ok: true, json: async () => ({ commit: "b".repeat(40), published: true, agent: "designer" }) } as Response;
+    }
+    if (!options?.method || options.method === "GET")
+      return { ok: true, json: async () => ({ chats, agents, chat_agent: "coordinator" }) } as Response;
+    return base(url, options);
+  });
+  await act(async () => root.render(<PersonalApp account={{ id: "admin", admin: true } as Person} navigate={vi.fn()} />));
+  await act(async () => {});
+  if (!button("Add agent")) await act(async () => button("Show chats").click());
+  await act(async () => button("Add agent").click());
+  await act(async () => {});
+  const type = async (selector: string, value: string) =>
+    act(async () => {
+      const element = document.querySelector<HTMLInputElement>(selector)!;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(element, value);
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  await type("#agent-name", "designer");
+  await type("#agent-description", "Designs.");
+  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(b => b.textContent === "Add agent")!.click());
+  await act(async () => {});
+  await act(async () => {});
+  const add = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith("/definition/agent"))!;
+  expect(JSON.parse(String(add[1]!.body))).toEqual({ key: "designer", description: "Designs.", template: "base", chat: true });
+  expect(button("Designer").getAttribute("aria-current")).toBe("true");
+});

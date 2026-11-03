@@ -313,10 +313,21 @@ export function AgentsApp({ agent, navigate }: { agent?: string; navigate: (path
 }
 
 /** A new agent: its name, what it does, the template it builds on, and whether Chat lists it. */
-function AddAgentDialog({ templates, onClose, onAdded }: { templates: Definition[]; onClose: () => void; onAdded: (key: string) => void }) {
+export function AddAgentDialog({ templates: given, onClose, onAdded }: { templates?: Definition[]; onClose: () => void; onAdded: (key: string) => void }) {
+  const [loaded, setLoaded] = useState<Definition[] | undefined>(given);
+  const templates = loaded ?? [];
+  useEffect(() => {
+    if (given) return;
+    void loadTree()
+      .then(tree => {
+        setLoaded(tree.bases);
+        setTemplate(current => current || tree.bases[0]?.key || "");
+      })
+      .catch(e => toast.error(e instanceof Error ? e.message : "Unable to load the factory"));
+  }, [given]);
   const [key, setKey] = useState("");
   const [description, setDescription] = useState("");
-  const [template, setTemplate] = useState(templates[0]?.key ?? "");
+  const [template, setTemplate] = useState(given?.[0]?.key ?? "");
   const [chat, setChat] = useState(true);
   const [busy, setBusy] = useState(false);
   const [problems, setProblems] = useState<string[]>([]);

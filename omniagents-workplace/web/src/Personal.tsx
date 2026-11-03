@@ -2,6 +2,7 @@ import type { Presentation } from "@omniagents/chat-ui/lib/presentation";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@omniagents/ui/resizable";
 import { Monitor } from "lucide-react";
 import { AgentReadiness } from "./AgentReadiness";
+import { AddAgentDialog } from "./Agents";
 import { AgentAvatar } from "@omniagents/chat-ui/components/omni-avatar/AgentAvatar";
 import { Avatar, AvatarFallback } from "@omniagents/ui/avatar";
 import { Popover, PopoverContent, PopoverTrigger } from "@omniagents/ui/popover";
@@ -175,6 +176,9 @@ export function PersonalApp({ account, navigate }: { account: Person; navigate?:
   const [editing, setEditing] = useState<Chat>();
   const [deleting, setDeleting] = useState<Chat>();
   const [readiness, setReadiness] = useState<string>();
+  const [addingAgent, setAddingAgent] = useState(false);
+  // A just-added agent: opened once Chat lists it.
+  const [added, setAdded] = useState<string>();
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -466,6 +470,18 @@ export function PersonalApp({ account, navigate }: { account: Person; navigate?:
           </button>
         ))}
         {needle && !visibleRows.length && <p className="px-2 py-3 text-sm text-muted-foreground">No agents match.</p>}
+        {navigate && (
+          <button
+            type="button"
+            onClick={() => setAddingAgent(true)}
+            className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm text-muted-foreground hover:bg-accent"
+          >
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-full border border-dashed">
+              <Plus className="size-4" />
+            </span>
+            Add agent
+          </button>
+        )}
       </nav>
       <div className="flex items-center gap-2 border-t px-4 py-3">
         <Avatar size="sm" aria-hidden>
@@ -500,6 +516,14 @@ export function PersonalApp({ account, navigate }: { account: Person; navigate?:
       {group("Archived", agentChats.filter(chat => chat.archived))}
     </div>
   );
+  useEffect(() => {
+    if (!added || !agents.includes(added)) return;
+    const home = fallbackFor(added, "");
+    if (home) {
+      select(home);
+      setAdded(undefined);
+    }
+  }, [added, agents]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1">
@@ -632,6 +656,16 @@ export function PersonalApp({ account, navigate }: { account: Person; navigate?:
           {viewer}
         </SheetContent>
       </Sheet>}
+      {addingAgent && (
+        <AddAgentDialog
+          onClose={() => setAddingAgent(false)}
+          onAdded={key => {
+            setAddingAgent(false);
+            setAdded(key);
+            void refreshChats();
+          }}
+        />
+      )}
       {readiness && (
         <AgentReadiness agent={readiness} name={displayAgent(readiness)} onClose={() => setReadiness(undefined)} />
       )}
