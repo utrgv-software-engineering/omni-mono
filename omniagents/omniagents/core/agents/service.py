@@ -4740,11 +4740,16 @@ class AgentService(RpcMethodsBase):
 
                 memory_config = getattr(self.spec, "memory_config", None)
                 if memory_config:
-                    from omniagents.core.memory.extract import schedule
+                    from omniagents.core.memory.extract import (
+                        conversation_triggers,
+                        schedule,
+                    )
 
                     extraction = memory_config.get("extraction") or {}
-                    triggers = extraction.get("triggers", [])
-                    if "idle" in triggers or "daily" in triggers:
+                    triggers = conversation_triggers(
+                        memory_config, getattr(sess, "_run_source", None)
+                    )
+                    if triggers:
                         try:
                             history = await self.get_session_history(sess.id)
                             source = {
@@ -7286,6 +7291,9 @@ class AgentService(RpcMethodsBase):
                 dispatch_token = queue_inbox.current_dispatch.set(
                     (sess.id, item.id, sess.queue_owner)
                 )
+                # Whoever queued it (a person's chat, an automation) for the
+                # run's end-of-turn work, such as which memory extraction runs.
+                sess._run_source = item.source
                 try:
                     # Worker lifecycle admission wraps the same serialized queue.
                     dispatch = getattr(self, "_worker_queue_dispatch", self.start_run)
@@ -7302,11 +7310,14 @@ class AgentService(RpcMethodsBase):
                 finally:
                     queue_inbox.current_dispatch.reset(dispatch_token)
                 await _wait_for_current_task()
+                sess._run_source = None
                 queue_inbox.finish(store, sess.id, item.id, sess.queue_owner)
                 self._refresh_queue(sess)
             except asyncio.CancelledError:
+                sess._run_source = None
                 raise
             except Exception as exc:
+                sess._run_source = None
                 logger.exception(
                     "drain failed",
                     extra={"session": sess.id, "source": item.source},

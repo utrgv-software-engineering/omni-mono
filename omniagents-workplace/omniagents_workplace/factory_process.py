@@ -59,12 +59,11 @@ class FactoryProcess:
             ),
         }
 
-    def environment(self, workplace, architecture, port, token, control_token, profile):
+    def environment(self, workplace, port, token, control_token, profile):
         app = workplace.apps.active()[0]
         env = base_environment()
         env.update(workplace.apps.env(app))
         env.update(
-            FACTORY_ARCHITECTURE=architecture,
             FACTORY_PORT=str(port),
             FACTORY_AUTH_TOKEN=token,
             OMNIAGENTS_AGENT_HOST_CONTROL_TOKEN=control_token,
@@ -139,7 +138,6 @@ class FactoryProcess:
             workplace.factory_config.apply(workplace)
             env = self.environment(
                 workplace,
-                record["architecture"],
                 port,
                 config["factory"]["auth_token"],
                 config["factory"]["admin_auth_token"],

@@ -72,14 +72,23 @@ def test_agent_memory_reads_and_writes_only_its_store(personal):
     w, client, _, _ = personal
     signin(w, client)
     app = w.apps.by_username("initech-factory")
-    own = f"agent:{app.id}/generalist"
+    own = f"agent:{app.id}/coordinator"
     other = f"agent:{app.id}/reviewer"
-    fact = w.memory.remember(app.id, own, "Generalist fact")
+    fact = w.memory.remember(app.id, own, "Coordinator fact")
     secret = w.memory.remember(app.id, other, "Reviewer fact")
+    w.store.put(
+        "personal.chat",
+        "memory-chat",
+        {"id": "memory-chat", "agent": "coordinator", "created_at": 1},
+    )
     base = "/workplace/api/memory/"
-    assert [s["id"] for s in client.get(base + "stores?scope=agent").json()] == [own]
+    assert [
+        s["id"]
+        for s in client.get(base + "stores?scope=agent&chat_id=memory-chat").json()
+    ] == [own]
     result = client.post(
-        base + "search?scope=agent", json={"query": "", "stores": [other]}
+        base + "search?scope=agent&chat_id=memory-chat",
+        json={"query": "", "stores": [other]},
     )
     assert [m["id"] for m in result.json()] == [fact["id"]]
     for operation, args in [
@@ -90,25 +99,31 @@ def test_agent_memory_reads_and_writes_only_its_store(personal):
         ("remember", {"store": other, "text": "changed"}),
     ]:
         assert (
-            client.post(base + operation + "?scope=agent", json=args).status_code == 403
+            client.post(
+                base + operation + "?scope=agent&chat_id=memory-chat", json=args
+            ).status_code
+            == 403
         )
     assert (
         client.post(
-            base + "update?scope=agent", json={"id": fact["id"], "text": "Updated fact"}
+            base + "update?scope=agent&chat_id=memory-chat",
+            json={"id": fact["id"], "text": "Updated fact"},
         ).status_code
         == 200
     )
     assert (
         len(
-            client.post(base + "get?scope=agent", json={"id": fact["id"]}).json()[
-                "history"
-            ]
+            client.post(
+                base + "get?scope=agent&chat_id=memory-chat", json={"id": fact["id"]}
+            ).json()["history"]
         )
         == 2
     )
     member = w.add_person(username="member", name="Member", email="member@example.test")
     signin(w, client, member)
-    assert client.get(base + "stores?scope=agent").status_code == 403
+    assert (
+        client.get(base + "stores?scope=agent&chat_id=memory-chat").status_code == 403
+    )
 
 
 def test_memory_sections_pagination_and_permissions(personal):
@@ -166,9 +181,10 @@ def test_memory_sections_pagination_and_permissions(personal):
     )
     assert (
         client.get(
-            "/workplace/api/memory/page", params={"store": empty, "scope": "agent"}
+            "/workplace/api/memory/page",
+            params={"store": empty, "scope": "agent", "chat_id": "missing-chat"},
         ).status_code
-        == 403
+        == 404
     )
     member = w.add_person(username="reader", name="Reader", email="reader@example.test")
     signin(w, client, member)

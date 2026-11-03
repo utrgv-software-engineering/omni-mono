@@ -187,7 +187,8 @@ def _literal(text: str) -> Any:
     return LiteralScalarString(text) if "\n" in text else text
 
 
-def _check_instructions(text: str) -> list[str]:
+def check_instructions(text: str) -> list[str]:
+    """What stops ``text`` loading as instructions (a Jinja template); empty when nothing does."""
     from jinja2 import Environment, TemplateSyntaxError
 
     try:
@@ -230,7 +231,7 @@ def _save(
     problems: list[str] = []
     if data.get("name") != key:
         problems.append(f"name must be {key!r}, the agent's directory")
-    problems.extend(_check_instructions(rendered))
+    problems.extend(check_instructions(rendered))
     if problems:
         raise AgentEditError(problems)
 

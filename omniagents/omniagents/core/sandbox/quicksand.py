@@ -1,8 +1,8 @@
-"""Experimental local QEMU backend with generation-based disk persistence.
+"""Local QEMU backend with a persistent working disk and explicit backups.
 
 No host shell execution. Files and commands go through QuickSand's guest agent.
 Interactive PTYs use a guest-side bridge; pipe-based jobs stream output and
-accept stdin. Durable close saves disk and stops the VM (processes do not resume).
+accept stdin. Durable close flushes disk and stops the VM (processes do not resume).
 """
 
 from __future__ import annotations
@@ -63,7 +63,8 @@ class QuicksandOptions(BaseSandboxClientOptions):
     setup: list[str] = Field(default_factory=list)
     startup: list[str] = Field(default_factory=list)
     boot_timeout: float = 180
-    save_interval_seconds: float = Field(default=60, ge=0)
+    # Legacy option accepted; automatic disk snapshots are no longer scheduled.
+    save_interval_seconds: float = Field(default=0, ge=0)
 
 
 class QuicksandState(SandboxSessionState):
@@ -82,6 +83,12 @@ def _atomic_text(path: Path, text: str):
         out.flush()
         os.fsync(out.fileno())
     temporary.replace(path)
+    if os.name != "nt":
+        parent = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(parent)
+        finally:
+            os.close(parent)
 
 
 def _generation(directory: Path) -> Path:
@@ -216,8 +223,23 @@ class QuicksandSession(BaseSandboxSession):
                     "Inspect the previous VM before explicitly setting recover_last_save=true."
                 )
             options = self.state.options
-            image = str(_generation(directory)) if self.resumed else options.image
-            if self.resumed or Path(image).is_dir():
+            working = directory / "working"
+            image = options.image
+            if (working / "omni-state.json").exists() and not (
+                working / "disk.qcow2"
+            ).is_file():
+                raise RuntimeError(
+                    "QuickSand working disk is missing; refusing an older backup or fresh VM"
+                )
+            if self.resumed and not (working / "disk.qcow2").exists():
+                generation = _generation(directory)
+                if (generation / "disk.qcow2").exists():
+                    working.mkdir(exist_ok=True)
+                    shutil.copy2(generation / "disk.qcow2", working / "disk.partial")
+                    (working / "disk.partial").replace(working / "disk.qcow2")
+                else:
+                    image = str(generation)  # One-time import of legacy SDK saves.
+            if Path(image).is_dir():
                 Sandbox.validate_save(image)
                 self._loaded_generation = Path(image)
             elif image == "ubuntu-desktop":
@@ -241,7 +263,7 @@ class QuicksandSession(BaseSandboxSession):
             _atomic_text(directory / "RUNNING", json.dumps({"pid": os.getpid()}))
             from .quicksand_runtime import sandbox_class
 
-            self.vm = sandbox_class()(
+            self.vm = sandbox_class(disk_path=directory / "working/disk.qcow2")(
                 image=image,
                 enable_display=options.enable_display,
                 memory=options.memory,
@@ -256,6 +278,17 @@ class QuicksandSession(BaseSandboxSession):
                 boot_timeout=options.boot_timeout,
             )
             await self.vm.start()
+            # QEMU exposes one monitor connection. Serialize every SDK monitor
+            # command (including desktop input) on that connection.
+            monitor = self.vm._qmp_client
+            execute = monitor.execute
+            monitor_lock = asyncio.Lock()
+
+            async def serialized_execute(*args, **kwargs):
+                async with monitor_lock:
+                    return await execute(*args, **kwargs)
+
+            monitor.execute = serialized_execute
             logger.info("QuickSand started with accelerator %s", self.vm.accelerator)
         except BaseException:
             if self.vm is not None:
@@ -290,36 +323,71 @@ class QuicksandSession(BaseSandboxSession):
         await self._exec_checked_nonzero("mkdir", "-p", self.state.manifest.root)
 
     async def _after_start(self):
-        await self.persist_durable()
-        interval = self.state.options.save_interval_seconds
-        if interval:
+        self.state.workspace_root_ready = True
+        self._write_working_state()
 
-            async def periodic():
-                while True:
-                    await asyncio.sleep(interval)
+        # Maintenance asks for backups explicitly. Restart/provisioning never
+        # invokes a disk copy, and old save_interval_seconds cannot enable one.
+        async def requested_backups():
+            request = Path(self.state.directory) / "backup.request"
+            while True:
+                await asyncio.sleep(1)
+                if not request.exists():
+                    continue
+                token = request.read_text().strip()
+
+                async def fulfill():
                     try:
-                        await self.persist_durable()
-                    except Exception:
-                        logger.exception(
-                            "QuickSand periodic save failed; previous generation retained"
-                        )
+                        await self.backup_durable()
+                        result = {"id": token, "ok": True}
+                    except Exception as exc:
+                        logger.exception("Requested QuickSand backup failed")
+                        result = {"id": token, "ok": False, "error": str(exc)}
+                    _atomic_text(request.with_name("backup.result"), json.dumps(result))
+                    request.unlink(missing_ok=True)
 
-            self._save_task = asyncio.create_task(periodic())
+                pending = asyncio.create_task(fulfill())
+                try:
+                    await asyncio.shield(pending)
+                except asyncio.CancelledError:
+                    await pending  # Return the backup result before shutdown.
+                    raise
+
+        self._save_task = asyncio.create_task(requested_backups())
+
+    def _write_working_state(self):
+        working = Path(self.state.directory) / "working"
+        working.mkdir(parents=True, exist_ok=True)
+        _atomic_text(working / "omni-state.json", self.state.model_dump_json())
+
+    async def _flush_disk(self):
+        from quicksand_core._types import GuestCommands
+
+        await self.vm.execute(GuestCommands.SYNC, timeout=30.0, exclusive=True)
+        await self.vm._qmp_client.execute(
+            "human-monitor-command", **{"command-line": 'qemu-io drive0 "flush"'}
+        )
+        self._write_working_state()
 
     async def _after_start_failed(self):
         # Do not erase the previous save when provisioning fails.
         await self._stop_vm()
 
     async def persist_durable(self):
+        """Flush durable state; startup callers must not create backup copies."""
+        if self.vm is None or not self.vm.is_running:
+            raise RuntimeError("Cannot flush a stopped QuickSand VM")
+        await self._flush_disk()
+
+    async def backup_durable(self):
         if self.vm is None or not self.vm.is_running:
             raise RuntimeError("Cannot save a stopped QuickSand VM")
         async with self._save_lock:
             from filelock import AsyncFileLock
 
             async with AsyncFileLock(str(Path(self.state.directory) / "snapshot.lock")):
-                # SDK disk saves and parent-layer copies can continue in worker
-                # threads after cancellation. Keep the lock until they finish,
-                # before shutdown starts another save or closes the VM.
+                # Keep the snapshot lock until QEMU finishes the explicit backup.
+                # Never publish or copy a target while its block job is writing.
                 saving = asyncio.create_task(self._save_generation())
                 try:
                     await asyncio.shield(saving)
@@ -328,38 +396,77 @@ class QuicksandSession(BaseSandboxSession):
                     raise
 
     async def _save_generation(self):
+        """Explicit point-in-time backup; QEMU copies without pivoting live disk."""
         directory = Path(self.state.directory)
         name = "save-" + uuid.uuid4().hex
-        self._guest_ready.clear()
+        generation = directory / name
+        generation.mkdir()
+        await self._flush_disk()
+        client = self.vm._qmp_client
+        job = "backup-" + uuid.uuid4().hex
         try:
-            await self.vm.save(name, workspace=directory)
-        finally:
-            self._guest_ready.set()
-        if self._loaded_generation is not None:
-            await asyncio.to_thread(self._include_parent_overlays, directory / name)
-        normalize_saved_overlay_order(directory / name)
-        if len(list((directory / name / "overlays").glob("*.qcow2"))) > 32:
-            await asyncio.to_thread(
-                compact_saved_overlay_chain,
-                directory / name,
-                self.vm._overlay_manager._qemu_img,
+            await client.execute(
+                "drive-backup",
+                **{
+                    "device": "drive0",
+                    "job-id": job,
+                    "target": str(generation / "disk.qcow2"),
+                    "format": "qcow2",
+                    "sync": "full",
+                    "auto-dismiss": False,
+                },
             )
-        _atomic_text(directory / name / "omni-state.json", self.state.model_dump_json())
-        # QuickSand's overwrite removes the previous save before rename.
-        # Unique generations + atomic pointer keep the previous save intact.
-        _atomic_text(directory / "CURRENT", name)
-        generations = sorted(directory.glob("save-*"), key=lambda p: p.stat().st_mtime)
+            while True:
+                jobs = (await client.execute("query-jobs"))["return"]
+                current = next((item for item in jobs if item["id"] == job), None)
+                if current is None:
+                    raise RuntimeError("QuickSand backup job disappeared")
+                if current["status"] == "concluded":
+                    await client.execute("job-dismiss", id=job)
+                    if current.get("error"):
+                        raise RuntimeError(current["error"])
+                    break
+                if current["status"] in {"paused", "standby", "aborting"}:
+                    raise RuntimeError(
+                        "QuickSand backup did not complete: " + current["status"]
+                    )
+                await asyncio.sleep(0.2)
+            with (generation / "disk.qcow2").open("rb") as disk:
+                os.fsync(disk.fileno())
+            _atomic_text(generation / "omni-state.json", self.state.model_dump_json())
+            _atomic_text(directory / "CURRENT", name)
+        except BaseException:
+            # Keep an unfinished target unpublished. Stop its block job before
+            # allowing shutdown; a failed backup never rolls back the live disk.
+            jobs = (await client.execute("query-jobs"))["return"]
+            current = next((item for item in jobs if item["id"] == job), None)
+            if current:
+                if current["status"] != "concluded":
+                    await client.execute("job-cancel", id=job)
+                    while True:
+                        jobs = (await client.execute("query-jobs"))["return"]
+                        current = next(
+                            (item for item in jobs if item["id"] == job), None
+                        )
+                        if current is None or current["status"] == "concluded":
+                            break
+                        await asyncio.sleep(0.2)
+                if current:
+                    await client.execute("job-dismiss", id=job)
+            raise
+        # Prior backups are independent of the live disk, so two suffice here.
+        generations = sorted(
+            (p for p in directory.glob("save-*") if (p / "omni-state.json").is_file()),
+            key=lambda p: p.stat().st_mtime,
+        )
         for old in generations[:-2]:
             if old.is_dir() and old != self._loaded_generation:
                 shutil.rmtree(old)
 
-    def _include_parent_overlays(self, generation):
-        include_parent_overlays(self._loaded_generation, generation)
-
     async def suspend_durable(self):
         await self._cancel_saver()
         await self.pty_terminate_all()
-        await self.persist_durable()  # A failed save must prevent destructive close.
+        await self._flush_disk()
         await self._stop_vm()
 
     async def _cancel_saver(self):
@@ -779,7 +886,16 @@ class QuicksandClient(LifecycleSessionClientMixin, BaseSandboxClient):
                 "QuickSand state does not belong to the configured state directory"
             )
         saved = self.deserialize_session_state(
-            json.loads((_generation(directory) / "omni-state.json").read_text())
+            json.loads(
+                (
+                    (
+                        directory / "working"
+                        if (directory / "working/omni-state.json").exists()
+                        else _generation(directory)
+                    )
+                    / "omni-state.json"
+                ).read_text()
+            )
         )
         if (
             saved.container_id != state.container_id

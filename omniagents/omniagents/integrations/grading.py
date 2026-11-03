@@ -10,7 +10,7 @@ that share of its agents' completed automation runs (every replayed one,
 A run is its agent's session, and also the session of every agent it called
 as a tool (``agent_tools``). Each of those is a child thread of the run's own,
 recorded with its whole transcript (``orchestration/subagents.py``). A
-foreman's run that called the implementer is graded by the implementer's
+coordinator's run that called a specialist is graded by that specialist's
 judges, reading the implementer's own session: what it was given, every tool
 call and its output, and its report. The judge's ``input`` template sees
 that history, ``scenario.name`` (the automation), ``scenario.agent`` (whose

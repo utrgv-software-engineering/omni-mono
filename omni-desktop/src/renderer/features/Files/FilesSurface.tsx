@@ -29,7 +29,7 @@ import { persistedStoreApi } from '@/renderer/services/store';
 import { type FileEditorLease, FileEditorRegistry } from '@/shared/machines/file-editor-registry';
 import type { WorkspaceMountDescriptor } from '@/shared/types';
 
-import { CodeMirrorEditor } from './CodeMirrorEditor';
+import { CodeMirrorEditor } from '@omniagents/ui/code-editor';
 import { FileTabs } from './FileTabs';
 import { FsFileEditorIO } from './fs-file-editor-io';
 import {

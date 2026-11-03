@@ -89,7 +89,7 @@ function ToolRow({ item }: { item: Item }) {
     </div>
   </details>;
 }
-function Identity({ connected }: { connected: boolean | null }) {
+function Identity({ connected, name }: { connected: boolean | null; name: string }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const planet = new OmniPlanet(canvas.current!, {size: 128, mood: connected === false ? "asleep" : "idle"});
@@ -98,8 +98,8 @@ function Identity({ connected }: { connected: boolean | null }) {
     return () => { document.removeEventListener("visibilitychange", pause); planet.dispose(); };
   }, [connected]);
   return <div className="flex flex-col items-center pb-7 pt-10">
-    <canvas ref={canvas} className="size-32" aria-label="Omni" role="img" />
-    <h2 className="mt-1 text-xl font-medium tracking-tight">Omni</h2>
+    <canvas ref={canvas} className="size-32" aria-label={name} role="img" />
+    <h2 className="mt-1 text-xl font-medium tracking-tight">{name}</h2>
     <p className="mt-1 flex items-center gap-1.5 text-sm text-muted-foreground"><span className={connected ? "size-1.5 rounded-full bg-primary" : "size-1.5 rounded-full bg-muted-foreground"} />{connected === null ? "Connecting…" : connected ? "Connected" : "Reconnecting…"}</p>
   </div>;
 }
@@ -165,7 +165,7 @@ function Agents({ chatId, agents, loaded, error }: { chatId: string; agents: Age
     </button>)}
   </div>;
 }
-export function AgentPanel({ chatId, tab, onTab, onClose }: { chatId: string; tab: string; onTab: (tab: string) => void; onClose?: () => void }) {
+export function AgentPanel({ agentName = "Agent", chatId, tab, onTab, onClose }: { agentName?: string; chatId: string; tab: string; onTab: (tab: string) => void; onClose?: () => void }) {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [connected, setConnected] = useState<boolean | null>(null);
   const [error, setError] = useState("");
@@ -183,14 +183,14 @@ export function AgentPanel({ chatId, tab, onTab, onClose }: { chatId: string; ta
   }, [chatId]);
   return <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto" style={{scrollbarGutter: "stable"}}>
     {onClose && <Button className="absolute right-3 top-3" variant="ghost" size="icon-sm" aria-label="Close viewer" onClick={onClose}><X className="size-4" /></Button>}
-    <Identity connected={connected} />
+    <Identity connected={connected} name={agentName} />
     <TooltipProvider><Tabs value={tab} onValueChange={onTab} className="gap-0">
       <TabsList className="mx-4 grid w-auto grid-cols-3 rounded-full" aria-label="Agent details">
         {([{id:"activity",label:"Activity",Icon:List},{id:"agents",label:"Agents",Icon:Users},{id:"memory",label:"Memory",Icon:Brain}]).map(({id,label,Icon}) => <Tooltip key={id}><TooltipTrigger asChild><TabsTrigger value={id} aria-label={label} className="rounded-full"><Icon className="size-4" /></TabsTrigger></TooltipTrigger><TooltipContent>{label}</TooltipContent></Tooltip>)}
       </TabsList>
       <TabsContent value="activity"><Activity key={chatId} chatId={chatId} /></TabsContent>
       <TabsContent value="agents"><Agents key={chatId} chatId={chatId} agents={agents} loaded={connected !== null} error={error} /></TabsContent>
-      <TabsContent value="memory"><MemoryApp agent /></TabsContent>
+      <TabsContent value="memory"><MemoryApp key={chatId} agent={chatId} /></TabsContent>
     </Tabs></TooltipProvider>
   </div>;
 }

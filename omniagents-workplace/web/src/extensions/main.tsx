@@ -64,7 +64,7 @@ function Surface({ value }: { value: Initial }) {
     <Toaster />
     {value.app === "linear" && <div className="p-2 md:hidden"><Button variant="ghost" size="icon" aria-label="Open Linear navigation" onClick={()=>setNavigation(true)}><Menu /></Button></div>}
     <Sheet open={navigation} onOpenChange={setNavigation}><SheetContent side="left"><SheetTitle className="sr-only">App navigation</SheetTitle><div ref={adoptSlot} /></SheetContent></Sheet>
-    {value.app === "slack" ? <Workplace embedded account={value.account} environment="production" configurable={false} factory={false} architecture="specialist" onSignOut={() => {}} /> :
+    {value.app === "slack" ? <Workplace embedded account={value.account} environment="production" configurable={false} factory={false} onSignOut={() => {}} /> :
      value.app === "github" ? <GitHubApp route={parseGitHubPath(path) || { view: "repos" }} selectedRepositories={value.selectedRepositories ?? []} actor={value.account.github_login} admin={value.account.admin} version={version} navigate={navigate} /> :
      value.app === "linear" ? <LinearApp route={parseLinearPath(path) || parseLinearPath("/linear")!} me={value.account.linear_id} version={version} navigate={navigate} /> :
      value.app === "recorder" ? <Recorder account={value.account} /> : null}

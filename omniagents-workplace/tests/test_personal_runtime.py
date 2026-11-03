@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from omniagents_workplace.personal import PersonalConversations
 from omniagents_workplace.personal_runtime import PersonalRpcPolicy
 
 
@@ -78,6 +79,7 @@ async def test_native_start_and_queue_preserve_attribution(policy):
         "hello",
         "receipt",
         author="alice",
+        author_name="alice",
         input_content=[{"type": "input_text", "text": "hello"}],
     )
     forward, reply = await request(
@@ -90,7 +92,7 @@ async def test_native_start_and_queue_preserve_attribution(policy):
     )
     assert forward is None and reply["result"]["ok"]
     policy.connection.send.assert_awaited_with(
-        "next", "next-id", author="alice", input_content=None
+        "next", "next-id", author="alice", author_name="alice", input_content=None
     )
 
 
@@ -130,8 +132,8 @@ async def test_decisions_use_authoritative_pending_item(policy):
 @pytest.mark.parametrize(
     "endpoint",
     [
-        "/workplace/api/personal/runtime/ws",
-        "/workplace/api/personal/runtime/ws/realtime",
+        "/workplace/api/personal/chats/factory-personal/runtime/ws",
+        "/workplace/api/personal/chats/factory-personal/runtime/ws/realtime",
     ],
 )
 @pytest.mark.parametrize(
@@ -149,11 +151,21 @@ def test_websocket_requires_admin_origin_and_live_session(
     from omniagents_workplace.server import create_app
     import omniagents_workplace.factory_runtime as runtime
 
-    monkeypatch.setenv("FACTORY_ARCHITECTURE", "personal")
     monkeypatch.setenv(
         "WORKPLACE_ALLOWED_ORIGINS", "http://127.0.0.1:7395,http://localhost:7395"
     )
-    monkeypatch.setattr(PersonalConnection, "connect", AsyncMock())
+    from omniagents_workplace.factory_models import FactoryRpc
+
+    async def config(self, method, path):
+        return {"agents": ["coordinator"], "chat_agent": "coordinator"}
+
+    monkeypatch.setattr(FactoryRpc, "http", config)
+
+    async def connect(self):
+        self.agent = self.agent or "coordinator"
+        self.url = self.base_url.replace("http", "ws", 1) + "/agents/coordinator/ws"
+
+    monkeypatch.setattr(PersonalConnection, "connect", connect)
 
     async def relay(ws, url, token, authorized, policy):
         assert token == "t" and policy.connection.session_id == "factory-personal"
@@ -164,6 +176,7 @@ def test_websocket_requires_admin_origin_and_live_session(
 
     monkeypatch.setattr(runtime, "relay", relay)
     w = _workplace(tmp_path, "http://runtime.invalid")
+    PersonalConversations(w.store).ensure_mains(["generalist"], "generalist")
     try:
         client = TestClient(create_app(w, static_dir=tmp_path))
         path = endpoint
@@ -205,12 +218,23 @@ def test_native_messages_reach_runtime_but_foreign_sessions_do_not(
     from omniagents_workplace.personal import PersonalConnection
     from omniagents_workplace.server import create_app
 
-    monkeypatch.setenv("FACTORY_ARCHITECTURE", "personal")
-    monkeypatch.setattr(PersonalConnection, "connect", AsyncMock())
+    from omniagents_workplace.factory_models import FactoryRpc
+
+    async def config(self, method, path):
+        return {"agents": ["coordinator"], "chat_agent": "coordinator"}
+
+    monkeypatch.setattr(FactoryRpc, "http", config)
+
+    async def connect(self):
+        self.agent = self.agent or "coordinator"
+        self.url = self.base_url.replace("http", "ws", 1) + "/agents/coordinator/ws"
+
+    monkeypatch.setattr(PersonalConnection, "connect", connect)
 
     async def call(self, method, params):
         import json, websockets
 
+        await self.connect()
         async with websockets.connect(self.url) as socket:
             await socket.send(
                 json.dumps({"id": 17, "method": method, "params": params})
@@ -220,6 +244,7 @@ def test_native_messages_reach_runtime_but_foreign_sessions_do_not(
     monkeypatch.setattr(PersonalConnection, "call", call)
     url, seen = upstream
     w = _workplace(tmp_path, url)
+    PersonalConversations(w.store).ensure_mains(["generalist"], "generalist")
     try:
         client = TestClient(create_app(w, static_dir=tmp_path))
         client.cookies.set(
@@ -235,7 +260,7 @@ def test_native_messages_reach_runtime_but_foreign_sessions_do_not(
         path = (
             f"/workplace/api/personal/chats/{sid}/runtime/ws"
             if side
-            else "/workplace/api/personal/runtime/ws"
+            else "/workplace/api/personal/chats/factory-personal/runtime/ws"
         )
         with client.websocket_connect(path, headers={"origin": w.base_url}) as ws:
             ws.send_json(
@@ -253,7 +278,7 @@ def test_native_messages_reach_runtime_but_foreign_sessions_do_not(
                     {"id": 2, "method": method, "params": {"session_id": sid, **params}}
                 )
                 assert ws.receive_json()["result"]["method"] == "enqueue_message"
-        assert seen["paths"] == ["/agents/generalist/ws"] * 3
+        assert seen["paths"] == ["/agents/coordinator/ws"] * 3
         page = client.get(f"/workplace/api/personal/chats/{sid}/feed").json()
         assert [m["text"] for m in page["messages"]] == ["hello", "next"]
         assert {m["author"] for m in page["messages"]} == {"bill"}
@@ -276,14 +301,14 @@ async def test_voice_policy_scopes_and_attributes_requests(policy):
         delegation_id="d1",
         text="work",
     )
-    assert forward["params"]["text"] == "[alice]\nwork"
+    assert forward["params"]["text"] == "[From alice (@alice)]\n\nwork"
     forward, _ = await request(
         voice,
         "sync_context",
         session_id="factory-personal",
         turns=[{"id": "1", "role": "user", "text": "hi"}],
     )
-    assert forward["params"]["turns"][0]["text"] == "[alice]\nhi"
+    assert forward["params"]["turns"][0]["text"] == "[From alice (@alice)]\n\nhi"
     forward, reply = await request(
         voice, "start_run", session_id="factory-personal", prompt="bypass"
     )
@@ -331,7 +356,7 @@ async def test_side_chat_policy_binds_text_and_voice_to_selected_session():
         if method == "enqueue_message":
             assert forward is None and error["result"]["ok"]
             connection.send.assert_awaited_once_with(
-                "hi", "id", author="emm", input_content=None
+                "hi", "id", author="emm", author_name="emm", input_content=None
             )
         else:
             assert error is None and forward["params"]["session_id"] == "personal-side"

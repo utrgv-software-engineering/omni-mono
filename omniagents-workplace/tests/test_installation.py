@@ -46,13 +46,11 @@ def installation(tmp_path):
     a = i.add(
         name="One",
         project=project(tmp_path, "one"),
-        architecture="personal",
         owner=owner,
     )
     b = i.add(
         name="Two",
         project=project(tmp_path, "two"),
-        architecture="specialist",
         owner=owner,
     )
     i.grant(a["id"], other.id, "member")
@@ -68,10 +66,9 @@ def prefix(record):
 def test_explicit_routes_and_data_isolation(installation, monkeypatch):
     i, client, owner, other, a, b = installation
     assert not i.errors, i.errors
-    for record, mode in ((a, "personal"), (b, "specialist")):
+    for record in (a, b):
         response = client.get(prefix(record) + "/workplace/api/session")
         assert response.status_code == 200, response.text
-        assert response.json()["architecture"] == mode
         assert not response.json()["configurable"]
     wa, _ = i.instances[a["id"]]
     wb, _ = i.instances[b["id"]]
@@ -146,9 +143,7 @@ def test_machine_tokens_are_factory_local(installation):
 def test_project_and_runtime_isolation(installation, monkeypatch):
     i, client, owner, _, a, b = installation
     with pytest.raises(ValueError, match="non-overlapping"):
-        i.add(
-            name="Overlap", project=a["project"], architecture="personal", owner=owner
-        )
+        i.add(name="Overlap", project=a["project"], owner=owner)
     monkeypatch.setenv("GH_TOKEN", "ambient-secret")
     monkeypatch.setenv("OPENAI_API_KEY", "ambient-model-secret")
     environments = []
@@ -156,10 +151,10 @@ def test_project_and_runtime_isolation(installation, monkeypatch):
         p = i.processes[record["id"]]
         w, _ = i.instances[record["id"]]
         profile = p.prepare_profile(7355)
-        env = p.environment(
-            w, record["architecture"], 8000, "runtime-token", "control-token", profile
-        )
+        env = p.environment(w, 8000, "runtime-token", "control-token", profile)
         assert "GH_TOKEN" not in env and "OPENAI_API_KEY" not in env
+        assert "FACTORY_ARCHITECTURE" not in env
+        assert "OMNIAGENTS_PROJECT_OVERLAYS" not in env
         assert prefix(record) in env["MEMORY_MCP_URL"]
         data = yaml.safe_load(profile.read_text())
         assert str(p.directory) in data["client"]["state_dir"]
@@ -191,7 +186,6 @@ def test_registry_and_members_survive_restart(tmp_path):
     record = i.add(
         name="Persistent",
         project=project(tmp_path, "project"),
-        architecture="personal",
         owner=owner,
     )
     cookie = i.accounts.start_session(owner)
@@ -211,7 +205,7 @@ def test_create_factory_after_startup(installation, tmp_path):
     path = project(tmp_path, "dynamic")
     response = client.post(
         "/workplace/api/factories",
-        json={"name": "Dynamic", "project": str(path), "architecture": "personal"},
+        json={"name": "Dynamic", "project": str(path)},
     )
     assert response.status_code == 200, response.text
     record = response.json()
@@ -287,7 +281,6 @@ def test_managed_workflows_use_isolated_runtime_environment(tmp_path, monkeypatc
     record = i.add(
         name="CI",
         project=project(tmp_path, "project"),
-        architecture="specialist",
         owner=owner,
     )
     with TestClient(create_installation_app(i, static_dir=tmp_path)):
@@ -351,7 +344,6 @@ def test_adopt_existing_factory_preserves_accounts_sessions_and_service_data(
         data,
         config,
         project=project_dir,
-        architecture="personal",
         runtime_container="existing-runtime",
     )
     with TestClient(create_installation_app(i, static_dir=tmp_path)) as client:
@@ -359,7 +351,6 @@ def test_adopt_existing_factory_preserves_accounts_sessions_and_service_data(
         assert client.get("/workplace/api/session").json()["account"]["id"] == owner.id
         result = client.get(prefix(record) + "/workplace/api/session").json()
         assert result["account"]["id"] == owner.id
-        assert result["architecture"] == "personal"
         w, _ = i.instances[record["id"]]
         assert dict(w.store.docs("proof"))["existing"] == {"conversation": "keep-me"}
         assert len(w.accounts.people()) == 1
@@ -380,7 +371,7 @@ def test_hosted_creation_copies_template_without_credentials(tmp_path):
         template=template,
     )
     owner = identity(i, "owner", True)
-    record = i.add(name="New", project="", architecture="specialist", owner=owner)
+    record = i.add(name="New", project="", owner=owner)
     path = Path(record["project"])
     assert (path / "project.yml").is_file()
     assert not (path / ".env").exists() and not (path / "config").exists()

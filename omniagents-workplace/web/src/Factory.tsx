@@ -1,3 +1,4 @@
+import { AutomationRoutes } from "./AutomationRoutes";
 import { FactorySecrets } from "./FactorySecrets";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@omniagents/ui/dialog";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem } from "@omniagents/ui/dropdown-menu";
@@ -658,6 +659,7 @@ export function FactoryApp({ navigate, onConfigure, onModel, onSchedules }: { na
   const [days, setDays] = useState(7);
   const [report, setReport] = useState<FactoryReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [routingOpen, setRoutingOpen] = useState(false);
   const [benchmarking, setBenchmarking] = useState<FactoryRun | null>(null);
   const load = useCallback(
     () =>
@@ -695,10 +697,12 @@ export function FactoryApp({ navigate, onConfigure, onModel, onSchedules }: { na
         </NativeSelect>
         {onConfigure && <DropdownMenu><DropdownMenuTrigger asChild><Button className="ml-auto" variant="outline">Factory settings</Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuGroup>
           {onModel && <DropdownMenuItem onSelect={onModel}>Model</DropdownMenuItem>}
+          {onModel && <DropdownMenuItem onSelect={() => setRoutingOpen(true)}>Automations</DropdownMenuItem>}
           {onSchedules && <DropdownMenuItem onSelect={onSchedules}>Schedules</DropdownMenuItem>}
           <DropdownMenuItem onSelect={onConfigure}>Self-improvement</DropdownMenuItem>
           {onModel && <DropdownMenuItem onSelect={() => setSecretsOpen(true)}>Secrets</DropdownMenuItem>}
         </DropdownMenuGroup></DropdownMenuContent></DropdownMenu>}
+        <Dialog open={routingOpen} onOpenChange={setRoutingOpen}><DialogContent><DialogHeader><DialogTitle>Automations</DialogTitle><DialogDescription>Choose the agent and conversation for each workflow. Changes apply to future events.</DialogDescription></DialogHeader>{routingOpen && <AutomationRoutes />}</DialogContent></Dialog>
         <Dialog open={secretsOpen} onOpenChange={setSecretsOpen}><DialogContent><DialogHeader><DialogTitle>Factory secrets</DialogTitle><DialogDescription>Credentials available to this factory.</DialogDescription></DialogHeader>{secretsOpen && <FactorySecrets />}</DialogContent></Dialog>
       </div>
       {error && <p className="text-sm text-destructive">{error}</p>}

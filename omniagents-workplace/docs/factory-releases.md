@@ -61,7 +61,7 @@ Controller configuration contains these operator-owned values:
 - Identity/evidence: `factory_id`, `provider`, `repository`, `branch`, `workflow`,
   `workflow_sha256`, `required_checks`, `require_branch_protection`, and
   `evidence_token_file`. Stand-in additionally needs its scoped `api_url`.
-- Runtime: `container`, `network`, `architecture`, `runtime_env`, `state_directory`
+- Runtime: `container`, `network`, `runtime_env`, `state_directory`
   (the managed factory's `releases` directory), `runtime_token_file`, and
   `runtime_control_token_file`.
 - Policy/approval: `policy_url`, `policy_token_file`, and `approval_file` outside

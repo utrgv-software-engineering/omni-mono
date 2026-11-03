@@ -24,7 +24,6 @@ def controller(tmp_path, monkeypatch):
         factory_id="a" * 32,
         container="factory",
         network="net",
-        architecture="personal",
         image_repository="registry/factory",
         framework_image="framework@sha256:" + "b" * 64,
         approval_file=str(root / "approval.json"),
@@ -89,7 +88,6 @@ def controller(tmp_path, monkeypatch):
             return dict(
                 release_protocol=1,
                 busy=state["busy"],
-                architecture="personal",
                 version=request["REVISION"] if state["new"] else "old",
                 release_paused=state["new"],
             )

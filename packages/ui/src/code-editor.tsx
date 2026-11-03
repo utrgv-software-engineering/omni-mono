@@ -6,11 +6,17 @@ import { EditorView, keymap } from '@codemirror/view';
 import { basicSetup } from 'codemirror';
 import { useEffect, useRef } from 'react';
 
-import type { OpenFileLocation } from './open-file-intent';
+/** One-based source location. Omit `endLine` to target a single caret position. */
+export type CodeMirrorLocation = Readonly<{
+  line: number;
+  column?: number;
+  endLine?: number;
+  endColumn?: number;
+}>;
 
 export type CodeMirrorRevealRequest = Readonly<{
   requestId: string;
-  location: OpenFileLocation;
+  location: CodeMirrorLocation;
 }>;
 
 export type CodeMirrorEditorProps = {
@@ -21,7 +27,7 @@ export type CodeMirrorEditorProps = {
   ariaLabel?: string;
   autoFocus?: boolean;
   revealRequest?: CodeMirrorRevealRequest;
-  /** Workspace path; selects the syntax-highlighting language by filename. */
+  /** The file's path; selects the syntax-highlighting language by filename. */
   path?: string;
   /** Follow the app's dark theme (One Dark) instead of the light default. */
   dark?: boolean;

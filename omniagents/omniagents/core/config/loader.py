@@ -297,6 +297,18 @@ def _load_instructions(config: Dict[str, Any], base_dir: Path) -> Callable[[], s
         "instructions_file"
     )  # Keep original key name
 
+    recipe = config.get("_instructions_recipe")
+    if recipe:
+        # An agent that extends a base: its files are combined again on each
+        # call, so an edited instructions file reaches the next run.
+        def combine_instructions():
+            try:
+                return _combine_instructions(recipe)
+            except OSError as e:
+                _report(f"Error reading instructions: {e}")
+                return f"Error reading instructions: {e}"
+
+        return combine_instructions
     if instructions_content:
         # Use literal instructions if provided
         return lambda: str(instructions_content)
@@ -443,6 +455,34 @@ def _agent_skill_roots(
     return out
 
 
+def _instructions_source(config: Dict[str, Any], base_dir: Path) -> Dict[str, Any]:
+    """Where an agent definition's own instructions come from: ``{"file"}``
+    or ``{"text"}``, or, for one that extends another, how they combine."""
+    if config.get("_instructions_recipe"):
+        return config["_instructions_recipe"]
+    if config.get("instructions"):
+        return {"text": str(config["instructions"])}
+    rel = config.get("instructions_file")
+    if not rel:
+        return {"text": ""}
+    return {"file": str((base_dir / str(rel)).resolve())}
+
+
+def _combine_instructions(recipe: Dict[str, Any]) -> str:
+    """The instructions ``recipe`` (:func:`_instructions_source`) makes, read now."""
+    if "text" in recipe:
+        return recipe["text"]
+    if "file" in recipe:
+        return Path(recipe["file"]).read_text(encoding="utf-8")
+    base = _combine_instructions(recipe["base"])
+    role = _combine_instructions(recipe["role"])
+    if _ROLE_SLOT.search(base):
+        return _ROLE_SLOT.sub(lambda _m: role, base)
+    if role:
+        return base.rstrip() + "\n\n" + role
+    return base
+
+
 def _instructions_text(config: Dict[str, Any], base_dir: Path, source: Path) -> str:
     """An agent definition's own instructions, read now (for ``extends:`` merging)."""
     if config.get("instructions"):
@@ -531,6 +571,13 @@ def _apply_extends(
         merged["instructions"] = base_instructions.rstrip() + "\n\n" + role_instructions
     elif base_instructions:
         merged["instructions"] = base_instructions
+    if merged.get("instructions"):
+        merged["_instructions_recipe"] = {
+            "base": _instructions_source(base, base_dir),
+            "role": _instructions_source(config, config_file.parent),
+        }
+    else:
+        merged.pop("_instructions_recipe", None)
 
     dirs: List[str] = []
     if config.get("instructions_file"):

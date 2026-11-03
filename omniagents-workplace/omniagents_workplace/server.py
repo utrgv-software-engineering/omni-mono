@@ -27,7 +27,7 @@ import re
 import secrets
 import time
 import uuid
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 from importlib import resources
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -679,6 +679,12 @@ class Workplace:
 class PersonalChatCreate(BaseModel):
     model_config = {"extra": "forbid"}
     title: str = Field(default="New chat", min_length=1, max_length=100)
+    agent: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]*$")
+
+
+class PersonalSeen(BaseModel):
+    model_config = {"extra": "forbid"}
+    revision: str = Field(max_length=128)
 
 
 class PersonalChatUpdate(BaseModel):
@@ -1059,10 +1065,7 @@ def create_app(
     ws = workplace.slack
     from .personal import PersonalConversations
 
-    personal = PersonalConversations(
-        workplace.store,
-        architecture=workplace.environ.get("FACTORY_ARCHITECTURE", "specialist"),
-    )
+    personal = PersonalConversations(workplace.store)
 
     @contextlib.asynccontextmanager
     async def lifespan(_app):
@@ -1166,7 +1169,7 @@ def create_app(
             methods=["GET", "POST", "DELETE"],
         )
     )
-    app.include_router(memory_router(workplace))
+    app.include_router(memory_router(workplace, conversations=personal))
     app.include_router(library_router(workplace))
     from .shared.api import shared_router
 
@@ -1268,7 +1271,6 @@ def create_app(
             and workplace.factory_config is not None,
             # Served with a factory's workplace.yml: its model is configured here (admins).
             "factory": workplace.factory_config is not None,
-            "architecture": personal.architecture,
             # A workplace `up` made: its admin chooses a password on this machine.
             "claim_here": _claim(request),
         }
@@ -2204,6 +2206,89 @@ def create_app(
         org = workplace.github.organization()
         return f"{org.login}/{name}" if name and org else None
 
+    @app.get("/workplace/api/factory/automations")
+    async def factory_automations(request: Request, days: float = 7):
+        """Every automation with its triggers, routing, recent runs and the
+        events of its kinds it did not run for; each run says whether its chat
+        can be opened in Chat."""
+        admin(request)
+        data = await personal_result(
+            _factory_rpc(request).http(
+                "GET", f"/integrations/automations?days={float(days)}"
+            )
+        )
+        await personal_result(sync_automation_chats())
+        for automation in data.get("automations", []):
+            for run in automation.get("runs", []):
+                run["chat"] = personal.exists(run.get("session_id") or "")
+        from .personal import chat_configuration
+
+        # Agents in Chat's order, with their names, for one section each.
+        config = await personal_result(chat_configuration(_factory_rpc(request)))
+        return {
+            **data,
+            "chat_agent": config.get("chat_agent"),
+            "chat_agents": config.get("chat_agents", config.get("agents", [])),
+            "agent_details": config.get("agent_details", []),
+        }
+
+    @app.put("/workplace/api/factory/automations/{name}/enabled")
+    async def factory_automation_enabled(name: str, request: Request):
+        """Turn an automation on or off (``PUT {"enabled": bool}``)."""
+        admin(request)
+        from urllib.parse import quote
+        import httpx
+
+        url, token = _factory_endpoint()
+        if not url:
+            raise HTTPException(503, "Factory is unavailable")
+        async with httpx.AsyncClient(timeout=30) as client:
+            result = await client.put(
+                url.rstrip("/")
+                + "/integrations/automations/"
+                + quote(name, safe="")
+                + "/enabled",
+                json=await request.json(),
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        if not result.is_success:
+            raise HTTPException(
+                result.status_code,
+                (result.json() if result.content else {}).get("detail")
+                or "Unable to change the automation",
+            )
+        return result.json()
+
+    @app.api_route("/workplace/api/factory/automation-routes", methods=["GET"])
+    async def automation_routes(request: Request):
+        admin(request)
+        return await personal_result(
+            _factory_rpc(request).http("GET", "/integrations/automation-routes")
+        )
+
+    @app.put("/workplace/api/factory/automation-routes/{name}")
+    async def automation_route_update(name: str, request: Request):
+        admin(request)
+        from urllib.parse import quote
+        import httpx
+
+        url, token = _factory_endpoint()
+        if not url:
+            raise HTTPException(503, "Factory is unavailable")
+        async with httpx.AsyncClient(timeout=30) as client:
+            result = await client.put(
+                url.rstrip("/")
+                + "/integrations/automation-routes/"
+                + quote(name, safe=""),
+                json=await request.json(),
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        if not result.is_success:
+            raise HTTPException(
+                result.status_code, "Unable to update automation routing"
+            )
+        return result.json()
+
     @app.get("/workplace/api/factory/benchmarks")
     def factory_benchmarks(request: Request):
         """The factory's benchmark suites (its repository's main) and their results
@@ -2297,12 +2382,17 @@ def create_app(
     from .desktop import mount_desktop
 
     mount_desktop(app, workplace, admin, _factory_endpoint, _cookie, SESSION_COOKIE)
+    from .factory_definition import FactoryDefinition, definition_router
+
+    definition = FactoryDefinition(workplace, _factory_repository, _factory_endpoint)
+    workplace.github.subscribe(definition.on_github)
+    app.include_router(definition_router(definition))
 
     async def personal_connection(request: Request):
         account = admin(request)
         url, token = _factory_endpoint()
         return await personal.for_account(
-            account, url, token, request.path_params.get("chat_id", "factory-personal")
+            account, url, token, request.path_params["chat_id"]
         )
 
     async def personal_result(operation):
@@ -2362,19 +2452,113 @@ def create_app(
         )
         return {**result, "attention": attention}
 
+    async def sync_automation_chats(session_id=None):
+        from .factory_models import FactoryRpc
+
+        url, token = _factory_endpoint()
+        rpc = FactoryRpc(url, token)
+        data = await rpc.http(
+            "GET",
+            "/integrations/conversations"
+            + ("?session_id=" + quote(session_id, safe="") if session_id else ""),
+        )
+        for chat in data.get("conversations", []):
+            personal.register_automation(chat)
+
+    def _names():
+        return {a.username: a.name or a.username for a in workplace.accounts.people()}
+
     @app.get("/workplace/api/personal/chats")
     async def personal_chats(request: Request):
-        await personal_connection(request)
+        """Each chat agent, its Main Chat and Side Chats, and its automations' chats."""
+        account = admin(request)
         url, token = _factory_endpoint()
-        return {"chats": await personal.summaries(admin(request), url, token)}
+        from .factory_models import FactoryRpcError
+
+        try:
+            from .personal import chat_configuration
+
+            config = await chat_configuration(_factory_rpc(request))
+            await sync_automation_chats()
+        except FactoryRpcError:
+            return {
+                "chats": personal.chats(),
+                "agents": [],
+                "chat_agent": None,
+                "offline": True,
+            }
+        chat_agents = list(config.get("chat_agents", config.get("agents", [])))
+        personal.ensure_mains(chat_agents, config.get("chat_agent"))
+        chats = await personal.summaries(account, url, token, _names())
+        # An agent no longer offered for chat still shows while it has Side or
+        # automation chats; a leftover Main Chat alone does not keep it.
+        agents = chat_agents + sorted(
+            {c["agent"] for c in chats if c.get("agent") and c.get("kind") != "main"}
+            - set(chat_agents)
+        )
+        return {
+            "chats": chats,
+            "agents": agents,
+            "chat_agents": chat_agents,
+            "chat_agent": config.get("chat_agent"),
+            "agent_details": config.get("agent_details", []),
+        }
+
+    @app.get("/workplace/api/personal/agents/{agent}/readiness")
+    async def personal_agent_readiness(agent: str, request: Request, weeks: int = 8):
+        """How an agent is doing, week by week: people's messages to it, the
+        lessons it learned, and its runs and grades (``agent_readiness``)."""
+        from .factory_models import FactoryRpcError
+        from .factory_report import agent_readiness
+
+        rpc = _factory_rpc(request)
+        if not re.fullmatch(r"[a-z][a-z0-9_]*", agent):
+            raise HTTPException(422, "Unknown agent")
+        since = time.time() - max(1, min(weeks, 26)) * 7 * 86400
+        factory_error = None
+        try:
+            runs = (await rpc.http("GET", f"/integrations/runs?since={since}")).get(
+                "runs"
+            ) or []
+        except FactoryRpcError as exc:
+            runs, factory_error = [], str(exc)
+        apps = workplace.apps.active()
+        store = f"agent:{apps[0].id}/{agent}" if apps else None
+        lessons = [
+            m for _, m in workplace.store.docs("memory.item") if m["store"] == store
+        ]
+        chats = [c["id"] for c in personal.chats() if c.get("agent") == agent]
+        return {
+            **agent_readiness(
+                runs,
+                lessons,
+                personal.messages.sent_at(chats),
+                agent,
+                since=since,
+            ),
+            "factory_error": factory_error,
+        }
+
+    @app.post("/workplace/api/personal/chats/{chat_id}/seen")
+    async def personal_chat_seen(chat_id: str, body: PersonalSeen, request: Request):
+        personal.mark_seen(admin(request), chat_id, body.revision)
+        return {"ok": True}
 
     @app.post("/workplace/api/personal/chats")
     async def personal_chat_create(body: PersonalChatCreate, request: Request):
-        await personal_connection(request)
+        admin(request)
+        from .personal import chat_configuration
+
+        config = await personal_result(chat_configuration(_factory_rpc(request)))
+        agent = body.agent or config.get("chat_agent")
+        if not agent or agent not in config.get("agents", []):
+            raise HTTPException(422, "Choose an agent available in this factory")
         if not body.title.strip():
             raise HTTPException(422, "Enter a chat title.")
         return personal.create(
-            body.title.strip(), auto_title="title" not in body.model_fields_set
+            body.title.strip(),
+            auto_title="title" not in body.model_fields_set,
+            agent=agent,
         )
 
     @app.delete("/workplace/api/personal/chats/{chat_id}")
@@ -2395,7 +2579,6 @@ def create_app(
         return personal.update(chat_id, changes)
 
     @app.get("/workplace/api/personal/chats/{chat_id}")
-    @app.get("/workplace/api/personal")
     async def personal_snapshot(request: Request):
         connection = await personal_connection(request)
         return await personal_result(connection.snapshot())
@@ -2404,11 +2587,16 @@ def create_app(
     async def personal_feed(chat_id: str, request: Request, after: int = 0):
         # Reading public messages never requires a live agent or starts work.
         admin(request)
-        if personal.architecture != "personal" or not personal.exists(chat_id):
+        if not personal.exists(chat_id):
             raise HTTPException(404, "Chat not found")
         if after < 0:
             raise HTTPException(422, "Invalid cursor")
-        return personal.messages.page(chat_id, after)
+        page = personal.messages.page(chat_id, after)
+        names = _names()
+        for message in page["messages"]:
+            if message["role"] == "user":
+                message["author_name"] = names.get(message["author"], message["author"])
+        return page
 
     def chat_publisher(request):
         scheme, _, token = request.headers.get("authorization", "").partition(" ")
@@ -2419,8 +2607,6 @@ def create_app(
         )
         if member is None or member.kind != "app":
             raise HTTPException(401, "A factory app token is required")
-        if personal.architecture != "personal":
-            raise HTTPException(409, "Public Chat requires Personal mode")
         return member
 
     @app.post("/library/api/chat/messages")
@@ -2434,6 +2620,8 @@ def create_app(
         }:
             raise HTTPException(422, "Expected conversation, text and message_id")
         chat = body["conversation"]
+        if isinstance(chat, str) and not personal.exists(chat):
+            await personal_result(sync_automation_chats(chat))
         if not isinstance(chat, str) or not personal.exists(chat):
             raise HTTPException(404, "Chat not found")
         mid = body["message_id"]
@@ -2457,27 +2645,26 @@ def create_app(
         return personal.messages.page(conversation, after)
 
     @app.post("/workplace/api/personal/chats/{chat_id}/messages")
-    @app.post("/workplace/api/personal/messages")
     async def personal_send(body: PersonalMessage, request: Request):
         connection = await personal_connection(request)
         if not body.text.strip():
             raise HTTPException(422, "Write a message first.")
+        account = admin(request)
         return await personal_result(
             connection.send(
                 body.text.strip(),
                 str(body.submission_id),
-                author=admin(request).username,
+                author=account.username,
+                author_name=account.name,
             )
         )
 
     @app.post("/workplace/api/personal/chats/{chat_id}/stop")
-    @app.post("/workplace/api/personal/stop")
     async def personal_stop(body: PersonalStop, request: Request):
         connection = await personal_connection(request)
         return await personal_result(connection.stop(body.run_id))
 
     @app.post("/workplace/api/personal/chats/{chat_id}/decisions")
-    @app.post("/workplace/api/personal/decisions")
     async def personal_decision(body: PersonalDecision, request: Request):
         connection = await personal_connection(request)
         return await personal_result(
@@ -2485,7 +2672,6 @@ def create_app(
         )
 
     @app.websocket("/workplace/api/personal/chats/{chat_id}/runtime/ws")
-    @app.websocket("/workplace/api/personal/runtime/ws")
     async def personal_runtime_ws(websocket: WebSocket):
         from .factory_runtime import relay, trusted_origin
         from .personal_runtime import PersonalRpcPolicy
@@ -2499,10 +2685,7 @@ def create_app(
                 account
                 and account.admin
                 and not account.disabled
-                and personal.architecture == "personal"
-                and personal.exists(
-                    websocket.path_params.get("chat_id", "factory-personal")
-                )
+                and personal.exists(websocket.path_params["chat_id"])
             )
 
         if not authorized() or not trusted_origin(
@@ -2519,7 +2702,7 @@ def create_app(
                 account,
                 url,
                 token,
-                websocket.path_params.get("chat_id", "factory-personal"),
+                websocket.path_params["chat_id"],
             )
             await connection.connect()
         except (HTTPException, FactoryRpcError):
@@ -2531,11 +2714,10 @@ def create_app(
             connection.url,
             token,
             authorized=authorized,
-            policy=PersonalRpcPolicy(connection, account.username),
+            policy=PersonalRpcPolicy(connection, account.username, account.name),
         )
 
     @app.websocket("/workplace/api/personal/chats/{chat_id}/runtime/ws/realtime")
-    @app.websocket("/workplace/api/personal/runtime/ws/realtime")
     async def personal_voice_ws(websocket: WebSocket):
         from .factory_runtime import relay, trusted_origin
         from .personal_runtime import PersonalVoicePolicy
@@ -2549,10 +2731,7 @@ def create_app(
                 account
                 and account.admin
                 and not account.disabled
-                and personal.architecture == "personal"
-                and personal.exists(
-                    websocket.path_params.get("chat_id", "factory-personal")
-                )
+                and personal.exists(websocket.path_params["chat_id"])
             )
 
         if not authorized() or not trusted_origin(
@@ -2569,7 +2748,7 @@ def create_app(
                 account,
                 url,
                 token,
-                websocket.path_params.get("chat_id", "factory-personal"),
+                websocket.path_params["chat_id"],
             )
             await connection.connect()
         except (HTTPException, FactoryRpcError):
@@ -2581,7 +2760,7 @@ def create_app(
             connection.url + "/realtime",
             token,
             authorized=authorized,
-            policy=PersonalVoicePolicy(connection, account.username),
+            policy=PersonalVoicePolicy(connection, account.username, account.name),
         )
 
     @app.get("/workplace/api/factory/runs/{run_id}")

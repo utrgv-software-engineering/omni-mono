@@ -333,33 +333,48 @@ matches automations with `provider: memory`.
 
 For agent configuration, see [the memory guide](../omniagents/docs/guide/memory.md).
 
-## Personal generalist UI
+## Chat
 
-The **Chat** tab (`/personal`) is available when both services start with
-`FACTORY_ARCHITECTURE=personal`. All authorized administrators share one generalist
-Main Chat per factory, including its questions, approvals, and stop control.
-The chat picker creates additional shared side chats with independent histories,
-text queues, and voice connections. They use the same generalist, tools, memory,
-and Library. Side chats can be renamed, archived/restored, or deleted; Main Chat
-stays pinned. The **+** beside **Side Chats** opens a conversation immediately;
-its first message supplies its initial title. Row menus contain rename, archive,
-and delete. Archived chats appear in a collapsible section only when present.
-The list shows working, needs-input, and unread activity, refreshed every five
-seconds while the page is visible. Wide screens use a persistent in-chat sidebar;
-smaller screens use a drawer. Direct chat links override the last remembered chat.
-Drafts and transcript reading positions survive switching chats.
-Deletion requires an idle chat with an empty queue and preserves
-shared memory and Library content. Archive only hides a chat from the active list;
-it does not stop its work.
-Messages carry their authenticated sender's name. Previous account conversations
-are retained, but are not merged into this shared history.
+The **Chat** tab (`/personal`) lists agents first: the project's
+`agents.chat_entrypoint` (the default), the rest of `agents.chat_agents`, and any
+other agent that has Side or automation chats. Each agent row shows whether any
+of its chats needs input, is working, or has unread activity. Selecting an agent
+shows its chats:
 
-`FACTORY_ARCHITECTURE=specialist` disables the Chat tab and its API. The factory
-uses the foreman and the explicit agents in its automation definitions. In personal
-mode, every matched automation—including nightly improvement—routes to Main Chat
-instead. Main Chat and events use the same durable FIFO queue and runtime;
-results appear in Main Chat and retain their originating event/thread for replies.
-The generalist can use generic task workers. No separate dashboard service is needed.
+- **Main Chat**: one per agent, shared by every administrator, pinned (it cannot
+  be renamed, archived or deleted). The default agent's is the original
+  `factory-personal` conversation, so its history carries over. Automations
+  never post into it.
+- **Side Chats**: started with the **+** beside **Side Chats**, shared with every
+  administrator; the first message names one until it is renamed. Rename,
+  archive/restore and delete are in each row's menu.
+- **Automations**: one chat per automation conversation, grouped and collapsed.
+  Routing decides which: each automation runs the agent its route names (an admin
+  override in Factory → Automations, then the automation's `agent:`, then
+  `agents.entrypoint`), in a conversation keyed by its source thread and agent;
+  scheduled and Shared-file events start a new one unless the automation says
+  `conversation: thread`. A chat is titled for its source (`PR #12 · Add
+  pagination`, a Linear issue, a Slack message's text, or the automation's name)
+  and archives itself once its pull request or issue closes (once: an
+  administrator can restore it). Any administrator can reply in one to correct the
+  agent where the work happened.
+- **Archived**: collapsed, when there are any.
+
+Every person's message shows their name and initials, and reaches the agent as
+`[From <name> (@<username>)]` followed by the text, so the agent knows who is
+speaking. A working chat says who it is working for. Unread is per
+administrator, kept by Workplace (`POST …/chats/{id}/seen`). Deletion requires an
+idle chat with an empty queue and preserves shared memory and Library content;
+archive only hides a chat. Wide screens use a persistent sidebar, smaller
+screens a drawer; direct chat links override the last remembered chat.
+
+The gauge beside an agent's name opens its **readiness**
+(`GET /workplace/api/personal/agents/{agent}/readiness`), week by week: messages
+from people, lessons it learned (those attributed to one person in brackets),
+its own automation runs and failures, and the judges' pass rates on every run
+graded for it, including where another agent called it. Lessons that level off
+while people keep working with it, and passing grades, are the evidence for
+adding it to a pipeline; neither is a verdict.
 
 The page embeds the shared `@omniagents/chat-ui` conversation, composer, tool
 activity, questions, and approvals. Its authenticated WebSocket gateway binds
@@ -369,8 +384,8 @@ while busy use the runtime queue. Stop and approval IDs are verified against the
 selected conversation before forwarding them. Policy changes are unavailable.
 
 The runtime owns execution and conversation history. Browser refresh/close does
-not stop work. Pending queued messages are checked when personal mode starts;
-interrupted active runs are not blindly replayed. The resident sandbox lives for
+not stop work. Pending queued messages are recovered when the runtime starts;
+interrupted active runs are not replayed. The resident sandbox lives for
 the server process; save repository work in branches/PRs before restarting.
 
 The browser receives no factory credential and cannot access unregistered sessions or choose an agent,
@@ -379,25 +394,20 @@ conversation's questions or stop its current run. Ordinary members have no acces
 Existing authentication, session revocation, origin checks, and the read-only
 Factory transcript proxy remain enforced. Tools, credentials, and memory are shared.
 
-Architecture changes require restarting both services with the same setting.
-The runtime verifies its mode on Personal connections and refuses mode changes
-with active automation work, live conversation leases, or queued messages. One
-factory runtime holds the architecture lock. Stop intake and let work finish before
-switching; historical conversations are retained and inactive agent endpoints are
-disabled. Factory promotions also wait for Personal work to finish.
+Every agent works on the factory's one shared machine, which survives restarts.
+One factory runtime holds the factory's intake lock. Factory promotions wait for
+chat work to finish.
 
 Verification: `tests/test_personal.py` covers shared identity, admin access,
-mode mismatch, policy injection, pending controls, and WebSocket reconnection.
-Runtime integration tests cover both routing modes, event deduplication, busy
-switch rejection, and chat/event serialization on the real queue without model
-calls. Live model comparisons remain deferred. Projects, artifacts, voice, and
+policy injection, pending controls, and WebSocket reconnection. Runtime
+integration tests cover per-automation routing and event deduplication without
+model calls. Live model comparisons remain deferred. Projects, artifacts, voice, and
 desktop control remain future slices.
 
 
 The Workplace shell uses a 76px app rail from 768px upward, with main tabs
 centered between the brand and bottom controls and scrolling on short screens. Phones use three
-primary destinations plus More; Personal leads in personal mode, Factory in
-specialist mode. Remaining apps and Account are available through More. Connections lives in
+primary destinations plus More; Chat leads for a factory's administrators. Remaining apps and Account are available through More. Connections lives in
 the account menu; admins also have Developer tools → Event log there. Slack and Linear retain their own mobile navigation
 drawers. The phone bar respects safe areas and hides while a soft keyboard
 shrinks the viewport; the shell height follows that viewport to keep the composer
@@ -425,6 +435,37 @@ Picture Frame canvas planet and reflects the conversation's connection, work,
 approval/question and voice states. Microphone and received speaker tracks supply
 WebRTC voice levels; the avatar never starts or controls work. Animation pauses
 when hidden or outside the viewport and respects reduced-motion preferences.
+
+## Agents: editing the factory
+
+The **Agents** tab (`/agents`, administrators) edits what the factory's agents
+are told and know how to do: each agent's instructions and skills, those shared
+by every agent (the bases they `extends:` and the project's `skills/`), and the
+automations. The factory lists them and checks every edit
+(`GET /integrations/definition`, `POST /integrations/definition/check`): an
+instructions file must be a valid template, a skill's frontmatter must name its
+folder, an automation must load.
+
+Saving is a commit on the factory repository's `main`, as the person who saved
+(`PUT /workplace/api/factory/definition/files`), and publishes it: the Workplace
+asks the factory to move its checkout to that commit
+(`POST /integrations/definition/advance`). The factory reads instructions,
+skills and automations again on each run, so the next run uses the edit and
+nothing restarts. Runs record the commit they ran. A save over a file someone
+else changed since it was opened is refused. **History** lists a file's commits
+with their changes, and **Restore this version** saves the old content as a new
+commit.
+
+**Require review** (the switch at the bottom of the list,
+`factory.definition.require_review`) turns each save into a pull request
+instead; merging it publishes it. Any move of `main` (a merged pull request, the
+improver's included) is offered to the factory the same way. The factory moves
+only when everything between its commit and the new one is read on each run;
+agent settings, tools, dependencies and sandbox profiles still change by release,
+and the editor says so. It refuses to move while its checkout has changes that
+aren't committed, so edits made on the server are never overwritten: commit them
+to the repository first. Editing needs the factory's repository in the
+Workplace; with GitHub connected, change it by pull request there.
 
 ## Repository connections and self-improvement
 
@@ -617,7 +658,7 @@ port with `--sandbox-port` and `--sandbox-url` to expose only git/upload service
 to tool containers. Workflow shell jobs use disposable Docker containers.
 
 With `--template`, **New factory** creates a clean project copy; users need only
-a name and architecture. Provider credentials and installation state are not
+a name. Provider credentials and installation state are not
 copied from the template.
 
 For an existing deployment, `Installation.adopt` registers its stopped Workplace

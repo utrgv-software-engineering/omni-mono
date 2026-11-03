@@ -13,6 +13,8 @@ import zipfile
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from typing import Literal
+
 from pydantic import BaseModel, Field, ConfigDict
 
 from ..accounts import me
@@ -45,6 +47,8 @@ class Rule(BaseModel):
     events: list[str] = ["shared.files_uploaded"]
     recursive: bool = True
     include_agent: bool = False
+    agent: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]*$")
+    conversation: Literal["auto", "thread", "new"] = "auto"
     enabled: bool = False
 
 

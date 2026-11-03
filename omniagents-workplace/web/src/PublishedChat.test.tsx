@@ -36,3 +36,13 @@ it("renders only the independent public feed, preserves literal prefixes, and op
     expect(node.textContent).toContain("Omni");
   } finally { await act(async()=>root.unmount()); node.remove(); }
 });
+
+it("gives each person's message its sender and leaves the agent's unattributed", async () => {
+  const { publicMessageItems } = await import("./PublishedChat");
+  const items = publicMessageItems([
+    { seq: 1, id: "a", role: "user", author: "priya", author_name: "Priya Shah", text: "hi", created_at: 1 },
+    { seq: 2, id: "b", role: "assistant", author: "app", text: "hello", created_at: 2 },
+  ]);
+  expect(items[0].sender).toEqual({ name: "Priya Shah" });
+  expect(items[1].sender).toBeUndefined();
+});

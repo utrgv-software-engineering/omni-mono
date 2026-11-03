@@ -36,6 +36,7 @@ __all__ = [
     "automations_dir",
     "list_automations",
     "load_automation",
+    "parse_automation",
 ]
 
 _FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?(.*)\Z", re.S)
@@ -56,6 +57,7 @@ class Automation:
     agent: Optional[str] = None
     triggers: List[Dict[str, Any]] = field(default_factory=list)
     self_improvement: bool = False
+    conversation: str = "auto"
 
     def run_input(self, event: Any = None, context: Optional[str] = None) -> str:
         """The input a run started by this automation receives: its instruction,
@@ -83,7 +85,15 @@ def load_automation(project_root: Path, name: str) -> Automation:
         raise AutomationError(
             f"No automation {name!r} at {path}. Available: {available}"
         )
-    match = _FRONTMATTER.match(_render(project_root, path))
+    return parse_automation(project_root, name, path.read_text(encoding="utf-8"))
+
+
+def parse_automation(project_root: Path, name: str, text: str) -> Automation:
+    """``automations/<name>/automation.md`` with ``text`` as its content,
+    whether or not that is what the file holds (an edit, checked before it
+    is saved)."""
+    path = automations_dir(project_root) / name / "automation.md"
+    match = _FRONTMATTER.match(_render(project_root, path, text))
     if not match:
         raise AutomationError(f"{path}: expected YAML frontmatter between '---' lines")
     try:
@@ -100,6 +110,9 @@ def load_automation(project_root: Path, name: str) -> Automation:
         raise AutomationError(f"{path}: 'self_improvement' must be a boolean")
     if agent is not None and (not isinstance(agent, str) or not agent.strip()):
         raise AutomationError(f"{path}: 'agent' must name a project agent")
+    conversation = meta.get("conversation", "auto")
+    if conversation not in {"auto", "thread", "new"}:
+        raise AutomationError(f"{path}: conversation must be auto, thread, or new")
     instruction = match.group(2).strip()
     if not instruction:
         raise AutomationError(
@@ -113,10 +126,11 @@ def load_automation(project_root: Path, name: str) -> Automation:
         agent=agent.strip() if isinstance(agent, str) else None,
         triggers=list(triggers),
         self_improvement=meta.get("self_improvement", False),
+        conversation=conversation,
     )
 
 
-def _render(project_root: Path, path: Path) -> str:
+def _render(project_root: Path, path: Path, text: str) -> str:
     """The automation file with ``project``'s values in it."""
     import jinja2
 
@@ -127,7 +141,7 @@ def _render(project_root: Path, path: Path) -> str:
     )
     env.filters["tojson"] = lambda value: json.dumps(value, ensure_ascii=False)
     try:
-        template = env.from_string(path.read_text(encoding="utf-8"))
+        template = env.from_string(text)
         return template.render(project=project_values_at(project_root))
     except jinja2.TemplateError as exc:
         raise AutomationError(f"{path}: {exc}") from exc

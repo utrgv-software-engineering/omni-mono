@@ -139,7 +139,6 @@ export interface Session {
   configurable?: boolean;
   /** Served with a factory's workplace.yml: its model is configured in the UI. */
   factory?: boolean;
-  architecture?: "personal" | "specialist";
 }
 
 export interface Invite {

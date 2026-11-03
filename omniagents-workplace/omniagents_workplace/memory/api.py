@@ -8,7 +8,7 @@ from .state import MemoryError, AdminPrincipal
 from .mcp import SPECS
 
 
-def memory_router(workplace):
+def memory_router(workplace, conversations=None):
     r = APIRouter(prefix="/workplace/api/memory")
     state = workplace.memory
 
@@ -33,7 +33,15 @@ def memory_router(workplace):
         app = workplace.apps.by_username(str(config.get("app", {}).get("username", "")))
         if app is None:
             raise HTTPException(404, "Factory agent is not configured")
-        store = f"agent:{app.id}/generalist"
+        chat_id = request.query_params.get("chat_id")
+        chat = (
+            next((c for c in conversations.chats() if c["id"] == chat_id), None)
+            if conversations
+            else None
+        )
+        if chat is None or not chat.get("agent"):
+            raise HTTPException(404, "Chat agent is not configured")
+        store = f"agent:{app.id}/{chat['agent']}"
         attempt(lambda: state._access(app.id, store))
         return store
 

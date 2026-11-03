@@ -11,7 +11,7 @@ it.each([true, false])("uses the same list/detail/editor flow (agent scope: %s)"
  const node=document.createElement("div");document.body.append(node);const root=createRoot(node);
  const button=(name:string)=>[...node.querySelectorAll("button")].find(b=>b.textContent===name || b.getAttribute("aria-label")===name)!;
  try {
-  await act(async()=>root.render(<MemoryApp agent={agent} />));
+  await act(async()=>root.render(<MemoryApp agent={agent ? "test-chat" : false} />));
   expect(node.querySelector("textarea")).toBeNull();
   expect(!!node.querySelector('[aria-label="Memory store"]')).toBe(false);
   expect(node.textContent).not.toContain(memory.store);
@@ -22,7 +22,7 @@ it.each([true, false])("uses the same list/detail/editor flow (agent scope: %s)"
   await act(async()=>button("Edit").click());
   expect(node.querySelector("textarea")!.value).toBe(memory.text);
   await act(async()=>node.querySelector("form")!.dispatchEvent(new Event("submit",{bubbles:true,cancelable:true})));
-  expect(fetcher.mock.calls.some(([url,init])=>url.endsWith(agent ? "/update?scope=agent" : "/update") && JSON.parse(init!.body as string).id==="m1")).toBe(true);
+  expect(fetcher.mock.calls.some(([url,init])=>url.endsWith(agent ? "/update?scope=agent&chat_id=test-chat" : "/update") && JSON.parse(init!.body as string).id==="m1")).toBe(true);
   expect(node.querySelector("textarea")).toBeNull();
   await act(async()=>button(agent ? "New memory" : "Add memory to generalist").click());
   expect(node.querySelector("textarea")!.value).toBe("");

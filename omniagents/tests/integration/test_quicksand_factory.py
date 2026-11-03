@@ -37,7 +37,8 @@ async def test_generalist_repository_and_library(tmp_path, monkeypatch):
     from omniagents.core.providers import codex
     from omniagents.core.project.runtime import load_project
     from omniagents.integrations.environment import RunEnvironments, GitHubConfig
-    from omniagents.integrations.server import _run_starter
+    from omniagents.integrations.agent_runtimes import AgentRuntimes
+    from omniagents.integrations.personal import ConversationRunner
     from omniagents.execution import AgentHostResources
 
     source = Path(
@@ -120,17 +121,13 @@ async def test_generalist_repository_and_library(tmp_path, monkeypatch):
             async def principal():
                 return None
 
-            steps = []
-
-            async def progress(step):
-                steps.append(step)
-                print(
-                    "Factory:",
-                    step.name if step.kind == "tool" else step.text,
-                    flush=True,
-                )
-
-            run = _run_starter(project, resources, None, principal)
+            # The path production runs automations on: a turn on the agent's
+            # durable conversation, with its tools on the shared machine.
+            runtimes = AgentRuntimes(project, auth_token=None, host_resources=resources)
+            runtime = await runtimes.app("generalist")
+            run = ConversationRunner(
+                runtime.state.agent_service, principal, "generalist"
+            )
             result = await asyncio.wait_for(
                 run(
                     "generalist",
@@ -144,7 +141,6 @@ async def test_generalist_repository_and_library(tmp_path, monkeypatch):
                         "Use your normal tools and approvals. Leave edits uncommitted, do not push or contact anyone. "
                         "No worker delegation is needed. Finish with a concise report."
                     ),
-                    progress,
                 ),
                 900,
             )
@@ -170,7 +166,6 @@ async def test_generalist_repository_and_library(tmp_path, monkeypatch):
                     workplace.library.root / artifact["id"] / artifact["main"]
                 ).read_text()
             )
-            assert any(s.kind == "tool" for s in steps)
             print(
                 "Real generalist repository/worktree/Library proof passed", flush=True
             )

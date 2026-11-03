@@ -227,3 +227,14 @@ async def test_retirement_permission_does_not_allow_other_writes(monkeypatch):
 def test_retirement_permission_requires_boolean(permission):
     with pytest.raises(ValueError, match="must be a boolean"):
         MemoryClient({"stores": {"team": {"access": "read", "forget": permission}}})
+
+
+def test_conversation_extraction_skips_automation_turns():
+    from omniagents.core.memory.extract import conversation_triggers
+
+    config = {"extraction": {"triggers": ["run_end", "idle", "compaction", "daily"]}}
+    assert conversation_triggers(config, "workplace:personal") == {"idle", "daily"}
+    assert conversation_triggers(config, None) == {"idle", "daily"}
+    # The factory already extracts an automation's run at its end.
+    assert conversation_triggers(config, "automation") == set()
+    assert conversation_triggers({"extraction": {"triggers": ["run_end"]}}) == set()

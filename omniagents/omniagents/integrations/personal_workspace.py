@@ -140,11 +140,13 @@ def backup(state_path, destination, *, keep=3):
 
 
 def maintenance_lock(state_path):
+    # The running factory holds this lock (architecture.claim_intake); it lives
+    # beside the workspace's state file.
     path = Path(state_path)
-    architecture = path.with_name(
-        path.name.removesuffix(".personal-sandbox.json") + ".architecture"
+    lock = path.with_name(
+        path.name.removesuffix(".personal-sandbox.json") + ".intake.lock"
     )
-    handle = architecture.open("a+")
+    handle = lock.open("a+")
     try:
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:

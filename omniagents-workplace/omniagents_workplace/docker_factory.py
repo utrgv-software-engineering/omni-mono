@@ -71,7 +71,6 @@ class DockerFactoryProcess(FactoryProcess):
         workplace.factory_config.apply(workplace)
         env = self.environment(
             workplace,
-            self.record["architecture"],
             8765,
             config["factory"]["auth_token"],
             config["factory"]["admin_auth_token"],

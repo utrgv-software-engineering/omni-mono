@@ -26,7 +26,6 @@ async def test_shared_workflow_uses_durable_intake_and_architecture(tmp_path, pe
         entrypoint="generalist" if personal else "triage",
         store=store,
         run=run,
-        shared_session="factory-personal" if personal else None,
     )
     app = FastAPI()
 
@@ -72,7 +71,7 @@ async def test_shared_workflow_uses_durable_intake_and_architecture(tmp_path, pe
         await intake.drain()
         assert len(calls) == 1
         assert calls[0][0] == ("generalist" if personal else "triage")
-        assert (calls[0][1] == "factory-personal") is personal
+        assert calls[0][1] != "factory-personal"
         assert "Invoices/one.pdf" in calls[0][2] and "Invoices/two.pdf" in calls[0][2]
         assert "/workspace/Shared" in calls[0][2]
         event["id"] = "agent-change"
@@ -94,7 +93,7 @@ async def test_shared_workflow_uses_durable_intake_and_architecture(tmp_path, pe
         ).status_code == 200
         await intake.drain()
         assert len(calls) == 2
-        assert calls[0][1] == calls[1][1]
+        assert calls[0][1] != calls[1][1]
     store.close()
 
 

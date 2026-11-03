@@ -9,6 +9,7 @@ import { useRealtimeVoice } from "@omniagents/chat-ui/hooks/use-realtime-voice";
 import { MessageList } from "@omniagents/chat-ui/components/MessageList";
 import { Input } from "@omniagents/chat-ui/components/Input";
 import { OmniAvatar } from "@omniagents/chat-ui/components/omni-avatar/OmniAvatar";
+import { agentPalette } from "@omniagents/chat-ui/components/omni-avatar/agent-palette";
 import { ModelSessionControls } from "@omniagents/chat-ui/components/ModelSessionControls";
 import { EscalationBanner } from "@omniagents/chat-ui/components/EscalationBanner";
 import {
@@ -20,11 +21,17 @@ import type { Attachment, ChatMessage } from "@omniagents/client/transcript/chat
 import { Button } from "@omniagents/ui/button";
 import { factoryFetch } from "./factory-scope";
 
+/** The chat header's top padding (``py-2`` in Personal.tsx): the avatar's
+ * planet starts there too, like the header's other items. */
+const HEADER_PADDING = 8;
+
 export type PublishedMessage = {
   seq: number;
   id: string;
   role: "user" | "assistant";
   author: string;
+  /** The admin's display name, for a person's message in a shared chat. */
+  author_name?: string;
   text: string;
   created_at: number;
   content?: Array<{
@@ -44,6 +51,9 @@ export function publicMessageItems(
     role: message.role,
     content: message.text,
     message_id: String(message.seq),
+    ...(message.role === "user"
+      ? { sender: { name: message.author_name || message.author } }
+      : {}),
     attachments: Array.isArray(message.content)
       ? message.content.flatMap<Attachment>((part) => {
           if (part.type === "input_image" && part.image_url)
@@ -67,11 +77,16 @@ export function PublishedChat({
   sessionId,
   active,
   showAvatar = true,
+  agentName = "Agent",
+  agentId,
   onPresent,
 }: {
   sessionId: string;
   active: boolean;
   showAvatar?: boolean;
+  agentName?: string;
+  /** The agent's ID: its avatar's colours, as in the chat list. */
+  agentId?: string;
   onPresent: (value: Presentation) => void;
 }) {
   const client = useRPCClient();
@@ -183,6 +198,7 @@ export function PublishedChat({
   }, [runtime.pendingApprovals, active, activity]);
 
   const items = useMemo(() => publicMessageItems(messages), [messages]);
+  const palette = useMemo(() => (agentId ? agentPalette(agentId) : undefined), [agentId]);
   const send = async (text: string, files?: File[], inputId?: string) => {
     try {
       await session.send(text, files, { inputId });
@@ -197,15 +213,19 @@ export function PublishedChat({
     connected && !["initializing", "initError"].includes(runtime.phase);
   return (
     <div className="flex h-full min-h-0 flex-col" data-public-chat={sessionId}>
-      <div className="relative flex min-h-0 flex-1 flex-col [&_[data-testid=chat-transcript]]:pt-[120px]">
-        {showAvatar && <OmniAvatar
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        {showAvatar && <OmniAvatar name={agentName} palette={palette} top={HEADER_PADDING}
           online={connected}
           waiting={!!escalation || runtime.pendingApprovals.size > 0}
           working={runtime.thinking}
           voice={voice}
           onClick={activity}
         />}
-        <MessageList items={items} thinking={false} />
+        {/* Messages pass under the header and avatar: hidden under the header
+            row, fading back in by the foot of the avatar's name. */}
+        <div className="flex min-h-0 flex-1 flex-col [mask-image:linear-gradient(to_bottom,transparent_48px,black_112px)] [&_[data-testid=chat-transcript]]:pt-[104px]">
+          <MessageList items={items} thinking={false} />
+        </div>
       </div>
       {(feedError || runtimeError || runtime.phase === "initError") && (
         <div role="alert" className="flex items-center gap-2 px-3 py-2 text-sm">

@@ -17,52 +17,66 @@ from omniagents.execution import EnvironmentCapability
 
 
 @pytest.mark.asyncio
-async def test_failed_save_keeps_last_generation_and_vm(tmp_path):
-    client = QuicksandClient(state_dir=tmp_path)
-    wrapped = await client.create(manifest=Manifest(root="/workspace"))
-    session = QuicksandSession(wrapped.state)
-    directory = Path(session.state.directory)
-    directory.mkdir()
-
-    async def save(name, *, workspace):
-        (workspace / name).mkdir()
-
-    session.vm = SimpleNamespace(
-        is_running=True, save=AsyncMock(side_effect=save), stop=AsyncMock()
+async def test_shutdown_flushes_without_backup_and_keeps_disk(tmp_path):
+    session = QuicksandSession(
+        (await QuicksandClient(state_dir=tmp_path).create()).state
     )
-    await session.persist_durable()
-    pointer = (directory / "CURRENT").read_text()
-    state = client.serialize_session_state(session.state)
-    session.vm.save.side_effect = OSError("disk full")
-    with pytest.raises(OSError, match="disk full"):
-        await session.suspend_durable()
-    assert (directory / "CURRENT").read_text() == pointer
-    assert session.vm.is_running
-    session.vm.stop.assert_not_awaited()
-    restored = await client.resume(client.deserialize_session_state(state))
-    assert restored.state.container_id == session.state.container_id
+    working = Path(session.state.directory) / "working"
+    working.mkdir(parents=True)
+    disk = working / "disk.qcow2"
+    disk.write_bytes(b"installed packages and workspace")
+    session.vm = SimpleNamespace(is_running=True, stop=AsyncMock())
+    session._flush_disk = AsyncMock()
+    session.persist_durable = AsyncMock(
+        side_effect=AssertionError("shutdown must not back up")
+    )
+    await session.suspend_durable()
+    session._flush_disk.assert_awaited_once()
+    assert disk.read_bytes() == b"installed packages and workspace"
+    assert session.vm is None
 
 
 @pytest.mark.asyncio
-async def test_resume_uses_manifest_from_saved_generation(tmp_path):
+async def test_failed_flush_prevents_destructive_stop(tmp_path):
+    session = QuicksandSession(
+        (await QuicksandClient(state_dir=tmp_path).create()).state
+    )
+    session.vm = SimpleNamespace(is_running=True, stop=AsyncMock())
+    session._flush_disk = AsyncMock(side_effect=OSError("flush failed"))
+    with pytest.raises(OSError, match="flush failed"):
+        await session.suspend_durable()
+    session.vm.stop.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_resume_uses_working_state_without_snapshot(tmp_path):
     client = QuicksandClient(state_dir=tmp_path)
     wrapped = await client.create(manifest=Manifest(root="/workspace"))
     stale = client.serialize_session_state(wrapped.state)
     session = QuicksandSession(wrapped.state)
-    directory = Path(session.state.directory)
-    directory.mkdir()
-
-    async def save(name, *, workspace):
-        (workspace / name).mkdir()
-
-    session.vm = SimpleNamespace(is_running=True, save=AsyncMock(side_effect=save))
     session.state.workspace_root_ready = True
-    await session.persist_durable()
+    session._write_working_state()
     resumed = await client.resume(client.deserialize_session_state(stale))
     assert resumed.state.workspace_root_ready
-    (directory / "CURRENT").unlink()
-    with pytest.raises(FileNotFoundError):
-        await client.resume(client.deserialize_session_state(stale))
+    assert not (Path(session.state.directory) / "CURRENT").exists()
+
+
+@pytest.mark.asyncio
+async def test_old_interval_does_not_schedule_snapshots(tmp_path):
+    import asyncio
+
+    session = QuicksandSession(
+        (
+            await QuicksandClient(state_dir=tmp_path).create(
+                options=QuicksandOptions(save_interval_seconds=0.01)
+            )
+        ).state
+    )
+    session.persist_durable = AsyncMock()
+    await session._after_start()
+    await asyncio.sleep(0.05)
+    await session._cancel_saver()
+    session.persist_durable.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -158,7 +172,9 @@ async def test_subsequent_save_includes_frozen_parent_layers(tmp_path):
     (generation / "manifest.json").write_text('{"version":6}')
     (generation / "overlays/0.qcow2").write_bytes(b"new work")
     session._loaded_generation = parent
-    session._include_parent_overlays(generation)
+    from omniagents.core.sandbox.quicksand import include_parent_overlays
+
+    include_parent_overlays(parent, generation)
     assert [
         (generation / f"overlays/{n:08d}.qcow2").read_bytes() for n in range(3)
     ] == [
@@ -353,7 +369,7 @@ async def test_cancelled_snapshot_finishes_before_lock_released(tmp_path):
         completed.append(True)
 
     session._save_generation = save
-    task = asyncio.create_task(session.persist_durable())
+    task = asyncio.create_task(session.backup_durable())
     await entered.wait()
     task.cancel()
     await asyncio.sleep(0)
@@ -421,38 +437,6 @@ def test_compaction_preserves_zeroes_and_writes(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_failed_compaction_does_not_publish_checkpoint(tmp_path, monkeypatch):
-    import omniagents.core.sandbox.quicksand as module
-
-    wrapped = await QuicksandClient(state_dir=tmp_path).create()
-    session = QuicksandSession(wrapped.state)
-    directory = Path(session.state.directory)
-    (directory / "save-before").mkdir(parents=True)
-    (directory / "CURRENT").write_text("save-before")
-
-    async def save(name, *, workspace):
-        overlays = workspace / name / "overlays"
-        overlays.mkdir(parents=True)
-        for i in range(33):
-            (overlays / f"{i}.qcow2").write_bytes(b"fixture")
-
-    def reject(*args, **kwargs):
-        raise RuntimeError("comparison mismatch")
-
-    session.vm = SimpleNamespace(
-        is_running=True,
-        save=AsyncMock(side_effect=save),
-        stop=AsyncMock(),
-        _overlay_manager=SimpleNamespace(_qemu_img="fixture"),
-    )
-    monkeypatch.setattr(module, "compact_saved_overlay_chain", reject)
-    with pytest.raises(RuntimeError, match="comparison mismatch"):
-        await session.persist_durable()
-    assert (directory / "CURRENT").read_text() == "save-before"
-    session.vm.stop.assert_not_awaited()
-
-
-@pytest.mark.asyncio
 async def test_checkpoint_rejection_retries_without_repeating_executed_command(
     tmp_path,
 ):
@@ -508,35 +492,119 @@ async def test_checkpoint_wait_is_bounded_and_read_errors_are_preserved(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_commands_wait_for_checkpoint_and_failed_save_releases_waiters(tmp_path):
+async def test_explicit_backup_does_not_block_guest_commands(tmp_path):
     import asyncio
 
-    client = QuicksandClient(state_dir=tmp_path)
     session = QuicksandSession(
-        (await client.create(manifest=Manifest(root="/workspace"))).state
+        (await QuicksandClient(state_dir=tmp_path).create()).state
     )
     Path(session.state.directory).mkdir()
-    started, release = asyncio.Event(), asyncio.Event()
+    entered, finish = asyncio.Event(), asyncio.Event()
 
-    async def save(*args, **kwargs):
-        started.set()
-        await release.wait()
-        raise OSError("save failed")
+    async def backup():
+        entered.set()
+        await finish.wait()
 
+    session._save_generation = backup
     session.vm = SimpleNamespace(
         is_running=True,
-        save=save,
         execute=AsyncMock(
             return_value=SimpleNamespace(exit_code=0, stdout="ok", stderr="")
         ),
     )
-    saving = asyncio.create_task(session.persist_durable())
-    await started.wait()
-    command = asyncio.create_task(session.exec("echo ok"))
-    await asyncio.sleep(0.01)
-    session.vm.execute.assert_not_awaited()
-    release.set()
-    with pytest.raises(OSError, match="save failed"):
-        await saving
-    assert (await command).stdout == b"ok"
-    assert session._guest_ready.is_set()
+    task = asyncio.create_task(session.backup_durable())
+    await entered.wait()
+    result = await asyncio.wait_for(session.exec("echo ok"), 1)
+    assert result.stdout == b"ok"
+    finish.set()
+    await task
+
+
+@pytest.mark.asyncio
+async def test_failed_explicit_backup_keeps_current(tmp_path, monkeypatch):
+    session = QuicksandSession(
+        (await QuicksandClient(state_dir=tmp_path).create()).state
+    )
+    directory = Path(session.state.directory)
+    directory.mkdir()
+    (directory / "CURRENT").write_text("save-before")
+
+    async def execute(command, **kwargs):
+        if command == "query-jobs":
+            return {
+                "return": [
+                    {"id": execute.job, "status": "concluded", "error": "disk full"}
+                ]
+            }
+        if command == "drive-backup":
+            execute.job = kwargs["job-id"]
+        return {"return": {}}
+
+    session.vm = SimpleNamespace(
+        is_running=True, _qmp_client=SimpleNamespace(execute=execute)
+    )
+    session._flush_disk = AsyncMock()
+    with pytest.raises(RuntimeError, match="disk full"):
+        await session.backup_durable()
+    assert (directory / "CURRENT").read_text() == "save-before"
+
+
+@pytest.mark.asyncio
+async def test_stopped_backup_copies_working_disk_not_old_checkpoint(tmp_path):
+    from omniagents.integrations.quicksand_maintenance import backup
+
+    session = QuicksandSession(
+        (await QuicksandClient(state_dir=tmp_path / "vms").create()).state
+    )
+    session._write_working_state()
+    directory = Path(session.state.directory)
+    (directory / "working/disk.qcow2").write_bytes(b"latest installed packages")
+    (directory / "CURRENT").write_text("save-obsolete")
+    record = {"session_state": session.state.model_dump(mode="json")}
+    result = backup(record, tmp_path / "backups")
+    assert (result / "vm/disk.qcow2").read_bytes() == b"latest installed packages"
+
+
+@pytest.mark.asyncio
+async def test_startup_persistence_flushes_without_creating_backup(tmp_path):
+    session = QuicksandSession(
+        (await QuicksandClient(state_dir=tmp_path).create()).state
+    )
+    session.vm = SimpleNamespace(is_running=True)
+    session._flush_disk = AsyncMock()
+    session.backup_durable = AsyncMock(
+        side_effect=AssertionError("startup is not backup")
+    )
+    await session.persist_durable()
+    session._flush_disk.assert_awaited_once()
+    session.backup_durable.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_acknowledges_an_already_requested_backup(tmp_path):
+    import asyncio
+
+    session = QuicksandSession(
+        (await QuicksandClient(state_dir=tmp_path).create()).state
+    )
+    entered, finish = asyncio.Event(), asyncio.Event()
+
+    async def backup():
+        entered.set()
+        await finish.wait()
+
+    session.backup_durable = backup
+    await session._after_start()
+    directory = Path(session.state.directory)
+    (directory / "backup.request").write_text("test-request")
+    await asyncio.wait_for(entered.wait(), 2)
+    stopping = asyncio.create_task(session._cancel_saver())
+    await asyncio.sleep(0)
+    assert not stopping.done()
+    finish.set()
+    await stopping
+    assert json.loads((directory / "backup.result").read_text()) == {
+        "id": "test-request",
+        "ok": True,
+    }
+    assert not (directory / "backup.request").exists()

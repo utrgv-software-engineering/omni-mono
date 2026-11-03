@@ -75,7 +75,6 @@ function SignedRoot() {
         environment={session.environment ?? "development"}
         configurable={!!session.configurable}
         factory={!!session.factory}
-        architecture={session.architecture ?? "specialist"}
         onSignOut={signOut}
       />
     );

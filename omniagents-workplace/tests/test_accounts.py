@@ -31,7 +31,6 @@ def test_a_new_workplace_is_set_up_by_whoever_has_its_setup_link(tmp_path):
             "claim_here": None,
             "configurable": False,
             "factory": False,
-            "architecture": "specialist",
         }
         assert client.get("/workplace/api/state").status_code == 401
         assert (

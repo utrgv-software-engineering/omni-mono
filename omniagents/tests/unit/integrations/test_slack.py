@@ -454,6 +454,22 @@ def test_mount_integrations_without_a_manifest_or_integrations(tmp_path):
     assert mount_integrations(app, Spec(), None) is None
 
 
+def test_mount_integrations_reads_configured_manifest(tmp_path, monkeypatch):
+    manifest = tmp_path / "project.yml"
+    manifest.write_text("memory:\n  url: http://memory.invalid\n")
+
+    class Spec:
+        manifest_path = str(manifest)
+
+    def load_project(path):
+        assert path == str(manifest)
+        raise RuntimeError("reached project loading")
+
+    monkeypatch.setattr("omniagents.core.project.runtime.load_project", load_project)
+    with pytest.raises(RuntimeError, match="reached project loading"):
+        mount_integrations(FastAPI(), Spec(), None)
+
+
 def test_a_run_counts_as_done_only_when_it_completed():
     from omniagents.integrations.server import run_failure
 

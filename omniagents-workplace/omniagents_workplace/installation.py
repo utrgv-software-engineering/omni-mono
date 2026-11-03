@@ -97,15 +97,7 @@ class Installation:
         self.deployments = Deployments(self)
 
     def adopt(
-        self,
-        data,
-        config,
-        *,
-        project,
-        architecture,
-        runtime_container,
-        environ=None,
-        workflow=None
+        self, data, config, *, project, runtime_container, environ=None, workflow=None
     ):
         """Register an offline existing factory without moving its service/runtime data."""
         if self.records or self.accounts.people():
@@ -131,7 +123,6 @@ class Installation:
                 "id": factory_id,
                 "name": config["organization"]["name"],
                 "project": str(project),
-                "architecture": architecture,
                 "autostart": True,
                 "adopted": True,
                 "runtime_container": runtime_container,
@@ -197,7 +188,7 @@ class Installation:
         self.records[record["id"]] = record
         self.store.put("factory", record["id"], record)
 
-    def add(self, *, name, project, architecture, owner):
+    def add(self, *, name, project, owner):
         name = name.strip()
         factory_id = uuid.uuid4().hex
         if not project:
@@ -227,8 +218,6 @@ class Installation:
             )
         if not name or len(name) > 100:
             raise ValueError("Name the factory (at most 100 characters)")
-        if architecture not in {"personal", "specialist"}:
-            raise ValueError("Choose personal or specialist")
         if not (project / "project.yml").is_file():
             raise ValueError(
                 "Choose a factory project directory containing project.yml"
@@ -248,7 +237,6 @@ class Installation:
                 "id": factory_id,
                 "name": name,
                 "project": str(project),
-                "architecture": architecture,
                 "autostart": False,
             }
             directory = self.directory / "factories" / factory_id
@@ -349,10 +337,7 @@ class Installation:
             record = self.records[factory_id]
             prefix = "/factories/" + factory_id
             directory = self.directory / "factories" / factory_id
-            environ = {
-                "FACTORY_ARCHITECTURE": record["architecture"],
-                "EVALUATIONS_ARCHIVE": str(directory / "evaluations"),
-            }
+            environ = {"EVALUATIONS_ARCHIVE": str(directory / "evaluations")}
             environ.update(record.get("environ", {}))
             environ["COOLIFY_MCP_URL"] = self.internal_url + prefix + "/coolify/mcp"
             if self.docker_host_data and not record.get("workplace_dir"):
@@ -461,7 +446,6 @@ class Installation:
                     cfg = w.factory_config.load()["factory"]
                     runtime_env = process.environment(
                         w,
-                        record["architecture"],
                         0,
                         cfg["auth_token"],
                         cfg["admin_auth_token"],
@@ -507,7 +491,7 @@ class Installation:
         membership = self.membership(record["id"], identity.id)
         process = self.processes.get(record["id"])
         return {
-            **{key: record[key] for key in ("id", "name", "architecture")},
+            **{key: record[key] for key in ("id", "name")},
             "project": record["project"] if identity.admin else None,
             "role": membership["role"] if membership else None,
             "deployment": (

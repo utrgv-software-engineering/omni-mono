@@ -38,7 +38,6 @@ class FactoryCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str
     project: str = ""
-    architecture: Literal["personal", "specialist"] = "personal"
 
 
 class MemberChange(BaseModel):

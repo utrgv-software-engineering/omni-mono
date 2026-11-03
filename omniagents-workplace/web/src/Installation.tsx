@@ -6,7 +6,6 @@ import { type Person } from "./api";
 type Factory = {
   id: string;
   name: string;
-  architecture: string;
   project: string | null;
   role: string | null;
   runtime: { running: boolean; ready?: boolean; error?: string | null };
@@ -122,16 +121,6 @@ export function InstallationApp({
               <Input name="project" required placeholder="/path/to/factory" />
             </label>
           )}
-          <label className="block space-y-1">
-            <span>Architecture</span>
-            <select
-              name="architecture"
-              className="block rounded-md border bg-background p-2"
-            >
-              <option value="personal">Personal</option>
-              <option value="specialist">Pipelined</option>
-            </select>
-          </label>
           <Button disabled={busy} type="submit">
             Create factory
           </Button>
@@ -146,8 +135,6 @@ export function InstallationApp({
             <div>
               <h2 className="font-medium">{factory.name}</h2>
               <p className="text-sm text-muted-foreground">
-                {factory.architecture === "personal" ? "Personal" : "Pipelined"}{" "}
-                ·{" "}
                 {factory.runtime.running
                   ? factory.runtime.ready
                     ? "Running"
@@ -189,7 +176,7 @@ export function InstallationApp({
               {factory.role && (
                 <Button asChild>
                   <a
-                    href={`/factories/${factory.id}/${factory.architecture === "personal" ? "personal" : ""}`}
+                    href={`/factories/${factory.id}/personal`}
                   >
                     Open
                   </a>

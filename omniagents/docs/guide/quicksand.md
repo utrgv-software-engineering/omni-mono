@@ -1,6 +1,6 @@
 # QuickSand local VM sandbox
 
-QuickSand is an experimental alternative to Docker for agent execution. Both factory architectures can use it. Docker remains the default. Workplace also has an optional QuickSand workflow runner; production deployment remains unchanged.
+QuickSand is an experimental alternative to Docker for agent execution. Every factory agent can use it. Docker remains the default. Workplace also has an optional QuickSand workflow runner; production deployment remains unchanged.
 
 Install the optional dependency:
 
@@ -25,7 +25,6 @@ options:
   cpus: 2
   disk_size: 10G
   network_mode: full
-  save_interval_seconds: 60
   setup:
     - apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git
   exposed_ports: [8000]
@@ -39,7 +38,7 @@ terminal:
   command: bash -i
 ```
 
-`setup` runs once on a fresh VM before repository materialization. `startup` runs on every boot, including resume; the factory uses it to start the guest Docker daemon. Use it for initial Git installation if repositories will be seeded. Agents can install further packages during normal work; saves preserve them. Docker's `build:` profile section is not supported. Existing machine options are retained on resume; changing RAM, ports, or setup in the profile does not migrate a saved VM automatically.
+`setup` runs once on a fresh VM before repository materialization. `startup` runs on every boot, including resume; the factory uses it to start the guest Docker daemon. Use it for initial Git installation if repositories will be seeded. Agents can install further packages during normal work; the persistent working disk preserves them. Docker's `build:` profile section is not supported. Existing machine options are retained on resume; changing RAM, ports, or setup in the profile does not migrate a saved VM automatically.
 
 `port_forwards` maps guest ports to explicit **host loopback** ports. The example exposes a guest app at `http://127.0.0.1:18000`. `host_services` maps guest ports at `10.0.2.101` to host loopback ports: the VM reaches Workplace at `http://10.0.2.101:7300` when Workplace listens on host port 7395. Configure the factory's Git stand-in URL accordingly, such as `http://10.0.2.101:7300/github`. Docker service names and `host.docker.internal` do not automatically resolve in this VM.
 
@@ -53,15 +52,23 @@ Ubuntu includes the Python interpreter needed by the bridge. Other images must p
 
 ## Persistence and failure behavior
 
-Each VM has a stable identity and a private directory. Saves contain its disk and serialized sandbox metadata. A generation becomes current only after writing both; a failed save leaves the prior `CURRENT` pointer intact. The adapter retains two recent generations and any generation backing the active VM.
+Each VM has a stable identity and a private directory. Its standalone
+`working/disk.qcow2` lives on persistent storage, outside the SDK's temporary
+socket/log directory. Restarts reuse that same disk: no snapshot, copy,
+consolidation, or extra overlay layer is required. Legacy SDK saves are imported
+once into a standalone working disk; the original save remains intact.
 
-QuickSand 0.13 uses save format v6. Its subsequent saves exclude layers loaded from a previous save. The adapter explicitly includes those frozen parent layers before publishing a generation. This compatibility handling is covered by repeated save/restart checks and must be reviewed before upgrading QuickSand. New saved chains longer than 32 layers are consolidated from private copies using QEMU, then compared against the original guest-visible disk before publication. This bounds saved-chain depth without changing the package base or discarding installed files. Cancellation waits for an in-progress save to finish before releasing its lock.
+Graceful shutdown flushes the guest filesystem and QEMU block device, terminates
+managed commands, and stops the VM. Installed packages, Git worktrees and other
+disk changes survive. Processes and terminal sessions restart. The legacy
+`save_interval_seconds` option is accepted but no longer starts periodic snapshots.
 
-Graceful factory shutdown terminates managed commands, saves the disk, and stops the VM. Restart boots from that disk; running processes and terminal sessions do not survive. Profile services start again. Package installations, Git worktrees, uncommitted files, and other disk changes survive.
-
-Periodic saving defaults to 60 seconds; `0` disables it. An abrupt crash can lose changes since the last successful save. A persistent `RUNNING` marker blocks automatic recovery after an unclean exit. Inspect and stop any previous VM first, preserve its files, and then explicitly set `client.recover_last_save: true` if recovering the last save is acceptable. Remove that setting after recovery. A file lock prevents two owners from opening the same adapter state concurrently.
-
-Missing, mismatched, or corrupt state fails closed. It never falls back to a clean VM. A failed final save prevents the adapter from stopping the VM, allowing investigation rather than silently discarding work.
+Explicit backups use QEMU's full-disk backup job without pivoting the running VM
+onto another overlay. A completed backup is published atomically; errors leave
+the prior backup intact. Backups and the working disk are separate. A file lock
+prevents two owners from opening one VM. An unclean `RUNNING` marker still requires
+inspection and explicit recovery; the working disk is retained, not silently
+replaced with an older checkpoint. Missing or mismatched state fails closed.
 
 The existing maintenance CLI supports QuickSand. Set `STATE` to the factory's `integrations/<product>.personal-sandbox.json` under its `OMNIAGENTS_HOME`:
 
@@ -73,15 +80,20 @@ python -m omniagents.integrations.personal_workspace reset --state "$STATE" --to
 python -m omniagents.integrations.personal_workspace restore --state "$STATE" --source ./backups/personal-TIMESTAMP-ID
 ```
 
-A live backup copies the latest **completed disk save**, not unsaved changes in the running VM. `backup.json` records its timestamp. Stop the factory first for a final, current backup. Backup and periodic-save cleanup share a lock. A failed backup prevents reset; an active or unclean VM cannot be reset. Restore assigns a new VM identity and resumes on the next factory start. Use `--vm-root` to relocate storage, matching the profile's `client.state_dir`.
+A live backup requests a fresh point-in-time disk backup from the running owner
+and waits for completion; it never silently copies a stale checkpoint. A stopped
+VM is copied under its owner lock. `backup.json` records the timestamp. Bind mounts
+are backed up separately. A failed backup prevents reset; an active or unclean VM
+cannot be reset. Restore assigns a new VM identity and resumes on the next factory
+start. Use `--vm-root` to relocate storage, matching `client.state_dir`.
 
 Protect backups as credentials: VM disks can contain tokens. Host mounts are **not** included in VM backups. The Library remains in Workplace's data directory and is covered by its backup. On another machine, configure `LIBRARY_FILES_HOST_PATH` to the restored Workplace Library directory before starting.
 
 ## Factory launcher and Library
 
-In the factory template, `bin/dev-quicksand` installs the optional dependency group, selects `sandbox_profile_quicksand.yml`, builds a clean toolchain image once, and runs `Procfile.quicksand.dev`. Ordinary workflow jobs get disposable VMs with their own Docker daemon. Explicit evaluation/benchmark/staging runtime actions keep agent processes on the host and route tools into QuickSand. See the [Workplace runner guide](../../../omniagents-workplace/docs/quicksand-runner.md). Stop another local factory/Workplace using the same ports before launching it. The launcher uses a separate `.workplace/quicksand-runtime` home, keeping existing Docker sandbox state intact. Both personal and pipelined modes use the same configured backend.
+In the factory template, `bin/dev-quicksand` installs the optional dependency group, selects `sandbox_profile_quicksand.yml`, builds a clean toolchain image once, and runs `Procfile.quicksand.dev`. Ordinary workflow jobs get disposable VMs with their own Docker daemon. Explicit evaluation/benchmark/staging runtime actions keep agent processes on the host and route tools into QuickSand. See the [Workplace runner guide](../../../omniagents-workplace/docs/quicksand-runner.md). Stop another local factory/Workplace using the same ports before launching it. The launcher uses a separate `.workplace/quicksand-runtime` home, keeping existing Docker sandbox state intact. Every agent uses the same configured backend.
 
-`OMNIAGENTS_SANDBOX_PROFILE` explicitly selects the profile, bypassing Docker-specific user profile layers. The bundled profile maps guest Workplace access to `10.0.2.101:7300`; the Procfile sets Workplace's sandbox URL to match. The launcher uses the existing Workplace data and selected architecture.
+`OMNIAGENTS_SANDBOX_PROFILE` explicitly selects the profile, bypassing Docker-specific user profile layers. The bundled profile maps guest Workplace access to `10.0.2.101:7300`; the Procfile sets Workplace's sandbox URL to match. The launcher uses the existing Workplace data.
 
 `LIBRARY_FILES_HOST_PATH` is mounted at `/workspace/Library` through QuickSand's host-directory sharing. Normal Library tools create metadata, and normal agent file tools edit the shared files. Generic profile mounts use `client.binds: [{source: /absolute/host/directory, target: /guest/directory, read_only: false}]`.
 

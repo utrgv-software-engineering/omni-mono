@@ -60,9 +60,7 @@ with (root / "release.lock").open("w") as lock:
                 runtime_url(config) + "/integrations/architecture",
                 token(config, "runtime_token_file"),
             )
-            if status.get("architecture") == config["architecture"] and not status.get(
-                "release_paused"
-            ):
+            if status.get("release_protocol") and not status.get("release_paused"):
                 break
         except (OSError, ValueError):
             pass

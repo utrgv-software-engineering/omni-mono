@@ -7,29 +7,6 @@ from omniagents.integrations import server as integrations_server
 from omniagents.rpc.auth import ConnectionAuthenticator
 
 
-class _Agent:
-    def __init__(self):
-        self.calls = []
-
-    async def initialize(self):
-        self.calls.append("initialize")
-
-    def set_principal(self, principal):
-        self.calls.append(("principal", principal.user_id))
-
-    def run_streamed(self, _input):
-        self.calls.append("run")
-        return SimpleNamespace(stream_events=_no_events)
-
-    def get_last_run_end(self):
-        return None
-
-
-async def _no_events():
-    return
-    yield
-
-
 def _app(auth_token):
     spec = SimpleNamespace(security_config={})
     authenticator = ConnectionAuthenticator.from_spec(spec, auth_token=auth_token)
@@ -38,38 +15,13 @@ def _app(auth_token):
     )
 
 
-def test_runs_are_owned_by_the_servers_principal(monkeypatch):
-    agent = _Agent()
-
-    async def create_unified_agent(spec, **kwargs):
-        return agent
-
-    import omniagents.core.agents.factory as factory
-    import omniagents.core.project.runtime as project_runtime
-
-    monkeypatch.setattr(factory, "create_unified_agent", create_unified_agent)
-    monkeypatch.setattr(
-        project_runtime,
-        "build_spec_from_project",
-        lambda project, key: SimpleNamespace(),
-    )
-    run = integrations_server._run_starter(
-        SimpleNamespace(),
-        None,
-        None,
-        integrations_server._server_principal(_app("t"), "t"),
-    )
-    asyncio.run(run("foreman", "s1", "hello"))
-    assert agent.calls == ["initialize", ("principal", "token_user"), "run"]
-
-
 def test_a_server_without_a_token_starts_runs_as_before(monkeypatch):
     assert (
         asyncio.run(integrations_server._server_principal(_app(None), None)()) is None
     )
 
 
-def test_factory_workspace_is_attached_once_and_kept_for_all_runs(
+def test_factory_machine_is_attached_at_startup_and_detached_at_shutdown(
     monkeypatch, tmp_path
 ):
     from contextlib import asynccontextmanager
@@ -96,26 +48,6 @@ def test_factory_workspace_is_attached_once_and_kept_for_all_runs(
 
     async def exercise():
         await app.router.on_startup[0]()
-        agents = []
-
-        async def create(spec, **kwargs):
-            assert kwargs["host_resources"] is resources
-            agent = _Agent()
-            agents.append(agent)
-            return agent
-
-        import omniagents.core.agents.factory as factory
-        import omniagents.core.project.runtime as runtime
-
-        monkeypatch.setattr(factory, "create_unified_agent", create)
-        monkeypatch.setattr(
-            runtime, "build_spec_from_project", lambda project, key: key
-        )
-        run = integrations_server._run_starter(project, resources, None, principal)
-        await asyncio.gather(
-            run("implementer", "s1", "change"), run("reviewer", "s2", "review")
-        )
-        assert len(agents) == 2
         assert not detached
         await app.router.on_shutdown[-1]()
 

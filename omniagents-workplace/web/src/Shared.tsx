@@ -13,7 +13,7 @@ import { factoryFetch, factoryUrl } from "./factory-scope";
 import type { Person } from "./api";
 
 type Entry = { path: string; kind: "file" | "folder"; size: number; modified: number; revision: string };
-type Workflow = { id?: string; name: string; folder: string; instruction: string; patterns: string[]; events: string[]; recursive: boolean; include_agent: boolean; enabled: boolean; revision?: number };
+type Workflow = { agent?: string | null; conversation?: string; id?: string; name: string; folder: string; instruction: string; patterns: string[]; events: string[]; recursive: boolean; include_agent: boolean; enabled: boolean; revision?: number };
 type Change = { id: string; event: string; at: number; origin: string; actor: { name: string }; entries: Entry[] };
 const labels: Record<string, string> = { "shared.files_uploaded": "Files added", "shared.file_updated": "File updated", "shared.entry_moved": "File or folder moved", "shared.entry_deleted": "File or folder deleted" };
 const error = (e: unknown) => toast.error(e instanceof Error ? e.message : "Request failed");
@@ -194,6 +194,8 @@ function FilePreview({ entry }: { entry: Entry }) {
 }
 
 function SharedWorkflows({ open, onClose, folder, admin }: { open: boolean; onClose: () => void; folder: string; admin: boolean }) {
+  const [agents, setAgents] = useState<string[]>([]);
+  useEffect(() => { if (open && admin) void factoryFetch("/workplace/api/factory/automation-routes").then(r => r.json()).then(r => setAgents(r.agents || [])).catch(error); }, [open, admin]);
   const [rules, setRules] = useState<Workflow[]>([]), [edit, setEdit] = useState<Workflow>();
   const [events, setEvents] = useState<Change[]>([]), [deliveries, setDeliveries] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
@@ -202,6 +204,8 @@ function SharedWorkflows({ open, onClose, folder, admin }: { open: boolean; onCl
   return <Dialog open={open} onOpenChange={value => { if (!value) { setEdit(undefined); onClose(); } }}><DialogContent className="max-h-[90dvh] overflow-auto sm:max-w-2xl"><DialogHeader><DialogTitle>Shared workflows</DialogTitle><DialogDescription>Only enabled rules start agent work. Agent changes are excluded unless you enable them.</DialogDescription></DialogHeader>
     {edit ? <form className="flex flex-col gap-4" onSubmit={async e => { e.preventDefault(); setBusy(true);try { const {id,revision,...body}=edit;await api('/workflows'+(id?'/'+id:''),id?'PUT':'POST',body);setEdit(undefined);await load(); } catch(e){error(e);}finally{setBusy(false);} }}>
       <FieldGroup>
+        <Field><FieldLabel htmlFor="workflow-agent">Agent</FieldLabel><NativeSelect id="workflow-agent" value={edit.agent || ""} onChange={e=>setEdit({...edit,agent:e.target.value || null})}><NativeSelectOption value="">Factory default</NativeSelectOption>{agents.map(a=><NativeSelectOption key={a} value={a}>{a}</NativeSelectOption>)}</NativeSelect></Field>
+        <Field><FieldLabel htmlFor="workflow-conversation">Conversation</FieldLabel><NativeSelect id="workflow-conversation" value={edit.conversation || "auto"} onChange={e=>setEdit({...edit,conversation:e.target.value})}><NativeSelectOption value="auto">New conversation for each file event</NativeSelectOption><NativeSelectOption value="thread">Continue this workflow's conversation</NativeSelectOption><NativeSelectOption value="new">Always start a new conversation</NativeSelectOption></NativeSelect></Field>
         <Field><FieldLabel htmlFor="workflow-name">Name</FieldLabel><Input id="workflow-name" value={edit.name} required onChange={e=>setEdit({...edit,name:e.target.value})}/></Field>
         <Field><FieldLabel htmlFor="workflow-folder">Folder</FieldLabel><Input id="workflow-folder" value={edit.folder} placeholder="All Shared files" onChange={e=>setEdit({...edit,folder:e.target.value})}/></Field>
         <Field><FieldLabel htmlFor="workflow-patterns">File patterns</FieldLabel><Input id="workflow-patterns" value={edit.patterns.join(', ')} onChange={e=>setEdit({...edit,patterns:e.target.value.split(',').map(s=>s.trim())})}/><FieldDescription>Comma-separated patterns, such as *.pdf, *.csv.</FieldDescription></Field>

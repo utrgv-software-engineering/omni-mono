@@ -49,9 +49,15 @@ _READ_FUNCTIONS = {
 
 
 class PersonalRpcPolicy:
-    def __init__(self, connection, username):
+    def __init__(self, connection, username, name=None):
         self.connection = connection
         self.username = username
+        self.name = name or username
+
+    def sender_line(self):
+        from .personal import sender_line
+
+        return sender_line(self.name, self.username)
 
     async def __call__(self, message):
         """Return (upstream request, local reply); either may be None."""
@@ -165,7 +171,11 @@ class PersonalRpcPolicy:
             if not isinstance(submission, str) or not submission:
                 raise ValueError("A stable submission ID is required")
             result = await self.connection.send(
-                text, submission, author=self.username, input_content=content
+                text,
+                submission,
+                author=self.username,
+                author_name=self.name,
+                input_content=content,
             )
             if method == "start_run":
                 return {**result, "run_id": result.get("run_id", "")}, False
@@ -265,7 +275,7 @@ class PersonalVoicePolicy(PersonalRpcPolicy):
             self.fields(params, {"session_id", "delegation_id", "text"})
             if not isinstance(params.get("text"), str):
                 raise ValueError("Invalid voice request")
-            params["text"] = f"[{self.username}]\n{params['text']}"
+            params["text"] = f"{self.sender_line()}\n\n{params['text']}"
         elif method == "sync_context":
             self.fields(params, {"session_id", "turns"})
             turns = params.get("turns", [])
@@ -275,7 +285,7 @@ class PersonalVoicePolicy(PersonalRpcPolicy):
                 if not isinstance(turn, dict) or not isinstance(turn.get("text"), str):
                     raise ValueError("Invalid transcript turn")
                 if turn.get("role") == "user":
-                    turn["text"] = f"[{self.username}]\n{turn['text']}"
+                    turn["text"] = f"{self.sender_line()}\n\n{turn['text']}"
         else:
             raise ValueError("This voice operation is not available in Personal")
         return None, True

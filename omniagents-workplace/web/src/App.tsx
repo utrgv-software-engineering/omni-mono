@@ -1,7 +1,7 @@
 import { McpAppFrame, extensionRequest, type AppCatalog, type InstalledApp } from "./McpAppFrame";
 import { AppsLauncher } from "./AppsLauncher";
 import { ExtensionsDialog } from "./Extensions";
-import { Mic, Plug, LayoutGrid } from "lucide-react";
+import { Bot, Mic, Plug, LayoutGrid } from "lucide-react";
 import { appTransport } from "./extensions/transport";
 import { SharedApp } from "./Shared";
 import { FolderOpen } from "lucide-react";
@@ -40,6 +40,7 @@ import {
   Lock,
   Menu,
   MessageSquare,
+  Workflow,
   Pencil,
   Search,
   Sparkles,
@@ -74,6 +75,8 @@ const PersonalApp = lazy(() => import("./Personal").then((m) => ({ default: m.Pe
 const FactoryRun = lazy(() => import("./FactoryRun").then((m) => ({ default: m.FactoryRun })));
 import { FactoryModelDialog } from "./FactoryModel";
 import { FactorySchedulesDialog } from "./FactorySchedules";
+import { AutomationsApp } from "./Automations";
+import { AgentsApp } from "./Agents";
 import { GitHubApp, parseGitHubPath } from "./GitHub";
 import { LinearApp, parseLinearPath } from "./Linear";
 import { AppsDialog, TokensDialog } from "./Apps";
@@ -102,7 +105,6 @@ export default function App({
   environment,
   configurable,
   factory,
-  architecture,
   onSignOut,
   embedded = false,
 }: {
@@ -114,7 +116,6 @@ export default function App({
   configurable: boolean;
   /** Served with a factory's workplace.yml: its model is configured here. */
   factory: boolean;
-  architecture: "personal" | "specialist";
   onSignOut: () => void;
 }) {
   const [state, setState] = useState<WorkplaceState | null>(null);
@@ -187,10 +188,12 @@ export default function App({
   const personalRoute = path === "/personal";
   const memoryRoute = path === "/memory";
   const factoryRoute = path === "/factory" || path.startsWith("/factory/");
-  const canvasRoute = launcherRoute || extensionRoute || sharedRoute || libraryRoute || factoryRoute || personalRoute ? null : parseCanvasPath(path);
-  const linearRoute = launcherRoute || extensionRoute || sharedRoute || libraryRoute || factoryRoute || personalRoute || canvasRoute ? null : parseLinearPath(path);
+  const automationsRoute = path === "/automations" || path.startsWith("/automations/");
+  const agentsRoute = path === "/agents" || path.startsWith("/agents/");
+  const canvasRoute = launcherRoute || extensionRoute || sharedRoute || libraryRoute || factoryRoute || automationsRoute || agentsRoute || personalRoute ? null : parseCanvasPath(path);
+  const linearRoute = launcherRoute || extensionRoute || sharedRoute || libraryRoute || factoryRoute || automationsRoute || agentsRoute || personalRoute || canvasRoute ? null : parseLinearPath(path);
   const route =
-    launcherRoute || extensionRoute || sharedRoute || libraryRoute || factoryRoute || personalRoute || canvasRoute || linearRoute ? null : parseGitHubPath(path);
+    launcherRoute || extensionRoute || sharedRoute || libraryRoute || factoryRoute || automationsRoute || agentsRoute || personalRoute || canvasRoute || linearRoute ? null : parseGitHubPath(path);
   // Going somewhere closes the drawer.
   useEffect(() => setNavOpen(false), [path, channelId]);
 
@@ -609,10 +612,12 @@ export default function App({
     ) : null;
 
   // One ordered set of destinations for the rail, phone bar, and More sheet.
-  const slackRoute = !launcherRoute && !extensionRoute && !sharedRoute && !coolifyRoute && !desktopRoute && !libraryRoute && !route && !linearRoute && !canvasRoute && !factoryRoute && !personalRoute && !memoryRoute;
+  const slackRoute = !launcherRoute && !extensionRoute && !sharedRoute && !coolifyRoute && !desktopRoute && !libraryRoute && !route && !linearRoute && !canvasRoute && !factoryRoute && !automationsRoute && !agentsRoute && !personalRoute && !memoryRoute;
   const sections = [
-    ...(factory && architecture === "personal" && account.admin ? [{ name: "Chat", to: "/personal", icon: MessageSquare, active: personalRoute }] : []),
-    ...(factory && (architecture !== "personal" || !account.admin) ? [{ name: "Factory", to: "/factory", icon: Factory, active: factoryRoute }] : []),
+    ...(factory && account.admin ? [{ name: "Chat", to: "/personal", icon: MessageSquare, active: personalRoute }] : []),
+    ...(factory && account.admin ? [{ name: "Automations", to: "/automations", icon: Workflow, active: automationsRoute }] : []),
+    ...(factory && account.admin ? [{ name: "Agents", to: "/agents", icon: Bot, active: agentsRoute }] : []),
+    ...(factory && !account.admin ? [{ name: "Factory", to: "/factory", icon: Factory, active: factoryRoute }] : []),
     ...(!embedded ? [{name: "Apps", to: "/apps", icon: LayoutGrid, active: launcherRoute}] : []),
     ...(embedded ? [{ name: "Slack", to: "/", icon: Hash, active: slackRoute }] : (appCatalog?.apps ?? []).filter(app => app.enabled && app.entrypoints.length).flatMap(app => app.entrypoints.map((entry, index) => ({
       showInNavigation: app.showInNavigation !== false, name: entry.name, to: app.path ?? `/apps/${app.id}/${index}`, icon: app.id === "slack" ? Hash : app.id === "github" ? GitBranch : app.id === "linear" ? Sparkles : app.id === "recorder" ? Mic : entry.icons?.[0]?.src?.match(/^(https:\/\/|data:image\/)/) ? (props: { "aria-hidden"?: boolean }) => <img {...props} src={entry.icons![0].src} className="size-4" alt="" /> : Plug,
@@ -623,7 +628,7 @@ export default function App({
     ...(desktopAvailable ? [{ name: "Desktop", to: "/desktop", icon: Monitor, active: desktopRoute }] : []),
     ...(factoryBase() && account.admin ? [{ name: "Coolify", to: "/coolify", icon: Rocket, active: coolifyRoute }] : []),
     { name: "Memory", to: "/memory", icon: Archive, active: memoryRoute },
-    ...(factory && architecture === "personal" && account.admin ? [{ name: "Factory", to: "/factory", icon: Factory, active: factoryRoute }] : []),
+    ...(factory && account.admin ? [{ name: "Factory", to: "/factory", icon: Factory, active: factoryRoute }] : []),
   ];
   const nativeApps: InstalledApp[] = sections.filter(section => !("showInNavigation" in section) && section.to !== "/apps").map(section => ({
     id: "native:" + section.to.slice(1), name: section.name, kind: "native", enabled: true,
@@ -679,7 +684,7 @@ export default function App({
   return (
     <NavSlot.Provider value={navSlot}>
     <div className="flex h-[var(--workplace-viewport-height,100%)] flex-col bg-background text-foreground md:flex-row">
-      {!embedded && <WorkplaceNav sections={sections.filter(section => section.to === "/apps" || ("showInNavigation" in section ? section.showInNavigation : appCatalog?.nativeNavigation?.[section.to.slice(1)] !== false))} brand={state.slack.team.name} personalMode={architecture === "personal"} navigate={navigate}
+      {!embedded && <WorkplaceNav sections={sections.filter(section => section.to === "/apps" || ("showInNavigation" in section ? section.showInNavigation : appCatalog?.nativeNavigation?.[section.to.slice(1)] !== false))} brand={state.slack.team.name} personalMode={!!factory && !!account.admin} navigate={navigate}
         account={accountMenu} />}
       <div className="order-first flex min-h-0 min-w-0 flex-1 flex-col md:order-none" style={personalRoute ? { paddingTop: "env(safe-area-inset-top)" } : undefined}>
       <Toaster />
@@ -752,8 +757,16 @@ export default function App({
       ) : desktopRoute ? (
         account.admin ? <Desktop /> : <p className="p-6">Desktop requires an administrator account.</p>
       ) : personalRoute ? (
-        architecture !== "personal" ? <p className="p-6">Chat is disabled in the specialist architecture.</p> : account.admin ? <Suspense fallback={<div className="p-6">Opening Chat…</div>}><PersonalApp key={account.id} account={account} /></Suspense>
+        account.admin ? <Suspense fallback={<div className="p-6">Opening Chat…</div>}><PersonalApp key={account.id} account={account} /></Suspense>
           : <p className="p-6">Chat currently requires an administrator account.</p>
+      ) : automationsRoute ? (
+        account.admin && factory
+          ? <AutomationsApp key={path} name={path.startsWith("/automations/") ? decodeURIComponent(path.slice("/automations/".length)) : undefined} navigate={navigate} />
+          : <p className="p-6">Automations require a factory administrator.</p>
+      ) : agentsRoute ? (
+        account.admin && factory
+          ? <AgentsApp path={path.startsWith("/agents/") ? decodeURIComponent(path.slice("/agents/".length)) : undefined} navigate={navigate} />
+          : <p className="p-6">Editing agents requires a factory administrator.</p>
       ) : factoryRoute && parseFactoryRunPath(path) != null ? (
         <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Opening the run…</div>}>
           <FactoryRun runId={parseFactoryRunPath(path)!} navigate={navigate} />
@@ -764,7 +777,7 @@ export default function App({
         <MemoryApp />
       ) : sharedRoute ? (
         <SharedApp account={account} onUse={text => {
-          if (architecture === "personal" && account.admin) {
+          if (account.admin) {
             let id = "factory-personal";
             try { id = JSON.parse(localStorage.getItem((factoryBase() ? factoryBase() + ":" : "") + "workplace.chat.selected") || '"factory-personal"'); } catch { /* use main chat */ }
             const draft = getConversationDraft(id);

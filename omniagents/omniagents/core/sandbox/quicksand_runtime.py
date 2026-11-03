@@ -1,4 +1,4 @@
-"""User-local repair for missing desktop files in QuickSand's Linux QEMU wheel.
+"""Instance-scoped persistent disk and desktop compatibility for QuickSand.
 
 quick-sandbox 0.13 / quicksand-qemu 0.5.12 bundles Ubuntu QEMU 8.2.2 but
 only copies accelerator modules and three firmware files. Native desktop mode
@@ -117,11 +117,41 @@ def desktop_runtime(runtime, cache_root=None):
     return replace(runtime, module_dir=cache / "modules", data_dir=cache / "firmware")
 
 
-def sandbox_class():
+def sandbox_class(*, disk_path=None):
     """Keep the compatibility hook scoped to our VM instances, not global SDK state."""
     from quicksand import Sandbox
 
     class DesktopSandbox(Sandbox):
+        def _create_overlay(self):
+            if disk_path is None:
+                return super()._create_overlay()
+            # Only sockets/logs are temporary. The disk is never owned by SDK
+            # cleanup and is reused directly, without a new layer per boot.
+            target = Path(disk_path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if not target.exists():
+                self._overlay_manager._prepare_restored_chain(
+                    self._image.chain[1:], self._image.chain[0]
+                )
+                temporary = target.with_suffix(".partial")
+                subprocess.run(
+                    [
+                        str(self._overlay_manager._qemu_img),
+                        "convert",
+                        "-O",
+                        "qcow2",
+                        str(self._image.chain[-1]),
+                        str(temporary),
+                    ],
+                    check=True,
+                    capture_output=True,
+                )
+                self._overlay_manager.resize_overlay(temporary, self.config.disk_size)
+                with temporary.open("rb") as disk:
+                    os.fsync(disk.fileno())
+                temporary.replace(target)
+            self._overlay_path = target
+
         def _build_vm_command(self):
             command = super()._build_vm_command()
             # Docker's default seccomp policy blocks io_uring. Allow deployments

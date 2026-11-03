@@ -1586,11 +1586,15 @@ class GitHubState:
         branch: str,
         files: List[Tuple[str, Optional[bytes]]],
         message: str,
+        *,
+        bypass_protection: bool = False,
     ) -> str:
+        """Commit ``files`` on ``branch``; ``bypass_protection`` (an admin's
+        choice) commits to a protected branch without a pull request."""
         before = repo.bare.ref_sha(branch)
         if before is None:
             raise GitHubError(404, "Branch not found")
-        if branch in repo.protected:
+        if branch in repo.protected and not bypass_protection:
             raise GitHubError(
                 409,
                 f"Changes must be made through a pull request. Cannot update the protected branch {branch}.",

@@ -15,15 +15,15 @@ type Store = { id: string; name: string; access: string };
 type MemoryPage = {items: Memory[]; total: number; offset: number; limit: number};
 type Memory = { id: string; store: string; text: string; kind: string; version: number; author: string;
   source: { run_id?: string }; tags: string[]; history?: Memory[]; reason?: string };
-async function call<T>(operation: string, args?: unknown, agent = false): Promise<T> {
-  const response = await factoryFetch(`/workplace/api/memory/${operation}${agent ? "?scope=agent" : ""}`, args === undefined ? {} : {
+async function call<T>(operation: string, args?: unknown, agent: string | false = false): Promise<T> {
+  const response = await factoryFetch(`/workplace/api/memory/${operation}${agent ? `${operation.includes("?") ? "&" : "?"}scope=agent&chat_id=${encodeURIComponent(agent)}` : ""}`, args === undefined ? {} : {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(args),
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.detail || "Memory request failed");
   return data;
 }
-export function MemoryApp({ agent = false }: { agent?: boolean }) {
+export function MemoryApp({ agent = false }: { agent?: string | false }) {
   const request = useCallback(<T,>(operation: string, args?: unknown) => call<T>(operation, args, agent), [agent]);
   const [stores, setStores] = useState<Store[]>([]);
   const [store, setStore] = useState("");

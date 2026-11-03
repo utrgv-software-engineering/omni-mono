@@ -14,6 +14,9 @@ const { app, config, unmounted, hosts } = vi.hoisted(() => ({
 }));
 vi.mock("./ChatViewer", () => ({ ChatViewer: ({ value, onClose }: { value: {kind:string;title:string}; onClose:()=>void }) => <section data-viewer={value.kind}>{value.title}<button onClick={onClose}>Close viewer</button></section> }));
 vi.mock("./Desktop", () => ({ useDesktopAvailable: () => false, Desktop: () => <div>Desktop</div> }));
+vi.mock("@omniagents/chat-ui/components/omni-avatar/AgentAvatar", () => ({
+  AgentAvatar: ({ seed, mood }: { seed: string; mood?: string }) => <span data-avatar={seed} data-mood={mood ?? "idle"} />,
+}));
 vi.mock("./PublishedChat", () => ({
   PublishedChat: (props: { sessionId: string }) => {
     useEffect(() => () => unmounted(props.sessionId), [props.sessionId]);
@@ -50,10 +53,17 @@ let chats: {
   id: string;
   title: string;
   archived: boolean;
+  kind: "main" | "side" | "automation";
+  agent: string;
+  automation?: string;
   revision?: string;
+  unread?: boolean;
   waiting?: boolean;
   running?: boolean;
+  working_for?: string;
+  last_message?: { role: "user" | "assistant"; author_name?: string; text: string; at: number };
 }[];
+const threads = async () => act(async () => button("Threads with Coordinator").click());
 const button = (name: string) =>
   [...document.querySelectorAll<HTMLButtonElement>("button")].find(
     (b) => b.getAttribute("aria-label") === name || b.textContent === name,
@@ -81,22 +91,25 @@ beforeEach(() => {
   document.body.append(container);
   root = createRoot(container);
   chats = [
-    { id: "factory-personal", title: "Main Chat", archived: false },
-    { id: "personal-side", title: "Planning", archived: false },
+    { id: "factory-personal", title: "Main Chat", archived: false, kind: "main", agent: "coordinator" },
+    { id: "personal-side", title: "Planning", archived: false, kind: "side", agent: "coordinator" },
   ];
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (_url, options) => {
+    vi.fn(async (url, options) => {
+      if (String(url).endsWith("/seen")) return { ok: true, json: async () => ({ ok: true }) };
       if (options?.method === "POST") {
         const created = {
           id: "personal-new",
           title: "New chat",
           archived: false,
+          kind: "side" as const,
+          agent: JSON.parse(options.body).agent,
         };
         chats.push(created);
         return { ok: true, json: async () => created };
       }
-      return { ok: true, json: async () => ({ chats }) };
+      return { ok: true, json: async () => ({ chats, agents: ["coordinator"], chat_agent: "coordinator" }) };
     }),
   );
 });
@@ -112,6 +125,8 @@ it("embeds the public chat with a registered session and retained viewport", asy
     showAvatar: true,
     onPresent: expect.any(Function),
     active: true,
+    agentId: "coordinator",
+    agentName: "Coordinator",
   });
   expect(config).toHaveBeenCalledWith({
     baseUrl: `${location.origin}/workplace/api/personal/chats/factory-personal/runtime/?minimal=true`,
@@ -132,15 +147,14 @@ it("does not connect on authorization failure and can retry", async () => {
 });
 it("creates a side chat immediately without a naming dialog and closes mobile navigation", async () => {
   await act(async () => root.render(<PersonalApp account={{ id: "admin", admin: true } as Person} />));
-  await act(async () => button("Show chats").click());
-  expect(document.body.textContent).not.toContain("Conversations with Omni");
+  await threads();
   expect(document.body.textContent).not.toContain("Archived");
   await act(async () => button("New side chat").click());
   expect(fetch).toHaveBeenCalledWith(
     "/workplace/api/personal/chats",
-    expect.objectContaining({ method: "POST", body: "{}" }),
+    expect.objectContaining({ method: "POST", body: JSON.stringify({agent: "coordinator"}) }),
   );
-  expect(document.querySelector('[aria-label="Chat sessions"]')).toBeNull();
+  expect(document.querySelector('[aria-label="Threads"]')).toBeNull();
   expect(location.search).toBe("?chat=personal-new");
   expect(config).toHaveBeenLastCalledWith({
     baseUrl: `${location.origin}/workplace/api/personal/chats/personal-new/runtime/?minimal=true`,
@@ -151,6 +165,7 @@ it("keeps desktop navigation open when switching and remembers the selected chat
   wide = true;
   await act(async () => root.render(<PersonalApp account={{ id: "admin", admin: true } as Person} />));
   await act(async () => button("Show chats").click());
+  await threads();
   await act(async () => button("Planning").click());
   expect(
     container.querySelector('aside[aria-label="Conversations"]'),
@@ -158,6 +173,7 @@ it("keeps desktop navigation open when switching and remembers the selected chat
   expect(JSON.parse(localStorage.getItem("workplace.chat.selected")!)).toBe(
     "personal-side",
   );
+  await threads();
   await act(async () => button("Planning").click());
   expect(container.textContent).toContain("Shared chat");
   expect(unmounted).not.toHaveBeenCalled();
@@ -190,24 +206,30 @@ it("restores the remembered chat without a URL selection", async () => {
     expect.objectContaining({ sessionId: "personal-side", active: true }),
   );
 });
-it("shows unread and attention indicators and a conditional archive section", async () => {
+it("shows unread and attention indicators and marks a chat read on the server", async () => {
   chats[1].revision = "new-result";
+  chats[1].unread = true;
   chats.push({
     id: "archived",
     title: "Old chat",
     archived: true,
+    kind: "side",
+    agent: "coordinator",
     waiting: true,
   });
   await act(async () => root.render(<PersonalApp account={{ id: "admin", admin: true } as Person} />));
   await act(async () => button("Show chats").click());
+  // The agent row carries its chats' unread activity.
   expect(
-    document.querySelector('[aria-label="Unread activity"]'),
+    document.querySelector('[aria-label="Coordinator"] [aria-label="Unread activity"]'),
   ).not.toBeNull();
+  await threads();
   expect(document.body.textContent).toContain("Archived · 1");
   await act(async () => button("Planning").click());
-  expect(
-    JSON.parse(localStorage.getItem("workplace.chat.seen")!)["personal-side"],
-  ).toBe("new-result");
+  expect(fetch).toHaveBeenCalledWith(
+    "/workplace/api/personal/chats/personal-side/seen",
+    expect.objectContaining({ method: "POST", body: JSON.stringify({ revision: "new-result" }) }),
+  );
 });
 
 
@@ -223,12 +245,83 @@ it("replaces the single viewer, closes it, and scopes it to its chat", async () 
   await act(async () => host.presentView?.({ ...common, kind: "desktop", title: "Desktop" }));
   expect(document.querySelectorAll("[data-viewer]")).toHaveLength(1);
   expect(document.querySelector("[data-viewer]")?.getAttribute("data-viewer")).toBe("desktop");
-  await act(async () => button("Show chats").click());
+  await threads();
   await act(async () => button("Planning").click());
   expect(document.querySelector("[data-viewer]")).toBeNull();
+  await threads();
   await act(async () => button("Main Chat").click());
   expect(document.querySelector("[data-viewer]")?.getAttribute("data-viewer")).toBe("desktop");
   await act(async () => button("Close viewer").click());
   expect(app).toHaveBeenLastCalledWith(expect.objectContaining({showAvatar:true}));
   expect(document.querySelector("[data-viewer]")).toBeNull();
+});
+
+it("lists each agent once, with its face, latest message and time, default first then by activity", async () => {
+  const now = Date.now() / 1000;
+  chats[0].last_message = { role: "assistant", text: "booked the venue", at: now - 86400 * 3 };
+  chats.push(
+    { id: "main-reviewer", title: "Main Chat", archived: false, kind: "main", agent: "reviewer", last_message: { role: "user", author_name: "Priya", text: "review   PR 12", at: now - 60 } },
+    { id: "auto-1", title: "PR #12 · Add pagination", archived: false, kind: "automation", agent: "reviewer", automation: "pr-opened", running: true, working_for: "PR #12 · Add pagination" },
+    { id: "main-designer", title: "Main Chat", archived: false, kind: "main", agent: "designer", last_message: { role: "assistant", text: "draft ready", at: now - 3600 } },
+  );
+  vi.mocked(fetch).mockResolvedValue({ok:true,json:async()=>({chats,agents:["coordinator","designer","reviewer"],chat_agent:"coordinator",agent_details:[{id:"coordinator",name:"Alex"},{id:"reviewer",name:"Code Reviewer"}]})} as Response);
+  await act(async () => root.render(<PersonalApp account={{id:"admin",name:"Priya Shah",admin:true} as Person}/>));
+  expect(app).toHaveBeenCalledWith(expect.objectContaining({sessionId:"factory-personal",agentName:"Alex",agentId:"coordinator"}));
+  await act(async () => button("Show chats").click());
+  const nav = document.querySelector('nav[aria-label="Agents"]')!;
+  const rows = [...nav.querySelectorAll("button")];
+  // The default agent stays first; the rest follow their latest activity.
+  expect(rows.map(r => r.getAttribute("aria-label"))).toEqual(["Alex", "Code Reviewer", "Designer"]);
+  expect(rows[0].textContent).toContain("booked the venue");
+  expect(rows[2].textContent).toContain("draft ready");
+  // Working on an automation shows on the face and in the preview.
+  expect(rows[1].querySelector("[data-mood]")!.getAttribute("data-mood")).toBe("thinking");
+  expect(rows[1].textContent).toContain("Working for PR #12");
+  expect(document.body.textContent).toContain("PS");
+  await act(async () => rows[1].click());
+  expect(app).toHaveBeenLastCalledWith(expect.objectContaining({sessionId:"main-reviewer",agentName:"Code Reviewer",agentId:"reviewer"}));
+  await act(async () => button("Threads with Code Reviewer").click());
+  expect(document.body.textContent).toContain("Automations · 1");
+  await act(async () => button("New side chat").click());
+  expect(fetch).toHaveBeenCalledWith("/workplace/api/personal/chats",expect.objectContaining({method:"POST",body:JSON.stringify({agent:"reviewer"})}));
+});
+
+it("searches agents by name and latest message", async () => {
+  chats[0].last_message = { role: "assistant", text: "venue booked", at: 1 };
+  vi.mocked(fetch).mockResolvedValue({ok:true,json:async()=>({chats:[...chats,{ id: "main-designer", title: "Main Chat", archived: false, kind: "main", agent: "designer" }],agents:["coordinator","designer"],chat_agent:"coordinator"})} as Response);
+  await act(async () => root.render(<PersonalApp account={{id:"admin",admin:true} as Person}/>));
+  await act(async () => button("Show chats").click());
+  const search = document.querySelector<HTMLInputElement>('input[aria-label="Search agents"]')!;
+  const type = async (value: string) => act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    setter.call(search, value);
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await type("venue");
+  expect([...document.querySelectorAll('nav[aria-label="Agents"] button')].map(b => b.getAttribute("aria-label"))).toEqual(["Coordinator"]);
+  await type("zzz");
+  expect(document.body.textContent).toContain("No agents match.");
+});
+
+it("never offers to manage a Main Chat and names who a chat is working for", async () => {
+  chats[0].running = true;
+  chats[0].working_for = "Priya";
+  await act(async()=>root.render(<PersonalApp account={{id:"admin",admin:true} as Person}/>));
+  // One header: the toggle, the agent as its heading, then the actions.
+  const header = container.querySelector("header")!;
+  expect(header.querySelector("h2")!.textContent).toBe("Coordinator");
+  expect(header.textContent).toContain("Working for Priya");
+  expect([...header.querySelectorAll("button")].map(b => b.getAttribute("aria-label"))).toEqual(
+    ["Show chats", "Threads with Coordinator", "Readiness of Coordinator"],
+  );
+  await threads();
+  expect(button("Manage Main Chat")).toBeUndefined();
+  expect(button("Manage Planning")).toBeDefined();
+});
+
+it("shows an empty state without connecting when there are no chats", async () => {
+  vi.mocked(fetch).mockResolvedValueOnce({ok:true,json:async()=>({chats:[],agents:[],chat_agent:"coordinator"})} as Response);
+  await act(async()=>root.render(<PersonalApp account={{id:"admin",admin:true} as Person}/>));
+  expect(app).not.toHaveBeenCalled();
+  expect(container.textContent).toContain("No chats yet.");
 });

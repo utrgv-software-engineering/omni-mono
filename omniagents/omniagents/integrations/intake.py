@@ -105,15 +105,13 @@ class EventIntake:
         store: EventStore,
         run: RunStarter,
         max_concurrent_runs: int = 4,
-        shared_session: Optional[str] = None,
     ) -> None:
         self.project_root = Path(project_root)
         self.entrypoint = entrypoint
-        self.shared_session = shared_session
         self.store = store
         self._run = run
         self._slots = asyncio.Semaphore(max_concurrent_runs)
-        self._conversation_locks: Dict[str, asyncio.Lock] = {}
+        self._conversation_locks: Dict[tuple[str, str], asyncio.Lock] = {}
         self._tasks: set[asyncio.Task] = set()
         #: The runs in progress, by conversation (provider, thread key).
         self._running: Dict[tuple, set] = {}
@@ -192,6 +190,17 @@ class EventIntake:
         if not matched:
             self.store.set_status(event_id, "ignored", "no automation matches")
             return
+        off = self.store.turned_off()
+        if off:
+            kept = [automation for automation in matched if automation.name not in off]
+            if not kept:
+                self.store.set_status(
+                    event_id,
+                    "ignored",
+                    "turned off: " + ", ".join(a.name for a in matched),
+                )
+                return
+            matched = kept
         from .self_improvement import allowed
 
         matched = [automation for automation in matched if await allowed(automation)]
@@ -212,28 +221,33 @@ class EventIntake:
     async def _dispatch(
         self, event_id: int, event: IncomingEvent, automation: Automation
     ) -> None:
-        agent = (
-            self.entrypoint
-            if self.shared_session
-            else (automation.agent or self.entrypoint)
+        route = self.store.automation_routes().get(automation.name, {})
+        agent = route.get("agent") or automation.agent or self.entrypoint
+        grouping = route.get("conversation") or automation.conversation
+        # Scheduled/Shared occurrences are independent tasks by default. Explicit
+        # thread grouping can retain a conversation across those occurrences.
+        reuse = grouping == "thread" or (
+            grouping == "auto" and event.provider not in {"schedule", "shared"}
         )
-        session_id = self.shared_session
-        if event.thread_key and not self.shared_session:
-            session_id = self.store.thread_session(
-                event.provider, event.thread_key, agent
-            )
+        session_id = (
+            self.store.thread_session(event.provider, event.thread_key, agent)
+            if reuse and event.thread_key
+            else None
+        )
         if session_id is None:
             session_id = str(uuid.uuid4())
-            if event.thread_key:
+            if reuse and event.thread_key:
                 self.store.remember_thread(
                     event.provider, event.thread_key, agent, session_id
                 )
-        prompt = automation.run_input(event.payload, event.context)
-        if self.shared_session:
-            prompt = (
-                f"Automation: {automation.name}\nSource: {event.provider}\n"
-                f"Thread: {event.thread_key or '(scheduled event)'}\n\n" + prompt
-            )
+        prompt = replace(
+            automation,
+            instruction=automation.instruction
+            + (
+                f"\n\nAutomation: {automation.name}\nSource: {event.provider}\n"
+                f"Thread: {event.thread_key or '(independent event)'}"
+            ),
+        ).run_input(event.payload, event.context)
         dispatch_id = self.store.start_dispatch(
             event_id,
             automation.name,
@@ -242,12 +256,8 @@ class EventIntake:
             prompt=prompt,
             version=self.version,
         )
-        lock = (
-            nullcontext()
-            if self.shared_session
-            else self._conversation_locks.setdefault(session_id, asyncio.Lock())
-        )
-        slots = nullcontext() if self.shared_session else self._slots
+        lock = self._conversation_locks.setdefault((agent, session_id), asyncio.Lock())
+        slots = self._slots
         on_step = self.on_step.get(event.provider)
         progress: Optional[Progress] = None
         if on_step is not None:
@@ -285,8 +295,6 @@ class EventIntake:
         except Exception as exc:
             logger.exception("integrations: run of %s failed", agent)
             result = RunResult(error=f"{type(exc).__name__}: {exc}")
-        if self.shared_session and result.history is None:
-            result = replace(result, history=[])
         if result.history is not None:
             self.store.record_turn(
                 dispatch_id, result.history, result.started_at, result.finished_at

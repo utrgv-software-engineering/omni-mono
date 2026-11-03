@@ -281,7 +281,6 @@ def activate(config, request, root):
                 if (
                     observed.get("version") == release["revision"]
                     and observed.get("release_paused") is True
-                    and observed.get("architecture") == config["architecture"]
                 ):
                     break
             except (OSError, ValueError):
@@ -328,12 +327,9 @@ def activate(config, request, root):
                 docker("POST", "/containers/" + config["container"] + "/start")
                 for _ in range(60):
                     try:
-                        if (
-                            http(
-                                runtime_url(config) + "/integrations/architecture", auth
-                            ).get("architecture")
-                            == config["architecture"]
-                        ):
+                        if http(
+                            runtime_url(config) + "/integrations/architecture", auth
+                        ).get("release_protocol"):
                             break
                     except (OSError, ValueError):
                         pass

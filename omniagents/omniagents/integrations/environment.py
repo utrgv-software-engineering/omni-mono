@@ -1,7 +1,7 @@
-"""Factory sandboxes: persistent when a state path is supplied.
+"""Factory sandboxes: kept across restarts when a state path is supplied.
 
-Personal and pipelined factories retain their sandbox across restarts.
-Persistent repository paths include a stable provider/repository hash, so
+The factory's shared machine is one (``server._attach_factory_workspace``);
+evaluations open disposable ones. Persistent repository paths include a stable provider/repository hash, so
 switching GitHub providers never reuses another provider's checkout.
 ``/workspace/.omni-repositories.json`` lists active paths and preparation
 errors. Previous checkouts remain on disk, including uncommitted work.
@@ -152,7 +152,7 @@ class RunSandbox:
 
 
 class RunEnvironments:
-    """Project sandboxes; a saved state path opts into personal persistence."""
+    """Project sandboxes; a saved state path keeps one across restarts."""
 
     def __init__(
         self,
@@ -284,13 +284,3 @@ class RunEnvironments:
                     detach=state_path is not None,
                     destroy=state_path is None,
                 )
-
-    @asynccontextmanager
-    async def open(self) -> AsyncIterator[Any]:
-        """A sandbox, as the AgentHost resources that route a run into it."""
-        from omniagents.execution import AgentHostResources
-
-        async with self.sandbox() as sandbox:
-            resources = AgentHostResources.create(f"automation-{uuid.uuid4().hex[:12]}")
-            sandbox.register(resources)
-            yield resources

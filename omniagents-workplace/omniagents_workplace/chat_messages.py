@@ -64,6 +64,38 @@ class ChatMessages:
             "has_more": len(rows) > limit,
         }
 
+    def sent_at(self, chats):
+        """When people wrote in these chats."""
+        chats = list(chats)
+        if not chats:
+            return []
+        with self.store.transaction():
+            rows = self.store._db.execute(
+                "SELECT created_at FROM chat_messages WHERE role='user' AND chat IN ("
+                + ",".join("?" * len(chats))
+                + ")",
+                chats,
+            ).fetchall()
+        return [row[0] for row in rows]
+
+    def last(self, chat):
+        """The chat's latest published message, for a list's preview."""
+        with self.store.transaction():
+            row = self.store._db.execute(
+                "SELECT role, author, text, created_at FROM chat_messages WHERE chat=? ORDER BY seq DESC LIMIT 1",
+                (chat,),
+            ).fetchone()
+        return dict(role=row[0], author=row[1], text=row[2], at=row[3]) if row else None
+
+    def last_author(self, chat):
+        """Who wrote the chat's latest person's message (``None`` if nobody has)."""
+        with self.store.transaction():
+            row = self.store._db.execute(
+                "SELECT author FROM chat_messages WHERE chat=? AND role='user' ORDER BY seq DESC LIMIT 1",
+                (chat,),
+            ).fetchone()
+        return row[0] if row else None
+
     def delete(self, chat):
         with self.store.transaction():
             self.store._db.execute("DELETE FROM chat_messages WHERE chat=?", (chat,))

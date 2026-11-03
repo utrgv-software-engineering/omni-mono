@@ -82,7 +82,7 @@ def test_publication_auth_and_no_runtime_side_effect(personal, tmp_path):
 def test_runtime_output_is_never_public(personal):
     w, client, calls, states = personal
     signin(w, client)
-    client.get("/workplace/api/personal")
+    client.get("/workplace/api/personal/chats/factory-personal")
     states["factory-personal"]["snapshot"]["items"] = [
         {"kind": "agent_message", "content": {"text": "Internal final response"}},
         {
@@ -90,7 +90,7 @@ def test_runtime_output_is_never_public(personal):
             "content": {"text": "[worker message] internal handoff"},
         },
     ]
-    assert client.get("/workplace/api/personal").json()["items"]
+    assert client.get("/workplace/api/personal/chats/factory-personal").json()["items"]
     assert (
         client.get("/workplace/api/personal/chats/factory-personal/feed").json()[
             "messages"
@@ -98,10 +98,57 @@ def test_runtime_output_is_never_public(personal):
         == []
     )
     body = {"text": "Actual user message", "submission_id": str(uuid.uuid4())}
-    assert client.post("/workplace/api/personal/messages", json=body).status_code == 200
+    assert (
+        client.post(
+            "/workplace/api/personal/chats/factory-personal/messages", json=body
+        ).status_code
+        == 200
+    )
     assert [
         m["text"]
         for m in client.get(
             "/workplace/api/personal/chats/factory-personal/feed"
         ).json()["messages"]
     ] == ["Actual user message"]
+
+
+def test_automation_chat_is_registered_on_explicit_publication(personal, monkeypatch):
+    from omniagents_workplace.factory_models import FactoryRpc
+
+    w, client, calls, _ = personal
+    signin(w, client)
+    token = w.apps.env(w.apps.by_username("initech-factory"))["CANVAS_MCP_TOKEN"]
+
+    async def runtime_http(self, method, path, **kwargs):
+        assert path == "/integrations/conversations?session_id=scheduled-work"
+        return {
+            "conversations": [
+                {
+                    "id": "scheduled-work",
+                    "agent": "coordinator",
+                    "title": "Nightly report",
+                    "created_at": 1,
+                }
+            ]
+        }
+
+    monkeypatch.setattr(FactoryRpc, "http", runtime_http)
+    result = client.post(
+        "/library/api/chat/messages",
+        headers={"Authorization": "Bearer " + token},
+        json={
+            "conversation": "scheduled-work",
+            "text": "Report ready",
+            "message_id": "report",
+        },
+    )
+    assert result.status_code == 200
+    registered = dict(w.store.docs("personal.chat"))["scheduled-work"]
+    assert registered["agent"] == "coordinator"
+    assert not calls  # Publication does not enqueue or start an agent.
+    assert (
+        client.get("/workplace/api/personal/chats/scheduled-work/feed").json()[
+            "messages"
+        ][0]["text"]
+        == "Report ready"
+    )

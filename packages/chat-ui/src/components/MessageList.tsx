@@ -39,6 +39,7 @@ import { useRPCClient } from '@omniagents/chat-ui/rpc-context';
 import type { ActivityGroupData } from '@omniagents/client/transcript/activity-group';
 import { formatArgsPreview, groupItems } from '@omniagents/client/transcript/activity-group';
 import { messageKey } from '@omniagents/client/transcript/message-key';
+import { Avatar, AvatarFallback } from '@omniagents/ui/avatar';
 import { Button } from '@omniagents/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@omniagents/ui/collapsible';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@omniagents/ui/input-group';
@@ -291,6 +292,7 @@ export function MessageList({
                   role={(m as ChatMessage).role}
                   content={(m as ChatMessage).content}
                   attachments={(m as ChatMessage).attachments}
+                  sender={(m as ChatMessage).sender}
                   stagedContext={(m as ChatMessage).staged_context}
                   reactions={reactions}
                   onReact={handleReaction}
@@ -378,11 +380,17 @@ function StagedContextRibbon({ entries }: { entries: NonNullable<ChatMessage['st
   );
 }
 
+function initials(name: string) {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  return ((words[0]?.[0] ?? '') + (words.length > 1 ? (words[words.length - 1]?.[0] ?? '') : '')).toUpperCase() || '?';
+}
+
 function MessageBubble({
   messageKey: key,
   role,
   content,
   attachments,
+  sender,
   stagedContext,
   reactions,
   onReact,
@@ -394,6 +402,7 @@ function MessageBubble({
   role: ChatMessage['role'];
   content: string;
   attachments?: Attachment[];
+  sender?: ChatMessage['sender'];
   stagedContext?: ChatMessage['staged_context'];
   reactions?: Record<string, 'like' | 'dislike' | undefined>;
   onReact?: (key: string, type: 'like' | 'dislike') => void;
@@ -407,6 +416,14 @@ function MessageBubble({
     return (
       <div className="flex justify-end">
         <div className="flex min-w-0 max-w-5/6 flex-col items-end space-y-2 sm:max-w-2/3">
+          {sender ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="truncate">{sender.name}</span>
+              <Avatar size="sm" aria-hidden>
+                <AvatarFallback>{initials(sender.name)}</AvatarFallback>
+              </Avatar>
+            </div>
+          ) : null}
           {attachments && attachments.length > 0 ? (
             <div className="flex flex-wrap gap-2 w-full justify-end">
               {attachments.map((att, i) => (

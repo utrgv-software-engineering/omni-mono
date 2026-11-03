@@ -20,8 +20,8 @@ conversations, artifacts, agent processes, or writable VM state.
   directories are rejected. Agent processes use separate runtime homes, provider
   credential directories, profiles, ports, and logs. They do not inherit other
   factories' service credentials from the installation process.
-- Personal and pipelined architectures are selected per factory. The choice is stored when
-  creating the factory and does not change another factory's mode.
+- Which agent handles chats and each automation is configured in each factory's
+  project. Each factory's agents share that factory's one machine.
 - Clean VM images can be shared; writable disks, Library mounts, and preview
   forwards cannot. Workflow jobs remain disposable VMs. Host workflow execution
   is not enabled by the installation host.
@@ -62,7 +62,7 @@ start without demo repositories or shared provider credentials.
 
 Workflow execution requires the installation's clean runner image option. The
 host does not silently run repository shell scripts when no runner is configured.
-Both factory architectures use persistent tool environments; CI steps use
+Factory agents use persistent tool environments; CI steps use
 disposable environments. Local installations use QuickSand VMs; Docker-hosted
 installations use containers.
 A short shared launch lock prevents the QuickSand SDK from selecting the same

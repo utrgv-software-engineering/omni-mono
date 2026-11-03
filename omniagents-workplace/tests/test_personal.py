@@ -13,8 +13,11 @@ from test_factory_runtime import _workplace
 
 @pytest.fixture
 def personal(tmp_path, monkeypatch):
-    monkeypatch.setenv("FACTORY_ARCHITECTURE", "personal")
     workplace = _workplace(tmp_path, "http://runtime.invalid:8000")
+    # The chat list creates each chat agent's Main Chat; tests address it directly.
+    PersonalConversations(workplace.store).ensure_mains(
+        ["generalist", "foreman"], "generalist"
+    )
     calls, states = [], {}
 
     async def call(self, method, params):
@@ -36,6 +39,18 @@ def personal(tmp_path, monkeypatch):
             return {"accepted": True}
         return True
 
+    from omniagents_workplace.factory_models import FactoryRpc
+
+    async def runtime_http(self, method, path, **kwargs):
+        if path.startswith("/integrations/conversations"):
+            return {"conversations": []}
+        return {
+            "routing_version": 1,
+            "agents": ["generalist", "foreman"],
+            "chat_agent": "generalist",
+        }
+
+    monkeypatch.setattr(FactoryRpc, "http", runtime_http)
     monkeypatch.setattr(PersonalConnection, "call", call)
     client = TestClient(create_app(workplace, static_dir=tmp_path))
     yield workplace, client, calls, states
@@ -50,15 +65,19 @@ def signin(workplace, client, account=None):
 
 def test_requires_signed_in_admin_and_same_origin(personal):
     w, client, calls, _ = personal
-    assert client.get("/workplace/api/personal").status_code == 401
+    assert (
+        client.get("/workplace/api/personal/chats/factory-personal").status_code == 401
+    )
     member = w.add_person(username="member", name="Member", email="m@example.test")
     signin(w, client, member)
-    assert client.get("/workplace/api/personal").status_code == 403
+    assert (
+        client.get("/workplace/api/personal/chats/factory-personal").status_code == 403
+    )
     assert not calls
     signin(w, client)
     assert (
         client.post(
-            "/workplace/api/personal/messages",
+            "/workplace/api/personal/chats/factory-personal/messages",
             headers={"origin": "https://evil.test"},
             json={"text": "hi", "submission_id": str(uuid.uuid4())},
         ).status_code
@@ -70,23 +89,34 @@ def test_requires_signed_in_admin_and_same_origin(personal):
 def test_shared_session_survives_new_app_for_all_admins(personal, tmp_path):
     w, client, calls, _ = personal
     first = signin(w, client)
-    sid = client.get("/workplace/api/personal").json()["session_id"]
+    sid = client.get("/workplace/api/personal/chats/factory-personal").json()[
+        "session_id"
+    ]
     other = w.add_person(
         username="other", name="Other", email="o@example.test", admin=True
     )
     signin(w, client, other)
-    other_sid = client.get("/workplace/api/personal").json()["session_id"]
+    other_sid = client.get("/workplace/api/personal/chats/factory-personal").json()[
+        "session_id"
+    ]
     assert sid == other_sid == "factory-personal"
     second_client = TestClient(create_app(w, static_dir=tmp_path))
     signin(w, second_client, first)
-    assert second_client.get("/workplace/api/personal").json()["session_id"] == sid
+    assert (
+        second_client.get("/workplace/api/personal/chats/factory-personal").json()[
+            "session_id"
+        ]
+        == sid
+    )
     assert all(method == "queue_status" for _, method, _ in calls)
 
 
 def test_messages_cannot_choose_identity_or_weaken_policy(personal):
     w, client, calls, _ = personal
     signin(w, client)
-    sid = client.get("/workplace/api/personal").json()["session_id"]
+    sid = client.get("/workplace/api/personal/chats/factory-personal").json()[
+        "session_id"
+    ]
     body = {"text": "Check my project", "submission_id": str(uuid.uuid4())}
     for key, value in [
         ("session_id", "victim"),
@@ -97,17 +127,24 @@ def test_messages_cannot_choose_identity_or_weaken_policy(personal):
     ]:
         assert (
             client.post(
-                "/workplace/api/personal/messages", json={**body, key: value}
+                "/workplace/api/personal/chats/factory-personal/messages",
+                json={**body, key: value},
             ).status_code
             == 422
         )
-    assert client.post("/workplace/api/personal/messages", json=body).status_code == 200
+    assert (
+        client.post(
+            "/workplace/api/personal/chats/factory-personal/messages", json=body
+        ).status_code
+        == 200
+    )
     assert calls[-1] == (
         sid,
         "enqueue_message",
         {
             "session_id": sid,
-            "content": body["text"],
+            # The agent is told who wrote it; the public feed keeps the text.
+            "content": "[From Bill (@bill)]\n\n" + body["text"],
             "variables": {"workplace_sender": "bill", "workplace_conversation": sid},
             "submission_id": body["submission_id"],
             "role": "user",
@@ -116,13 +153,15 @@ def test_messages_cannot_choose_identity_or_weaken_policy(personal):
     )
     assert (
         client.post(
-            "/workplace/api/personal/messages", json={**body, "text": " "}
+            "/workplace/api/personal/chats/factory-personal/messages",
+            json={**body, "text": " "},
         ).status_code
         == 422
     )
     assert (
         client.post(
-            "/workplace/api/personal/messages", json={**body, "text": "x" * 20001}
+            "/workplace/api/personal/chats/factory-personal/messages",
+            json={**body, "text": "x" * 20001},
         ).status_code
         == 422
     )
@@ -131,17 +170,21 @@ def test_messages_cannot_choose_identity_or_weaken_policy(personal):
 def test_stop_only_current_owners_run(personal):
     w, client, calls, states = personal
     signin(w, client)
-    sid = client.get("/workplace/api/personal").json()["session_id"]
+    sid = client.get("/workplace/api/personal/chats/factory-personal").json()[
+        "session_id"
+    ]
     assert (
         client.post(
-            "/workplace/api/personal/stop", json={"run_id": "foreign"}
+            "/workplace/api/personal/chats/factory-personal/stop",
+            json={"run_id": "foreign"},
         ).status_code
         == 409
     )
     assert not any(m == "stop_run" for _, m, _ in calls)
     assert (
         client.post(
-            "/workplace/api/personal/stop", json={"run_id": "run-" + sid}
+            "/workplace/api/personal/chats/factory-personal/stop",
+            json={"run_id": "run-" + sid},
         ).status_code
         == 200
     )
@@ -149,7 +192,8 @@ def test_stop_only_current_owners_run(personal):
     states[sid]["active_run_id"] = None
     assert (
         client.post(
-            "/workplace/api/personal/stop", json={"run_id": "run-" + sid}
+            "/workplace/api/personal/chats/factory-personal/stop",
+            json={"run_id": "run-" + sid},
         ).status_code
         == 409
     )
@@ -190,7 +234,9 @@ def test_only_pending_controls_in_owners_snapshot_can_be_answered(
 ):
     w, client, calls, states = personal
     signin(w, client)
-    sid = client.get("/workplace/api/personal").json()["session_id"]
+    sid = client.get("/workplace/api/personal/chats/factory-personal").json()[
+        "session_id"
+    ]
     item = {
         "item_id": "own-item",
         "kind": kind,
@@ -200,44 +246,58 @@ def test_only_pending_controls_in_owners_snapshot_can_be_answered(
     states[sid]["snapshot"]["items"] = [item]
     body = {"item_id": "foreign-item", "action": action, "value": {"text": "answer"}}
     assert (
-        client.post("/workplace/api/personal/decisions", json=body).status_code == 409
+        client.post(
+            "/workplace/api/personal/chats/factory-personal/decisions", json=body
+        ).status_code
+        == 409
     )
     assert not any(m == method for _, m, _ in calls)
     body["item_id"] = "own-item"
     assert (
         client.post(
-            "/workplace/api/personal/decisions", json={**body, "always_approve": True}
+            "/workplace/api/personal/chats/factory-personal/decisions",
+            json={**body, "always_approve": True},
         ).status_code
         == 422
     )
     assert (
-        client.post("/workplace/api/personal/decisions", json=body).status_code == 200
+        client.post(
+            "/workplace/api/personal/chats/factory-personal/decisions", json=body
+        ).status_code
+        == 200
     )
     assert calls[-1] == (sid, method, args)
     item["status"] = "completed"
     assert (
-        client.post("/workplace/api/personal/decisions", json=body).status_code == 409
+        client.post(
+            "/workplace/api/personal/chats/factory-personal/decisions", json=body
+        ).status_code
+        == 409
     )
 
 
 def test_disabled_account_loses_access(personal):
     w, client, calls, _ = personal
     account = signin(w, client)
-    assert client.get("/workplace/api/personal").status_code == 200
+    assert (
+        client.get("/workplace/api/personal/chats/factory-personal").status_code == 200
+    )
     account.disabled = True
     calls.clear()
-    assert client.get("/workplace/api/personal").status_code == 401
+    assert (
+        client.get("/workplace/api/personal/chats/factory-personal").status_code == 401
+    )
     assert not calls
 
 
 @pytest.mark.asyncio
 async def test_identity_persists_when_store_is_reopened(tmp_path, monkeypatch):
-    monkeypatch.setenv("FACTORY_ARCHITECTURE", "personal")
     from omniagents_workplace.store import Store
     from types import SimpleNamespace
 
     account = SimpleNamespace(id="a", admin=True, disabled=False)
     store = Store(tmp_path / "state.db")
+    PersonalConversations(store).ensure_mains(["generalist"], "generalist")
     first = await PersonalConversations(store).for_account(
         account, "http://runtime", "secret"
     )
@@ -254,14 +314,18 @@ async def test_identity_persists_when_store_is_reopened(tmp_path, monkeypatch):
 async def test_real_transport_reconnects_without_stopping_background_run(monkeypatch):
     import httpx
 
-    async def architecture(self, url, **kwargs):
+    async def architecture(self, method, url, **kwargs):
         return httpx.Response(
             200,
-            json={"architecture": "personal", "session_id": "owner"},
+            json={
+                "routing_version": 1,
+                "agents": ["generalist"],
+                "chat_agent": "generalist",
+            },
             request=httpx.Request("GET", url),
         )
 
-    monkeypatch.setattr(httpx.AsyncClient, "get", architecture)
+    monkeypatch.setattr(httpx.AsyncClient, "request", architecture)
     import asyncio
     import json
     import websockets
@@ -375,36 +439,37 @@ def test_bridge_commands_match_runtime_signatures():
         inspect.signature(getattr(AgentService, name)).bind(None, **args)
 
 
-def test_specialist_mode_disables_personal(personal, monkeypatch, tmp_path):
+def test_chat_is_available_to_admins(personal, tmp_path):
     w, _, calls, _ = personal
-    monkeypatch.setenv("FACTORY_ARCHITECTURE", "specialist")
     client = TestClient(create_app(w, static_dir=tmp_path))
     signin(w, client)
-    assert client.get("/workplace/api/session").json()["architecture"] == "specialist"
-    assert client.get("/workplace/api/personal").status_code == 409
+    assert "architecture" not in client.get("/workplace/api/session").json()
+    assert (
+        client.get("/workplace/api/personal/chats/factory-personal").status_code == 200
+    )
     assert (
         client.post(
-            "/workplace/api/personal/messages",
+            "/workplace/api/personal/chats/factory-personal/messages",
             json={"text": "hi", "submission_id": str(uuid.uuid4())},
         ).status_code
-        == 409
+        == 200
     )
-    assert not calls
+    assert calls
 
 
 @pytest.mark.asyncio
-async def test_runtime_mode_mismatch_never_opens_socket(monkeypatch):
+async def test_runtime_without_a_chat_agent_never_opens_socket(monkeypatch):
     import httpx
     from omniagents_workplace.factory_models import FactoryRpcError
 
-    async def architecture(self, url, **kwargs):
+    async def architecture(self, method, url, **kwargs):
         return httpx.Response(
             200,
-            json={"architecture": "specialist", "session_id": None},
+            json={"session_id": None},
             request=httpx.Request("GET", url),
         )
 
-    monkeypatch.setattr(httpx.AsyncClient, "get", architecture)
+    monkeypatch.setattr(httpx.AsyncClient, "request", architecture)
     connection = PersonalConnection(
         "http://runtime.invalid", "secret", "factory-personal"
     )
@@ -431,7 +496,10 @@ def test_side_chat_lifecycle_and_shared_registry(personal, tmp_path):
     )
     assert calls[-1][0] == sid
     assert (
-        client.get("/workplace/api/personal").json()["session_id"] == "factory-personal"
+        client.get("/workplace/api/personal/chats/factory-personal").json()[
+            "session_id"
+        ]
+        == "factory-personal"
     )
     other = w.add_person(
         username="sideadmin", name="Other", email="side@example.test", admin=True
@@ -448,11 +516,12 @@ def test_side_chat_lifecycle_and_shared_registry(personal, tmp_path):
         ).status_code
         == 200
     )
-    assert second.get(base).json()["chats"][1]["archived"]
-    assert (
-        client.patch(base + "/factory-personal", json={"title": "Oops"}).status_code
-        == 409
-    )
+    assert next(c for c in second.get(base).json()["chats"] if c["id"] == sid)[
+        "archived"
+    ]
+    # The original conversation is the default agent's Main Chat: pinned.
+    for change in ({"title": "Existing conversation"}, {"archived": True}):
+        assert client.patch(base + "/factory-personal", json=change).status_code == 409
     assert client.delete(base + "/factory-personal").status_code == 409
     assert client.delete(base + "/" + sid).status_code == 409
     states[sid].update(run_active=False, depth=0, active_run_id=None)
@@ -514,4 +583,298 @@ def test_auto_title_and_activity_from_actual_conversation(personal):
     row = next(c for c in client.get(base).json()["chats"] if c["id"] == sid)
     assert row["waiting"] and row["revision"] != revision
     assert row["title"] == "My title"
-    assert client.get(base).json()["chats"][0]["title"] == "Main Chat"
+    assert (
+        next(
+            c for c in client.get(base).json()["chats"] if c["id"] == "factory-personal"
+        )["title"]
+        == "Main Chat"
+    )
+
+
+def test_each_chat_agent_has_one_pinned_main_chat(personal):
+    w, client, _, _ = personal
+    signin(w, client)
+    base = "/workplace/api/personal/chats"
+    chats = client.get(base).json()["chats"]
+    mains = {c["agent"]: c["id"] for c in chats if c["kind"] == "main"}
+    # The default agent's Main Chat is the original shared conversation.
+    assert mains == {"generalist": "factory-personal", "foreman": "main-foreman"}
+    for chat_id in mains.values():
+        assert (
+            client.patch(base + "/" + chat_id, json={"archived": True}).status_code
+            == 409
+        )
+        assert client.delete(base + "/" + chat_id).status_code == 409
+    side = client.post(base, json={"agent": "foreman"}).json()
+    assert side["kind"] == "side" and side["agent"] == "foreman"
+    client.get(base)
+    assert (
+        len([c for c in client.get(base).json()["chats"] if c["kind"] == "main"]) == 2
+    )
+
+
+def test_chats_saved_before_kinds_are_migrated(tmp_path):
+    from omniagents_workplace.store import Store
+
+    store = Store(tmp_path / "state.db")
+    store.put(
+        "personal.chat",
+        "factory-personal",
+        {
+            "id": "factory-personal",
+            "title": "Event planning",
+            "archived": False,
+            "created_at": 0,
+        },
+    )
+    store.put(
+        "personal.chat",
+        "auto",
+        {
+            "id": "auto",
+            "title": "pr-opened",
+            "agent": "code_reviewer",
+            "automation": True,
+            "created_at": 1,
+        },
+    )
+    chats = PersonalConversations(store)
+    chats.ensure_mains(["generalist"], "generalist")
+    by_id = {c["id"]: c for c in chats.chats()}
+    assert by_id["factory-personal"]["kind"] == "main"
+    assert by_id["factory-personal"]["agent"] == "generalist"
+    assert by_id["factory-personal"]["title"] == "Main Chat"
+    assert by_id["auto"]["kind"] == "automation" and by_id["auto"]["automation"] is None
+    store.close()
+
+
+def test_a_deleted_original_is_not_adopted_again(tmp_path):
+    from omniagents_workplace.store import Store
+
+    store = Store(tmp_path / "state.db")
+    store.put("chat.deleted", "factory-personal", {"deleted": True})
+    chats = PersonalConversations(store)
+    chats.ensure_mains(["generalist"], "generalist")
+    assert [c["id"] for c in chats.chats()] == ["main-generalist"]
+    store.close()
+
+
+def test_chat_agent_cannot_change_mid_conversation(personal):
+    w, client, _, _ = personal
+    signin(w, client)
+    base = "/workplace/api/personal/chats"
+    created = client.post(base, json={"agent": "generalist"}).json()
+    assert (
+        client.patch(base + "/" + created["id"], json={"agent": "foreman"}).status_code
+        == 422
+    )
+
+
+def test_automation_chats_are_titled_and_archive_once_when_their_item_closes(
+    personal, monkeypatch
+):
+    from omniagents_workplace.factory_models import FactoryRpc
+
+    w, client, _, _ = personal
+    signin(w, client)
+    conversation = {
+        "id": "auto-1",
+        "agent": "code_reviewer",
+        "automation": "pr-opened",
+        "title": "PR #12 · Add pagination",
+        "created_at": 5,
+        "source": "github",
+        "thread_key": "acme/web#12",
+        "closed": False,
+    }
+
+    async def runtime_http(self, method, path, **kwargs):
+        if path.startswith("/integrations/conversations"):
+            return {"conversations": [conversation]}
+        return {
+            "routing_version": 1,
+            "agents": ["generalist", "code_reviewer"],
+            "chat_agents": ["generalist"],
+            "chat_agent": "generalist",
+        }
+
+    monkeypatch.setattr(FactoryRpc, "http", runtime_http)
+    base = "/workplace/api/personal/chats"
+    listing = client.get(base).json()
+    row = next(c for c in listing["chats"] if c["id"] == "auto-1")
+    assert row["kind"] == "automation" and row["title"] == "PR #12 · Add pagination"
+    assert row["automation"] == "pr-opened" and not row["archived"]
+    # An agent only automations use still appears, after the chat agents.
+    assert listing["agents"] == ["generalist", "code_reviewer"]
+    conversation["closed"] = True
+    row = next(c for c in client.get(base).json()["chats"] if c["id"] == "auto-1")
+    assert row["archived"]
+    # Restored by an admin, it stays restored.
+    client.patch(base + "/auto-1", json={"archived": False})
+    row = next(c for c in client.get(base).json()["chats"] if c["id"] == "auto-1")
+    assert not row["archived"]
+
+
+def test_unread_is_per_admin_and_working_for_names_the_sender(personal):
+    w, client, _, states = personal
+    signin(w, client)
+    base = "/workplace/api/personal/chats"
+    client.post(
+        base + "/factory-personal/messages",
+        json={"text": "Draft the landing page", "submission_id": str(uuid.uuid4())},
+    )
+    states["factory-personal"]["snapshot"]["items"] = [
+        {"item_id": "m", "kind": "agent_message", "status": "completed"}
+    ]
+    row = next(
+        c for c in client.get(base).json()["chats"] if c["id"] == "factory-personal"
+    )
+    assert row["unread"] and row["working_for"] == "Bill"
+    assert (
+        client.post(
+            base + "/factory-personal/seen", json={"revision": row["revision"]}
+        ).status_code
+        == 200
+    )
+    row = next(
+        c for c in client.get(base).json()["chats"] if c["id"] == "factory-personal"
+    )
+    assert not row["unread"]
+    other = w.add_person(
+        username="ann", name="Ann", email="ann@example.test", admin=True
+    )
+    signin(w, client, other)
+    row = next(
+        c for c in client.get(base).json()["chats"] if c["id"] == "factory-personal"
+    )
+    assert row["unread"]
+    feed = client.get(base + "/factory-personal/feed").json()["messages"]
+    assert feed[0]["author"] == "bill" and feed[0]["author_name"] == "Bill"
+    assert feed[0]["text"] == "Draft the landing page"
+
+
+def test_readiness_counts_messages_lessons_runs_and_grades_per_week(
+    personal, monkeypatch
+):
+    import time as clock
+    from omniagents_workplace.factory_models import FactoryRpc
+
+    w, client, _, _ = personal
+    signin(w, client)
+    now = clock.time()
+    runs = [
+        {
+            "agent": "generalist",
+            "status": "completed",
+            "started_at": now - 60,
+            "grades": [
+                {"judge": "task_compliance", "agent": "generalist", "passed": True}
+            ],
+        },
+        {
+            # Another agent's run that called the generalist: its grade counts.
+            "agent": "foreman",
+            "status": "failed",
+            "started_at": now - 30,
+            "grades": [
+                {"judge": "task_compliance", "agent": "generalist", "passed": False},
+                {"judge": "review_quality", "agent": "reviewer", "passed": True},
+            ],
+        },
+    ]
+
+    async def runtime_http(self, method, path, **kwargs):
+        if path.startswith("/integrations/runs"):
+            return {"runs": runs}
+        if path.startswith("/integrations/conversations"):
+            return {"conversations": []}
+        return {
+            "routing_version": 1,
+            "agents": ["generalist"],
+            "chat_agent": "generalist",
+        }
+
+    monkeypatch.setattr(FactoryRpc, "http", runtime_http)
+    app = w.apps.active()[0]
+    store = w.memory.provision(app.id, "agent") + "/generalist"
+    w.memory._access(app.id, store, True)
+    w.memory.remember(app.id, store, "Buttons use sharp corners", tags=["person:bill"])
+    w.memory.remember(app.id, store, "Run make lint before a PR")
+    w.memory.remember(app.id, store, "Working on PR 12", kind="note")
+    client.post(
+        "/workplace/api/personal/chats/factory-personal/messages",
+        json={"text": "Sharper corners please", "submission_id": str(uuid.uuid4())},
+    )
+    data = client.get("/workplace/api/personal/agents/generalist/readiness").json()
+    assert data["agent"] == "generalist" and data["factory_error"] is None
+    assert len(data["weeks"]) >= 8
+    this_week = data["weeks"][-1]
+    assert this_week["messages"] == 1
+    assert this_week["lessons"] == 2 and this_week["personal_lessons"] == 1
+    assert this_week["runs"] == 1 and this_week["failed"] == 0
+    rate = this_week["pass_rates"]["task_compliance"]
+    assert rate["passed"] == 1 and rate["graded"] == 2
+    assert (
+        client.get("/workplace/api/personal/agents/Bad-Name/readiness").status_code
+        == 422
+    )
+
+
+def test_each_chat_carries_its_latest_public_message(personal):
+    w, client, _, _ = personal
+    signin(w, client)
+    base = "/workplace/api/personal/chats"
+    client.post(
+        base + "/factory-personal/messages",
+        json={"text": "book the venue", "submission_id": str(uuid.uuid4())},
+    )
+    chats = {c["id"]: c for c in client.get(base).json()["chats"]}
+    last = chats["factory-personal"]["last_message"]
+    assert last["text"] == "book the venue" and last["author_name"] == "Bill"
+    assert last["role"] == "user" and last["at"] > 0
+    assert chats["main-foreman"]["last_message"] is None
+
+
+def test_automations_view_marks_runs_whose_chat_can_be_opened(personal, monkeypatch):
+    from omniagents_workplace.factory_models import FactoryRpc
+
+    w, client, _, _ = personal
+    signin(w, client)
+    view = {
+        "since": 0,
+        "automations": [
+            {
+                "name": "pr-opened",
+                "runs": [
+                    {"id": 1, "session_id": "auto-1", "status": "completed"},
+                    {"id": 2, "session_id": "gone", "status": "failed"},
+                ],
+                "skipped": [],
+            }
+        ],
+    }
+
+    async def runtime_http(self, method, path, **kwargs):
+        if path.startswith("/integrations/automations"):
+            assert "days=7" in path
+            return view
+        if path.startswith("/integrations/conversations"):
+            return {
+                "conversations": [
+                    {"id": "auto-1", "agent": "code_reviewer", "title": "PR #1"}
+                ]
+            }
+        return {
+            "routing_version": 1,
+            "agents": ["generalist"],
+            "chat_agent": "generalist",
+        }
+
+    monkeypatch.setattr(FactoryRpc, "http", runtime_http)
+    data = client.get("/workplace/api/factory/automations").json()
+    runs = data["automations"][0]["runs"]
+    assert [r["chat"] for r in runs] == [True, False]
+    assert data["chat_agent"] == "generalist" and data["chat_agents"] == ["generalist"]
+    member = w.add_person(username="viewer", name="Viewer", email="v@example.test")
+    signin(w, client, member)
+    assert client.get("/workplace/api/factory/automations").status_code == 403

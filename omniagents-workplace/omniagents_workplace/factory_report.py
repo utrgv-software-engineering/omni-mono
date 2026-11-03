@@ -457,3 +457,67 @@ def factory_report(
         "by_version": _by_version(out_runs),
         "promotions": _promotions(w, factory_repo, since),
     }
+
+
+def agent_readiness(
+    runs: List[Dict[str, Any]],
+    lessons: List[Dict[str, Any]],
+    messages: List[float],
+    agent: str,
+    *,
+    since: float,
+) -> Dict[str, Any]:
+    """Whether an agent is ready to work unattended, week by week.
+
+    ``messages`` are when people wrote to the agent in its chats; ``lessons``
+    the memories it gained (attributed to a person when tagged ``person:``);
+    ``runs`` the factory's runs, of which this agent's own count, and every
+    grade of this agent counts, including where another agent called it.
+    Lessons that level off while people keep working with it, and passing
+    grades on its own runs, are the evidence; neither is a verdict.
+    """
+    weeks: Dict[float, Dict[str, Any]] = {}
+
+    def week(at: float) -> Dict[str, Any]:
+        start = _bucket_start(at, "week")
+        return weeks.setdefault(
+            start,
+            {
+                "start": start,
+                "messages": 0,
+                "lessons": 0,
+                "personal_lessons": 0,
+                "runs": 0,
+                "failed": 0,
+                "grades": [],
+            },
+        )
+
+    at = _bucket_start(since, "week")
+    while at <= time.time():
+        week(at)
+        at += 7 * 86400
+    for when in messages:
+        if when >= since:
+            week(when)["messages"] += 1
+    for lesson in lessons:
+        if lesson["created_at"] < since or lesson["kind"] not in ("fact", "core"):
+            continue
+        slot = week(lesson["created_at"])
+        slot["lessons"] += 1
+        if any(tag.startswith("person:") for tag in lesson.get("tags") or []):
+            slot["personal_lessons"] += 1
+    for run in runs:
+        if run["agent"] == agent:
+            slot = week(run["started_at"])
+            slot["runs"] += 1
+            slot["failed"] += int(run["status"] in ("failed", "interrupted"))
+        week(run["started_at"])["grades"] += [
+            g for g in run.get("grades") or [] if g.get("agent") == agent
+        ]
+    out = []
+    for start in sorted(weeks):
+        slot = weeks[start]
+        grades = slot.pop("grades")
+        out.append({**slot, "pass_rates": _rates(grades)})
+    return {"agent": agent, "weeks": out}

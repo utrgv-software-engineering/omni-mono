@@ -17,6 +17,7 @@ continues it.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 import time
@@ -28,6 +29,8 @@ from .events import IncomingEvent
 __all__ = ["EventStore"]
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS automation_routes (name TEXT PRIMARY KEY, configuration TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS automation_switches (name TEXT PRIMARY KEY, enabled INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     provider TEXT NOT NULL,
@@ -119,6 +122,33 @@ CREATE TABLE IF NOT EXISTS threads (
 """
 
 
+#: GitHub events that end a pull request's or issue's conversation.
+CLOSING_EVENTS = ("pull_request_merged", "pull_request_closed", "issue_closed")
+
+
+def conversation_title(provider, thread_key, payload, automation):
+    """What a person calls the work an automation conversation is about."""
+    if provider == "github":
+        kind = "PR" if payload.get("pull_request") else "Issue"
+        item = payload.get("pull_request") or payload.get("issue") or {}
+        if item.get("number") is not None:
+            title = str(item.get("title") or "").strip()
+            return f"{kind} #{item['number']}" + (f" · {title}" if title else "")
+    if provider == "linear":
+        issue = payload.get("issue") or {}
+        label = " · ".join(
+            str(issue[k]).strip() for k in ("identifier", "title") if issue.get(k)
+        )
+        if label:
+            return label
+    if provider == "slack":
+        text = str((payload.get("event") or {}).get("text") or "")
+        text = " ".join(re.sub(r"<@[A-Z0-9]+>", "", text).split())
+        if text:
+            return text[:60]
+    return automation.replace("-", " ").replace("_", " ").capitalize()
+
+
 class EventStore:
     """SQLite store; safe to share across the server's tasks and threads."""
 
@@ -130,6 +160,39 @@ class EventStore:
         self._db.row_factory = sqlite3.Row
         with self._lock:
             self._db.executescript(_SCHEMA)
+            self._db.commit()
+
+    def automation_routes(self):
+        with self._lock:
+            return {
+                r["name"]: json.loads(r["configuration"])
+                for r in self._db.execute("SELECT * FROM automation_routes")
+            }
+
+    def set_automation_route(self, name, configuration):
+        with self._lock:
+            self._db.execute(
+                "INSERT OR REPLACE INTO automation_routes VALUES (?, ?)",
+                (name, json.dumps(configuration)),
+            )
+            self._db.commit()
+
+    def turned_off(self) -> set:
+        """Automations an admin turned off: they start nothing until turned on."""
+        with self._lock:
+            return {
+                r["name"]
+                for r in self._db.execute(
+                    "SELECT name FROM automation_switches WHERE enabled = 0"
+                )
+            }
+
+    def set_automation_enabled(self, name: str, enabled: bool) -> None:
+        with self._lock:
+            self._db.execute(
+                "INSERT OR REPLACE INTO automation_switches VALUES (?, ?)",
+                (name, int(bool(enabled))),
+            )
             self._db.commit()
 
     def mark_interrupted(self) -> int:
@@ -414,6 +477,46 @@ class EventStore:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def conversations(self, session_id=None):
+        """Automation conversations: one per (session, agent), titled for what
+        started it, and ``closed`` once its pull request or issue closed."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT d.session_id, d.agent, d.automation, d.started_at,"
+                " e.provider, e.thread_key, e.payload FROM dispatches d"
+                " JOIN events e ON e.id = d.event_id "
+                + ("WHERE d.session_id = ? " if session_id else "")
+                + "ORDER BY d.started_at",
+                (session_id,) if session_id else (),
+            ).fetchall()
+            closed = {
+                row[0]
+                for row in self._db.execute(
+                    "SELECT DISTINCT thread_key FROM events WHERE provider = 'github'"
+                    " AND event IN (?, ?, ?) AND thread_key IS NOT NULL",
+                    CLOSING_EVENTS,
+                )
+            }
+        first: Dict[tuple, Dict[str, Any]] = {}
+        for row in rows:
+            key = (row["session_id"], row["agent"])
+            if key in first:
+                continue
+            payload = json.loads(row["payload"])
+            first[key] = {
+                "id": row["session_id"],
+                "agent": row["agent"],
+                "automation": row["automation"],
+                "title": conversation_title(
+                    row["provider"], row["thread_key"], payload, row["automation"]
+                ),
+                "created_at": row["started_at"],
+                "source": row["provider"],
+                "thread_key": row["thread_key"],
+                "closed": row["provider"] == "github" and row["thread_key"] in closed,
+            }
+        return sorted(first.values(), key=lambda c: c["created_at"], reverse=True)[:500]
+
     def runs_since(self, since: float) -> List[Dict[str, Any]]:
         """The runs that started at or after ``since``, oldest first: what started
         each, how it ended, its last message and its grades."""
@@ -469,6 +572,38 @@ class EventStore:
                     control=row["control"],
                 ),
             )
+            for row in rows
+        ]
+
+    def event_outcomes(self, since: float, limit: int = 2000) -> List[Dict[str, Any]]:
+        """Events received since ``since``, newest first: what each was, how the
+        factory settled it, and which automations it started."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT e.id, e.provider, e.event, e.thread_key, e.received_at, e.status,"
+                " e.detail, GROUP_CONCAT(d.automation) AS automations FROM events e"
+                " LEFT JOIN dispatches d ON d.event_id = e.id WHERE e.received_at >= ?"
+                " GROUP BY e.id ORDER BY e.id DESC LIMIT ?",
+                (since, limit),
+            ).fetchall()
+        return [
+            {
+                **{
+                    k: row[k]
+                    for k in (
+                        "id",
+                        "provider",
+                        "event",
+                        "thread_key",
+                        "received_at",
+                        "status",
+                        "detail",
+                    )
+                },
+                "automations": (
+                    (row["automations"] or "").split(",") if row["automations"] else []
+                ),
+            }
             for row in rows
         ]
 
