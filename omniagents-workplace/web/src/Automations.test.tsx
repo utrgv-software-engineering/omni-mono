@@ -89,23 +89,66 @@ afterEach(() => {
 it("reads each automation as one sentence and its health as one word", () => {
   expect(sentence(automations[0], "Improver")).toBe("Every day at 02:00 (server time) → Improver reviews the day and proposes factory changes");
   expect(sentence(automations[2], "Foreman")).toBe("When someone messages the factory directly in Slack → Foreman slack dms");
-  expect(automations.map(health)).toEqual(["ok", "never", "quiet"]);
+  // Events its filters left out are not a problem: it has nothing to do yet.
+  expect(automations.map(health)).toEqual(["ok", "quiet", "quiet"]);
   expect(health({ ...automations[0], enabled: false })).toBe("off");
+  expect(health({ ...automations[0], blocked: "Self-improvement is off" })).toBe("blocked");
   expect(health({ ...automations[0], runs: [{ ...automations[0].runs[0], status: "failed" }] })).toBe("failing");
 });
 
-it("puts what needs attention first, then each agent's automations in Chat's order", async () => {
+const tabs = () => [...node.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+const openTab = async (label: string) =>
+  act(async () => {
+    tabs().find(t => t.textContent?.startsWith(label))!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+  });
+
+it("shows one agent's automations at a time, in Chat's order", async () => {
   await act(async () => root.render(<AutomationsApp navigate={vi.fn()} />));
-  const sections = [...node.querySelectorAll("section")].map(s => s.getAttribute("aria-label"));
-  expect(sections).toEqual(["Needs attention", "Foreman", "Improver"]);
-  const attention = node.querySelector('section[aria-label="Needs attention"]')!;
-  expect(attention.textContent).toContain("checks the docs still match the API");
-  expect(attention.querySelector('[aria-label="Never runs: its filters leave out every event"]')).not.toBeNull();
+  expect(tabs().map(t => t.textContent)).toEqual(["Foreman · 1", "Maintainer · 1", "Improver · 1"]);
+  // The first tab opens first.
+  expect(node.textContent).toContain("Foreman slack dms");
+  expect(node.textContent).not.toContain("checks the docs still match the API");
+  await openTab("Maintainer");
+  // Filters leaving events out is them working: nothing to attend to.
+  expect(node.textContent).toContain("checks the docs still match the API");
+  expect(node.querySelector('section[aria-label="Needs attention"]')).toBeNull();
   expect(node.textContent).not.toContain("judged");
+});
+
+it("flags the tab with something to do and says what it is", async () => {
+  const failed = { ...automations[2], runs: [{ id: 9, agent: "foreman", session_id: "s-9", status: "failed", started_at: 1_700_000_200 }] };
+  const blocked = { ...automations[0], blocked: "Self-improvement is off" };
+  const original = [...automations];
+  automations.splice(0, 3, blocked, automations[1], failed);
+  try {
+    await act(async () => root.render(<AutomationsApp navigate={vi.fn()} />));
+    expect(tabs().filter(t => t.querySelector('[aria-label="Needs attention"]')).map(t => t.textContent)).toEqual(["Foreman · 1", "Improver · 1"]);
+    await openTab("Foreman");
+    expect(node.querySelector('section[aria-label="Needs attention"]')!.textContent).toContain("Its last run failed. Open it to see why.");
+    await openTab("Improver");
+    expect(node.textContent).toContain("Self-improvement is off. Open it to see how to turn it on.");
+  } finally {
+    automations.splice(0, 3, ...original);
+  }
+});
+
+it("says when self-improvement stops an automation and opens Factory changes", async () => {
+  const original = automations[0];
+  automations[0] = { ...original, blocked: "Self-improvement is off" };
+  const settings = vi.fn();
+  try {
+    await act(async () => root.render(<AutomationsApp name="nightly-review" navigate={vi.fn()} onFactorySettings={settings} />));
+    expect(node.querySelector('[role="status"]')!.textContent).toContain("Self-improvement is off, so this automation can't run.");
+    await act(async () => button("Open Factory changes").click());
+    expect(settings).toHaveBeenCalled();
+  } finally {
+    automations[0] = original;
+  }
 });
 
 it("turns an automation off from the list", async () => {
   await act(async () => root.render(<AutomationsApp navigate={vi.fn()} />));
+  await openTab("Improver");
   await act(async () => button("Turn off Nightly review").click());
   expect(fetcher).toHaveBeenCalledWith(
     "/workplace/api/factory/automations/nightly-review/enabled",
@@ -138,7 +181,7 @@ it("keeps ignored events behind a toggle", async () => {
     history.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
   });
   expect(node.textContent).not.toContain("no automation matches");
-  await act(async () => button("Show the event it ignored").click());
+  await act(async () => button("Show the event it didn't run for").click());
   expect(node.textContent).toContain("no automation matches");
 });
 

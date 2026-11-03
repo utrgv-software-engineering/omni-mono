@@ -761,7 +761,7 @@ export default function App({
           : <p className="p-6">Chat currently requires an administrator account.</p>
       ) : automationsRoute ? (
         account.admin && factory
-          ? <AutomationsApp key={path} name={path.startsWith("/automations/") ? decodeURIComponent(path.slice("/automations/".length)) : undefined} navigate={navigate} />
+          ? <AutomationsApp key={path} name={path.startsWith("/automations/") ? decodeURIComponent(path.slice("/automations/".length)) : undefined} navigate={navigate} onFactorySettings={() => {setRepositoryDialogMode("factory");setRepositoriesOpen(true);}} />
           : <p className="p-6">Automations require a factory administrator.</p>
       ) : agentsRoute ? (
         account.admin && factory

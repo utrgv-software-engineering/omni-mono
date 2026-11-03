@@ -568,6 +568,85 @@ async def test_automations_view_shows_triggers_runs_and_events_it_skipped(
 
 
 @pytest.mark.asyncio
+async def test_automations_view_counts_only_its_own_timer_and_says_what_stops_it(
+    tmp_path, monkeypatch
+):
+    """Another automation's timer is not an event this one left out, and a
+    self-improvement automation says when self-improvement is off."""
+    import httpx
+    from fastapi import FastAPI
+    from omniagents.integrations import personal, self_improvement
+    from omniagents.integrations.server import mount_integrations
+    from omniagents.rpc.auth import ConnectionAuthenticator
+
+    monkeypatch.setenv("OMNIAGENTS_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.delenv("OMNIAGENTS_SANDBOX_PROFILE", raising=False)
+    root = tmp_path / "factory"
+    (root / "agents" / "coordinator").mkdir(parents=True)
+    (root / "agents" / "coordinator" / "agent.yml").write_text("name: coordinator\n")
+    for name, extra in [("weekly", ""), ("nightly", "self_improvement: true\n")]:
+        (root / "automations" / name).mkdir(parents=True)
+        (root / "automations" / name / "automation.md").write_text(
+            f"---\n{extra}triggers:\n  - provider: schedule\n    event: cron_fired\n"
+            f"    schedule:\n      name: {name}\n      cron: '0 2 * * *'\n---\nDo the {name} work.\n"
+        )
+    (root / "project.yml").write_text(
+        "product:\n  name: view-test\nagents:\n  entrypoint: coordinator\n"
+        "memory:\n  url: http://memory.invalid\n"
+    )
+
+    async def turn(self, agent, session_id, prompt, progress=None):
+        return RunResult(output="done")
+
+    monkeypatch.setattr(personal.ConversationRunner, "__call__", turn)
+    monkeypatch.setattr(self_improvement, "policy", lambda: {"enabled": False})
+    app = FastAPI()
+    app.state.agent_service = SimpleNamespace(_release_gate=None)
+    app.state.connection_authenticator = ConnectionAuthenticator.from_spec(
+        SimpleNamespace(security_config={}), auth_token="t"
+    )
+    spec = SimpleNamespace(
+        manifest_path=str(root / "project.yml"), agent_slug="coordinator"
+    )
+    intake = mount_integrations(app, spec, SimpleNamespace())
+    auth = {"Authorization": "Bearer t"}
+
+    async def view():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://t"
+        ) as client:
+            data = (await client.get("/integrations/automations", headers=auth)).json()
+        return {a["name"]: a for a in data["automations"]}
+
+    def timer(name, delivery):
+        return IncomingEvent(
+            provider="schedule",
+            event="cron_fired",
+            delivery_id=delivery,
+            payload={"schedule": name},
+            filters={"schedules": [name]},
+        )
+
+    await intake.accept(timer("weekly", "w1"))
+    await intake.drain()
+    by_name = await view()
+    assert len(by_name["weekly"]["runs"]) == 1
+    assert by_name["nightly"]["skipped"] == []
+    assert by_name["nightly"]["blocked"] == "Self-improvement is off"
+    assert by_name["weekly"]["blocked"] is None
+
+    # Its own timer, while it is turned off, is one it left out.
+    intake.store.set_automation_enabled("weekly", False)
+    await intake.accept(timer("weekly", "w2"))
+    await intake.drain()
+    assert [e["detail"] for e in (await view())["weekly"]["skipped"]] == [
+        "turned off: weekly"
+    ]
+    intake.store.close()
+
+
+@pytest.mark.asyncio
 async def test_publishing_an_edit_moves_the_factory_and_its_runs(tmp_path, monkeypatch):
     """The Workplace saves an edit to the factory's repository and asks the
     factory to run it: the checkout moves, and the next run is recorded with it."""

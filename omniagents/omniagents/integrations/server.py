@@ -180,6 +180,20 @@ def parse_integrations(entries: Any) -> List[Config]:
     return configs
 
 
+def _left_out(name: str, kinds: set, event: Dict[str, Any]) -> bool:
+    """Whether ``event`` was one of automation ``name``'s kinds that it did not run for."""
+    if (event["provider"], event["event"]) not in kinds or name in event["automations"]:
+        return False
+    if event["provider"] == "schedule":
+        # Each timer belongs to one automation: another automation's timer firing
+        # is not one this left out, only its own while it was turned off.
+        detail = event.get("detail") or ""
+        return detail.startswith("turned off: ") and name in detail[
+            len("turned off: ") :
+        ].split(", ")
+    return True
+
+
 def mount_integrations(
     app: Any, spec: Any, resources: Any, *, auth_token: Optional[str] = None
 ) -> Optional[EventIntake]:
@@ -331,12 +345,16 @@ def mount_integrations(
         since = clock.time() - max(0.0, min(float(days), 90.0)) * 86400
         overrides = store.automation_routes()
         off = store.turned_off()
+        from .self_improvement import allowed
+
         runs = await asyncio.to_thread(store.runs_since, since)
         events = await asyncio.to_thread(store.event_outcomes, since)
         out = []
         for a in list_automations(project.root):
             kinds = {(t.get("provider"), t.get("event")) for t in a.triggers}
             own = [r for r in runs if r["automation"] == a.name]
+            # What stops it running at all, said so a person can fix it.
+            blocked = None if await allowed(a) else "Self-improvement is off"
             out.append(
                 {
                     "name": a.name,
@@ -369,12 +387,8 @@ def mount_integrations(
                         }
                         for r in reversed(own)
                     ][:50],
-                    "skipped": [
-                        e
-                        for e in events
-                        if (e["provider"], e["event"]) in kinds
-                        and a.name not in e["automations"]
-                    ][:20],
+                    "blocked": blocked,
+                    "skipped": [e for e in events if _left_out(a.name, kinds, e)][:20],
                 }
             )
         return {"automations": out, "since": since}

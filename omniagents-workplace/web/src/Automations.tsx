@@ -40,6 +40,8 @@ export type Automation = {
   conversation: "auto" | "thread" | "new";
   runs: Run[];
   skipped: Skipped[];
+  /** What stops it running at all ("Self-improvement is off"); null when nothing does. */
+  blocked?: string | null;
 };
 type View = {
   automations: Automation[];
@@ -63,11 +65,11 @@ const SOURCES: Record<string, { icon: LucideIcon; label: string }> = {
   memory: { icon: Archive, label: "Memory" },
 };
 
-type Health = "off" | "failing" | "never" | "running" | "ok" | "quiet";
+type Health = "off" | "blocked" | "failing" | "running" | "ok" | "quiet";
 const HEALTH: Record<Health, { label: string; dot: string }> = {
   off: { label: "Off", dot: "border border-muted-foreground" },
+  blocked: { label: "Can't run", dot: "bg-amber-500" },
   failing: { label: "Its last run failed", dot: "bg-destructive" },
-  never: { label: "Never runs: its filters leave out every event", dot: "bg-amber-500" },
   running: { label: "Running", dot: "bg-sky-500 animate-pulse" },
   ok: { label: "Working", dot: "bg-emerald-500" },
   quiet: { label: "Nothing to do yet", dot: "bg-muted-foreground/40" },
@@ -79,12 +81,18 @@ const when = (seconds?: number | null) => (seconds ? new Date(seconds * 1000).to
 /** How an automation is doing, in one of six words a dot can carry. */
 export function health(automation: Automation): Health {
   if (!automation.enabled) return "off";
+  if (automation.blocked) return "blocked";
   const last = automation.runs[0];
   if (last?.status === "running") return "running";
   if (last && ["failed", "interrupted"].includes(last.status)) return "failing";
-  if (!automation.runs.length && automation.skipped.length) return "never";
   return automation.runs.length ? "ok" : "quiet";
 }
+
+/** Whether a person has something to do about it: a failed run to look at, or something stopping it. */
+const needsAttention = (automation: Automation) => ["failing", "blocked"].includes(health(automation));
+
+/** The agent tab last open, so coming back from an automation returns to it. */
+let lastTab: string | undefined;
 
 /** "When a pull request is opened in api → Code Reviewer reviews the pull request". */
 export function sentence(automation: Automation, agentName: string) {
@@ -109,8 +117,9 @@ function HealthDot({ value }: { value: Health }) {
 }
 
 /** Every automation, as a sentence each: what starts it and which agent does what. */
-export function AutomationsApp({ name, navigate }: { name?: string; navigate: (path: string) => void }) {
+export function AutomationsApp({ name, navigate, onFactorySettings }: { name?: string; navigate: (path: string) => void; onFactorySettings?: () => void }) {
   const [view, setView] = useState<View>();
+  const [tab, setTab] = useState(lastTab);
   const [agents, setAgents] = useState<string[]>([]);
   const [error, setError] = useState("");
   const load = useCallback(async () => {
@@ -169,15 +178,19 @@ export function AutomationsApp({ name, navigate }: { name?: string; navigate: (p
     );
   if (name && !selected) return <p className="p-6 text-sm">No automation named “{name}”.</p>;
   if (selected)
-    return <AutomationDetail automation={selected} agents={agents} agentName={agentName} navigate={navigate} reload={load} onToggle={enabled => void toggle(selected, enabled)} />;
+    return <AutomationDetail automation={selected} agents={agents} agentName={agentName} navigate={navigate} reload={load} onToggle={enabled => void toggle(selected, enabled)} onFactorySettings={onFactorySettings} />;
 
   const order = [...new Set([view.chat_agent, ...(view.chat_agents ?? [])].filter((a): a is string => !!a))];
   const rank = (agent: string) => (order.includes(agent) ? order.indexOf(agent) : order.length);
-  const attention = view.automations.filter(a => ["failing", "never"].includes(health(a)));
-  const byAgent = [...new Set(view.automations.map(a => a.agent))]
+  // One tab per agent: Chat's agents always (so it's clear where theirs will go), then any other agent with automations.
+  const tabs = [...new Set([...order, ...view.automations.map(a => a.agent)])]
     .sort((a, b) => rank(a) - rank(b) || agentName(a).localeCompare(agentName(b)))
-    .map(agent => ({ agent, items: view.automations.filter(a => a.agent === agent && !attention.includes(a)) }))
-    .filter(group => group.items.length);
+    .map(agent => ({ agent, items: view.automations.filter(a => a.agent === agent) }));
+  const current = tabs.some(t => t.agent === tab) ? tab! : tabs[0]?.agent;
+  const choose = (agent: string) => {
+    lastTab = agent;
+    setTab(agent);
+  };
 
   const row = (automation: Automation) => (
     <li key={automation.name} className="flex items-center gap-3 px-4 py-3">
@@ -189,6 +202,11 @@ export function AutomationsApp({ name, navigate }: { name?: string; navigate: (p
         className={`min-w-0 flex-1 text-left text-sm hover:underline ${automation.enabled ? "" : "text-muted-foreground"}`}
       >
         {sentence(automation, agentName(automation.agent))}
+        {needsAttention(automation) && (
+          <span className="block text-xs text-muted-foreground">
+            {health(automation) === "blocked" ? `${automation.blocked}. Open it to see how to turn it on.` : "Its last run failed. Open it to see why."}
+          </span>
+        )}
       </button>
       <HealthDot value={health(automation)} />
       <Switch
@@ -210,21 +228,45 @@ export function AutomationsApp({ name, navigate }: { name?: string; navigate: (p
           <Button variant="outline" size="sm" onClick={() => navigate(`/automations/${encodeURIComponent(NEW)}`)}><Plus />New automation</Button>
         </div>
         {view.automations.length === 0 && <p className="text-sm text-muted-foreground">This factory has no automations.</p>}
-        {attention.length > 0 && (
-          <section aria-label="Needs attention">
-            <h2 className="mb-2 text-sm font-semibold">Needs attention</h2>
-            <ul className="divide-y rounded-lg border border-amber-500/40">{attention.map(row)}</ul>
-          </section>
+        {current && (
+          <Tabs value={current} onValueChange={choose}>
+            <TabsList className="h-auto flex-wrap justify-start">
+              {tabs.map(({ agent, items }) => (
+                <TabsTrigger key={agent} value={agent} className="gap-2">
+                  <AgentAvatar seed={agent} size={16} />
+                  {agentName(agent)} · {items.length}
+                  {items.some(needsAttention) && <span className="size-2 rounded-full bg-destructive" role="img" aria-label="Needs attention" />}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+            {tabs.map(({ agent, items }) => {
+              const attention = items.filter(needsAttention);
+              const rest = items.filter(a => !needsAttention(a));
+              return (
+                <TabsContent key={agent} value={agent} className="flex flex-col gap-6 pt-4">
+                  {items.length === 0 && (
+                    <div className="flex flex-col items-start gap-2 rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
+                      No automations yet. Add one and choose {agentName(agent)} to run it.
+                      <Button variant="outline" size="sm" onClick={() => navigate(`/automations/${encodeURIComponent(NEW)}`)}><Plus />New automation</Button>
+                    </div>
+                  )}
+                  {attention.length > 0 && (
+                    <section aria-label="Needs attention">
+                      <h2 className="mb-2 text-sm font-semibold">Needs attention</h2>
+                      <ul className="divide-y rounded-lg border border-amber-500/40">{attention.map(row)}</ul>
+                    </section>
+                  )}
+                  {rest.length > 0 && (
+                    <section aria-label={agentName(agent)}>
+                      {attention.length > 0 && <h2 className="mb-2 text-sm font-semibold">Everything else</h2>}
+                      <ul className="divide-y rounded-lg border">{rest.map(row)}</ul>
+                    </section>
+                  )}
+                </TabsContent>
+              );
+            })}
+          </Tabs>
         )}
-        {byAgent.map(group => (
-          <section key={group.agent} aria-label={agentName(group.agent)}>
-            <h2 className="mb-2 flex items-center gap-2 text-sm font-semibold">
-              <AgentAvatar seed={group.agent} size={20} />
-              {agentName(group.agent)}
-            </h2>
-            <ul className="divide-y rounded-lg border">{group.items.map(row)}</ul>
-          </section>
-        ))}
       </div>
     </div>
   );
@@ -237,6 +279,7 @@ function AutomationDetail({
   navigate,
   reload,
   onToggle,
+  onFactorySettings,
 }: {
   automation: Automation;
   agents: string[];
@@ -244,6 +287,7 @@ function AutomationDetail({
   navigate: (path: string) => void;
   reload: () => Promise<void>;
   onToggle: (enabled: boolean) => void;
+  onFactorySettings?: () => void;
 }) {
   const [agent, setAgent] = useState(automation.agent);
   const [conversation, setConversation] = useState(automation.conversation);
@@ -320,6 +364,20 @@ function AutomationDetail({
           </span>
         </div>
         <p className="text-sm">{sentence(automation, agentName(automation.agent))}</p>
+        {state === "blocked" && (
+          <div role="status" className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/40 p-3 text-sm">
+            <span className="flex-1">{automation.blocked}, so this automation can't run. It's turned on in Factory changes, after choosing the factory's repository.</span>
+            {onFactorySettings && <Button variant="outline" size="sm" onClick={onFactorySettings}>Open Factory changes</Button>}
+          </div>
+        )}
+        {state === "failing" && (
+          <div role="status" className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/40 p-3 text-sm">
+            <span className="min-w-0 flex-1">
+              Its last run failed{automation.runs[0].error ? <>: <span className="text-destructive">{automation.runs[0].error}</span></> : "."}
+            </span>
+            <Button variant="outline" size="sm" onClick={() => navigate(`/factory/runs/${automation.runs[0].id}`)}>Run details</Button>
+          </div>
+        )}
         {editing && (
           <section aria-label="Edit the automation" className="flex flex-col gap-2">
             {form === undefined ? (
@@ -425,7 +483,7 @@ function AutomationDetail({
             {automation.skipped.length > 0 && (
               <div>
                 <Button variant="link" size="sm" className="px-0" onClick={() => setIgnored(value => !value)}>
-                  {ignored ? "Hide" : "Show"} {automation.skipped.length === 1 ? "the event" : `the ${automation.skipped.length} events`} it ignored
+                  {ignored ? "Hide" : "Show"} {automation.skipped.length === 1 ? "the event" : `the ${automation.skipped.length} events`} it didn't run for
                 </Button>
                 {ignored && (
                   <ul className="mt-2 flex flex-col divide-y rounded-lg border">
