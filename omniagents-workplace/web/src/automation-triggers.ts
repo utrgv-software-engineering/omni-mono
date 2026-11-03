@@ -58,43 +58,64 @@ function and(items: string[]) {
   return items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} or ${items[items.length - 1]}`;
 }
 
-/** The trigger's filter in words: where, which labels, who. */
-function conditions(filter: Record<string, unknown> = {}) {
-  const out: string[] = [];
-  const repos = list(filter.repos);
-  if (repos.length) out.push(`in ${and(repos)}`);
-  const bases = list(filter.base_branches);
-  if (bases.length) out.push(`into ${and(bases)}`);
-  const branches = list(filter.branches);
-  if (branches.length) out.push(`on ${and(branches)}`);
-  const paths = list(filter.paths);
-  if (paths.length) out.push(`touching ${and(paths)}`);
+/** One thing a trigger's filter narrows to, and the values it allows. */
+export type Condition = {
+  kind: "repo" | "base" | "branch" | "path" | "label" | "not_label" | "mention" | "assignee" | "outcome" | "channel" | "emoji" | "team";
+  values: string[];
+};
+
+/** The trigger's filter as its parts, in the order a sentence says them: where, which labels, who. */
+export function conditionParts(filter: Record<string, unknown> = {}): Condition[] {
+  const out: Condition[] = [];
+  const add = (kind: Condition["kind"], value: unknown) => {
+    const values = list(value);
+    if (values.length) out.push({ kind, values });
+  };
+  add("repo", filter.repos);
+  add("base", filter.base_branches);
+  add("branch", filter.branches);
+  add("path", filter.paths);
   const labels = filter.labels;
-  if (labels && typeof labels === "object" && !Array.isArray(labels)) {
-    const without = list((labels as { not_in?: unknown }).not_in);
-    if (without.length) out.push(`without the labels ${without.join(", ")}`);
-  } else if (list(labels).length) {
-    out.push(`labelled ${and(list(labels))}`);
-  }
-  const mentioned = list(filter.mentioned);
-  if (mentioned.length) out.push(`mentioning @${and(mentioned)}`);
-  const assignees = list(filter.assignees);
-  if (assignees.length) out.push(`assigned to @${and(assignees)}`);
-  const conclusions = list(filter.conclusions);
-  if (conclusions.length) out.push(`that ended in ${and(conclusions)}`);
-  const channels = list(filter.channels);
-  if (channels.length) out.push(`in #${and(channels)}`);
-  const emojis = list(filter.emojis);
-  if (emojis.length) out.push(`with ${and(emojis.map(e => `:${e}:`))}`);
-  const teams = list(filter.teams);
-  if (teams.length) out.push(`for the ${and(teams)} team`);
+  if (labels && typeof labels === "object" && !Array.isArray(labels)) add("not_label", (labels as { not_in?: unknown }).not_in);
+  else add("label", labels);
+  add("mention", filter.mentioned);
+  add("assignee", filter.assignees);
+  add("outcome", filter.conclusions);
+  add("channel", filter.channels);
+  add("emoji", filter.emojis);
+  add("team", filter.teams);
   return out;
 }
 
-export function describeTrigger(trigger: Trigger) {
+const WORDS: Record<Condition["kind"], (values: string[]) => string> = {
+  repo: v => `in ${and(v)}`,
+  base: v => `into ${and(v)}`,
+  branch: v => `on ${and(v)}`,
+  path: v => `touching ${and(v)}`,
+  label: v => `labelled ${and(v)}`,
+  not_label: v => `without the labels ${v.join(", ")}`,
+  mention: v => `mentioning @${and(v)}`,
+  assignee: v => `assigned to @${and(v)}`,
+  outcome: v => `that ended in ${and(v)}`,
+  channel: v => `in #${and(v)}`,
+  emoji: v => `with ${and(v.map(e => `:${e}:`))}`,
+  team: v => `for the ${and(v)} team`,
+};
+
+/** The trigger's filter in words: where, which labels, who. */
+function conditions(filter: Record<string, unknown> = {}) {
+  return conditionParts(filter).map(c => WORDS[c.kind](c.values));
+}
+
+/** What happens, without the filter: "A CI workflow finishes", or the schedule in words. */
+export function describeEvent(trigger: Trigger) {
   if (trigger.provider === "schedule") return describeCron(trigger.schedule?.cron ?? "");
-  const kind = `${trigger.provider}:${trigger.event}`;
-  const what = EVENTS[kind] ?? `${trigger.provider}: ${trigger.event}`;
+  return EVENTS[`${trigger.provider}:${trigger.event}`] ?? `${trigger.provider}: ${trigger.event}`;
+}
+
+export function describeTrigger(trigger: Trigger) {
+  const what = describeEvent(trigger);
+  if (trigger.provider === "schedule") return what;
   const where = conditions(trigger.filter);
   return where.length ? `${what} ${where.join(", ")}` : what;
 }

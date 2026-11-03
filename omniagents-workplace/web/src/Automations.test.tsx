@@ -106,13 +106,42 @@ it("shows one agent's automations at a time, in Chat's order", async () => {
   await act(async () => root.render(<AutomationsApp navigate={vi.fn()} />));
   expect(tabs().map(t => t.textContent)).toEqual(["Foreman · 1", "Maintainer · 1", "Improver · 1"]);
   // The first tab opens first.
-  expect(node.textContent).toContain("Foreman slack dms");
-  expect(node.textContent).not.toContain("checks the docs still match the API");
+  // A row leads with what it does; the tab already says who.
+  expect(button("Slack dms").textContent).toBe("Slack dms");
+  expect(node.textContent).not.toContain("Checks the docs still match the API");
   await openTab("Maintainer");
   // Filters leaving events out is them working: nothing to attend to.
-  expect(node.textContent).toContain("checks the docs still match the API");
+  expect(button("Docs drift on push").textContent).toBe("Checks the docs still match the API");
   expect(node.querySelector('section[aria-label="Needs attention"]')).toBeNull();
   expect(node.textContent).not.toContain("judged");
+});
+
+it("shows what starts each automation as the event and a chip per filter value", async () => {
+  const original = automations[1];
+  automations[1] = {
+    ...original,
+    triggers: [
+      { provider: "github", event: "workflow_run_completed", filter: { repos: ["*/api", "*/web", "*/site"], branches: ["main"], conclusions: ["failure"] } },
+      { provider: "github", event: "push" },
+    ],
+  };
+  try {
+    await act(async () => root.render(<AutomationsApp navigate={vi.fn()} />));
+    await openTab("Maintainer");
+    const line = button("Docs drift on push").nextElementSibling!;
+    const chips = [...line.querySelectorAll('[data-slot="badge"]')].map(b => b.textContent);
+    // Several repositories fold into one chip on the list; it names them on hover.
+    expect(chips).toEqual(["3 repos", "main", "failure", "+1"]);
+    expect(line.textContent).toContain("A CI workflow finishes");
+    expect(line.querySelector('[title="api, web, site"]')).not.toBeNull();
+    expect(line.querySelector('[data-slot="badge"][class*="text-destructive"]')!.textContent).toBe("failure");
+    // On its own page, every repository is its own chip.
+    await act(async () => root.render(<AutomationsApp key="detail" name="docs-drift-on-push" navigate={vi.fn()} />));
+    const when = node.querySelector('section[aria-label="When"]')!;
+    expect([...when.querySelectorAll('[data-slot="badge"]')].map(b => b.textContent)).toEqual(["api", "web", "site", "main", "failure"]);
+  } finally {
+    automations[1] = original;
+  }
 });
 
 it("flags the tab with something to do and says what it is", async () => {

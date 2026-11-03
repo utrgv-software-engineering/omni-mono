@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Archive, ArrowLeft, Clock, FolderOpen, GitBranch, Hash, Pencil, Play, Plus, Sparkles, Trash2, Zap, type LucideIcon } from "lucide-react";
+import { Archive, ArrowLeft, AtSign, CircleCheck, CircleX, Clock, FileCode, FolderGit2, FolderOpen, GitBranch, GitMerge, Hash, Pencil, Play, Plus, Smile, Sparkles, Tag, Trash2, UserCheck, Users, Zap, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { AgentAvatar } from "@omniagents/chat-ui/components/omni-avatar/AgentAvatar";
 import { Badge } from "@omniagents/ui/badge";
@@ -8,7 +8,7 @@ import { NativeSelect, NativeSelectOption } from "@omniagents/ui/native-select";
 import { Switch } from "@omniagents/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@omniagents/ui/tabs";
 import { factoryFetch } from "./factory-scope";
-import { describeTrigger, scheduleName, type Trigger } from "./automation-triggers";
+import { conditionParts, describeEvent, describeTrigger, scheduleName, type Condition, type Trigger } from "./automation-triggers";
 import { FileEditor } from "./Agents";
 import { AutomationForm, deleteAutomation, loadAutomation, type AutomationFields } from "./AutomationForm";
 
@@ -94,6 +94,10 @@ const needsAttention = (automation: Automation) => ["failing", "blocked"].includ
 /** The agent tab last open, so coming back from an automation returns to it. */
 let lastTab: string | undefined;
 
+/** What it does, as a heading: "Reviews the pull request". */
+export const action = (automation: Automation) =>
+  (automation.description || humanize(automation.name).toLowerCase()).replace(/^\w/, c => c.toUpperCase());
+
 /** "When a pull request is opened in api → Code Reviewer reviews the pull request". */
 export function sentence(automation: Automation, agentName: string) {
   const [first, ...more] = automation.triggers;
@@ -110,6 +114,57 @@ function SourceIcon({ trigger }: { trigger?: Trigger }) {
   const source = SOURCES[trigger?.provider ?? ""] ?? { icon: Zap, label: trigger?.provider ?? "Automation" };
   const Icon = source.icon;
   return <Icon className="size-4 shrink-0 text-muted-foreground" role="img" aria-label={source.label} />;
+}
+
+const CHIPS: Record<Condition["kind"], { icon: LucideIcon; text: (value: string) => string; mono?: boolean }> = {
+  repo: { icon: FolderGit2, text: v => v.replace(/^\*\//, "") },
+  base: { icon: GitMerge, text: v => `into ${v}`, mono: true },
+  branch: { icon: GitBranch, text: v => v, mono: true },
+  path: { icon: FileCode, text: v => v, mono: true },
+  label: { icon: Tag, text: v => v },
+  not_label: { icon: Tag, text: v => `not ${v}` },
+  mention: { icon: AtSign, text: v => v },
+  assignee: { icon: UserCheck, text: v => `@${v}` },
+  outcome: { icon: CircleX, text: v => v },
+  channel: { icon: Hash, text: v => v },
+  emoji: { icon: Smile, text: v => `:${v}:` },
+  team: { icon: Users, text: v => v },
+};
+const OUTCOMES: Record<string, { icon: LucideIcon; className: string }> = {
+  failure: { icon: CircleX, className: "border-destructive/40 text-destructive" },
+  success: { icon: CircleCheck, className: "border-emerald-500/40 text-emerald-700 dark:text-emerald-400" },
+};
+
+function Chip({ icon: Icon, children, mono, className = "", title }: { icon: LucideIcon; children: React.ReactNode; mono?: boolean; className?: string; title?: string }) {
+  return (
+    <Badge variant="outline" title={title} className={`font-normal ${mono ? "font-mono" : ""} ${className}`}>
+      <Icon />{children}
+    </Badge>
+  );
+}
+
+/** What starts it: the event in words, then each filter value as a chip. Folded, several repositories are one chip that names them on hover. */
+function TriggerLine({ trigger, fold = false }: { trigger: Trigger; fold?: boolean }) {
+  return (
+    <span className="flex flex-wrap items-center gap-1.5">
+      <SourceIcon trigger={trigger} />
+      <span>{describeEvent(trigger)}</span>
+      {trigger.provider !== "schedule" &&
+        conditionParts(trigger.filter).flatMap(({ kind, values }) => {
+          const chip = CHIPS[kind];
+          if (fold && kind === "repo" && values.length > 1)
+            return [<Chip key={kind} icon={chip.icon} title={values.map(chip.text).join(", ")}>{values.length} repos</Chip>];
+          return values.map(value => {
+            const outcome = kind === "outcome" ? OUTCOMES[value] : undefined;
+            return (
+              <Chip key={`${kind}:${value}`} icon={outcome?.icon ?? chip.icon} mono={chip.mono} className={outcome?.className}>
+                {chip.text(value)}
+              </Chip>
+            );
+          });
+        })}
+    </span>
+  );
 }
 
 function HealthDot({ value }: { value: Health }) {
@@ -192,22 +247,30 @@ export function AutomationsApp({ name, navigate, onFactorySettings }: { name?: s
     setTab(agent);
   };
 
-  const row = (automation: Automation) => (
+  // Each tab is one agent, so a row leads with what it does and puts what starts it on a quieter line.
+  const row = (automation: Automation) => {
+    const [first, ...more] = automation.triggers;
+    return (
     <li key={automation.name} className="flex items-center gap-3 px-4 py-3">
-      <SourceIcon trigger={automation.triggers[0]} />
-      <button
-        type="button"
-        aria-label={humanize(automation.name)}
-        onClick={() => navigate(`/automations/${encodeURIComponent(automation.name)}`)}
-        className={`min-w-0 flex-1 text-left text-sm hover:underline ${automation.enabled ? "" : "text-muted-foreground"}`}
-      >
-        {sentence(automation, agentName(automation.agent))}
+      <div className={`flex min-w-0 flex-1 flex-col gap-1 ${automation.enabled ? "" : "opacity-60"}`}>
+        <button
+          type="button"
+          aria-label={humanize(automation.name)}
+          onClick={() => navigate(`/automations/${encodeURIComponent(automation.name)}`)}
+          className="text-left text-sm font-medium hover:underline"
+        >
+          {action(automation)}
+        </button>
+        <span className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+          {first ? <TriggerLine trigger={first} fold /> : "Started by hand"}
+          {more.length > 0 && <Badge variant="secondary" title={more.map(describeTrigger).join("\n")}>+{more.length}</Badge>}
+        </span>
         {needsAttention(automation) && (
-          <span className="block text-xs text-muted-foreground">
+          <span className="text-xs text-muted-foreground">
             {health(automation) === "blocked" ? `${automation.blocked}. Open it to see how to turn it on.` : "Its last run failed. Open it to see why."}
           </span>
         )}
-      </button>
+      </div>
       <HealthDot value={health(automation)} />
       <Switch
         aria-label={`${automation.enabled ? "Turn off" : "Turn on"} ${humanize(automation.name)}`}
@@ -215,7 +278,8 @@ export function AutomationsApp({ name, navigate, onFactorySettings }: { name?: s
         onCheckedChange={enabled => void toggle(automation, enabled)}
       />
     </li>
-  );
+    );
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-6">
@@ -415,7 +479,7 @@ function AutomationDetail({
               <h2 className="text-sm font-semibold">When</h2>
               <ul className="mt-2 flex flex-col gap-1 text-sm">
                 {automation.triggers.map((trigger, index) => (
-                  <li key={index} className="flex items-center gap-2"><SourceIcon trigger={trigger} />{describeTrigger(trigger)}</li>
+                  <li key={index}><TriggerLine trigger={trigger} /></li>
                 ))}
               </ul>
             </section>
