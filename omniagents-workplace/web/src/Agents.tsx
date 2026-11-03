@@ -13,6 +13,9 @@ import { factoryFetch } from "./factory-scope";
 import { API, json, loadTree, savedMessage, scopeLabel, send, type Definition, type DefinitionError, type EffectiveSkill, type Saved, type Tree } from "./definition-api";
 import { VersionHistory } from "./VersionHistory";
 
+/** A template's page: `/agents/template:<base>`. */
+const TEMPLATE = "template:";
+
 const CodeMirrorEditor = lazy(() => import("@omniagents/ui/code-editor").then(m => ({ default: m.CodeMirrorEditor })));
 
 export function useDark() {
@@ -120,13 +123,28 @@ export function AgentsApp({ agent, navigate }: { agent?: string; navigate: (path
   }, [load]);
   if (error) return <div role="alert" className="p-6 text-sm">{error} <Button variant="ghost" onClick={() => void load()}>Retry</Button></div>;
   if (!tree) return <p className="p-6 text-sm text-muted-foreground">Loading…</p>;
-  const current = tree.agents.find(a => a.key === agent) ?? tree.agents.find(a => a.chat) ?? tree.agents[0];
+  // A template (a base agents extend) is `template:<key>`; anything else an agent.
+  const template = agent?.startsWith(TEMPLATE) ? tree.bases.find(b => b.key === agent.slice(TEMPLATE.length)) : undefined;
+  const current = template ?? tree.agents.find(a => a.key === agent) ?? tree.agents.find(a => a.chat) ?? tree.agents[0];
   if (!current) return <p className="p-6 text-sm">This factory has no agents.</p>;
   const name = (key: string) => tree.agents.find(a => a.key === key)?.name ?? key;
-  const bases = (current.extends_chain ?? []).map(key => tree.bases.find(b => b.key === key)).filter((b): b is Definition => !!b && !!b.instructions);
-  const skills = current.effective_skills ?? [];
-  const shared = (s: EffectiveSkill) => s.scope.kind !== "agent";
+  const bases = (current.extends_chain ?? []).map(key => tree.bases.find(b => b.key === key)).filter((b): b is Definition => !!b);
   const sharedFolder = tree.skills[0]?.folder;
+  const factorySkills: EffectiveSkill[] = tree.skills.flatMap(f => f.skills.map(s => ({ ...s, scope: { kind: "factory" as const }, replaces: [] })));
+  const skills: EffectiveSkill[] = template
+    ? [...template.skills.map(s => ({ ...s, scope: { kind: "base" as const, base: template.key, name: template.name }, replaces: [] })), ...factorySkills]
+    : (current.effective_skills ?? []);
+  const shared = (s: EffectiveSkill) => (template ? true : s.scope.kind !== "agent");
+  // Where a new skill can go from this page, the first being the default.
+  const homes: { label: string; folder: string }[] = template
+    ? [
+        ...(template.skills_folder ? [{ label: `Every agent built on ${template.name}`, folder: template.skills_folder }] : []),
+        ...(sharedFolder && (template.agents?.length ?? 0) < tree.agents.length ? [{ label: "Every agent", folder: sharedFolder }] : []),
+      ]
+    : [
+        ...(current.skills_folder ? [{ label: `Only ${current.name}`, folder: current.skills_folder }] : []),
+        ...(sharedFolder ? [{ label: "Every agent", folder: sharedFolder }] : []),
+      ];
   const move = async (s: EffectiveSkill, to: string, message: string) => {
     try {
       const saved = await send<Saved>("/skill/move", "POST", { base_commit: tree.main, path: s.path, to, message }, "Unable to move the skill");
@@ -155,7 +173,7 @@ export function AgentsApp({ agent, navigate }: { agent?: string; navigate: (path
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-8">
         <div className="flex flex-wrap items-center gap-3">
           <Button variant="ghost" size="sm" onClick={() => navigate("/personal")}><ArrowLeft />Chat</Button>
-          <NativeSelect aria-label="Agent" className="ml-auto" value={current.key} onChange={e => navigate(`/agents/${encodeURIComponent(e.target.value)}`)}>
+          <NativeSelect aria-label="Agent" className="ml-auto" value={template ? TEMPLATE + template.key : current.key} onChange={e => navigate(`/agents/${encodeURIComponent(e.target.value)}`)}>
             <NativeSelectOptGroup label="In Chat">
               {chat.map(a => <NativeSelectOption key={a.key} value={a.key}>{a.name}</NativeSelectOption>)}
             </NativeSelectOptGroup>
@@ -164,36 +182,47 @@ export function AgentsApp({ agent, navigate }: { agent?: string; navigate: (path
                 {others.map(a => <NativeSelectOption key={a.key} value={a.key}>{a.name}</NativeSelectOption>)}
               </NativeSelectOptGroup>
             )}
+            {tree.bases.length > 0 && (
+              <NativeSelectOptGroup label="Templates">
+                {tree.bases.map(b => <NativeSelectOption key={b.key} value={TEMPLATE + b.key}>{b.name} template</NativeSelectOption>)}
+              </NativeSelectOptGroup>
+            )}
           </NativeSelect>
         </div>
-        <div className="flex items-center gap-3">
-          <AgentAvatar seed={current.key} size={40} />
+        {template ? (
           <div className="min-w-0">
-            <h1 className="text-xl font-semibold">{current.name}</h1>
-            {current.description && <p className="text-sm text-muted-foreground">{current.description}</p>}
+            <h1 className="text-xl font-semibold">{template.name} template</h1>
+            <p className="text-sm text-muted-foreground">
+              What every agent built on it starts from: {(template.agents ?? []).map(name).join(", ") || "no agents yet"}. Changes apply to all of them.
+            </p>
           </div>
-        </div>
+        ) : (
+          <div className="flex items-center gap-3">
+            <AgentAvatar seed={current.key} size={40} />
+            <div className="min-w-0">
+              <h1 className="text-xl font-semibold">{current.name}</h1>
+              {current.description && <p className="text-sm text-muted-foreground">{current.description}</p>}
+            </div>
+          </div>
+        )}
         <Status tree={tree} />
 
         <section aria-label="Instructions" className="flex flex-col gap-2">
           <h2 className="font-semibold">Instructions</h2>
           {current.instructions ? (
-            <FileEditor key={current.instructions} path={current.instructions} label={`${current.name}'s instructions`} onSaved={() => void load()} />
+            <FileEditor key={current.instructions} path={current.instructions} label={template ? `${template.name} template instructions` : `${current.name}'s instructions`} onSaved={() => void load()} />
           ) : (
             <p className="text-sm text-muted-foreground">
               {current.inline_instructions ? "These instructions are in the agent's settings, which change with a release." : "This agent has no instructions of its own."}
             </p>
           )}
           {bases.map(base => (
-            <details key={base.key} className="rounded-md border px-3 py-2">
-              <summary className="cursor-pointer text-sm">{(base.agents?.length ?? 0) > 1 ? `Every agent built on ${base.name} also follows these instructions` : `${current.name} also follows ${base.name}'s instructions`}</summary>
-              <p className="mt-2 text-sm text-muted-foreground">
-                {(base.agents?.length ?? 0) > 1 ? `Changes apply to ${base.agents!.map(name).join(", ")}.` : ""}
-              </p>
-              <div className="mt-2">
-                <FileEditor path={base.instructions!} label={`${base.name} instructions`} onSaved={() => void load()} />
-              </div>
-            </details>
+            <p key={base.key} className="text-sm text-muted-foreground">
+              {current.name} also follows the {base.name} template.{" "}
+              <Button variant="link" size="sm" className="h-auto px-0" onClick={() => navigate(`/agents/${encodeURIComponent(TEMPLATE + base.key)}`)}>
+                Edit the template
+              </Button>
+            </p>
           ))}
         </section>
 
@@ -203,7 +232,7 @@ export function AgentsApp({ agent, navigate }: { agent?: string; navigate: (path
             <Button size="sm" variant="outline" className="ml-auto" onClick={() => setSkill("new")}><Plus />Add skill</Button>
           </div>
           {skills.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{current.name} has no skills yet.</p>
+            <p className="text-sm text-muted-foreground">{template ? "No skills yet." : `${current.name} has no skills yet.`}</p>
           ) : (
             <ul className="divide-y rounded-lg border">
               {skills.map(s => (
@@ -225,10 +254,10 @@ export function AgentsApp({ agent, navigate }: { agent?: string; navigate: (path
                       <Button variant="ghost" size="icon-sm" aria-label={`More for ${s.name}`}><MoreHorizontal /></Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      {s.scope.kind === "agent" && sharedFolder && (
+                      {!template && s.scope.kind === "agent" && sharedFolder && (
                         <DropdownMenuItem onSelect={() => void move(s, sharedFolder, `Share skill ${s.name} with every agent`)}>Share with every agent</DropdownMenuItem>
                       )}
-                      {s.scope.kind !== "agent" && current.skills_folder && (
+                      {!template && s.scope.kind !== "agent" && current.skills_folder && (
                         <DropdownMenuItem onSelect={() => void move(s, current.skills_folder!, `Make skill ${s.name} ${current.name}'s only`)}>Make it {current.name}'s only</DropdownMenuItem>
                       )}
                       <DropdownMenuItem onSelect={() => setHistory(s)}>Version history</DropdownMenuItem>
@@ -244,8 +273,8 @@ export function AgentsApp({ agent, navigate }: { agent?: string; navigate: (path
       {skill && (
         <SkillDialog
           skill={skill === "new" ? undefined : skill}
-          agent={current}
-          sharedFolder={sharedFolder}
+          owner={template ? `agents built on the ${template.name} template` : current.name}
+          homes={homes}
           main={tree.main}
           agentName={name}
           onClose={() => setSkill(undefined)}
@@ -260,16 +289,18 @@ export function AgentsApp({ agent, navigate }: { agent?: string; navigate: (path
 /** A skill as its fields: its name, when to use it, and its steps. */
 function SkillDialog({
   skill,
-  agent,
-  sharedFolder,
+  owner,
+  homes,
   main,
   agentName,
   onClose,
   onSaved,
 }: {
   skill?: EffectiveSkill;
-  agent: Definition;
-  sharedFolder?: string;
+  /** Whose page it opened from, in words: "Foreman", "agents built on the Base template". */
+  owner: string;
+  /** Where a new skill can go: who has it, and its folder; the first is the default. */
+  homes: { label: string; folder: string }[];
   main: string;
   agentName: (key: string) => string;
   onClose: () => void;
@@ -277,7 +308,7 @@ function SkillDialog({
 }) {
   const dark = useDark();
   const [name, setName] = useState(skill?.name ?? "");
-  const [scope, setScope] = useState<"agent" | "shared">("agent");
+  const [home, setHome] = useState(homes[0]?.folder ?? "");
   const [description, setDescription] = useState(skill?.description ?? "");
   const [body, setBody] = useState("");
   const [commit, setCommit] = useState(main);
@@ -296,8 +327,7 @@ function SkillDialog({
       })
       .catch(e => toast.error(e instanceof Error ? e.message : "Unable to open the skill"));
   }, [skill]);
-  const folder = scope === "shared" ? sharedFolder : agent.skills_folder;
-  const path = skill?.path ?? `${folder}/${name.trim()}/SKILL.md`;
+  const path = skill?.path ?? `${home}/${name.trim()}/SKILL.md`;
   const save = async () => {
     setBusy(true);
     setProblems([]);
@@ -315,7 +345,6 @@ function SkillDialog({
       setBusy(false);
     }
   };
-  const isShared = skill ? skill.scope.kind !== "agent" : scope === "shared";
   return (
     <Dialog open onOpenChange={open => !open && onClose()}>
       <DialogContent className="sm:max-w-3xl">
@@ -323,10 +352,10 @@ function SkillDialog({
           <DialogTitle>{skill ? skill.name : "Add a skill"}</DialogTitle>
           <DialogDescription>
             {skill
-              ? isShared
-                ? `${scopeLabel(skill.scope, agentName)} uses this skill. Changes apply to all of them.`
-                : `Only ${agent.name} has this skill.`
-              : `A skill is a procedure ${agent.name} follows when the task calls for it.`}
+              ? skill.scope.kind === "agent"
+                ? `Only ${owner} has this skill.`
+                : `${scopeLabel(skill.scope, agentName)} uses this skill. Changes apply to all of them.`
+              : `A skill is a procedure an agent follows when the task calls for it.`}
           </DialogDescription>
         </DialogHeader>
         {!loaded ? (
@@ -339,12 +368,13 @@ function SkillDialog({
                   <Label htmlFor="skill-name">Name</Label>
                   <Input id="skill-name" value={name} placeholder="release-checklist" onChange={e => setName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"))} />
                 </div>
-                {sharedFolder && agent.skills_folder && (
+                {homes.length > 1 && (
                   <div className="flex flex-col gap-1.5">
                     <Label>Who has it</Label>
-                    <RadioGroup value={scope} onValueChange={value => setScope(value as "agent" | "shared")} className="flex gap-4">
-                      <label className="flex items-center gap-2 text-sm"><RadioGroupItem value="agent" />Only {agent.name}</label>
-                      <label className="flex items-center gap-2 text-sm"><RadioGroupItem value="shared" />Every agent</label>
+                    <RadioGroup value={home} onValueChange={setHome} className="flex flex-wrap gap-4">
+                      {homes.map(h => (
+                        <label key={h.folder} className="flex items-center gap-2 text-sm"><RadioGroupItem value={h.folder} />{h.label}</label>
+                      ))}
                     </RadioGroup>
                   </div>
                 )}

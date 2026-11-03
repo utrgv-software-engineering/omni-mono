@@ -439,8 +439,11 @@ when hidden or outside the viewport and respects reduced-motion preferences.
 ## Editing agents and automations
 
 **Edit** (the pencil in Chat's header) opens an agent's page (`/agents/<agent>`,
-administrators): its instructions; the instructions of the bases it extends,
-collapsed, saying which agents follow them; and its skills. Its skills are
+administrators): its instructions, a link to the template it builds on (a
+base it `extends:`), and its skills. A template has its own page
+(`/agents/template:<base>`, under Templates in the page's agent menu): its
+instructions, which every agent built on it follows, and the skills those
+agents share. Its skills are
 every skill it has, in the order the framework searches them: its own folder,
 its bases', then the factory's `skills/`. Each says who has it ("Only
 Foreman", "Every agent built on Base", "Every agent") and which skill of the

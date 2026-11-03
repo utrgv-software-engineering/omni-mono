@@ -46,7 +46,7 @@ const tree: Tree = {
     { key: "implementer", kind: "agent", name: "Implementer", description: "", instructions: null, inline_instructions: true, skills_folder: "agents/implementer/skills", skills: [], extends: null, chat: false, extends_chain: [], effective_skills: [] },
   ],
   bases: [{ key: "base", kind: "base", name: "Base", description: "", instructions: "base/instructions.md", inline_instructions: false, skills_folder: "base/skills", skills: [], extends: null, agents: ["foreman", "implementer"] }],
-  skills: [{ folder: "skills", skills: [] }],
+  skills: [{ folder: "skills", skills: [{ name: "canvas", path: "skills/canvas/SKILL.md", description: "Draw." }] }],
   automations: [],
   repository: "acme/factory",
   main: MAIN,
@@ -112,7 +112,9 @@ it("shows one agent: its instructions, the shared ones collapsed, and its skills
   await render("foreman");
   expect(document.querySelector("h1")!.textContent).toBe("Foreman");
   expect(document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Foreman\'s instructions"]')!.value).toBe("Before.\n");
-  expect(document.querySelector("details summary")!.textContent).toBe("Every agent built on Base also follows these instructions");
+  expect(document.body.textContent).toContain("Foreman also follows the Base template.");
+  await act(async () => button("Edit the template").click());
+  expect(navigate).toHaveBeenCalledWith("/agents/template%3Abase");
   const skills = document.querySelector('section[aria-label="Skills"]')!.textContent!;
   expect(skills).toContain("canvas");
   expect(skills).toContain("Every agent");
@@ -140,7 +142,7 @@ it("adds a skill for every agent from its fields", async () => {
   await act(async () => button("Add skill").click());
   await type(document.querySelector<HTMLInputElement>("#skill-name")!, "Release Notes");
   expect(document.querySelector<HTMLInputElement>("#skill-name")!.value).toBe("release-notes");
-  await act(async () => document.querySelector<HTMLButtonElement>('[role="radio"][value="shared"]')!.click());
+  await act(async () => document.querySelector<HTMLButtonElement>('[role="radio"][value="skills"]')!.click());
   await type(document.querySelector<HTMLInputElement>("#skill-description")!, "When writing release notes.");
   await type(document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Steps"]')!, "1. List the changes.");
   await act(async () => [...document.querySelectorAll<HTMLButtonElement>("button")].filter(b => b.textContent === "Add skill").pop()!.click());
@@ -168,4 +170,16 @@ it("says when the running factory has changes that aren't saved, and nothing oth
   await render("implementer");
   expect(document.querySelector('[role="status"]')!.textContent).toContain("project.yml");
   expect(document.body.textContent).toContain("These instructions are in the agent's settings");
+});
+
+it("edits a template on its own page, saying which agents it changes", async () => {
+  await render("template:base");
+  expect(document.querySelector("h1")!.textContent).toBe("Base template");
+  expect(document.body.textContent).toContain("What every agent built on it starts from: Foreman, Implementer. Changes apply to all of them.");
+  expect(document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Base template instructions"]')!.value).toBe("Before.\n");
+  const reads = fetcher.mock.calls.filter(([url]) => url.includes("/definition/file?path=")).map(([url]) => url);
+  expect(reads).toEqual([expect.stringContaining("path=base%2Finstructions.md")]);
+  const skills = document.querySelector('section[aria-label="Skills"]')!.textContent!;
+  expect(skills).toContain("canvas");
+  expect(document.querySelector<HTMLSelectElement>('select[aria-label="Agent"]')!.value).toBe("template:base");
 });
