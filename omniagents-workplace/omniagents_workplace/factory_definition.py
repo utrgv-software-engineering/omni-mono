@@ -29,6 +29,7 @@ from pathlib import PurePosixPath
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import httpx
+import yaml
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -66,6 +67,32 @@ class RestoreBody(BaseModel):
     commit: str = Field(pattern=r"^[0-9a-f]{40}$")
 
 
+class SkillBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    base_commit: str = Field(pattern=r"^[0-9a-f]{40}$")
+    #: ``<skills folder>/<name>/SKILL.md``; a new one is created.
+    path: str = Field(min_length=1, max_length=300)
+    description: str = Field(min_length=1, max_length=1024)
+    #: The steps: the file's text after its frontmatter.
+    body: str = Field(default="", max_length=500_000)
+
+
+class DeleteBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    base_commit: str = Field(pattern=r"^[0-9a-f]{40}$")
+    path: str = Field(min_length=1, max_length=300)
+
+
+class MoveBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    base_commit: str = Field(pattern=r"^[0-9a-f]{40}$")
+    #: The skill's ``SKILL.md``.
+    path: str = Field(min_length=1, max_length=300)
+    #: The skills folder it moves to (an agent's, a base's, the factory's).
+    to: str = Field(min_length=1, max_length=300)
+    message: str = Field(min_length=1, max_length=200)
+
+
 class SettingsBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     require_review: bool
@@ -90,6 +117,24 @@ def describe(
 
     lines = [one(path, content) for path, content in changes]
     return lines[0] if len(lines) == 1 else f"{lines[0]} and {len(lines) - 1} more"
+
+
+def split_skill(text: str) -> Tuple[Dict[str, Any], str]:
+    """A ``SKILL.md``'s frontmatter (as a mapping) and its body."""
+    match = re.match(r"\A---\s*\n(.*?)\n---\s*\n?(.*)\Z", text, re.S)
+    if not match:
+        return {}, text
+    try:
+        meta = yaml.safe_load(match.group(1)) or {}
+    except yaml.YAMLError:
+        meta = {}
+    return (meta if isinstance(meta, dict) else {}), match.group(2).lstrip("\n")
+
+
+def join_skill(meta: Dict[str, Any], body: str) -> str:
+    """A ``SKILL.md`` from its frontmatter and body."""
+    front = yaml.safe_dump(meta, sort_keys=False, allow_unicode=True, width=1000)
+    return f"---\n{front}---\n\n{body.strip()}\n"
 
 
 class FactoryDefinition:
@@ -337,6 +382,87 @@ class FactoryDefinition:
             "detail": result.get("detail"),
         }
 
+    def skill(self, path: str) -> Dict[str, Any]:
+        """A skill as its fields: name, when to use it, its steps."""
+        found = self.read(path)
+        meta, body = split_skill(found["content"])
+        return {
+            "path": path,
+            "name": PurePosixPath(path).parent.name,
+            "description": str(meta.get("description") or ""),
+            "body": body,
+            "commit": found["commit"],
+        }
+
+    def save_skill(self, account: Any, body: SkillBody) -> Dict[str, Any]:
+        """Save a skill's fields, keeping the rest of its frontmatter."""
+        pure = PurePosixPath(body.path)
+        if pure.name != "SKILL.md" or len(pure.parts) < 3:
+            raise HTTPException(422, "A skill is <folder>/<name>/SKILL.md")
+        repo = self.repo()
+        found = repo.bare.blob(body.base_commit, body.path)
+        meta, _ = (
+            split_skill(found[1].decode("utf-8", "replace")) if found else ({}, "")
+        )
+        meta = {"name": pure.parent.name, **meta}
+        meta["name"] = pure.parent.name
+        meta["description"] = body.description.strip()
+        return self.save(
+            account,
+            body.base_commit,
+            [Change(path=body.path, content=join_skill(meta, body.body))],
+            None,
+        )
+
+    def move_skill(self, account: Any, body: MoveBody) -> Dict[str, Any]:
+        """Move a skill's folder, every file in it, to another skills folder."""
+        pure = PurePosixPath(body.path)
+        if pure.name != "SKILL.md" or len(pure.parts) < 3:
+            raise HTTPException(422, "A skill is <folder>/<name>/SKILL.md")
+        repo = self.repo()
+        folder = pure.parent.as_posix()
+        target = f"{body.to.rstrip('/')}/{pure.parent.name}"
+        if target == folder:
+            raise HTTPException(422, "The skill is already there")
+        files = [
+            f for f in repo.bare.files(body.base_commit) if f.startswith(folder + "/")
+        ]
+        if not files:
+            raise HTTPException(404, "No such skill")
+        if any(f.startswith(target + "/") for f in repo.bare.files(self.main(repo))):
+            raise HTTPException(409, f"There is already a skill at {target}")
+        changes: List[Change] = []
+        for f in files:
+            content = repo.bare.blob(body.base_commit, f)[1]
+            try:
+                text = content.decode("utf-8")
+            except UnicodeDecodeError:
+                raise HTTPException(
+                    422, f"{f} is not text; move this skill by pull request"
+                ) from None
+            changes += [
+                Change(path=f, content=None),
+                Change(path=target + f[len(folder) :], content=text),
+            ]
+        return self.save(account, body.base_commit, changes, body.message)
+
+    def delete_skill(self, account: Any, base_commit: str, path: str) -> Dict[str, Any]:
+        """Delete a skill: every file in its folder."""
+        pure = PurePosixPath(path)
+        if pure.name != "SKILL.md" or len(pure.parts) < 3:
+            raise HTTPException(422, "A skill is <folder>/<name>/SKILL.md")
+        repo = self.repo()
+        folder = pure.parent.as_posix() + "/"
+        files = [f for f in repo.bare.files(base_commit) if f.startswith(folder)]
+        if not files:
+            raise HTTPException(404, "No such skill")
+        return self.save(
+            account,
+            base_commit,
+            [Change(path=f, content=None) for f in files],
+            f"Delete skill {pure.parent.name}",
+        )
+
     def restore(self, account: Any, path: str, commit: str) -> Dict[str, Any]:
         repo = self.repo()
         if repo.bare.commit(commit) is None:
@@ -424,6 +550,28 @@ def definition_router(definition: FactoryDefinition) -> APIRouter:
         """Save edits: a commit on main (published), or a pull request when review is required."""
         account = admin(request)
         return definition.save(account, body.base_commit, body.changes, body.message)
+
+    @router.get("/skill")
+    def read_skill(path: str, request: Request):
+        """A skill's fields: name, when to use it, its steps."""
+        admin(request)
+        return definition.skill(path)
+
+    @router.put("/skill")
+    def save_skill(body: SkillBody, request: Request):
+        account = admin(request)
+        return definition.save_skill(account, body)
+
+    @router.post("/skill/delete")
+    def delete_skill(body: DeleteBody, request: Request):
+        account = admin(request)
+        return definition.delete_skill(account, body.base_commit, body.path)
+
+    @router.post("/skill/move")
+    def move_skill(body: MoveBody, request: Request):
+        """Give a skill to every agent, or to one: its folder moves."""
+        account = admin(request)
+        return definition.move_skill(account, body)
 
     @router.get("/history")
     def history(path: str, request: Request):

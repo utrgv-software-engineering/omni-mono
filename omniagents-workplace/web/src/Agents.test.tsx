@@ -3,7 +3,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { toast } from "sonner";
-import { AgentsApp, label, template, type Tree } from "./Agents";
+import { AgentsApp } from "./Agents";
+import { scopeLabel, type Tree } from "./definition-api";
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 vi.mock("@omniagents/chat-ui/components/omni-avatar/AgentAvatar", () => ({ AgentAvatar: () => <span data-avatar /> }));
@@ -16,24 +17,37 @@ vi.mock("@omniagents/ui/code-editor", () => ({
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const MAIN = "a".repeat(40);
+const factory = { kind: "factory" as const };
 const tree: Tree = {
   agents: [
     {
       key: "foreman",
       kind: "agent",
       name: "Foreman",
-      description: "",
+      description: "Runs the line.",
       instructions: "agents/foreman/instructions.md",
       inline_instructions: false,
       skills_folder: "agents/foreman/skills",
-      skills: [{ name: "triage", path: "agents/foreman/skills/triage/SKILL.md" }],
+      skills: [],
+      extends: "base",
+      chat: true,
+      extends_chain: ["base"],
+      effective_skills: [
+        {
+          name: "github",
+          path: "agents/foreman/skills/github/SKILL.md",
+          description: "Foreman's GitHub.",
+          scope: { kind: "agent", agent: "foreman" },
+          replaces: [{ path: "skills/github/SKILL.md", scope: factory }],
+        },
+        { name: "canvas", path: "skills/canvas/SKILL.md", description: "Draw.", scope: factory, replaces: [] },
+      ],
     },
+    { key: "implementer", kind: "agent", name: "Implementer", description: "", instructions: null, inline_instructions: true, skills_folder: "agents/implementer/skills", skills: [], extends: null, chat: false, extends_chain: [], effective_skills: [] },
   ],
-  bases: [
-    { key: "base", kind: "base", name: "Base", description: "", instructions: "base/instructions.md", inline_instructions: false, skills_folder: "base/skills", skills: [] },
-  ],
+  bases: [{ key: "base", kind: "base", name: "Base", description: "", instructions: "base/instructions.md", inline_instructions: false, skills_folder: "base/skills", skills: [], extends: null, agents: ["foreman", "implementer"] }],
   skills: [{ folder: "skills", skills: [] }],
-  automations: [{ name: "nightly-review", path: "automations/nightly-review/automation.md" }],
+  automations: [],
   repository: "acme/factory",
   main: MAIN,
   live: MAIN,
@@ -52,19 +66,29 @@ const fetcher = vi.fn(async (url: string, _options?: RequestInit) => {
 });
 const button = (name: string) =>
   [...document.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent?.trim() === name || b.getAttribute("aria-label") === name)!;
-const render = async (path?: string) => {
-  await act(async () => root.render(<AgentsApp path={path} navigate={() => {}} />));
+const type = async (element: HTMLTextAreaElement | HTMLInputElement, value: string) =>
+  act(async () => {
+    const proto = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(element, value);
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+const navigate = vi.fn();
+const render = async (agent?: string) => {
+  await act(async () => root.render(<AgentsApp key={agent} agent={agent} navigate={navigate} />));
+  await act(async () => {});
   await act(async () => {});
 };
 
 beforeEach(() => {
   answers = {
-    "/definition/file": () => ({ body: { path: "agents/foreman/instructions.md", content: "Before.\n", commit: MAIN } }),
+    "/definition/file": () => ({ body: { content: "Before.\n", commit: MAIN } }),
     "/definition/files": () => ({ body: { commit: "b".repeat(40), published: true } }),
-    "/definition/history": () => ({ body: { commits: [] } }),
+    "/definition/skill": () => ({ body: { description: "Foreman's GitHub.", body: "Steps.\n", commit: MAIN, published: true } }),
+    "/definition/skill/move": () => ({ body: { commit: "c".repeat(40), published: true } }),
     "/factory/definition": () => ({ body: tree }),
   };
   fetcher.mockClear();
+  navigate.mockClear();
   vi.mocked(toast.success).mockClear();
   vi.stubGlobal("fetch", fetcher);
   node = document.createElement("div");
@@ -76,35 +100,34 @@ afterEach(() => {
   node.remove();
 });
 
-it("names files the way the list does, and starts new ones from a template", () => {
-  expect(label(tree, "agents/foreman/instructions.md")).toBe("Foreman: instructions");
-  expect(label(tree, "automations/nightly-review/automation.md")).toBe("Automation: Nightly review");
-  expect(label(tree, "skills/notes/SKILL.md")).toBe("Skill: notes");
-  expect(template("skills/notes/SKILL.md")).toContain("name: notes");
-  expect(template("automations/weekly/automation.md")).toContain("name: weekly");
+it("says who has a skill in words", () => {
+  const name = (key: string) => ({ foreman: "Foreman" })[key] ?? key;
+  expect(scopeLabel({ kind: "agent", agent: "foreman" }, name)).toBe("Only Foreman");
+  expect(scopeLabel({ kind: "base", base: "base", name: "Base" }, name)).toBe("Every agent built on Base");
+  expect(scopeLabel(factory, name)).toBe("Every agent");
+  expect(scopeLabel({ kind: "repository", repository: "webapp" }, name)).toBe("From webapp");
 });
 
-it("lists each agent's instructions and skills, the shared ones, and automations", async () => {
-  await render();
-  const nav = document.querySelector('nav[aria-label="Factory files"]')!;
-  expect(nav.querySelector('section[aria-label="Foreman"]')!.textContent).toContain("Instructions");
-  expect(nav.querySelector('section[aria-label="Foreman"]')!.textContent).toContain("triage");
-  expect(nav.querySelector('section[aria-label="Shared by every agent"]')!.textContent).toContain("Base instructions");
-  expect(nav.querySelector('section[aria-label="Automations"]')!.textContent).toContain("Nightly review");
+it("shows one agent: its instructions, the shared ones collapsed, and its skills with who has them", async () => {
+  await render("foreman");
+  expect(document.querySelector("h1")!.textContent).toBe("Foreman");
+  expect(document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Foreman\'s instructions"]')!.value).toBe("Before.\n");
+  expect(document.querySelector("details summary")!.textContent).toBe("Every agent built on Base also follows these instructions");
+  const skills = document.querySelector('section[aria-label="Skills"]')!.textContent!;
+  expect(skills).toContain("canvas");
+  expect(skills).toContain("Every agent");
+  expect(skills).toContain("Replaces the skill github that every agent has");
+  // No file tree, no commit hashes, no review switch.
+  expect(document.body.textContent).not.toContain(MAIN.slice(0, 7));
+  expect(document.body.textContent).not.toContain("Require review");
 });
 
-it("saves an edit and says the factory uses it from its next run", async () => {
-  await render("agents/foreman/instructions.md");
-  const editor = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Foreman: instructions"]')!;
-  expect(editor.value).toBe("Before.\n");
-  expect(button("Save").disabled).toBe(true);
-  await act(async () => {
-    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
-    setter.call(editor, "After.\n");
-    editor.dispatchEvent(new Event("input", { bubbles: true }));
-  });
+it("saves instructions and says the next run uses them", async () => {
+  await render("foreman");
+  const editor = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Foreman\'s instructions"]')!;
+  await type(editor, "After.\n");
   await act(async () => button("Save").click());
-  const save = fetcher.mock.calls.find(([url]) => url.includes("/definition/files"))!;
+  const save = fetcher.mock.calls.find(([url]) => url.endsWith("/definition/files"))!;
   expect(JSON.parse(save[1]!.body as string)).toEqual({
     base_commit: MAIN,
     changes: [{ path: "agents/foreman/instructions.md", content: "After.\n" }],
@@ -112,29 +135,37 @@ it("saves an edit and says the factory uses it from its next run", async () => {
   expect(toast.success).toHaveBeenCalledWith("Saved. The factory uses it from its next run.");
 });
 
-it("shows what the factory says is wrong", async () => {
-  answers["/definition/files"] = () => ({ status: 422, body: { detail: { problems: { x: ["Instructions are not a valid template"] } } } });
-  await render("agents/foreman/instructions.md");
-  const editor = document.querySelector<HTMLTextAreaElement>("textarea")!;
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(editor, "{% if %}");
-    editor.dispatchEvent(new Event("input", { bubbles: true }));
+it("adds a skill for every agent from its fields", async () => {
+  await render("foreman");
+  await act(async () => button("Add skill").click());
+  await type(document.querySelector<HTMLInputElement>("#skill-name")!, "Release Notes");
+  expect(document.querySelector<HTMLInputElement>("#skill-name")!.value).toBe("release-notes");
+  await act(async () => document.querySelector<HTMLButtonElement>('[role="radio"][value="shared"]')!.click());
+  await type(document.querySelector<HTMLInputElement>("#skill-description")!, "When writing release notes.");
+  await type(document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Steps"]')!, "1. List the changes.");
+  await act(async () => [...document.querySelectorAll<HTMLButtonElement>("button")].filter(b => b.textContent === "Add skill").pop()!.click());
+  const save = fetcher.mock.calls.find(([url, options]) => url.endsWith("/definition/skill") && options?.method === "PUT")!;
+  expect(JSON.parse(save[1]!.body as string)).toEqual({
+    base_commit: MAIN,
+    path: "skills/release-notes/SKILL.md",
+    description: "When writing release notes.",
+    body: "1. List the changes.",
   });
-  await act(async () => button("Save").click());
-  expect(document.querySelector('[role="alert"]')!.textContent).toContain("Instructions are not a valid template");
 });
 
-it("a new skill opens from its template, and review turns Save into Propose", async () => {
-  answers["/definition/file"] = () => ({ status: 404, body: { detail: "No such file" } });
-  answers["/factory/definition"] = () => ({ body: { ...tree, require_review: true } });
-  await render("agents/foreman/skills/notes/SKILL.md");
-  expect(document.querySelector("textarea")!.value).toContain("name: notes");
-  expect(document.body.textContent).toContain("(new)");
-  expect(button("Propose").disabled).toBe(false);
+it("a shared skill warns that changes apply to every agent", async () => {
+  await render("foreman");
+  const canvas = [...document.querySelectorAll<HTMLButtonElement>('section[aria-label="Skills"] button')].find(b => b.textContent?.startsWith("canvas"))!;
+  await act(async () => canvas.click());
+  await act(async () => {});
+  expect(document.body.textContent).toContain("Every agent uses this skill. Changes apply to all of them.");
 });
 
-it("says when the running factory has changes that aren't committed", async () => {
+it("says when the running factory has changes that aren't saved, and nothing otherwise", async () => {
+  await render("foreman");
+  expect(document.querySelector('[role="status"]')).toBeNull();
   answers["/factory/definition"] = () => ({ body: { ...tree, uncommitted: ["project.yml"] } });
-  await render();
+  await render("implementer");
   expect(document.querySelector('[role="status"]')!.textContent).toContain("project.yml");
+  expect(document.body.textContent).toContain("These instructions are in the agent's settings");
 });

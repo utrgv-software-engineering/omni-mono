@@ -1,5 +1,6 @@
 import { appTransport } from "./extensions/transport";
 import { factoryFetch, factoryUrl } from "./factory-scope";
+import type { Scope } from "./definition-api";
 // The workplace server's UI API (/workplace/api) and its live stream.
 
 export interface SlackUser {
@@ -1732,6 +1733,8 @@ export const factoryBenchmarks = {
     ),
 };
 
+export type RunSkill = { name: string; source: Scope };
+
 export interface FactoryRunCase {
   id: number;
   automation: string;
@@ -1741,6 +1744,8 @@ export interface FactoryRunCase {
   event: string;
   version: string | null;
   pull_requests: { repository: string; number: number; relation: string }[];
+  /** The skills the run's agent was offered and loaded, each with where it came from. */
+  skills?: { offered: RunSkill[]; loaded: RunSkill[] };
   sessions: {
     agent: string;
     session_id: string;

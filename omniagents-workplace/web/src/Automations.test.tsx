@@ -6,6 +6,9 @@ import { AutomationsApp, health, sentence, type Automation } from "./Automations
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@omniagents/chat-ui/components/omni-avatar/AgentAvatar", () => ({ AgentAvatar: () => <span data-avatar /> }));
+vi.mock("@omniagents/ui/code-editor", () => ({
+  CodeMirrorEditor: ({ value, ariaLabel }: { value: string; ariaLabel: string }) => <textarea aria-label={ariaLabel} value={value} readOnly />,
+}));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const base = { description: "", self_improvement: false, enabled: true, conversation: "auto" as const, skipped: [] };
@@ -43,7 +46,9 @@ let node: HTMLDivElement;
 const fetcher = vi.fn(async (url: string, _options?: RequestInit) => ({
   ok: true,
   json: async () =>
-    url.includes("automation-routes")
+    url.includes("/definition/file")
+      ? { content: "---\ntriggers: []\n---\nReview the factory's runs.\n", commit: "a".repeat(40) }
+      : url.includes("automation-routes")
       ? { agents: ["improver", "maintainer", "foreman"] }
       : url.endsWith("/enabled")
         ? { enabled: false }
@@ -119,4 +124,15 @@ it("keeps ignored events behind a toggle", async () => {
   expect(node.textContent).not.toContain("no automation matches");
   await act(async () => button("Show the event it ignored").click());
   expect(node.textContent).toContain("no automation matches");
+});
+
+it("edits an automation where it is", async () => {
+  await act(async () => root.render(<AutomationsApp name="nightly-review" navigate={vi.fn()} />));
+  await act(async () => {});
+  await act(async () => button("Edit").click());
+  await act(async () => {});
+  await act(async () => {});
+  expect(fetcher.mock.calls.some(([url]) => url.includes("/definition/file?path=automations%2Fnightly-review%2Fautomation.md"))).toBe(true);
+  expect(document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Nightly review automation"]')!.value).toContain("Review the factory's runs.");
+  expect(button("Done")).toBeTruthy();
 });

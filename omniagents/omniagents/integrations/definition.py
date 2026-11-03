@@ -31,6 +31,7 @@ __all__ = [
     "live_commit",
     "origin",
     "read_each_run",
+    "skill_source",
 ]
 
 #: An automation's folder name, and a skill's (the skill validator checks the rest).
@@ -80,14 +81,25 @@ def _yaml(path: Path) -> Dict[str, Any]:
 
 
 def _skills(root: Path, folder: Path) -> List[Dict[str, str]]:
-    """The skills in a ``skills`` folder: each subfolder with a ``SKILL.md``."""
+    """The skills in a ``skills`` folder: each subfolder with a ``SKILL.md``,
+    with its one-line description."""
+    from omniagents.core.skills.errors import ParseError
+    from omniagents.core.skills.parser import parse_frontmatter
+
     out = []
     if folder.is_dir():
         for child in sorted(folder.iterdir()):
             skill_md = child / "SKILL.md"
             relative = _relative(root, skill_md)
             if child.is_dir() and skill_md.is_file() and relative:
-                out.append({"name": child.name, "path": relative})
+                try:
+                    meta, _ = parse_frontmatter(skill_md.read_text(encoding="utf-8"))
+                    description = str(meta.get("description") or "")
+                except (OSError, ParseError):
+                    description = ""
+                out.append(
+                    {"name": child.name, "path": relative, "description": description}
+                )
     return out
 
 
@@ -121,39 +133,80 @@ def _definition(
     )
 
 
-def definition_tree(root: Path) -> Dict[str, Any]:
-    """What people can edit in the factory at ``root``: each agent and each
-    base they extend (instructions and skills), the project's own skills,
-    and its automations."""
-    from omniagents.core.project.agent_files import agent_paths
-
-    root = Path(root).resolve()
-    agents: List[Dict[str, Any]] = []
-    bases: Dict[str, Dict[str, Any]] = {}
-    pending: List[str] = []
-    for key, agent_yml in agent_paths(root).items():
-        entry, extends = _definition(root, key, agent_yml, "agent")
-        agents.append(entry)
-        if extends:
-            pending.append(extends)
-    while pending:
-        folder = pending.pop()
-        if folder in bases or not (root / folder / "agent.yml").is_file():
-            continue
-        entry, extends = _definition(root, folder, root / folder / "agent.yml", "base")
-        bases[folder] = entry
-        if extends:
-            pending.append(extends)
+def _project_skill_folders(root: Path) -> List[str]:
     project = _yaml(root / "project.yml")
     configured = (project.get("paths") or {}).get("skills", "skills")
     folders = configured if isinstance(configured, list) else [configured]
-    skills = []
-    for folder in folders:
-        relative = _relative(root, root / str(folder))
-        if relative:
-            skills.append(
-                {"folder": relative, "skills": _skills(root, root / str(folder))}
+    return [f for f in (_relative(root, root / str(folder)) for folder in folders) if f]
+
+
+def definition_tree(root: Path) -> Dict[str, Any]:
+    """What people can edit in the factory at ``root``: each agent with its
+    instructions and every skill it has, the bases agents extend, the
+    factory's own skills, and its automations.
+
+    An agent's ``effective_skills`` are in the order the framework searches
+    them (its own folder, the bases it extends, the factory's), the first of
+    a name winning; each says who has it (``scope``) and which it replaces.
+    """
+    from omniagents.core.project.agent_files import agent_paths
+
+    root = Path(root).resolve()
+    project = _yaml(root / "project.yml")
+    section = project.get("agents") if isinstance(project.get("agents"), dict) else {}
+    chat = [
+        str(a)
+        for a in [section.get("chat_entrypoint"), *(section.get("chat_agents") or [])]
+        if a
+    ]
+    agents: List[Dict[str, Any]] = []
+    bases: Dict[str, Dict[str, Any]] = {}
+    chains: Dict[str, List[str]] = {}
+    for key, agent_yml in agent_paths(root).items():
+        entry, extends = _definition(root, key, agent_yml, "agent")
+        entry["chat"] = key in chat
+        agents.append(entry)
+        chain: List[str] = []
+        while extends and extends not in chain:
+            if extends not in bases:
+                if not (root / extends / "agent.yml").is_file():
+                    break
+                bases[extends], _next = _definition(
+                    root, extends, root / extends / "agent.yml", "base"
+                )
+            chain.append(extends)
+            extends = bases[extends]["extends"]
+        chains[key] = chain
+    for base in bases.values():
+        base["agents"] = sorted(
+            k for k, chain in chains.items() if base["key"] in chain
+        )
+    folders = _project_skill_folders(root)
+    skills = [{"folder": f, "skills": _skills(root, root / f)} for f in folders]
+    for agent in agents:
+        sources: List[Tuple[Dict[str, Any], List[Dict[str, str]]]] = [
+            ({"kind": "agent", "agent": agent["key"]}, agent["skills"])
+        ]
+        for key in chains[agent["key"]]:
+            sources.append(
+                (
+                    {"kind": "base", "base": key, "name": bases[key]["name"]},
+                    bases[key]["skills"],
+                )
             )
+        for folder in skills:
+            sources.append(({"kind": "factory"}, folder["skills"]))
+        effective: Dict[str, Dict[str, Any]] = {}
+        for scope, found in sources:
+            for skill in found:
+                if skill["name"] in effective:
+                    effective[skill["name"]]["replaces"].append(
+                        {"path": skill["path"], "scope": scope}
+                    )
+                else:
+                    effective[skill["name"]] = {**skill, "scope": scope, "replaces": []}
+        agent["extends_chain"] = chains[agent["key"]]
+        agent["effective_skills"] = list(effective.values())
     automations = []
     automations_root = root / "automations"
     if automations_root.is_dir():
@@ -173,9 +226,44 @@ def definition_tree(root: Path) -> Dict[str, Any]:
     }
 
 
+def skill_source(root: Path, path: str) -> Dict[str, Any]:
+    """Where the skill folder ``path`` a run used comes from: an agent's own
+    (``{"kind": "agent", "agent"}``), a base's, the factory's, the
+    installation's global folder, or a repository the run worked in."""
+    from omniagents.core.config.dirs import product_config_dir
+    from omniagents.core.project.agent_files import agent_paths
+    from omniagents.core.product import product_info
+
+    root = Path(root).resolve()
+    folder = PurePosixPath(path).parent  # the skills folder holding it
+    try:
+        relative = Path(str(folder)).resolve().relative_to(root).as_posix()
+    except (OSError, ValueError):
+        relative = None
+    if relative is not None:
+        for key, agent_yml in agent_paths(root).items():
+            if _relative(root, agent_yml.parent / "skills") == relative:
+                return {"kind": "agent", "agent": key}
+        if relative in _project_skill_folders(root):
+            return {"kind": "factory"}
+        if (root / relative).parent.joinpath("agent.yml").is_file():
+            return {"kind": "base", "base": str(PurePosixPath(relative).parent)}
+    try:
+        Path(str(folder)).resolve().relative_to(product_config_dir().resolve())
+        return {"kind": "global"}
+    except (OSError, ValueError):
+        pass
+    parts = [p for p in folder.parts if p not in ("/", "")]
+    if parts and parts[-1] == "skills":
+        parts = parts[:-1]
+    if parts and parts[-1] == f".{product_info().slug}":
+        parts = parts[:-1]
+    return {"kind": "repository", "repository": parts[-1] if parts else ""}
+
+
 def _editable(tree: Dict[str, Any], path: str) -> Optional[str]:
-    """What ``path`` is ("instructions", "skill" or "automation"), or ``None``
-    when it is not something people edit here."""
+    """What ``path`` is ("instructions", "skill", a skill's other "skill file"
+    or "automation"), or ``None`` when it is not something people edit here."""
     pure = PurePosixPath(path)
     if pure.is_absolute() or ".." in pure.parts or not pure.parts:
         return None
@@ -190,13 +278,17 @@ def _editable(tree: Dict[str, Any], path: str) -> Optional[str]:
         and _NAME.match(parts[1])
     ):
         return "automation"
-    if pure.name == "SKILL.md" and len(parts) >= 3 and _NAME.match(parts[-2]):
-        folder = PurePosixPath(*parts[:-2]).as_posix()
-        folders = {d["skills_folder"] for d in definitions} | {
-            s["folder"] for s in tree["skills"]
-        }
-        if folder in folders:
-            return "skill"
+    folders = {d["skills_folder"] for d in definitions} | {
+        s["folder"] for s in tree["skills"]
+    }
+    for depth in range(1, len(parts) - 1):
+        folder = PurePosixPath(*parts[:depth]).as_posix()
+        if folder in folders and _NAME.match(parts[depth]):
+            return (
+                "skill"
+                if len(parts) == depth + 2 and pure.name == "SKILL.md"
+                else "skill file"
+            )
     return None
 
 

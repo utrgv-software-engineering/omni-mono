@@ -12,7 +12,9 @@ import { ArrowLeft } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import { Popover, PopoverContent, PopoverTrigger } from "@omniagents/ui/popover";
 import { type FactoryRunCase, factoryRun } from "./api";
+import { scopeLabel } from "./definition-api";
 
 const CLIENT_IDENTITY = { name: "omniagents-workplace", version: "workplace" };
 
@@ -83,6 +85,7 @@ export function FactoryRun({
               {new Date(run.started_at * 1000).toLocaleString()}
               {run.version ? ` · factory ${run.version.slice(0, 7)}` : ""}
             </span>
+            {run.skills && run.skills.offered.length + run.skills.loaded.length > 0 && <RunSkills skills={run.skills} />}
             {run.pull_requests.map((p) => (
               <button
                 key={`${p.repository}#${p.number}`}
@@ -135,5 +138,33 @@ export function FactoryRun({
         </div>
       )}
     </div>
+  );
+}
+
+/** The skills a run was offered, which it loaded, and where each came from. */
+function RunSkills({ skills }: { skills: NonNullable<FactoryRunCase["skills"]> }) {
+  const loaded = new Set(skills.loaded.map((s) => s.name));
+  const offered = skills.offered.length ? skills.offered : skills.loaded;
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button type="button" className="text-xs text-sky-700 hover:underline dark:text-sky-300">
+          Skills · {loaded.size} loaded of {offered.length}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-80 p-2" aria-label="Skills">
+        <ul className="flex flex-col gap-1 text-sm">
+          {offered.map((s) => (
+            <li key={s.name} className="flex items-baseline gap-2 px-1">
+              <span className={loaded.has(s.name) ? "font-medium" : "text-muted-foreground"}>{s.name}</span>
+              <span className="ml-auto text-xs text-muted-foreground">
+                {loaded.has(s.name) ? "loaded · " : ""}
+                {scopeLabel(s.source, (key) => key)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </PopoverContent>
+    </Popover>
   );
 }

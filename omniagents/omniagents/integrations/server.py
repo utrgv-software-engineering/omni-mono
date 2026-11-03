@@ -212,6 +212,13 @@ def mount_integrations(
     if not project.entrypoint:
         logger.warning("integrations: the project has no entrypoint agent; off")
         return None
+    from omniagents.core.skills import default_skill_roots, set_skill_roots_provider
+
+    # A factory's skills are its repository's and its repositories': never
+    # the installation's unversioned global folder.
+    set_skill_roots_provider(
+        lambda workspace_root: default_skill_roots(workspace_root, include_global=False)
+    )
     profile = product_default_profile_path(manifest)
     environments = None
     if profile is not None:
@@ -611,7 +618,7 @@ def mount_integrations(
     recorder = UsageRecorder(store.record_usage)
     add_permanent_processor(recorder)
     app.router.on_shutdown.append(lambda: remove_permanent_processor(recorder))
-    _mount_runs_route(app, store, _price_list(project.root, data))
+    _mount_runs_route(app, store, _price_list(project.root, data), project.root)
     # Each agent's sessions, for the shared chat UI to read (agent_runtimes.py).
     from .agent_runtimes import AGENTS_PATH, AgentRuntimes
 
@@ -626,7 +633,7 @@ def mount_integrations(
         )
         return thread.created_at if thread else None
 
-    _mount_case_route(app, store, history, children, session_started)
+    _mount_case_route(app, store, history, children, session_started, project.root)
 
     judges = live_judges(project.root, data)
     if judges:
@@ -769,7 +776,9 @@ def _mount_definition_routes(
         return {"commit": live}
 
 
-def _mount_runs_route(app: Any, store: EventStore, prices: Any) -> None:
+def _mount_runs_route(
+    app: Any, store: EventStore, prices: Any, root: Optional[Path] = None
+) -> None:
     """``GET /integrations/runs?since=<epoch seconds>``: the factory's runs, newest
     last, each with what started it, how it went, its grades, what its model calls
     used and cost (API prices; a subscription's are API-equivalent), and its pull
@@ -805,6 +814,7 @@ def _mount_runs_route(app: Any, store: EventStore, prices: Any) -> None:
                             else (0.0 if not usage else None)
                         ),
                         "pull_requests": store.run_pull_requests(run["id"]),
+                        "skills": _run_skills(store, run["id"], root),
                     }
                 )
             return out
@@ -814,6 +824,25 @@ def _mount_runs_route(app: Any, store: EventStore, prices: Any) -> None:
         )
 
     app.add_api_route(RUNS_PATH, runs, methods=["GET"])
+
+
+def _run_skills(store: EventStore, dispatch_id: int, root: Optional[Path]) -> Dict:
+    """The skills a run was offered and loaded, each with where it came from."""
+    from .definition import skill_source
+
+    used = store.run_skills(dispatch_id)
+    return {
+        part: [
+            {
+                "name": s["name"],
+                "source": (
+                    skill_source(root, s["path"]) if root else {"kind": "unknown"}
+                ),
+            }
+            for s in used.get(part, [])
+        ]
+        for part in ("offered", "loaded")
+    }
 
 
 def _first_user_text(history: list) -> Optional[str]:
@@ -837,6 +866,7 @@ def _mount_case_route(
     history: Any,
     children: Any,
     session_started: Any = lambda agent, thread: None,
+    root: Optional[Path] = None,
 ) -> None:
     """``GET /integrations/runs/{id}/case``: what a run was given, to make a benchmark
     task of it: its own input, and each session's (the agents it called as tools)."""
@@ -896,6 +926,7 @@ def _mount_case_route(
                 "payload": run["payload"],
                 "version": run.get("version"),
                 "pull_requests": store.run_pull_requests(dispatch_id),
+                "skills": _run_skills(store, dispatch_id, root),
                 "sessions": sessions,
             }
 

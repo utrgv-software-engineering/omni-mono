@@ -50,6 +50,7 @@ import {
   MoreHorizontal,
   ChevronRight,
   Gauge,
+  Pencil,
   MessagesSquare,
   Search,
   X,
@@ -143,7 +144,7 @@ function StatusMark({ waiting, running, unread }: { waiting?: boolean; running?:
   return null;
 }
 
-export function PersonalApp({ account }: { account: Person }) {
+export function PersonalApp({ account, navigate }: { account: Person; navigate?: (path: string) => void }) {
   const [panelTabs, setPanelTabs] = useState<Record<string, string>>({});
   const [views, setViews] = useState<Record<string, Presentation | undefined>>({});
   const [split, setSplit] = useState(() => window.matchMedia("(min-width: 1024px)").matches);
@@ -576,6 +577,16 @@ export function PersonalApp({ account }: { account: Person }) {
                     {threads}
                   </PopoverContent>
                 </Popover>
+              )}
+              {current && navigate && (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`Edit ${displayAgent(selectedAgent)}`}
+                  onClick={() => navigate(`/agents/${encodeURIComponent(selectedAgent)}`)}
+                >
+                  <Pencil />
+                </Button>
               )}
               {current && (
                 <Button

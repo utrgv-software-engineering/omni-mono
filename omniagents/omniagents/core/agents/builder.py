@@ -582,6 +582,9 @@ def _bind_agent_skill_roots(
                     await provide_skill_dirs(
                         [skill.host_dir for skill in offered if skill.host_dir]
                     )
+                    from omniagents.core.skills.usage import record_offered
+
+                    record_offered(ctx.get("session_id"), offered)
                     context_wrapper = _ContextOverride(
                         context_wrapper,
                         {**ctx, "available_skills_block": run_skills_prompt(offered)},

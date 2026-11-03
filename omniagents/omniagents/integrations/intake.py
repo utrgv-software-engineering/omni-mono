@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import nullcontext
 import logging
+import time
 import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -272,9 +273,12 @@ class EventIntake:
 
         conversation = (event.provider, event.thread_key)
         run: Optional[asyncio.Future] = None
+        turn_started = time.time()
         try:
             async with lock, slots:
                 from .self_improvement import guarded_run
+
+                turn_started = time.time()
 
                 run = asyncio.ensure_future(
                     guarded_run(
@@ -306,6 +310,9 @@ class EventIntake:
         )
         if result.output:
             self.store.record_output(dispatch_id, result.output)
+        from omniagents.core.skills.usage import since
+
+        self.store.record_skills(dispatch_id, since(session_id, turn_started))
         if self.links is not None:
             try:
                 await asyncio.to_thread(

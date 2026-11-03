@@ -1,7 +1,7 @@
 import { McpAppFrame, extensionRequest, type AppCatalog, type InstalledApp } from "./McpAppFrame";
 import { AppsLauncher } from "./AppsLauncher";
 import { ExtensionsDialog } from "./Extensions";
-import { Bot, Mic, Plug, LayoutGrid } from "lucide-react";
+import { Mic, Plug, LayoutGrid } from "lucide-react";
 import { appTransport } from "./extensions/transport";
 import { SharedApp } from "./Shared";
 import { FolderOpen } from "lucide-react";
@@ -616,7 +616,6 @@ export default function App({
   const sections = [
     ...(factory && account.admin ? [{ name: "Chat", to: "/personal", icon: MessageSquare, active: personalRoute }] : []),
     ...(factory && account.admin ? [{ name: "Automations", to: "/automations", icon: Workflow, active: automationsRoute }] : []),
-    ...(factory && account.admin ? [{ name: "Agents", to: "/agents", icon: Bot, active: agentsRoute }] : []),
     ...(factory && !account.admin ? [{ name: "Factory", to: "/factory", icon: Factory, active: factoryRoute }] : []),
     ...(!embedded ? [{name: "Apps", to: "/apps", icon: LayoutGrid, active: launcherRoute}] : []),
     ...(embedded ? [{ name: "Slack", to: "/", icon: Hash, active: slackRoute }] : (appCatalog?.apps ?? []).filter(app => app.enabled && app.entrypoints.length).flatMap(app => app.entrypoints.map((entry, index) => ({
@@ -667,6 +666,7 @@ export default function App({
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => {closeNavigation();setTeamOpen(true);}}>Workspace settings</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setExtensionsOpen(true)}>Apps</DropdownMenuItem>
+              {account.admin && factory && <DropdownMenuItem onSelect={() => {setRepositoryDialogMode("factory");setRepositoriesOpen(true);}}>Factory changes</DropdownMenuItem>}
               <DropdownMenuItem onSelect={() => setTokensOpen(true)}>
                 Your tokens
               </DropdownMenuItem>
@@ -757,7 +757,7 @@ export default function App({
       ) : desktopRoute ? (
         account.admin ? <Desktop /> : <p className="p-6">Desktop requires an administrator account.</p>
       ) : personalRoute ? (
-        account.admin ? <Suspense fallback={<div className="p-6">Opening Chat…</div>}><PersonalApp key={account.id} account={account} /></Suspense>
+        account.admin ? <Suspense fallback={<div className="p-6">Opening Chat…</div>}><PersonalApp key={account.id} account={account} navigate={navigate} /></Suspense>
           : <p className="p-6">Chat currently requires an administrator account.</p>
       ) : automationsRoute ? (
         account.admin && factory
@@ -765,7 +765,7 @@ export default function App({
           : <p className="p-6">Automations require a factory administrator.</p>
       ) : agentsRoute ? (
         account.admin && factory
-          ? <AgentsApp path={path.startsWith("/agents/") ? decodeURIComponent(path.slice("/agents/".length)) : undefined} navigate={navigate} />
+          ? <AgentsApp key={path} agent={path.startsWith("/agents/") ? decodeURIComponent(path.slice("/agents/".length)) : undefined} navigate={navigate} />
           : <p className="p-6">Editing agents requires a factory administrator.</p>
       ) : factoryRoute && parseFactoryRunPath(path) != null ? (
         <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Opening the run…</div>}>

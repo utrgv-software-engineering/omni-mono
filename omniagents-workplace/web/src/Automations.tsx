@@ -9,6 +9,7 @@ import { Switch } from "@omniagents/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@omniagents/ui/tabs";
 import { factoryFetch } from "./factory-scope";
 import { describeTrigger, scheduleName, type Trigger } from "./automation-triggers";
+import { FileEditor } from "./Agents";
 
 type Grade = { judge: string; agent?: string; passed: boolean | null; reason?: string };
 type Run = {
@@ -228,6 +229,7 @@ function AutomationDetail({
   const [busy, setBusy] = useState(false);
   const [fullInstruction, setFullInstruction] = useState(false);
   const [ignored, setIgnored] = useState(false);
+  const [editing, setEditing] = useState(false);
   const schedule = scheduleName(automation.triggers);
   const changed = agent !== automation.agent || conversation !== automation.conversation;
   const [lead, ...rest] = automation.instruction.split(/\n\s*\n/);
@@ -266,8 +268,8 @@ function AutomationDetail({
                 <Play />Run now
               </Button>
             )}
-            <Button variant="outline" size="sm" onClick={() => navigate(`/agents/${encodeURIComponent(`automations/${automation.name}/automation.md`)}`)}>
-              <Pencil />Edit
+            <Button variant="outline" size="sm" aria-pressed={editing} onClick={() => setEditing(value => !value)}>
+              <Pencil />{editing ? "Done" : "Edit"}
             </Button>
             <Switch
               aria-label={`${automation.enabled ? "Turn off" : "Turn on"} ${humanize(automation.name)}`}
@@ -277,6 +279,14 @@ function AutomationDetail({
           </span>
         </div>
         <p className="text-sm">{sentence(automation, agentName(automation.agent))}</p>
+        {editing && (
+          <section aria-label="Edit the automation" className="flex flex-col gap-2">
+            <p className="text-sm text-muted-foreground">
+              Its description and triggers are at the top, between the <code>---</code> lines; what it's told follows.
+            </p>
+            <FileEditor path={`automations/${automation.name}/automation.md`} label={`${humanize(automation.name)} automation`} onSaved={() => void reload()} />
+          </section>
+        )}
 
         <Tabs defaultValue="overview">
           <TabsList>

@@ -699,7 +699,7 @@ export function FactoryApp({ navigate, onConfigure, onModel, onSchedules }: { na
           {onModel && <DropdownMenuItem onSelect={onModel}>Model</DropdownMenuItem>}
           {onModel && <DropdownMenuItem onSelect={() => setRoutingOpen(true)}>Automations</DropdownMenuItem>}
           {onSchedules && <DropdownMenuItem onSelect={onSchedules}>Schedules</DropdownMenuItem>}
-          <DropdownMenuItem onSelect={onConfigure}>Self-improvement</DropdownMenuItem>
+          <DropdownMenuItem onSelect={onConfigure}>Factory changes</DropdownMenuItem>
           {onModel && <DropdownMenuItem onSelect={() => setSecretsOpen(true)}>Secrets</DropdownMenuItem>}
         </DropdownMenuGroup></DropdownMenuContent></DropdownMenu>}
         <Dialog open={routingOpen} onOpenChange={setRoutingOpen}><DialogContent><DialogHeader><DialogTitle>Automations</DialogTitle><DialogDescription>Choose the agent and conversation for each workflow. Changes apply to future events.</DialogDescription></DialogHeader>{routingOpen && <AutomationRoutes />}</DialogContent></Dialog>

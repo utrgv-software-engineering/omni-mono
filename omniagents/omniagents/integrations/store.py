@@ -103,6 +103,12 @@ CREATE TABLE IF NOT EXISTS run_details (
     version TEXT,
     prompt TEXT NOT NULL
 );
+-- The skills a run's agent was offered and loaded (JSON: {offered, loaded},
+-- each [{name, path}]).
+CREATE TABLE IF NOT EXISTS run_skills (
+    dispatch_id INTEGER PRIMARY KEY REFERENCES dispatches(id),
+    skills TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS run_pull_requests (
     dispatch_id INTEGER NOT NULL REFERENCES dispatches(id),
     repository TEXT NOT NULL,
@@ -337,6 +343,22 @@ class EventStore:
                 (status, error, time.time(), dispatch_id),
             )
             self._db.commit()
+
+    def record_skills(self, dispatch_id: int, skills: Dict[str, Any]) -> None:
+        """What a run's agent was offered and loaded (``{offered, loaded}``)."""
+        with self._lock:
+            self._db.execute(
+                "INSERT OR REPLACE INTO run_skills (dispatch_id, skills) VALUES (?, ?)",
+                (dispatch_id, json.dumps(skills)),
+            )
+            self._db.commit()
+
+    def run_skills(self, dispatch_id: int) -> Dict[str, Any]:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT skills FROM run_skills WHERE dispatch_id = ?", (dispatch_id,)
+            ).fetchone()
+        return json.loads(row["skills"]) if row else {"offered": [], "loaded": []}
 
     def record_output(self, dispatch_id: int, output: str) -> None:
         with self._lock:

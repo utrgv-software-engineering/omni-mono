@@ -117,13 +117,17 @@ def _resolve_invocation_dir() -> Path:
         return Path.cwd()
 
 
-def default_skill_roots(workspace_root: str | None = None) -> List[Path]:
+def default_skill_roots(
+    workspace_root: str | None = None, *, include_global: bool = True
+) -> List[Path]:
     """The derived default skill roots for ``workspace_root``.
 
     Workspace dot-dir first, then routed source roots, then the
     per-user global root — so workspace-local skills shadow global ones
     under first-wins merging. Falls back to the invocation directory when
-    no workspace root is given (direct CLI runs).
+    no workspace root is given (direct CLI runs). A factory leaves out the
+    global root (``include_global=False``): on a shared server it would be
+    one unversioned folder changing every agent.
     """
     from omniagents.core.config.dirs import product_config_dir
     from omniagents.core.product import product_info
@@ -137,7 +141,8 @@ def default_skill_roots(workspace_root: str | None = None) -> List[Path]:
     unique = dedupe_skill_roots(
         [base / f".{slug}" / "skills", *source_skill_roots(str(base))]
     )
-    unique.append(product_config_dir() / "skills")
+    if include_global:
+        unique.append(product_config_dir() / "skills")
     return unique
 
 

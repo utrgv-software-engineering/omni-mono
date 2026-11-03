@@ -103,6 +103,16 @@ export function RepositoriesDialog({ open, onOpenChange, mode = "connection" }: 
     timer = setTimeout(poll, 1000);
     return () => { disposed = true; clearTimeout(timer); cancel(); };
   }, [device?.id, open, settings?.provider]);
+  // Whether saving an agent's instructions or skills opens a pull request (factory_definition.py).
+  const [requireReview, setRequireReview] = useState<boolean>();
+  useEffect(() => {
+    setRequireReview(undefined);
+    if (!open || mode !== "factory") return;
+    void factoryFetch("/workplace/api/factory/definition/settings")
+      .then(r => (r.ok ? r.json() : null))
+      .then(value => value && setRequireReview(value.require_review))
+      .catch(() => {});
+  }, [open, mode]);
   const act = async (action: () => Promise<void>) => {
     setBusy(true); setError("");
     try { await action(); } catch (e) { setError((e as Error).message); }
@@ -110,7 +120,7 @@ export function RepositoriesDialog({ open, onOpenChange, mode = "connection" }: 
   };
   return <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
-      <DialogHeader><DialogTitle>{mode === "connection" ? "Connection settings" : mode === "factory" ? "Self-improvement" : "Manage repositories"}</DialogTitle><DialogDescription>{mode === "connection" ? "Choose a provider and connect your account." : mode === "factory" ? "Link the factory’s repository to enable self-improvement PRs." : "Choose the repositories available in the agent workspace."}</DialogDescription></DialogHeader>
+      <DialogHeader><DialogTitle>{mode === "connection" ? "Connection settings" : mode === "factory" ? "Factory changes" : "Manage repositories"}</DialogTitle><DialogDescription>{mode === "connection" ? "Choose a provider and connect your account." : mode === "factory" ? "How the factory itself changes: improvement pull requests, and review of edits to agents and automations." : "Choose the repositories available in the agent workspace."}</DialogDescription></DialogHeader>
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       {settings && <FieldGroup>
         {mode === "connection" && <><Field><FieldLabel htmlFor="repository-provider">Provider</FieldLabel>
@@ -209,10 +219,19 @@ export function RepositoriesDialog({ open, onOpenChange, mode = "connection" }: 
         <Field orientation="horizontal"><Switch id="self-improvement" checked={settings.self_improvement} disabled={busy || !settings.factory_repository || (settings.provider === "github" && !settings.connected_as)} onCheckedChange={checked => setSettings({ ...settings, self_improvement: checked })} />
           <FieldLabel htmlFor="self-improvement">Self-improvement</FieldLabel>
         </Field>
+        {requireReview !== undefined && <Field orientation="horizontal"><Switch id="require-review" checked={requireReview} disabled={busy} onCheckedChange={setRequireReview} />
+          <FieldLabel htmlFor="require-review">Require review for changes to agents and automations</FieldLabel>
+        </Field>}
         </>}
         <Button disabled={busy || !!device || (settings.provider === "github" && !settings.connected_as)} onClick={() => void act(async () => {
           const { provider, repositories, factory_repository, self_improvement } = settings;
           setSettings(await repositoryRequest<Settings>("", "PUT", { provider, repositories, factory_repository, self_improvement }));
+          if (mode === "factory" && requireReview !== undefined) {
+            const response = await factoryFetch("/workplace/api/factory/definition/settings", {
+              method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ require_review: requireReview }),
+            });
+            if (!response.ok) throw new Error("Unable to save the review setting");
+          }
           window.dispatchEvent(new Event("repository-settings-changed"));
           toast.success("Repository settings saved");
           onOpenChange(false);

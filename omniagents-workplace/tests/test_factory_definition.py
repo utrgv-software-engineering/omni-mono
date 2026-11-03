@@ -259,3 +259,118 @@ def test_a_hosted_factory_is_edited_in_the_repository_its_checkout_came_from(edi
     with pytest.raises(HTTPException) as refused:
         e.definition.tree()
     assert refused.value.status_code == 409
+
+
+def test_a_skill_is_edited_as_fields_keeping_the_rest_of_its_frontmatter(editor):
+    from omniagents_workplace.factory_definition import SkillBody
+
+    e = editor
+    path = "agents/foreman/skills/triage/SKILL.md"
+    e.w.github.write_files(
+        e.repo,
+        "admin",
+        "main",
+        [
+            (
+                path,
+                b"---\nname: triage\ndescription: Old.\nallowed-tools: shell\n---\n\nOld steps.\n",
+            )
+        ],
+        "Skill",
+        bypass_protection=True,
+    )
+    skill = e.definition.skill(path)
+    assert (skill["name"], skill["description"], skill["body"]) == (
+        "triage",
+        "Old.",
+        "Old steps.\n",
+    )
+    e.definition.save_skill(
+        e.admin,
+        SkillBody(
+            base_commit=skill["commit"],
+            path=path,
+            description="Sort work.",
+            body="1. Read it.",
+        ),
+    )
+    text = e.repo.bare.blob("main", path)[1].decode()
+    assert (
+        text
+        == "---\nname: triage\ndescription: Sort work.\nallowed-tools: shell\n---\n\n1. Read it.\n"
+    )
+    new = "skills/notes/SKILL.md"
+    e.definition.save_skill(
+        e.admin,
+        SkillBody(
+            base_commit=_main(e), path=new, description="Take notes.", body="Write."
+        ),
+    )
+    assert e.repo.bare.blob("main", new)[1].startswith(
+        b"---\nname: notes\ndescription: Take notes.\n"
+    )
+    assert e.repo.bare.commit(_main(e)).subject == "Add skill notes"
+
+
+def test_sharing_a_skill_moves_its_folder_in_one_commit(editor):
+    from omniagents_workplace.factory_definition import MoveBody
+
+    e = editor
+    e.w.github.write_files(
+        e.repo,
+        "admin",
+        "main",
+        [
+            (
+                "agents/foreman/skills/triage/SKILL.md",
+                b"---\nname: triage\ndescription: x\n---\n",
+            ),
+            ("agents/foreman/skills/triage/references/a.md", b"Ref.\n"),
+        ],
+        "Skill",
+        bypass_protection=True,
+    )
+    before = _main(e)
+    result = e.definition.move_skill(
+        e.admin,
+        MoveBody(
+            base_commit=before,
+            path="agents/foreman/skills/triage/SKILL.md",
+            to="skills",
+            message="Share skill triage with every agent",
+        ),
+    )
+    commit = e.repo.bare.commit(_main(e))
+    assert result["published"] is True and commit.parents == [before]
+    assert commit.subject == "Share skill triage with every agent"
+    assert e.repo.bare.blob("main", "skills/triage/references/a.md")[1] == b"Ref.\n"
+    assert e.repo.bare.blob("main", "agents/foreman/skills/triage/SKILL.md") is None
+    with pytest.raises(HTTPException) as refused:
+        e.definition.move_skill(
+            e.admin,
+            MoveBody(
+                base_commit=_main(e),
+                path="skills/triage/SKILL.md",
+                to="skills",
+                message="x",
+            ),
+        )
+    assert refused.value.status_code == 422
+
+
+def test_deleting_a_skill_removes_its_folder(editor):
+    e = editor
+    e.w.github.write_files(
+        e.repo,
+        "admin",
+        "main",
+        [
+            ("skills/notes/SKILL.md", b"---\nname: notes\ndescription: x\n---\n"),
+            ("skills/notes/scripts/run.sh", b"echo\n"),
+        ],
+        "Skill",
+        bypass_protection=True,
+    )
+    e.definition.delete_skill(e.admin, _main(e), "skills/notes/SKILL.md")
+    assert not [f for f in e.repo.bare.files("main") if f.startswith("skills/notes/")]
+    assert e.repo.bare.commit(_main(e)).subject == "Delete skill notes"

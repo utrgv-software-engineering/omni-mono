@@ -436,37 +436,50 @@ approval/question and voice states. Microphone and received speaker tracks suppl
 WebRTC voice levels; the avatar never starts or controls work. Animation pauses
 when hidden or outside the viewport and respects reduced-motion preferences.
 
-## Agents: editing the factory
+## Editing agents and automations
 
-The **Agents** tab (`/agents`, administrators) edits what the factory's agents
-are told and know how to do: each agent's instructions and skills, those shared
-by every agent (the bases they `extends:` and the project's `skills/`), and the
-automations. The factory lists them and checks every edit
-(`GET /integrations/definition`, `POST /integrations/definition/check`): an
-instructions file must be a valid template, a skill's frontmatter must name its
-folder, an automation must load.
+**Edit** (the pencil in Chat's header) opens an agent's page (`/agents/<agent>`,
+administrators): its instructions; the instructions of the bases it extends,
+collapsed, saying which agents follow them; and its skills. Its skills are
+every skill it has, in the order the framework searches them: its own folder,
+its bases', then the factory's `skills/`. Each says who has it ("Only
+Foreman", "Every agent built on Base", "Every agent") and which skill of the
+same name it replaces. A skill is edited as fields: when to use it, and its
+steps (the rest of its frontmatter is kept). **Add skill** asks who should have
+it; a skill's menu shares it with every agent or makes it one agent's own (its
+folder moves in one commit), shows its version history, or deletes it. Other
+agents, those Chat doesn't list, are in the page's agent menu. An automation is
+edited on its own page (**Edit** in Automations).
 
-Saving is a commit on the factory repository's `main`, as the person who saved
-(`PUT /workplace/api/factory/definition/files`), and publishes it: the Workplace
-asks the factory to move its checkout to that commit
-(`POST /integrations/definition/advance`). The factory reads instructions,
-skills and automations again on each run, so the next run uses the edit and
-nothing restarts. Runs record the commit they ran. A save over a file someone
-else changed since it was opened is refused. **History** lists a file's commits
-with their changes, and **Restore this version** saves the old content as a new
-commit.
+Repositories' own skills (`<repo>/.<product>/skills`, a mounted repository's
+`skills/`) belong to those repositories and change by pull request there; a
+run's page lists the skills it was offered and loaded and where each came from.
+A factory never reads the installation's global skills folder, which is outside
+version control.
 
-**Require review** (the switch at the bottom of the list,
-`factory.definition.require_review`) turns each save into a pull request
-instead; merging it publishes it. Any move of `main` (a merged pull request, the
-improver's included) is offered to the factory the same way. The factory moves
-only when everything between its commit and the new one is read on each run;
-agent settings, tools, dependencies and sandbox profiles still change by release,
-and the editor says so. It refuses to move while its checkout has changes that
-aren't committed, so edits made on the server are never overwritten: commit them
-to the repository first. The repository is always the one the factory runs
-from (workplace.yml's `factory.repository`, in the Workplace), whichever
-provider serves the product repositories.
+The factory lists and checks every edit (`GET /integrations/definition`,
+`POST /integrations/definition/check`): an instructions file must be a valid
+template, a skill's frontmatter must name its folder, an automation must load.
+Saving is a commit on the factory repository's `main`, as the person who saved,
+and publishes it: the Workplace asks the factory to move its checkout to that
+commit (`POST /integrations/definition/advance`). The factory reads
+instructions, skills and automations again on each run, so the next run uses
+the edit and nothing restarts. Runs record the commit they ran. A save over a
+file someone else changed since it was opened is refused. **Version history**
+lists a file's versions with their changes, and **Restore** saves an old one
+as a new version.
+
+**Require review for changes to agents and automations** (Account → Factory
+changes, `factory.definition.require_review`) turns each save into a pull
+request instead; merging it publishes it. Any move of `main` (a merged pull
+request, the improver's included) is offered to the factory the same way. The
+factory moves only when everything between its commit and the new one is read
+on each run; agent settings, tools, dependencies and sandbox profiles still
+change by release, and the page says so. It refuses to move while its
+checkout has changes that aren't committed, so edits made on the server are
+never overwritten: commit them to the repository first. The repository is the
+one the factory runs from (workplace.yml's `factory.repository`, else the one
+its checkout came from), whichever provider serves the product repositories.
 
 ## Repository connections and self-improvement
 
