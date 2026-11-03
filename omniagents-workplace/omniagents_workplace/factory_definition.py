@@ -77,6 +77,17 @@ class SkillBody(BaseModel):
     body: str = Field(default="", max_length=500_000)
 
 
+class AgentBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    #: Its folder's name and its ``name:``: a-z, 0-9 and _.
+    key: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    description: str = Field(min_length=1, max_length=1024)
+    #: The template (a base) it builds on, if any.
+    template: Optional[str] = Field(default=None, max_length=200)
+    #: Whether Chat lists it.
+    chat: bool = False
+
+
 class DeleteBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     base_commit: str = Field(pattern=r"^[0-9a-f]{40}$")
@@ -446,6 +457,24 @@ class FactoryDefinition:
             ]
         return self.save(account, body.base_commit, changes, body.message)
 
+    def add_agent(self, account: Any, body: AgentBody) -> Dict[str, Any]:
+        """Add an agent: the factory says which files (its definition, its
+        instructions, Chat's list), and saving them publishes it."""
+        repo = self.repo()
+        status, data = self.factory(
+            "POST", "/integrations/definition/new-agent", body.model_dump()
+        )
+        if status >= 400:
+            raise HTTPException(status, data.get("detail") or "Unable to add the agent")
+        name = body.key.replace("_", " ").title()
+        saved = self.save(
+            account,
+            self.main(repo),
+            [Change(path=c["path"], content=c["content"]) for c in data["changes"]],
+            f"Add agent {name}",
+        )
+        return {**saved, "agent": body.key}
+
     def delete_skill(self, account: Any, base_commit: str, path: str) -> Dict[str, Any]:
         """Delete a skill: every file in its folder."""
         pure = PurePosixPath(path)
@@ -561,6 +590,12 @@ def definition_router(definition: FactoryDefinition) -> APIRouter:
     def save_skill(body: SkillBody, request: Request):
         account = admin(request)
         return definition.save_skill(account, body)
+
+    @router.post("/agent")
+    def add_agent(body: AgentBody, request: Request):
+        """Add an agent; it joins the running factory when its commit is published."""
+        account = admin(request)
+        return definition.add_agent(account, body)
 
     @router.post("/skill/delete")
     def delete_skill(body: DeleteBody, request: Request):

@@ -454,6 +454,15 @@ folder moves in one commit), shows its version history, or deletes it. Other
 agents, those Chat doesn't list, are in the page's agent menu. An automation is
 edited on its own page (**Edit** in Automations).
 
+**Add agent** (beside the agent menu) asks for a name, what it does, the
+template it builds on and whether people can chat with it. The factory writes
+its `agent.yml` and `instructions.md` and, for Chat, adds it to `project.yml`'s
+`agents.chat_agents`, keeping the file's comments
+(`POST /integrations/definition/new-agent`); the save checks that the project
+loads with it. Publishing a commit that only adds agents or changes which are in
+Chat reloads the running factory's agents, with no restart: each agent's
+runtime is built on first use, and Chat lists it.
+
 Repositories' own skills (`<repo>/.<product>/skills`, a mounted repository's
 `skills/`) belong to those repositories and change by pull request there; a
 run's page lists the skills it was offered and loaded and where each came from.

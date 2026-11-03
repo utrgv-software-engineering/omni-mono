@@ -257,17 +257,19 @@ def mount_integrations(
         )
 
     # Presentation metadata belongs to the configured agents, not the host UI.
-    agent_details = []
-    for agent_id, agent_path in project.agents_map.items():
-        definition = yaml.safe_load(agent_path.read_text()) or {}
-        agent_details.append(
-            {
-                "id": agent_id,
-                "name": definition.get("label")
-                or agent_id.replace("_", " ").replace("-", " ").title(),
-                "description": definition.get("description") or "",
-            }
-        )
+    def agent_details() -> List[Dict[str, str]]:
+        details = []
+        for agent_id, agent_path in project.agents_map.items():
+            definition = yaml.safe_load(agent_path.read_text()) or {}
+            details.append(
+                {
+                    "id": agent_id,
+                    "name": definition.get("label")
+                    or agent_id.replace("_", " ").replace("-", " ").title(),
+                    "description": definition.get("description") or "",
+                }
+            )
+        return details
 
     async def factory_status(request: Request):
         if not await _authorized(request):
@@ -281,7 +283,7 @@ def mount_integrations(
                 "agents": sorted(project.agents_map),
                 "chat_agent": project.chat_entrypoint,
                 "chat_agents": project.chat_agents,
-                "agent_details": agent_details,
+                "agent_details": agent_details(),
                 "busy": busy,
                 "version": os.environ.get("FACTORY_VERSION"),
                 "release_protocol": 1,
@@ -526,7 +528,21 @@ def mount_integrations(
     )
     # The factory's version, from whoever runs it (the supervisor: the commit it promoted).
     intake.version = os.environ.get("FACTORY_VERSION") or None
-    _mount_definition_routes(app, project.root, intake, data.get("integrations"))
+
+    def reload_agents() -> None:
+        """Agents added, or Chat's changed, by a published edit: the running
+        project learns them (each agent's runtime is built on first use)."""
+        fresh = load_project(str(manifest))
+        project.agents_map.clear()
+        project.agents_map.update(fresh.agents_map)
+        project.raw["agents"] = fresh.raw.get("agents")
+        logger.info(
+            "integrations: agents reloaded: %s", ", ".join(sorted(project.agents_map))
+        )
+
+    _mount_definition_routes(
+        app, project.root, intake, data.get("integrations"), reload_agents
+    )
     from omniagents.core.project.runtime import build_spec_from_project
     from omniagents.core.session.history_db import load_history
 
@@ -712,7 +728,11 @@ def _price_list(root: Path, data: dict):
 
 
 def _mount_definition_routes(
-    app: Any, root: Path, intake: EventIntake, integrations: Any
+    app: Any,
+    root: Path,
+    intake: EventIntake,
+    integrations: Any,
+    reload_agents: Callable[[], None] = lambda: None,
 ) -> None:
     """What people edit in the factory (``GET /integrations/definition``),
     checking edits before they are saved (``POST .../check``), and moving
@@ -752,6 +772,29 @@ def _mount_definition_routes(
         problems = await asyncio.to_thread(definition.check_changes, root, changes)
         return {"problems": problems}
 
+    @app.post("/integrations/definition/new-agent")
+    async def new_agent(request: Request):
+        """``{key, description, template?, chat?}``: the files that add an agent."""
+        if not await _authorized(request):
+            return Response(status_code=401)
+        body = await request.json()
+        if not isinstance(body, dict) or not isinstance(body.get("key"), str):
+            return JSONResponse(
+                {"detail": "Expected {key, description}"}, status_code=422
+            )
+        try:
+            changes = await asyncio.to_thread(
+                definition.new_agent_changes,
+                root,
+                body["key"],
+                description=str(body.get("description") or ""),
+                template=body.get("template") or None,
+                chat=bool(body.get("chat")),
+            )
+        except definition.DefinitionError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=exc.status)
+        return {"changes": changes}
+
     @app.post("/integrations/definition/advance")
     async def advance_definition(request: Request):
         """``{"commit"}``: run that commit of the factory's repository from now on."""
@@ -763,17 +806,20 @@ def _mount_definition_routes(
         token = github.resolved_token() if github else None
         async with lock:
             try:
-                live = await asyncio.to_thread(
+                moved = await asyncio.to_thread(
                     definition.advance, root, str(commit or ""), token=token
                 )
             except definition.DefinitionError as exc:
                 return JSONResponse(
                     {"detail": str(exc), "paths": exc.paths}, status_code=exc.status
                 )
+            if moved["reload"]:
+                await asyncio.to_thread(reload_agents)
+        live = moved["commit"]
         # Runs from now on are recorded with it (the supervisor restarts on it too).
         os.environ["FACTORY_VERSION"] = live
         intake.version = live
-        return {"commit": live}
+        return {"commit": live, "reloaded": moved["reload"]}
 
 
 def _mount_runs_route(

@@ -622,7 +622,9 @@ async def test_publishing_an_edit_moves_the_factory_and_its_runs(tmp_path, monke
 
     monkeypatch.setattr(personal.ConversationRunner, "__call__", turn)
     app = FastAPI()
-    app.state.agent_service = SimpleNamespace(_release_gate=None)
+    app.state.agent_service = SimpleNamespace(
+        _release_gate=None, active_run_ids=lambda: [], active_sessions=lambda: []
+    )
     app.state.connection_authenticator = ConnectionAuthenticator.from_spec(
         SimpleNamespace(security_config={}), auth_token="t"
     )
@@ -647,7 +649,37 @@ async def test_publishing_an_edit_moves_the_factory_and_its_runs(tmp_path, monke
         moved = await client.post(
             "/integrations/definition/advance", json={"commit": edit}, headers=auth
         )
-        assert moved.json() == {"commit": edit}
+        assert moved.json() == {"commit": edit, "reloaded": False}
+        # A new agent in Chat: the running factory has it once it moves.
+        added = (
+            await client.post(
+                "/integrations/definition/new-agent",
+                json={"key": "designer", "description": "Designs.", "chat": True},
+                headers=auth,
+            )
+        ).json()["changes"]
+        for change in added:
+            target = source / change["path"]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(change["content"])
+        git(source, "add", "-A")
+        git(source, "commit", "-qm", "Add agent Designer")
+        git(source, "push", "-q", str(tmp_path / "origin.git"), "main")
+        agent = git(source, "rev-parse", "HEAD")
+        status = (await client.get("/integrations/architecture", headers=auth)).json()
+        assert "designer" not in status["agents"]
+        moved = await client.post(
+            "/integrations/definition/advance", json={"commit": agent}, headers=auth
+        )
+        assert moved.json() == {"commit": agent, "reloaded": True}
+        status = (await client.get("/integrations/architecture", headers=auth)).json()
+        assert "designer" in status["agents"] and "designer" in status["chat_agents"]
+        assert {
+            "id": "designer",
+            "name": "Designer",
+            "description": "Designs.",
+        } in status["agent_details"]
+        edit = agent
         refused = await client.post(
             "/integrations/definition/advance", json={"commit": "nope"}, headers=auth
         )

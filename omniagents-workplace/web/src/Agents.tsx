@@ -3,6 +3,7 @@ import { ArrowLeft, History, MoreHorizontal, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { AgentAvatar } from "@omniagents/chat-ui/components/omni-avatar/AgentAvatar";
 import { Button } from "@omniagents/ui/button";
+import { Checkbox } from "@omniagents/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@omniagents/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@omniagents/ui/dropdown-menu";
 import { Input } from "@omniagents/ui/input";
@@ -110,6 +111,7 @@ export function AgentsApp({ agent, navigate }: { agent?: string; navigate: (path
   const [error, setError] = useState("");
   const [skill, setSkill] = useState<EffectiveSkill | "new">();
   const [history, setHistory] = useState<EffectiveSkill>();
+  const [adding, setAdding] = useState(false);
   const load = useCallback(async () => {
     try {
       setTree(await loadTree());
@@ -188,6 +190,7 @@ export function AgentsApp({ agent, navigate }: { agent?: string; navigate: (path
               </NativeSelectOptGroup>
             )}
           </NativeSelect>
+          <Button size="sm" variant="outline" onClick={() => setAdding(true)}><Plus />Add agent</Button>
         </div>
         {template ? (
           <div className="min-w-0">
@@ -282,7 +285,91 @@ export function AgentsApp({ agent, navigate }: { agent?: string; navigate: (path
         />
       )}
       {history && <VersionHistory path={history.path} title={`Skill: ${history.name}`} onClose={() => setHistory(undefined)} onRestored={() => void load()} />}
+      {adding && (
+        <AddAgentDialog
+          templates={tree.bases}
+          onClose={() => setAdding(false)}
+          onAdded={key => {
+            setAdding(false);
+            navigate(`/agents/${encodeURIComponent(key)}`);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/** A new agent: its name, what it does, the template it builds on, and whether Chat lists it. */
+function AddAgentDialog({ templates, onClose, onAdded }: { templates: Definition[]; onClose: () => void; onAdded: (key: string) => void }) {
+  const [key, setKey] = useState("");
+  const [description, setDescription] = useState("");
+  const [template, setTemplate] = useState(templates[0]?.key ?? "");
+  const [chat, setChat] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [problems, setProblems] = useState<string[]>([]);
+  const add = async () => {
+    setBusy(true);
+    setProblems([]);
+    try {
+      const saved = await send<Saved & { agent: string }>(
+        "/agent",
+        "POST",
+        { key, description, template: template || null, chat },
+        "Unable to add the agent",
+      );
+      const message = savedMessage(saved, chat ? "Added. It's in Chat now." : "Added.");
+      toast[message.kind](message.text);
+      if (saved.pull_request) onClose();
+      else onAdded(saved.agent);
+    } catch (e) {
+      const err = e as DefinitionError;
+      if (err.problems) setProblems(Object.values(err.problems).flat());
+      else toast.error(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog open onOpenChange={open => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add an agent</DialogTitle>
+          <DialogDescription>Give it a name and say what it does. You can write its instructions and skills next.</DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="agent-name">Name</Label>
+            <Input id="agent-name" value={key} placeholder="designer" onChange={e => setKey(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "_"))} />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="agent-description">What it does</Label>
+            <Input id="agent-description" value={description} placeholder="Turns requests into UI designs." onChange={e => setDescription(e.target.value)} />
+          </div>
+          {templates.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="agent-template">Builds on</Label>
+              <NativeSelect id="agent-template" value={template} onChange={e => setTemplate(e.target.value)}>
+                {templates.map(t => <NativeSelectOption key={t.key} value={t.key}>{t.name} template</NativeSelectOption>)}
+                <NativeSelectOption value="">No template</NativeSelectOption>
+              </NativeSelect>
+            </div>
+          )}
+          <label className="flex items-center gap-2 text-sm">
+            <Checkbox checked={chat} onCheckedChange={value => setChat(value === true)} />
+            People can chat with it
+          </label>
+          {problems.length > 0 && (
+            <ul role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm">
+              {problems.map(p => <li key={p}>{p}</li>)}
+            </ul>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button disabled={busy || !/^[a-z][a-z0-9_]*$/.test(key) || !description.trim()} onClick={() => void add()}>Add agent</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

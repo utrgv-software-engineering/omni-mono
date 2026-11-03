@@ -183,3 +183,17 @@ it("edits a template on its own page, saying which agents it changes", async () 
   expect(skills).toContain("canvas");
   expect(document.querySelector<HTMLSelectElement>('select[aria-label="Agent"]')!.value).toBe("template:base");
 });
+
+it("adds an agent in Chat built on the template, then opens it", async () => {
+  answers["/definition/agent"] = () => ({ body: { commit: "d".repeat(40), published: true, agent: "designer" } });
+  await render("foreman");
+  await act(async () => button("Add agent").click());
+  await type(document.querySelector<HTMLInputElement>("#agent-name")!, "Designer");
+  expect(document.querySelector<HTMLInputElement>("#agent-name")!.value).toBe("designer");
+  await type(document.querySelector<HTMLInputElement>("#agent-description")!, "Turns requests into designs.");
+  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(b => b.textContent === "Add agent")!.click());
+  const add = fetcher.mock.calls.find(([url]) => url.endsWith("/definition/agent"))!;
+  expect(JSON.parse(add[1]!.body as string)).toEqual({ key: "designer", description: "Turns requests into designs.", template: "base", chat: true });
+  expect(toast.success).toHaveBeenCalledWith("Added. It's in Chat now.");
+  expect(navigate).toHaveBeenCalledWith("/agents/designer");
+});

@@ -374,3 +374,42 @@ def test_deleting_a_skill_removes_its_folder(editor):
     e.definition.delete_skill(e.admin, _main(e), "skills/notes/SKILL.md")
     assert not [f for f in e.repo.bare.files("main") if f.startswith("skills/notes/")]
     assert e.repo.bare.commit(_main(e)).subject == "Delete skill notes"
+
+
+def test_adding_an_agent_commits_the_files_the_factory_names(editor):
+    from omniagents_workplace.factory_definition import AgentBody
+
+    e = editor
+    answer = e.fake.__call__
+    asked = []
+
+    def factory(method, path, body=None):
+        if path == "/integrations/definition/new-agent":
+            asked.append(body)
+            return 200, {
+                "changes": [
+                    {
+                        "path": "agents/designer/agent.yml",
+                        "content": "name: designer\n",
+                    },
+                    {
+                        "path": "agents/designer/instructions.md",
+                        "content": "# Designer\n",
+                    },
+                ]
+            }
+        return answer(method, path, body)
+
+    e.definition.factory = factory
+    result = e.definition.add_agent(
+        e.admin,
+        AgentBody(key="designer", description="Designs.", template="base", chat=True),
+    )
+    assert asked == [
+        {"key": "designer", "description": "Designs.", "template": "base", "chat": True}
+    ]
+    assert result["agent"] == "designer" and result["published"] is True
+    assert (
+        e.repo.bare.blob("main", "agents/designer/agent.yml")[1] == b"name: designer\n"
+    )
+    assert e.repo.bare.commit(_main(e)).subject == "Add agent Designer"

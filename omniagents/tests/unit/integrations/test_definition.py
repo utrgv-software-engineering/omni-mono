@@ -5,6 +5,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from yaml import safe_load as yaml_load
 
 from omniagents.integrations.definition import (
     DefinitionError,
@@ -12,6 +13,7 @@ from omniagents.integrations.definition import (
     check_changes,
     definition_tree,
     live_commit,
+    new_agent_changes,
     origin,
     read_each_run,
     skill_source,
@@ -188,10 +190,10 @@ def test_check_says_what_is_wrong(factory):
 def test_advance_moves_to_an_edit(factory):
     live = factory["live"]
     commit = _commit_in_source(factory, "agents/foreman/instructions.md", "Edited.\n")
-    assert advance(live, commit) == commit
+    assert advance(live, commit) == {"commit": commit, "reload": False}
     assert live_commit(live) == commit
     assert (live / "agents/foreman/instructions.md").read_text() == "Edited.\n"
-    assert advance(live, commit) == commit  # again: nothing to do
+    assert advance(live, commit)["commit"] == commit  # again: nothing to do
 
 
 def test_advance_refuses_what_needs_a_release(factory):
@@ -318,3 +320,84 @@ def test_where_a_runs_skill_came_from(factory):
         "kind": "repository",
         "repository": "webapp",
     }
+
+
+def _commit_changes_in_source(factory, changes, message):
+    for change in changes:
+        _write(factory["source"] / change["path"], change["content"])
+    _git(factory["source"], "add", "-A")
+    _git(factory["source"], "commit", "-qm", message)
+    _git(factory["source"], "push", "-q", str(factory["origin"]), "main")
+    return _git(factory["source"], "rev-parse", "HEAD")
+
+
+def test_adding_an_agent_in_chat_is_checked_and_reloads_the_factory(factory):
+    live = factory["live"]
+    (factory["source"] / "project.yml").write_text(
+        (factory["source"] / "project.yml")
+        .read_text()
+        .replace(
+            "agents: {entrypoint: foreman}",
+            "agents:\n  entrypoint: foreman  # what automations run\n  chat_agents: [foreman]",
+        )
+    )
+    _git(factory["source"], "commit", "-qam", "Chat")
+    _git(factory["source"], "push", "-q", str(factory["origin"]), "main")
+    _git(live, "pull", "-q")
+    changes = new_agent_changes(
+        live,
+        "designer",
+        description="Turns requests into designs.",
+        template="base",
+        chat=True,
+    )
+    by_path = {c["path"]: c["content"] for c in changes}
+    assert yaml_load(by_path["agents/designer/agent.yml"]) == {
+        "name": "designer",
+        "description": "Turns requests into designs.",
+        "extends": "base",
+        "instructions_file": "instructions.md",
+    }
+    assert "# what automations run" in by_path["project.yml"]  # comments kept
+    assert yaml_load(by_path["project.yml"])["agents"]["chat_agents"] == [
+        "foreman",
+        "designer",
+    ]
+    assert check_changes(live, changes) == {}
+    commit = _commit_changes_in_source(factory, changes, "Add agent Designer")
+    assert advance(live, commit) == {"commit": commit, "reload": True}
+
+
+def test_adding_an_agent_is_refused_when_it_would_not_load(factory):
+    live = factory["live"]
+    with pytest.raises(DefinitionError) as refused:
+        new_agent_changes(live, "Designer", description="x")
+    assert refused.value.status == 422
+    with pytest.raises(DefinitionError) as refused:
+        new_agent_changes(live, "foreman", description="x")
+    assert refused.value.status == 409
+    broken = [
+        {
+            "path": "agents/designer/agent.yml",
+            "content": "name: designer\nextends: nowhere\n",
+        },
+    ]
+    problems = check_changes(live, broken)
+    assert "nowhere" in " ".join(problems["agents/designer/agent.yml"])
+    assert str(live) not in " ".join(problems["agents/designer/agent.yml"])
+
+
+def test_other_project_settings_still_need_a_release(factory):
+    live = factory["live"]
+    text = (
+        (live / "project.yml")
+        .read_text()
+        .replace("entrypoint: foreman", "entrypoint: other")
+    )
+    assert check_changes(live, [{"path": "project.yml", "content": text}])[
+        "project.yml"
+    ]
+    commit = _commit_in_source(factory, "project.yml", text)
+    with pytest.raises(DefinitionError) as refused:
+        advance(live, commit)
+    assert refused.value.paths == ["project.yml"]

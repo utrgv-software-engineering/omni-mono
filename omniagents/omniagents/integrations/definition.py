@@ -29,6 +29,7 @@ __all__ = [
     "check_changes",
     "definition_tree",
     "live_commit",
+    "new_agent_changes",
     "origin",
     "read_each_run",
     "skill_source",
@@ -36,6 +37,8 @@ __all__ = [
 
 #: An automation's folder name, and a skill's (the skill validator checks the rest).
 _NAME = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+#: An agent's key: its folder's name, and its ``name:``.
+_AGENT_KEY = re.compile(r"[a-z][a-z0-9_]{0,63}")
 
 
 class DefinitionError(Exception):
@@ -306,9 +309,31 @@ def check_changes(
     root = Path(root).resolve()
     tree = definition_tree(root)
     problems: Dict[str, List[str]] = {}
+    # Adding an agent (its folder, and Chat listing it) is checked by loading
+    # the project with the change, as the factory will when it moves to it.
+    new_agents = {
+        PurePosixPath(str(c.get("path")))
+        .parent.as_posix(): PurePosixPath(str(c.get("path")))
+        .parent.name
+        for c in changes
+        if c.get("content") is not None and _new_agent(root, str(c.get("path") or ""))
+    }
+    loads: List[str] = []
     for change in changes:
         path = str(change.get("path") or "")
         content = change.get("content")
+        if any(path.startswith(folder + "/") for folder in new_agents):
+            if content is not None and not isinstance(content, str):
+                problems[path] = ["The content must be text."]
+            loads.append(path)
+            continue
+        if path == "project.yml":
+            if not isinstance(content, str) or not _chat_listing_only(root, content):
+                problems[path] = [
+                    "Only which agents are in Chat changes here; other project settings change with a release."
+                ]
+            loads.append(path)
+            continue
         kind = _editable(tree, path)
         found: List[str] = []
         if kind is None:
@@ -338,7 +363,138 @@ def check_changes(
                 found.append(str(exc).replace(str(root) + "/", ""))
         if found:
             problems[path] = found
+    if loads and not problems:
+        found = _load_with(root, changes, list(new_agents.values()))
+        if found:
+            problems[loads[0]] = found
     return problems
+
+
+def _agent_roots(root: Path) -> List[str]:
+    project = _yaml(root / "project.yml")
+    configured = (project.get("paths") or {}).get("agents", "agents")
+    roots = configured if isinstance(configured, list) else [configured]
+    return [r for r in (_relative(root, root / str(f)) for f in roots) if r]
+
+
+def _new_agent(root: Path, path: str) -> bool:
+    """Whether ``path`` is the ``agent.yml`` of an agent the project doesn't have."""
+    pure = PurePosixPath(path)
+    if pure.name != "agent.yml" or len(pure.parts) < 3 or ".." in pure.parts:
+        return False
+    if PurePosixPath(*pure.parts[:-2]).as_posix() not in _agent_roots(root):
+        return False
+    return (
+        _AGENT_KEY.fullmatch(pure.parent.name) is not None
+        and not (root / path).exists()
+    )
+
+
+def _without_chat(data: Any) -> Any:
+    if not isinstance(data, dict):
+        return data
+    agents = dict(data.get("agents") or {})
+    agents.pop("chat_agents", None)
+    return {**data, "agents": agents}
+
+
+def _chat_listing_only(root: Path, content: str) -> bool:
+    """Whether ``content`` changes project.yml only in which agents are in Chat."""
+    try:
+        after = yaml.safe_load(content)
+    except yaml.YAMLError:
+        return False
+    return _without_chat(after) == _without_chat(_yaml(root / "project.yml"))
+
+
+def _load_with(
+    root: Path, changes: Sequence[Dict[str, Any]], agents: Sequence[str]
+) -> List[str]:
+    """What loading the project, and each of ``agents``, reports once
+    ``changes`` are made (in a copy; ``root`` is untouched)."""
+    import shutil
+    import tempfile
+
+    from omniagents.core.config.loader import collect_config_problems
+    from omniagents.core.project.runtime import build_spec_from_project, load_project
+
+    with tempfile.TemporaryDirectory(prefix="definition-check-") as tmp:
+        copy = Path(tmp) / root.name
+        shutil.copytree(
+            root, copy, ignore=shutil.ignore_patterns(".git", "__pycache__")
+        )
+        for change in changes:
+            target = copy / str(change["path"])
+            if change.get("content") is None:
+                target.unlink(missing_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(str(change["content"]), encoding="utf-8")
+        with collect_config_problems() as problems:
+            try:
+                project = load_project(str(copy / "project.yml"))
+                for key in agents:
+                    build_spec_from_project(project, key)
+            # Loading imports the project's code; any failure refuses the change.
+            except Exception as exc:  # noqa: BLE001
+                problems.append(str(exc).replace(str(copy) + "/", ""))
+        # Loading the copy made it the process's project: put the real one back.
+        load_project(str(root / "project.yml"))
+    return list(problems)
+
+
+def new_agent_changes(
+    root: Path,
+    key: str,
+    *,
+    description: str,
+    template: Optional[str] = None,
+    chat: bool = False,
+) -> List[Dict[str, Any]]:
+    """The files that add agent ``key`` (its ``agent.yml`` and instructions,
+    built on ``template`` when given) and, with ``chat``, list it in Chat."""
+    from omniagents.core.utils.yaml_edit import dump_document, load_document
+
+    root = Path(root).resolve()
+    if not _AGENT_KEY.fullmatch(key):
+        raise DefinitionError(
+            422, "A name is a-z, 0-9 and _, starting with a letter (up to 64)"
+        )
+    tree = definition_tree(root)
+    if any(a["key"] == key for a in tree["agents"]):
+        raise DefinitionError(409, f"There is already an agent named {key}")
+    if template is not None and template not in {b["key"] for b in tree["bases"]}:
+        raise DefinitionError(422, f"There is no template {template}")
+    folder = f"{_agent_roots(root)[0]}/{key}"
+    definition = {"name": key, "description": description.strip()}
+    if template:
+        definition["extends"] = template
+    definition["instructions_file"] = "instructions.md"
+    title = key.replace("_", " ").title()
+    changes: List[Dict[str, Any]] = [
+        {
+            "path": f"{folder}/agent.yml",
+            "content": yaml.safe_dump(definition, sort_keys=False, allow_unicode=True),
+        },
+        {
+            "path": f"{folder}/instructions.md",
+            "content": f"# {title}\n\n{description.strip()}\n",
+        },
+    ]
+    if chat:
+        text = (root / "project.yml").read_text(encoding="utf-8")
+        document_yaml, document = load_document(text)
+        agents = document.setdefault("agents", {})
+        listed = agents.get("chat_agents")
+        if listed is None:
+            current = agents.get("chat_entrypoint") or agents.get("entrypoint")
+            agents["chat_agents"] = [a for a in [current, key] if a]
+        elif key not in listed:
+            listed.append(key)
+        changes.append(
+            {"path": "project.yml", "content": dump_document(document_yaml, document)}
+        )
+    return changes
 
 
 # -- moving the checkout ---------------------------------------------------------
@@ -406,10 +562,11 @@ def uncommitted(root: Path) -> List[str]:
     return paths
 
 
-def advance(root: Path, commit: str, *, token: Optional[str] = None) -> str:
+def advance(root: Path, commit: str, *, token: Optional[str] = None) -> Dict[str, Any]:
     """Fast-forward the checkout at ``root`` to ``commit`` (fetched from its
-    ``origin``), when everything between them is read on each run; the
-    commit. Refuses (:class:`DefinitionError`) a checkout with uncommitted
+    ``origin``) when everything between them is read on each run, or adds
+    agents or changes which are in Chat (``reload``: the server reloads its
+    agents). Refuses (:class:`DefinitionError`) a checkout with uncommitted
     changes, a commit that is not ahead of the running one, and one that
     changes what only a release changes."""
     root = Path(root).resolve()
@@ -419,7 +576,7 @@ def advance(root: Path, commit: str, *, token: Optional[str] = None) -> str:
     if current is None:
         raise DefinitionError(409, "This factory does not run from a checkout")
     if commit == current:
-        return commit
+        return {"commit": commit, "reload": False}
     dirty = uncommitted(root)
     if dirty:
         raise DefinitionError(
@@ -438,8 +595,35 @@ def advance(root: Path, commit: str, *, token: Optional[str] = None) -> str:
         raise DefinitionError(
             409, "That commit does not follow the one the factory runs"
         )
-    changed = _git(root, "diff", "--name-only", current, commit).splitlines()
-    needs_release = [p for p in changed if not read_each_run(p)]
+    changed = [
+        line.split("\t", 1)
+        for line in _git(
+            root, "diff", "--name-status", "--no-renames", current, commit
+        ).splitlines()
+        if "\t" in line
+    ]
+    agent_roots = _agent_roots(root)
+    reload = False
+    needs_release = []
+    for status, path in changed:
+        if read_each_run(path):
+            continue
+        pure = PurePosixPath(path)
+        if (
+            status == "A"
+            and pure.name == "agent.yml"
+            and len(pure.parts) >= 3
+            and PurePosixPath(*pure.parts[:-2]).as_posix() in agent_roots
+        ):
+            reload = True  # a new agent
+            continue
+        if path == "project.yml" and status == "M":
+            before = yaml.safe_load(_git(root, "show", f"{current}:project.yml"))
+            after = yaml.safe_load(_git(root, "show", f"{commit}:project.yml"))
+            if _without_chat(before) == _without_chat(after):
+                reload = True  # which agents are in Chat
+                continue
+        needs_release.append(path)
     if needs_release:
         raise DefinitionError(
             422,
@@ -447,4 +631,4 @@ def advance(root: Path, commit: str, *, token: Optional[str] = None) -> str:
             needs_release,
         )
     _git(root, "checkout", "--quiet", commit)
-    return commit
+    return {"commit": commit, "reload": reload}
