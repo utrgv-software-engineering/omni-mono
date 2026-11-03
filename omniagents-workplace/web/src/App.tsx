@@ -908,25 +908,6 @@ export default function App({
                 </button>
               ))}
             </Section>
-            <Section title="Repositories">
-              {state.github.repositories.map((r) => (
-                <button
-                  type="button"
-                  key={r.full_name}
-                  onClick={() => navigate(`/${r.full_name}`)}
-                  className="flex items-start gap-2 rounded-md px-2 py-1 text-left hover:bg-accent"
-                  title={r.description}
-                >
-                  <GitBranch className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-                  <div className="min-w-0">
-                    <div className="truncate font-medium">{r.full_name}</div>
-                    <div className="truncate text-xs text-muted-foreground">
-                      {r.open_issues} issues · {r.open_pulls} pull requests
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </Section>
           </AppNav>
 
           {mobile ? (
