@@ -36,6 +36,7 @@ is left off, with the reason logged.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 import os
@@ -530,12 +531,26 @@ def mount_integrations(
     intake.version = os.environ.get("FACTORY_VERSION") or None
 
     def reload_agents() -> None:
-        """Agents added, or Chat's changed, by a published edit: the running
-        project learns them (each agent's runtime is built on first use)."""
+        """Agents' settings, agents added or deleted, or the project's agents
+        section changed by a published edit: the running project takes the new
+        definitions, and each running agent's next run is built from its new
+        settings (an agent not running yet is built on first use)."""
+        from omniagents.core.project.runtime import build_spec_from_project
+
         fresh = load_project(str(manifest))
-        project.agents_map.clear()
-        project.agents_map.update(fresh.agents_map)
-        project.raw["agents"] = fresh.raw.get("agents")
+        for field in dataclasses.fields(project):
+            setattr(project, field.name, getattr(fresh, field.name))
+        running = dict(runtimes._apps)
+        if runtimes.primary_app is not None and runtimes.primary_agent:
+            running[runtimes.primary_agent] = runtimes.primary_app
+        for key, runtime in running.items():
+            if key not in project.agents_map:
+                continue  # deleted: no new conversations reach it
+            service = runtime.state.agent_service
+            spec = build_spec_from_project(project, key)
+            spec.project_slug = service.spec.project_slug
+            spec.agent_slug = service.spec.agent_slug
+            service.spec = spec
         logger.info(
             "integrations: agents reloaded: %s", ", ".join(sorted(project.agents_map))
         )
@@ -791,6 +806,44 @@ def _mount_definition_routes(
                 template=body.get("template") or None,
                 chat=bool(body.get("chat")),
             )
+        except definition.DefinitionError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=exc.status)
+        return {"changes": changes}
+
+    @app.get("/integrations/definition/agents/{key}")
+    async def agent_settings(key: str, request: Request):
+        """An agent's settings as fields, what it inherits, and the choices."""
+        if not await _authorized(request):
+            return Response(status_code=401)
+        try:
+            return await asyncio.to_thread(definition.agent_settings, root, key)
+        except definition.DefinitionError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=exc.status)
+
+    @app.post("/integrations/definition/agents/{key}/changes")
+    async def agent_changes(key: str, request: Request):
+        """``{settings}``: the files that give an agent those settings, or
+        (``{"delete": true}``) that delete it."""
+        if not await _authorized(request):
+            return Response(status_code=401)
+        body = await request.json()
+        if not isinstance(body, dict):
+            return JSONResponse(
+                {"detail": "Expected {settings} or {delete}"}, status_code=422
+            )
+        try:
+            if body.get("delete") is True:
+                changes = await asyncio.to_thread(
+                    definition.delete_agent_changes, root, key
+                )
+            elif isinstance(body.get("settings"), dict):
+                changes = await asyncio.to_thread(
+                    definition.agent_changes, root, key, body["settings"]
+                )
+            else:
+                return JSONResponse(
+                    {"detail": "Expected {settings} or {delete}"}, status_code=422
+                )
         except definition.DefinitionError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=exc.status)
         return {"changes": changes}

@@ -623,7 +623,10 @@ async def test_publishing_an_edit_moves_the_factory_and_its_runs(tmp_path, monke
     monkeypatch.setattr(personal.ConversationRunner, "__call__", turn)
     app = FastAPI()
     app.state.agent_service = SimpleNamespace(
-        _release_gate=None, active_run_ids=lambda: [], active_sessions=lambda: []
+        _release_gate=None,
+        active_run_ids=lambda: [],
+        active_sessions=lambda: [],
+        spec=SimpleNamespace(project_slug="edit-test", agent_slug="coordinator"),
     )
     app.state.connection_authenticator = ConnectionAuthenticator.from_spec(
         SimpleNamespace(security_config={}), auth_token="t"
@@ -674,6 +677,9 @@ async def test_publishing_an_edit_moves_the_factory_and_its_runs(tmp_path, monke
         assert moved.json() == {"commit": agent, "reloaded": True}
         status = (await client.get("/integrations/architecture", headers=auth)).json()
         assert "designer" in status["agents"] and "designer" in status["chat_agents"]
+        # The running agent's next run is built from the reloaded definitions.
+        spec = app.state.agent_service.spec
+        assert spec.name == "coordinator" and spec.agent_slug == "coordinator"
         assert {
             "id": "designer",
             "name": "Designer",

@@ -7,7 +7,9 @@ import { AutomationsApp, health, sentence, type Automation } from "./Automations
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@omniagents/chat-ui/components/omni-avatar/AgentAvatar", () => ({ AgentAvatar: () => <span data-avatar /> }));
 vi.mock("@omniagents/ui/code-editor", () => ({
-  CodeMirrorEditor: ({ value, ariaLabel }: { value: string; ariaLabel: string }) => <textarea aria-label={ariaLabel} value={value} readOnly />,
+  CodeMirrorEditor: ({ value, onChange, ariaLabel }: { value: string; onChange: (v: string) => void; ariaLabel: string }) => (
+    <textarea aria-label={ariaLabel} value={value} onChange={e => onChange(e.target.value)} />
+  ),
 }));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -46,9 +48,23 @@ let node: HTMLDivElement;
 const fetcher = vi.fn(async (url: string, _options?: RequestInit) => ({
   ok: true,
   json: async () =>
-    url.includes("/definition/file")
-      ? { content: "---\ntriggers: []\n---\nReview the factory's runs.\n", commit: "a".repeat(40) }
-      : url.includes("automation-routes")
+    url.includes("/definition/automations/nightly-review") && (_options?.method ?? "GET") === "GET"
+      ? {
+          commit: "a".repeat(40),
+          path: "automations/nightly-review/automation.md",
+          fields: {
+            description: "reviews the day",
+            agent: "improver",
+            triggers: [{ provider: "schedule", schedule: { name: "nightly-review", cron: "0 2 * * *" } }],
+            instruction: "Review the factory's runs.",
+            conversation: "auto",
+          },
+        }
+      : url.includes("/definition/automations/")
+        ? { commit: "b".repeat(40), published: true }
+        : url.endsWith("/factory/definition")
+          ? { main: "a".repeat(40) }
+          : url.includes("automation-routes")
       ? { agents: ["improver", "maintainer", "foreman"] }
       : url.endsWith("/enabled")
         ? { enabled: false }
@@ -126,13 +142,60 @@ it("keeps ignored events behind a toggle", async () => {
   expect(node.textContent).toContain("no automation matches");
 });
 
-it("edits an automation where it is", async () => {
+it("edits an automation where it is, as fields", async () => {
   await act(async () => root.render(<AutomationsApp name="nightly-review" navigate={vi.fn()} />));
   await act(async () => {});
   await act(async () => button("Edit").click());
   await act(async () => {});
   await act(async () => {});
-  expect(fetcher.mock.calls.some(([url]) => url.includes("/definition/file?path=automations%2Fnightly-review%2Fautomation.md"))).toBe(true);
-  expect(document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Nightly review automation"]')!.value).toContain("Review the factory's runs.");
-  expect(button("Done")).toBeTruthy();
+  expect(document.querySelector<HTMLInputElement>("#automation-description")!.value).toBe("reviews the day");
+  expect(document.querySelector<HTMLSelectElement>('select[aria-label="How often"]')!.value).toBe("daily");
+  expect(document.querySelector<HTMLInputElement>('input[aria-label="Time"]')!.value).toBe("02:00");
+  await act(async () => button("Save").click());
+  const save = fetcher.mock.calls.find(([url, options]) => url.includes("/definition/automations/nightly-review") && options?.method === "PUT")!;
+  expect(JSON.parse(save[1]!.body as string)).toMatchObject({
+    base_commit: "a".repeat(40),
+    agent: "improver",
+    triggers: [{ provider: "schedule", schedule: { name: "nightly-review", cron: "0 2 * * *" } }],
+  });
+});
+
+it("adds an automation from a form", async () => {
+  const navigate = vi.fn();
+  await act(async () => root.render(<AutomationsApp navigate={navigate} />));
+  await act(async () => {});
+  await act(async () => button("New automation").click());
+  expect(navigate).toHaveBeenCalledWith("/automations/%2Bnew");
+  await act(async () => root.render(<AutomationsApp key="new" name="+new" navigate={navigate} />));
+  await act(async () => {});
+  await act(async () => {});
+  const type = async (selector: string, value: string) =>
+    act(async () => {
+      const element = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector)!;
+      const proto = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(element, value);
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  await type("#automation-name", "Weekly Report");
+  await type("#automation-description", "writes the weekly report");
+  await type('textarea[aria-label="What it\'s told"]', "Write it.");
+  await act(async () => button("Add automation").click());
+  const save = fetcher.mock.calls.find(([url, options]) => url.includes("/definition/automations/weekly-report") && options?.method === "PUT")!;
+  expect(JSON.parse(save[1]!.body as string)).toEqual({
+    base_commit: "a".repeat(40),
+    description: "writes the weekly report",
+    agent: null,
+    triggers: [{ provider: "schedule", schedule: { name: "weekly-report", cron: "0 9 * * 1-5" } }],
+    instruction: "Write it.",
+    conversation: "auto",
+  });
+  expect(navigate).toHaveBeenCalledWith("/automations/weekly-report");
+});
+
+it("reads and writes the schedules people use", async () => {
+  const { readCron, writeCron } = await import("./AutomationForm");
+  expect(readCron("30 8 * * 1-5")).toMatchObject({ kind: "weekdays", time: "08:30" });
+  expect(readCron("0 9 * * 1")).toMatchObject({ kind: "weekly", day: 1 });
+  expect(readCron("*/5 * * * *")).toMatchObject({ kind: "custom" });
+  expect(writeCron({ kind: "weekly", time: "07:15", day: 3, cron: "" })).toBe("15 7 * * 3");
 });

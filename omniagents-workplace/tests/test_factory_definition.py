@@ -413,3 +413,123 @@ def test_adding_an_agent_commits_the_files_the_factory_names(editor):
         e.repo.bare.blob("main", "agents/designer/agent.yml")[1] == b"name: designer\n"
     )
     assert e.repo.bare.commit(_main(e)).subject == "Add agent Designer"
+
+
+def test_an_agents_settings_and_deleting_it_are_saved_as_the_factory_says(editor):
+    from omniagents_workplace.factory_definition import AgentSettingsBody
+
+    e = editor
+    answer = e.fake.__call__
+    asked = []
+
+    def factory(method, path, body=None):
+        if path == "/integrations/definition/agents/designer":
+            return 200, {"key": "designer", "model": None}
+        if path == "/integrations/definition/agents/designer/changes":
+            asked.append(body)
+            if body.get("delete"):
+                return 200, {
+                    "changes": [{"path": "agents/designer/agent.yml", "content": None}]
+                }
+            return 200, {
+                "changes": [
+                    {
+                        "path": "agents/designer/agent.yml",
+                        "content": "name: designer\nmodel: x\n",
+                    }
+                ]
+            }
+        return answer(method, path, body)
+
+    e.definition.factory = factory
+    assert e.definition.agent_settings("designer")["key"] == "designer"
+    settings = AgentSettingsBody(model="x").model_dump(exclude_unset=True)
+    saved = e.definition.change_agent(
+        e.admin, "designer", {"settings": settings}, "Change Designer's settings"
+    )
+    assert asked[0] == {"settings": {"model": "x"}} and saved["published"] is True
+    assert (
+        e.repo.bare.blob("main", "agents/designer/agent.yml")[1]
+        == b"name: designer\nmodel: x\n"
+    )
+    assert e.repo.bare.commit(_main(e)).subject == "Change Designer's settings"
+    e.definition.change_agent(
+        e.admin, "designer", {"delete": True}, "Delete agent Designer"
+    )
+    assert e.repo.bare.blob("main", "agents/designer/agent.yml") is None
+
+
+def test_an_automation_is_made_changed_and_deleted_as_fields(editor):
+    from omniagents_workplace.factory_definition import AutomationBody
+
+    e = editor
+    body = dict(
+        description="reviews the day",
+        agent="improver",
+        triggers=[
+            {
+                "provider": "schedule",
+                "schedule": {"name": "nightly", "cron": "0 2 * * *"},
+            }
+        ],
+        instruction="Review the day's runs.",
+    )
+    e.definition.save_automation(
+        e.admin, "nightly", AutomationBody(base_commit=_main(e), **body)
+    )
+    text = e.repo.bare.blob("main", "automations/nightly/automation.md")[1].decode()
+    assert text.startswith(
+        "---\ndescription: reviews the day\nagent: improver\ntriggers:\n"
+    )
+    assert text.endswith("---\n\nReview the day's runs.\n")
+    assert e.repo.bare.commit(_main(e)).subject == "Add automation nightly"
+    found = e.definition.automation("nightly")
+    assert (
+        found["fields"]["agent"] == "improver"
+        and found["fields"]["instruction"] == "Review the day's runs."
+    )
+    # Settings the form doesn't show survive a change.
+    e.w.github.write_files(
+        e.repo,
+        "admin",
+        "main",
+        [
+            (
+                "automations/nightly/automation.md",
+                text.replace("triggers:", "self_improvement: true\ntriggers:").encode(),
+            )
+        ],
+        "Flag",
+        bypass_protection=True,
+    )
+    e.definition.save_automation(
+        e.admin,
+        "nightly",
+        AutomationBody(
+            base_commit=_main(e), **{**body, "agent": None, "conversation": "new"}
+        ),
+    )
+    meta = e.repo.bare.blob("main", "automations/nightly/automation.md")[1].decode()
+    assert (
+        "self_improvement: true" in meta
+        and "agent:" not in meta
+        and "conversation: new" in meta
+    )
+    e.w.github.write_files(
+        e.repo,
+        "admin",
+        "main",
+        [
+            (
+                "automations/templated/automation.md",
+                b"---\n{% if x %}triggers: []{% endif %}\n---\nGo.\n",
+            )
+        ],
+        "Templated",
+        bypass_protection=True,
+    )
+    assert e.definition.automation("templated")["fields"] is None
+    e.definition.delete_automation(e.admin, "nightly")
+    assert not [
+        f for f in e.repo.bare.files("main") if f.startswith("automations/nightly/")
+    ]

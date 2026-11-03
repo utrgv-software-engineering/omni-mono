@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Archive, ArrowLeft, Clock, FolderOpen, GitBranch, Hash, Pencil, Play, Sparkles, Zap, type LucideIcon } from "lucide-react";
+import { Archive, ArrowLeft, Clock, FolderOpen, GitBranch, Hash, Pencil, Play, Plus, Sparkles, Trash2, Zap, type LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import { AgentAvatar } from "@omniagents/chat-ui/components/omni-avatar/AgentAvatar";
 import { Badge } from "@omniagents/ui/badge";
@@ -10,6 +10,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@omniagents/ui/tabs";
 import { factoryFetch } from "./factory-scope";
 import { describeTrigger, scheduleName, type Trigger } from "./automation-triggers";
 import { FileEditor } from "./Agents";
+import { AutomationForm, deleteAutomation, loadAutomation, type AutomationFields } from "./AutomationForm";
+
+/** The new-automation page's name in the path; no automation can have it. */
+const NEW = "+new";
 
 type Grade = { judge: string; agent?: string; passed: boolean | null; reason?: string };
 type Run = {
@@ -149,6 +153,20 @@ export function AutomationsApp({ name, navigate }: { name?: string; navigate: (p
   if (!view) return <p className="p-6 text-sm text-muted-foreground">Loading automations…</p>;
   const agentName = (id: string) => view.agent_details?.find(a => a.id === id)?.name || humanize(id);
   const selected = name ? view.automations.find(a => a.name === name) : undefined;
+  if (name === NEW)
+    return (
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-6">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
+          <div><Button variant="ghost" size="sm" onClick={() => navigate("/automations")}><ArrowLeft />Automations</Button></div>
+          <h1 className="text-xl font-semibold">New automation</h1>
+          <AutomationForm
+            agents={agents.map(a => ({ key: a, name: agentName(a) }))}
+            onSaved={saved => navigate(`/automations/${encodeURIComponent(saved)}`)}
+            onCancel={() => navigate("/automations")}
+          />
+        </div>
+      </div>
+    );
   if (name && !selected) return <p className="p-6 text-sm">No automation named “{name}”.</p>;
   if (selected)
     return <AutomationDetail automation={selected} agents={agents} agentName={agentName} navigate={navigate} reload={load} onToggle={enabled => void toggle(selected, enabled)} />;
@@ -184,9 +202,12 @@ export function AutomationsApp({ name, navigate }: { name?: string; navigate: (p
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-6">
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-6">
-        <div>
-          <h1 className="text-xl font-semibold">Automations</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Work the agents take on without being asked.</p>
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <h1 className="text-xl font-semibold">Automations</h1>
+            <p className="mt-1 text-sm text-muted-foreground">Work the agents take on without being asked.</p>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => navigate(`/automations/${encodeURIComponent(NEW)}`)}><Plus />New automation</Button>
         </div>
         {view.automations.length === 0 && <p className="text-sm text-muted-foreground">This factory has no automations.</p>}
         {attention.length > 0 && (
@@ -230,6 +251,23 @@ function AutomationDetail({
   const [fullInstruction, setFullInstruction] = useState(false);
   const [ignored, setIgnored] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState<{ commit: string; path: string; fields: AutomationFields | null }>();
+  useEffect(() => {
+    if (!editing) return setForm(undefined);
+    void loadAutomation(automation.name)
+      .then(setForm)
+      .catch(e => toast.error(e instanceof Error ? e.message : "Unable to open the automation"));
+  }, [editing, automation.name]);
+  const remove = async () => {
+    if (!window.confirm(`Delete the automation ${humanize(automation.name)}? Its runs stay in History.`)) return;
+    try {
+      const message = await deleteAutomation(automation.name);
+      toast[message.kind](message.text);
+      navigate("/automations");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Unable to delete the automation");
+    }
+  };
   const schedule = scheduleName(automation.triggers);
   const changed = agent !== automation.agent || conversation !== automation.conversation;
   const [lead, ...rest] = automation.instruction.split(/\n\s*\n/);
@@ -269,7 +307,10 @@ function AutomationDetail({
               </Button>
             )}
             <Button variant="outline" size="sm" aria-pressed={editing} onClick={() => setEditing(value => !value)}>
-              <Pencil />{editing ? "Done" : "Edit"}
+              <Pencil />{editing ? "Close" : "Edit"}
+            </Button>
+            <Button variant="ghost" size="icon-sm" aria-label={`Delete ${humanize(automation.name)}`} onClick={() => void remove()}>
+              <Trash2 />
             </Button>
             <Switch
               aria-label={`${automation.enabled ? "Turn off" : "Turn on"} ${humanize(automation.name)}`}
@@ -281,10 +322,28 @@ function AutomationDetail({
         <p className="text-sm">{sentence(automation, agentName(automation.agent))}</p>
         {editing && (
           <section aria-label="Edit the automation" className="flex flex-col gap-2">
-            <p className="text-sm text-muted-foreground">
-              Its description and triggers are at the top, between the <code>---</code> lines; what it's told follows.
-            </p>
-            <FileEditor path={`automations/${automation.name}/automation.md`} label={`${humanize(automation.name)} automation`} onSaved={() => void reload()} />
+            {form === undefined ? (
+              <p className="text-sm text-muted-foreground">Opening…</p>
+            ) : form.fields ? (
+              <AutomationForm
+                name={automation.name}
+                initial={form.fields}
+                commit={form.commit}
+                agents={agents.map(a => ({ key: a, name: agentName(a) }))}
+                onSaved={() => {
+                  setEditing(false);
+                  void reload();
+                }}
+                onCancel={() => setEditing(false)}
+              />
+            ) : (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  This automation's file has settings the form can't show; edit the file. Its description and triggers are at the top, between the <code>---</code> lines; what it's told follows.
+                </p>
+                <FileEditor path={form.path} label={`${humanize(automation.name)} automation`} onSaved={() => void reload()} />
+              </>
+            )}
           </section>
         )}
 

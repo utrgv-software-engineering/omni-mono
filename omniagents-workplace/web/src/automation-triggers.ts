@@ -7,7 +7,7 @@ export type Trigger = {
   schedule?: { name?: string; cron?: string; review_runs?: string };
 };
 
-const EVENTS: Record<string, string> = {
+export const EVENTS: Record<string, string> = {
   "github:pull_request_opened": "A pull request is opened",
   "github:pull_request_ready": "A draft pull request is marked ready",
   "github:pull_request_synchronized": "A pull request gets new commits",

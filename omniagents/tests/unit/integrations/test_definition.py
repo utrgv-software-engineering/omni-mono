@@ -10,7 +10,10 @@ from yaml import safe_load as yaml_load
 from omniagents.integrations.definition import (
     DefinitionError,
     advance,
+    agent_changes,
+    agent_settings,
     check_changes,
+    delete_agent_changes,
     definition_tree,
     live_commit,
     new_agent_changes,
@@ -165,7 +168,7 @@ def test_check_says_what_is_wrong(factory):
     problems = check_changes(
         factory["live"],
         [
-            {"path": "agents/foreman/agent.yml", "content": "model: x\n"},
+            {"path": "agents/foreman/tools/run.py", "content": "x = 1\n"},
             {"path": "agents/foreman/instructions.md", "content": "{% if %}"},
             {"path": "base/instructions.md", "content": None},
             {
@@ -176,7 +179,7 @@ def test_check_says_what_is_wrong(factory):
             {"path": "../outside.md", "content": "x"},
         ],
     )
-    assert "Only agents' instructions" in problems["agents/foreman/agent.yml"][0]
+    assert problems["agents/foreman/tools/run.py"] == ["Code changes with a release."]
     assert any("template" in p for p in problems["agents/foreman/instructions.md"])
     assert "emptied, not deleted" in problems["base/instructions.md"][0]
     assert (
@@ -200,13 +203,29 @@ def test_advance_refuses_what_needs_a_release(factory):
     live = factory["live"]
     before = live_commit(live)
     commit = _commit_in_source(
-        factory, "agents/foreman/agent.yml", "name: foreman\nmodel: x\n"
+        factory, "base/context.py", "def build():\n    return {}\n"
     )
     with pytest.raises(DefinitionError) as refused:
         advance(live, commit)
     assert refused.value.status == 422
-    assert refused.value.paths == ["agents/foreman/agent.yml"]
+    assert refused.value.paths == ["base/context.py"]
     assert live_commit(live) == before
+
+
+def test_agent_settings_apply_by_reloading(factory):
+    live = factory["live"]
+    commit = _commit_in_source(
+        factory,
+        "agents/foreman/agent.yml",
+        "name: foreman\ndescription: Runs it.\nextends: base\n"
+        "instructions_file: instructions.md\nmodel: other\n",
+    )
+    assert advance(live, commit) == {"commit": commit, "reload": True}
+    problems = check_changes(
+        live,
+        [{"path": "agents/foreman/agent.yml", "content": "description: no name\n"}],
+    )
+    assert problems["agents/foreman/agent.yml"]
 
 
 def test_advance_refuses_uncommitted_changes(factory):
@@ -389,11 +408,7 @@ def test_adding_an_agent_is_refused_when_it_would_not_load(factory):
 
 def test_other_project_settings_still_need_a_release(factory):
     live = factory["live"]
-    text = (
-        (live / "project.yml")
-        .read_text()
-        .replace("entrypoint: foreman", "entrypoint: other")
-    )
+    text = (live / "project.yml").read_text() + "tracing: {provider: studio}\n"
     assert check_changes(live, [{"path": "project.yml", "content": text}])[
         "project.yml"
     ]
@@ -401,3 +416,102 @@ def test_other_project_settings_still_need_a_release(factory):
     with pytest.raises(DefinitionError) as refused:
         advance(live, commit)
     assert refused.value.paths == ["project.yml"]
+
+
+def _with_designer(factory):
+    """foreman and a designer it calls, both in Chat; foreman the default."""
+    live = factory["live"]
+    _write(
+        factory["source"] / "project.yml",
+        """
+        agents:
+          entrypoint: foreman
+          chat_entrypoint: foreman
+          chat_agents: [foreman, designer]  # who people talk to
+        paths:
+          agents: [agents, base/agents]
+    """,
+    )
+    _write(
+        factory["source"] / "agents/designer/agent.yml",
+        "name: designer  # draws\ndescription: Designs.\nextends: base\n"
+        "instructions_file: instructions.md\n",
+    )
+    _write(factory["source"] / "agents/designer/instructions.md", "Design.\n")
+    _write(
+        factory["source"] / "agents/designer/tools/draw.py", "def draw():\n    pass\n"
+    )
+    _commit_in_source(
+        factory,
+        "agents/foreman/agent.yml",
+        "name: foreman\ndescription: Runs the line.\nextends: base\n"
+        "instructions_file: instructions.md\nagent_tools:\n"
+        "  - agent: designer\n    tool_name: design\n",
+    )
+    _git(live, "pull", "-q")
+    return live
+
+
+def test_an_agents_settings_as_fields(factory):
+    live = _with_designer(factory)
+    designer = agent_settings(live, "designer")
+    assert designer["description"] == "Designs."
+    assert designer["chat"] is True and designer["chat_default"] is False
+    assert designer["called_by"] == ["foreman"]
+    assert agent_settings(live, "foreman")["calls"] == ["designer"]
+    assert {"key": "foreman", "name": "Foreman"} in designer["options"]["agents"]
+
+
+def test_changing_settings_keeps_the_rest_and_checks(factory):
+    live = _with_designer(factory)
+    changes = agent_changes(
+        live,
+        "designer",
+        {
+            "label": "Designer",
+            "model": "gpt-x",
+            "description": "Draws screens.",
+            "chat": False,
+        },
+    )
+    by_path = {c["path"]: c["content"] for c in changes}
+    assert "# draws" in by_path["agents/designer/agent.yml"]
+    assert yaml_load(by_path["agents/designer/agent.yml"])["model"] == "gpt-x"
+    assert "# who people talk to" in by_path["project.yml"]
+    assert yaml_load(by_path["project.yml"])["agents"]["chat_agents"] == ["foreman"]
+    assert check_changes(live, changes) == {}
+    calls = agent_changes(live, "foreman", {"calls": []})
+    assert "agent_tools" not in yaml_load(calls[0]["content"])
+    with pytest.raises(DefinitionError):
+        agent_changes(live, "foreman", {"chat": False})  # Chat's default
+
+
+def test_deleting_an_agent_removes_its_folder_and_place_in_chat(factory):
+    live = _with_designer(factory)
+    with pytest.raises(DefinitionError) as refused:
+        delete_agent_changes(live, "designer")
+    assert "foreman" in str(refused.value)  # foreman calls it
+    unhook = agent_changes(live, "foreman", {"calls": []})
+    _commit_changes_in_source(factory, unhook, "Unhook")
+    _git(live, "pull", "-q")
+    changes = delete_agent_changes(live, "designer")
+    assert {c["path"] for c in changes} == {
+        "agents/designer/agent.yml",
+        "agents/designer/instructions.md",
+        "agents/designer/tools/draw.py",
+        "project.yml",
+    }
+    assert check_changes(live, changes) == {}
+    for change in changes:
+        target = factory["source"] / change["path"]
+        if change["content"] is None:
+            target.unlink()
+        else:
+            target.write_text(change["content"])
+    _git(factory["source"], "add", "-A")
+    _git(factory["source"], "commit", "-qm", "Delete agent Designer")
+    _git(factory["source"], "push", "-q", str(factory["origin"]), "main")
+    commit = _git(factory["source"], "rev-parse", "HEAD")
+    assert advance(live, commit) == {"commit": commit, "reload": True}
+    with pytest.raises(DefinitionError):
+        delete_agent_changes(live, "foreman")  # the defaults

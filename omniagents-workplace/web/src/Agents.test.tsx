@@ -56,11 +56,36 @@ const tree: Tree = {
   published: null,
 };
 
+const settings = {
+  key: "foreman",
+  path: "agents/foreman/agent.yml",
+  label: "",
+  description: "Runs the line.",
+  model: null,
+  capabilities: ["web"],
+  calls: ["implementer"],
+  chat: true,
+  chat_default: true,
+  automation_default: true,
+  inherited: { capabilities: ["shell"], model: "gpt-6-astra" },
+  called_by: [],
+  options: {
+    models: [{ id: "gpt-6-astra", label: "GPT-6-Astra" }, { id: "gpt-x", label: "GPT-X" }],
+    capabilities: [{ name: "shell", description: "" }, { name: "web", description: "" }, { name: "canvas", description: "" }],
+    agents: [{ key: "implementer", name: "Implementer" }],
+  },
+};
+
 let root: Root;
 let node: HTMLDivElement;
 let answers: Record<string, () => { status?: number; body: unknown }>;
-const fetcher = vi.fn(async (url: string, _options?: RequestInit) => {
-  const key = Object.keys(answers).find(k => url.split("?")[0]!.endsWith(k))!;
+const fetcher = vi.fn(async (url: string, options?: RequestInit) => {
+  const path = url.split("?")[0]!;
+  const method = options?.method ?? "GET";
+  // "PUT /definition/..." answers only that method; a bare path answers any.
+  const key =
+    Object.keys(answers).find(k => k.startsWith(method + " ") && path.endsWith(k.slice(method.length + 1))) ??
+    Object.keys(answers).find(k => !k.includes(" ") && path.endsWith(k))!;
   const { status = 200, body } = answers[key]!();
   return { ok: status < 400, status, json: async () => body };
 });
@@ -86,6 +111,8 @@ beforeEach(() => {
     "/definition/skill": () => ({ body: { description: "Foreman's GitHub.", body: "Steps.\n", commit: MAIN, published: true } }),
     "/definition/skill/move": () => ({ body: { commit: "c".repeat(40), published: true } }),
     "/factory/definition": () => ({ body: tree }),
+    "/definition/agents/foreman": () => ({ body: settings }),
+    "/definition/agents/implementer": () => ({ body: { ...settings, key: "implementer", path: "agents/implementer/agent.yml", chat: false, chat_default: false, automation_default: false } }),
   };
   fetcher.mockClear();
   navigate.mockClear();
@@ -178,7 +205,8 @@ it("edits a template on its own page, saying which agents it changes", async () 
   expect(document.body.textContent).toContain("What every agent built on it starts from: Foreman, Implementer. Changes apply to all of them.");
   expect(document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Base template instructions"]')!.value).toBe("Before.\n");
   const reads = fetcher.mock.calls.filter(([url]) => url.includes("/definition/file?path=")).map(([url]) => url);
-  expect(reads).toEqual([expect.stringContaining("path=base%2Finstructions.md")]);
+  expect(reads).toEqual([expect.stringContaining("path=base%2Finstructions.md"), expect.stringContaining("path=base%2Fagent.yml")]);
+  expect(document.querySelector('section[aria-label="Settings"]')!.textContent).toContain("every agent built on this template starts with");
   const skills = document.querySelector('section[aria-label="Skills"]')!.textContent!;
   expect(skills).toContain("canvas");
   expect(document.querySelector<HTMLSelectElement>('select[aria-label="Agent"]')!.value).toBe("template:base");
@@ -196,4 +224,38 @@ it("adds an agent in Chat built on the template, then opens it", async () => {
   expect(JSON.parse(add[1]!.body as string)).toEqual({ key: "designer", description: "Turns requests into designs.", template: "base", chat: true });
   expect(toast.success).toHaveBeenCalledWith("Added. It's in Chat now.");
   expect(navigate).toHaveBeenCalledWith("/agents/designer");
+});
+
+it("changes an agent's settings as fields, sending only what changed", async () => {
+  answers["/definition/agents/foreman"] = () => ({ body: settings });
+  await render("foreman");
+  const section = document.querySelector('section[aria-label="Settings"]')!;
+  expect(section.textContent).toContain("The template's (gpt-6-astra)");
+  expect(section.textContent).toContain("shell · from the template");
+  const model = section.querySelector<HTMLSelectElement>("#agent-model")!;
+  await act(async () => {
+    model.value = "gpt-x";
+    model.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  const canvas = [...section.querySelectorAll("label")].find(l => l.textContent?.startsWith("canvas"))!.querySelector<HTMLButtonElement>('[role="checkbox"]')!;
+  await act(async () => canvas.click());
+  answers["PUT /definition/agents/foreman"] = () => ({ body: { commit: "e".repeat(40), published: true } });
+  await act(async () => button("Save settings").click());
+  const save = fetcher.mock.calls.find(([url, options]) => url.endsWith("/definition/agents/foreman") && options?.method === "PUT")!;
+  expect(JSON.parse(save[1]!.body as string)).toEqual({ model: "gpt-x", capabilities: ["web", "canvas"] });
+  expect(toast.success).toHaveBeenCalledWith("Saved. It works this way from its next run.");
+});
+
+it("won't delete Chat's default agent, and deletes another", async () => {
+  await render("foreman");
+  expect(button("Delete agent").disabled).toBe(true);
+  expect(document.body.textContent).toContain("Make another agent the default before deleting this one.");
+  await render("implementer");
+  vi.stubGlobal("confirm", () => true);
+  answers["DELETE /definition/agents/implementer"] = () => ({ body: { commit: "f".repeat(40), published: true } });
+  await act(async () => {});
+  expect(button("Delete agent").disabled).toBe(false);
+  await act(async () => button("Delete agent").click());
+  expect(fetcher.mock.calls.some(([url, options]) => url.endsWith("/definition/agents/implementer") && options?.method === "DELETE")).toBe(true);
+  expect(navigate).toHaveBeenCalledWith("/agents");
 });

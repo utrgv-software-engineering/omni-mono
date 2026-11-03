@@ -26,7 +26,7 @@ import re
 import threading
 import time
 from pathlib import PurePosixPath
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
 import httpx
 import yaml
@@ -88,6 +88,36 @@ class AgentBody(BaseModel):
     chat: bool = False
 
 
+class AgentSettingsBody(BaseModel):
+    """The settings to change; those left out stay as they are."""
+
+    model_config = ConfigDict(extra="forbid")
+    label: Optional[str] = Field(default=None, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=1024)
+    #: ``None``: the template's.
+    model: Optional[str] = Field(default=None, max_length=200)
+    capabilities: Optional[List[str]] = Field(default=None, max_length=100)
+    #: The agents it can call.
+    calls: Optional[List[str]] = Field(default=None, max_length=100)
+    chat: Optional[bool] = None
+    chat_default: Optional[bool] = None
+    automation_default: Optional[bool] = None
+
+
+class AutomationBody(BaseModel):
+    """An automation as fields: what starts it, who does it, what it's told."""
+
+    model_config = ConfigDict(extra="forbid")
+    base_commit: str = Field(pattern=r"^[0-9a-f]{40}$")
+    description: str = Field(min_length=1, max_length=1024)
+    #: ``None``: the agent automations run by default.
+    agent: Optional[str] = Field(default=None, max_length=64)
+    #: Each ``{provider, event, filter?}`` or ``{provider: "schedule", schedule}``.
+    triggers: List[Dict[str, Any]] = Field(min_length=1, max_length=20)
+    instruction: str = Field(min_length=1, max_length=100_000)
+    conversation: Literal["auto", "thread", "new"] = "auto"
+
+
 class DeleteBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     base_commit: str = Field(pattern=r"^[0-9a-f]{40}$")
@@ -122,6 +152,10 @@ def describe(
             return f"{verb} automation {parts[1]}"
         if parts[-1] == "SKILL.md" and len(parts) >= 3:
             return f"{verb} skill {parts[-2]}"
+        if parts[-1] == "agent.yml" and len(parts) >= 2:
+            return f"{verb} {parts[-2].replace('_', ' ')} settings"
+        if path == "project.yml":
+            return "Change the agents in Chat"
         if len(parts) >= 2:
             return f"{verb} {parts[-2].replace('_', ' ')} instructions"
         return f"{verb} {path}"
@@ -146,6 +180,24 @@ def join_skill(meta: Dict[str, Any], body: str) -> str:
     """A ``SKILL.md`` from its frontmatter and body."""
     front = yaml.safe_dump(meta, sort_keys=False, allow_unicode=True, width=1000)
     return f"---\n{front}---\n\n{body.strip()}\n"
+
+
+def split_automation(text: str) -> Optional[Tuple[Dict[str, Any], str]]:
+    """An automation file's frontmatter and instruction, or ``None`` when it
+    is more than a form can show (template logic in its frontmatter)."""
+    match = re.match(r"\A---\s*\n(.*?)\n---\s*\n?(.*)\Z", text, re.S)
+    if not match or "{%" in match.group(1):
+        return None
+    try:
+        meta = yaml.safe_load(match.group(1)) or {}
+    except yaml.YAMLError:
+        return None
+    return (meta, match.group(2).strip()) if isinstance(meta, dict) else None
+
+
+def join_automation(meta: Dict[str, Any], instruction: str) -> str:
+    front = yaml.safe_dump(meta, sort_keys=False, allow_unicode=True, width=1000)
+    return f"---\n{front}---\n\n{instruction.strip()}\n"
 
 
 class FactoryDefinition:
@@ -475,6 +527,108 @@ class FactoryDefinition:
         )
         return {**saved, "agent": body.key}
 
+    def agent_settings(self, key: str) -> Dict[str, Any]:
+        self.repo()
+        status, data = self.factory("GET", f"/integrations/definition/agents/{key}")
+        if status >= 400:
+            raise HTTPException(
+                status, data.get("detail") or "Unable to read the agent"
+            )
+        return data
+
+    def change_agent(
+        self, account: Any, key: str, body: Dict[str, Any], message: str
+    ) -> Dict[str, Any]:
+        """Save what the factory says ``body`` (``{settings}`` or ``{delete}``) means."""
+        repo = self.repo()
+        status, data = self.factory(
+            "POST", f"/integrations/definition/agents/{key}/changes", body
+        )
+        if status >= 400:
+            raise HTTPException(
+                status, data.get("detail") or "Unable to change the agent"
+            )
+        if not data["changes"]:
+            return {"commit": self.main(repo), "published": True, "detail": None}
+        return self.save(
+            account,
+            self.main(repo),
+            [Change(path=c["path"], content=c["content"]) for c in data["changes"]],
+            message,
+        )
+
+    def automation(self, name: str) -> Dict[str, Any]:
+        """An automation as fields, or ``fields: None`` when only its file can show it."""
+        path = f"automations/{name}/automation.md"
+        found = self.read(path)
+        parsed = split_automation(found["content"])
+        fields = None
+        if parsed is not None:
+            meta, instruction = parsed
+            fields = {
+                "description": str(meta.get("description") or ""),
+                "agent": meta.get("agent"),
+                "triggers": meta.get("triggers") or [],
+                "instruction": instruction,
+                "conversation": meta.get("conversation") or "auto",
+            }
+        return {"name": name, "path": path, "commit": found["commit"], "fields": fields}
+
+    def save_automation(
+        self, account: Any, name: str, body: AutomationBody
+    ) -> Dict[str, Any]:
+        """Create or change an automation from its fields, keeping any other
+        settings its file has."""
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", name):
+            raise HTTPException(422, "A name is lowercase letters, digits, - and _")
+        repo = self.repo()
+        path = f"automations/{name}/automation.md"
+        found = repo.bare.blob(body.base_commit, path)
+        parsed = (
+            split_automation(found[1].decode("utf-8", "replace")) if found else ({}, "")
+        )
+        if parsed is None:
+            raise HTTPException(
+                409, "This automation's file has template logic; edit the file instead"
+            )
+        meta = dict(parsed[0])
+        meta["description"] = body.description.strip()
+        if body.agent:
+            meta["agent"] = body.agent
+        else:
+            meta.pop("agent", None)
+        meta["triggers"] = body.triggers
+        if body.conversation == "auto":
+            meta.pop("conversation", None)
+        else:
+            meta["conversation"] = body.conversation
+        ordered = {
+            k: meta[k]
+            for k in ("description", "agent", "conversation", "triggers")
+            if k in meta
+        }
+        ordered.update({k: v for k, v in meta.items() if k not in ordered})
+        return self.save(
+            account,
+            body.base_commit,
+            [Change(path=path, content=join_automation(ordered, body.instruction))],
+            None,
+        )
+
+    def delete_automation(self, account: Any, name: str) -> Dict[str, Any]:
+        repo = self.repo()
+        main = self.main(repo)
+        folder = f"automations/{name}/"
+        files = [f for f in repo.bare.files(main) if f.startswith(folder)]
+        if not files:
+            raise HTTPException(404, "No such automation")
+        return self.save(
+            account,
+            main,
+            [Change(path=f, content=None) for f in files],
+            f"Delete automation {name}",
+        )
+
     def delete_skill(self, account: Any, base_commit: str, path: str) -> Dict[str, Any]:
         """Delete a skill: every file in its folder."""
         pure = PurePosixPath(path)
@@ -596,6 +750,48 @@ def definition_router(definition: FactoryDefinition) -> APIRouter:
         """Add an agent; it joins the running factory when its commit is published."""
         account = admin(request)
         return definition.add_agent(account, body)
+
+    @router.get("/agents/{key}")
+    def agent_settings(key: str, request: Request):
+        """An agent's settings as fields, what it inherits, and the choices."""
+        admin(request)
+        return definition.agent_settings(key)
+
+    @router.put("/agents/{key}")
+    def change_agent(key: str, body: AgentSettingsBody, request: Request):
+        account = admin(request)
+        name = key.replace("_", " ").title()
+        return definition.change_agent(
+            account,
+            key,
+            {"settings": body.model_dump(exclude_unset=True)},
+            f"Change {name}'s settings",
+        )
+
+    @router.delete("/agents/{key}")
+    def delete_agent(key: str, request: Request):
+        account = admin(request)
+        name = key.replace("_", " ").title()
+        return definition.change_agent(
+            account, key, {"delete": True}, f"Delete agent {name}"
+        )
+
+    @router.get("/automations/{name}")
+    def read_automation(name: str, request: Request):
+        """An automation as fields: what starts it, who does it, what it's told."""
+        admin(request)
+        return definition.automation(name)
+
+    @router.put("/automations/{name}")
+    def save_automation(name: str, body: AutomationBody, request: Request):
+        """Create or change an automation from its fields."""
+        account = admin(request)
+        return definition.save_automation(account, name, body)
+
+    @router.delete("/automations/{name}")
+    def delete_automation(name: str, request: Request):
+        account = admin(request)
+        return definition.delete_automation(account, name)
 
     @router.post("/skill/delete")
     def delete_skill(body: DeleteBody, request: Request):

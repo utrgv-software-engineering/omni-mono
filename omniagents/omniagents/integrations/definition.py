@@ -19,13 +19,16 @@ import base64
 import re
 import subprocess
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import yaml
 
 __all__ = [
     "DefinitionError",
     "advance",
+    "agent_changes",
+    "agent_settings",
+    "delete_agent_changes",
     "check_changes",
     "definition_tree",
     "live_commit",
@@ -309,28 +312,37 @@ def check_changes(
     root = Path(root).resolve()
     tree = definition_tree(root)
     problems: Dict[str, List[str]] = {}
-    # Adding an agent (its folder, and Chat listing it) is checked by loading
-    # the project with the change, as the factory will when it moves to it.
+    # Agents' and templates' settings, an agent added or deleted, and the
+    # project's agents section are checked by loading the project with the
+    # change, as the factory will when it moves to it.
     new_agents = {
-        PurePosixPath(str(c.get("path")))
-        .parent.as_posix(): PurePosixPath(str(c.get("path")))
-        .parent.name
+        PurePosixPath(str(c.get("path"))).parent.as_posix()
         for c in changes
         if c.get("content") is not None and _new_agent(root, str(c.get("path") or ""))
     }
+    folders = new_agents | _agent_folders(root)
     loads: List[str] = []
     for change in changes:
         path = str(change.get("path") or "")
         content = change.get("content")
-        if any(path.startswith(folder + "/") for folder in new_agents):
+        if content is None and _in_deleted_agent(path, changes):
+            loads.append(path)  # the agent goes, everything in its folder with it
+            continue
+        if path.endswith(".py"):
+            problems[path] = ["Code changes with a release."]
+            continue
+        in_folder = any(path.startswith(folder + "/") for folder in folders)
+        if in_folder and not _editable(tree, path):
             if content is not None and not isinstance(content, str):
                 problems[path] = ["The content must be text."]
             loads.append(path)
             continue
-        if path == "project.yml":
-            if not isinstance(content, str) or not _chat_listing_only(root, content):
+        if path == "project.yml" or _capability_file(root, path):
+            if path == "project.yml" and (
+                not isinstance(content, str) or not _agents_section_only(root, content)
+            ):
                 problems[path] = [
-                    "Only which agents are in Chat changes here; other project settings change with a release."
+                    "Only the project's agents section changes here; other project settings change with a release."
                 ]
             loads.append(path)
             continue
@@ -364,7 +376,7 @@ def check_changes(
         if found:
             problems[path] = found
     if loads and not problems:
-        found = _load_with(root, changes, list(new_agents.values()))
+        found = _load_with(root, changes)
         if found:
             problems[loads[0]] = found
     return problems
@@ -390,27 +402,67 @@ def _new_agent(root: Path, path: str) -> bool:
     )
 
 
-def _without_chat(data: Any) -> Any:
+def _in_deleted_agent(path: str, changes: Sequence[Dict[str, Any]]) -> bool:
+    """Whether ``path`` is in a folder whose ``agent.yml`` ``changes`` delete:
+    the agent goes, its code with it."""
+    return any(
+        c.get("content") is None
+        and PurePosixPath(str(c.get("path"))).name == "agent.yml"
+        and path.startswith(PurePosixPath(str(c.get("path"))).parent.as_posix() + "/")
+        for c in changes
+    )
+
+
+def _agent_folders(root: Path) -> set:
+    """Every agent's folder, and every template's (a base agents extend)."""
+    tree = definition_tree(root)
+    return {
+        PurePosixPath(d["skills_folder"]).parent.as_posix()
+        for d in tree["agents"] + tree["bases"]
+        if d["skills_folder"]
+    }
+
+
+def _capability_file(root: Path, path: str) -> bool:
+    project = _yaml(root / "project.yml")
+    configured = (project.get("paths") or {}).get("capabilities") or []
+    folders = configured if isinstance(configured, list) else [configured]
+    pure = PurePosixPath(path)
+    return pure.suffix in (".yml", ".yaml") and any(
+        _relative(root, root / str(f)) == pure.parent.as_posix() for f in folders
+    )
+
+
+def _without_agents(data: Any) -> Any:
     if not isinstance(data, dict):
         return data
-    agents = dict(data.get("agents") or {})
-    agents.pop("chat_agents", None)
-    return {**data, "agents": agents}
+    return {k: v for k, v in data.items() if k != "agents"}
 
 
-def _chat_listing_only(root: Path, content: str) -> bool:
-    """Whether ``content`` changes project.yml only in which agents are in Chat."""
+def _agents_section_only(root: Path, content: str) -> bool:
+    """Whether ``content`` changes project.yml only in its ``agents`` section
+    (which agents there are, which are in Chat, the default ones)."""
     try:
         after = yaml.safe_load(content)
     except yaml.YAMLError:
         return False
-    return _without_chat(after) == _without_chat(_yaml(root / "project.yml"))
+    return _without_agents(after) == _without_agents(_yaml(root / "project.yml"))
 
 
-def _load_with(
-    root: Path, changes: Sequence[Dict[str, Any]], agents: Sequence[str]
-) -> List[str]:
-    """What loading the project, and each of ``agents``, reports once
+def _reloads(root: Path, path: str, before: Any = None, after: Any = None) -> bool:
+    """Whether a change to ``path`` applies by reloading the running
+    factory's agents: an agent's or a template's settings (``agent.yml``),
+    a capability, or project.yml's ``agents`` section (``before`` and
+    ``after`` are its two versions)."""
+    if PurePosixPath(path).name == "agent.yml" or _capability_file(root, path):
+        return True
+    if path == "project.yml":
+        return before is not None and _without_agents(before) == _without_agents(after)
+    return False
+
+
+def _load_with(root: Path, changes: Sequence[Dict[str, Any]]) -> List[str]:
+    """What loading the project, and every agent in it, reports once
     ``changes`` are made (in a copy; ``root`` is untouched)."""
     import shutil
     import tempfile
@@ -433,7 +485,7 @@ def _load_with(
         with collect_config_problems() as problems:
             try:
                 project = load_project(str(copy / "project.yml"))
-                for key in agents:
+                for key in project.agents_map:
                     build_spec_from_project(project, key)
             # Loading imports the project's code; any failure refuses the change.
             except Exception as exc:  # noqa: BLE001
@@ -494,6 +546,229 @@ def new_agent_changes(
         changes.append(
             {"path": "project.yml", "content": dump_document(document_yaml, document)}
         )
+    return changes
+
+
+# -- an agent's settings ----------------------------------------------------------
+
+
+def _models(root: Path) -> List[Dict[str, str]]:
+    """The models the project's catalog offers (``paths.model_catalog``)."""
+    project = _yaml(root / "project.yml")
+    catalog = (project.get("paths") or {}).get("model_catalog")
+    data = _yaml(root / str(catalog)) if catalog else {}
+    out: List[Dict[str, str]] = []
+    for provider in (data.get("providers") or {}).values():
+        for key, model in ((provider or {}).get("models") or {}).items():
+            label = (model or {}).get("label") if isinstance(model, dict) else None
+            out.append({"id": str(key), "label": str(label or key)})
+    return out
+
+
+def agent_settings(root: Path, key: str) -> Dict[str, Any]:
+    """Agent ``key``'s settings as fields, what it inherits from its
+    template, and the choices each field has."""
+    root = Path(root).resolve()
+    tree = definition_tree(root)
+    agent = next((a for a in tree["agents"] if a["key"] == key), None)
+    if agent is None:
+        raise DefinitionError(404, f"No agent {key}")
+    from omniagents.core.project.agent_files import agent_paths
+    from omniagents.core.project.runtime import load_project
+
+    path = agent_paths(root)[key]
+    data = _yaml(path)
+    inherited: Dict[str, Any] = {"capabilities": [], "model": None}
+    for base_key in agent["extends_chain"]:
+        base = _yaml(root / base_key / "agent.yml")
+        inherited["capabilities"] += [
+            c if isinstance(c, str) else c.get("name")
+            for c in base.get("capabilities") or []
+        ]
+        inherited["model"] = inherited["model"] or base.get("model")
+    project = _yaml(root / "project.yml")
+    section = project.get("agents") if isinstance(project.get("agents"), dict) else {}
+    chat = [str(a) for a in section.get("chat_agents") or []]
+    chat_default = section.get("chat_entrypoint") or section.get("entrypoint")
+    registry = load_project(str(root / "project.yml")).capability_registry
+    return {
+        "key": key,
+        "path": _relative(root, path),
+        "label": data.get("label") or "",
+        "description": str(data.get("description") or ""),
+        "model": data.get("model") or None,
+        "capabilities": [
+            c if isinstance(c, str) else c.get("name")
+            for c in data.get("capabilities") or []
+        ],
+        "calls": [
+            t.get("agent")
+            for t in data.get("agent_tools") or []
+            if isinstance(t, dict) and t.get("agent")
+        ],
+        "chat": key in chat or key == chat_default,
+        "chat_default": key == chat_default,
+        "automation_default": key == section.get("entrypoint"),
+        "inherited": inherited,
+        "called_by": sorted(
+            a["key"]
+            for a in tree["agents"]
+            if a["key"] != key
+            and key
+            in [
+                t.get("agent")
+                for t in _yaml(agent_paths(root)[a["key"]]).get("agent_tools") or []
+                if isinstance(t, dict)
+            ]
+        ),
+        "options": {
+            "models": _models(root),
+            "capabilities": [
+                {
+                    "name": name,
+                    "description": (
+                        getattr(capability, "instructions_text", None) or ""
+                    )
+                    .strip()
+                    .split("\n")[0],
+                }
+                for name, capability in sorted(registry.items())
+            ],
+            "agents": [
+                {"key": a["key"], "name": a["name"]}
+                for a in tree["agents"]
+                if a["key"] != key
+            ],
+        },
+    }
+
+
+def _project_agents_change(
+    root: Path, edit: Callable[[Any], None]
+) -> Optional[Dict[str, Any]]:
+    """project.yml with ``edit`` made to its ``agents`` section (comments
+    kept), or ``None`` when that changes nothing."""
+    from omniagents.core.utils.yaml_edit import dump_document, load_document
+
+    text = (root / "project.yml").read_text(encoding="utf-8")
+    document_yaml, document = load_document(text)
+    if document.get("agents") is None:
+        document["agents"] = {}
+    edit(document["agents"])
+    after = dump_document(document_yaml, document)
+    return None if after == text else {"path": "project.yml", "content": after}
+
+
+def agent_changes(
+    root: Path, key: str, settings: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    """The files that give agent ``key`` ``settings`` (any of label,
+    description, model, capabilities, calls, chat, chat_default,
+    automation_default), keeping everything else in them."""
+    from omniagents.core.project.agent_files import agent_paths
+    from omniagents.core.utils.yaml_edit import dump_document, load_document
+
+    root = Path(root).resolve()
+    current = agent_settings(root, key)
+    path = agent_paths(root)[key]
+    text = path.read_text(encoding="utf-8")
+    document_yaml, data = load_document(text)
+
+    def put(name: str, value: Any) -> None:
+        if value in (None, "", []):
+            data.pop(name, None)
+        else:
+            data[name] = value
+
+    if "label" in settings:
+        put("label", str(settings["label"] or "").strip())
+    if "description" in settings:
+        put("description", str(settings["description"] or "").strip())
+    if "model" in settings:
+        put("model", settings["model"] or None)
+    if "capabilities" in settings:
+        inherited = set(current["inherited"]["capabilities"])
+        put("capabilities", [c for c in settings["capabilities"] if c not in inherited])
+    if "calls" in settings:
+        existing = {
+            t.get("agent"): t
+            for t in data.get("agent_tools") or []
+            if isinstance(t, dict)
+        }
+        put(
+            "agent_tools",
+            [
+                existing.get(a) or {"agent": a, "tool_name": a}
+                for a in settings["calls"]
+            ],
+        )
+    changes: List[Dict[str, Any]] = []
+    after = dump_document(document_yaml, data)
+    if after != text:
+        changes.append({"path": _relative(root, path), "content": after})
+
+    def agents_section(section: Any) -> None:
+        if "chat" in settings or "chat_default" in settings:
+            chat = list(section.get("chat_agents") or [])
+            wanted = settings.get("chat", current["chat"]) or settings.get(
+                "chat_default"
+            )
+            if wanted and key not in chat:
+                chat.append(key)
+            if not wanted and key in chat:
+                chat.remove(key)
+            section["chat_agents"] = chat
+        if settings.get("chat_default"):
+            section["chat_entrypoint"] = key
+        if settings.get("automation_default"):
+            section["entrypoint"] = key
+
+    project = _project_agents_change(root, agents_section)
+    if project:
+        changes.append(project)
+    if settings.get("chat") is False and current["chat_default"]:
+        raise DefinitionError(
+            409, "This is Chat's default agent: make another agent the default first"
+        )
+    return changes
+
+
+def delete_agent_changes(root: Path, key: str) -> List[Dict[str, Any]]:
+    """The files that delete agent ``key``: its folder, and its place in Chat."""
+    root = Path(root).resolve()
+    current = agent_settings(root, key)
+    if current["chat_default"]:
+        raise DefinitionError(
+            409, "This is Chat's default agent: make another agent the default first"
+        )
+    if current["automation_default"]:
+        raise DefinitionError(
+            409,
+            "Automations run this agent by default: make another agent the default first",
+        )
+    if current["called_by"]:
+        raise DefinitionError(
+            409,
+            "Other agents call this one: "
+            + ", ".join(current["called_by"])
+            + ". Remove it from them first",
+        )
+    folder = (root / str(current["path"])).parent
+    changes: List[Dict[str, Any]] = [
+        {"path": _relative(root, f), "content": None}
+        for f in sorted(folder.rglob("*"))
+        if f.is_file() and "__pycache__" not in f.parts
+    ]
+
+    def agents_section(section: Any) -> None:
+        chat = list(section.get("chat_agents") or [])
+        if key in chat:
+            chat.remove(key)
+            section["chat_agents"] = chat
+
+    project = _project_agents_change(root, agents_section)
+    if project:
+        changes.append(project)
     return changes
 
 
@@ -602,27 +877,24 @@ def advance(root: Path, commit: str, *, token: Optional[str] = None) -> Dict[str
         ).splitlines()
         if "\t" in line
     ]
-    agent_roots = _agent_roots(root)
     reload = False
     needs_release = []
+    deleted = [
+        {"path": path, "content": None} for status, path in changed if status == "D"
+    ]
     for status, path in changed:
         if read_each_run(path):
             continue
-        pure = PurePosixPath(path)
-        if (
-            status == "A"
-            and pure.name == "agent.yml"
-            and len(pure.parts) >= 3
-            and PurePosixPath(*pure.parts[:-2]).as_posix() in agent_roots
-        ):
-            reload = True  # a new agent
+        if status == "D" and _in_deleted_agent(path, deleted):
+            reload = True  # an agent deleted, its code with it
             continue
+        before = after = None
         if path == "project.yml" and status == "M":
             before = yaml.safe_load(_git(root, "show", f"{current}:project.yml"))
             after = yaml.safe_load(_git(root, "show", f"{commit}:project.yml"))
-            if _without_chat(before) == _without_chat(after):
-                reload = True  # which agents are in Chat
-                continue
+        if _reloads(root, path, before, after):
+            reload = True
+            continue
         needs_release.append(path)
     if needs_release:
         raise DefinitionError(

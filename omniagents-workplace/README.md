@@ -438,30 +438,39 @@ when hidden or outside the viewport and respects reduced-motion preferences.
 
 ## Editing agents and automations
 
-**Edit** (the pencil in Chat's header) opens an agent's page (`/agents/<agent>`,
-administrators): its instructions, a link to the template it builds on (a
-base it `extends:`), and its skills. A template has its own page
-(`/agents/template:<base>`, under Templates in the page's agent menu): its
-instructions, which every agent built on it follows, and the skills those
-agents share. Its skills are
-every skill it has, in the order the framework searches them: its own folder,
-its bases', then the factory's `skills/`. Each says who has it ("Only
-Foreman", "Every agent built on Base", "Every agent") and which skill of the
-same name it replaces. A skill is edited as fields: when to use it, and its
-steps (the rest of its frontmatter is kept). **Add skill** asks who should have
-it; a skill's menu shares it with every agent or makes it one agent's own (its
-folder moves in one commit), shows its version history, or deletes it. Other
-agents, those Chat doesn't list, are in the page's agent menu. An automation is
-edited on its own page (**Edit** in Automations).
+With review off, everything about an agent and an automation is managed here,
+saved as a version of the factory and live from the next run; nobody needs to
+know the factory is a repository. With review on (Account → Factory changes),
+the same edits become pull requests and go live when merged.
 
-**Add agent** (beside the agent menu) asks for a name, what it does, the
-template it builds on and whether people can chat with it. The factory writes
-its `agent.yml` and `instructions.md` and, for Chat, adds it to `project.yml`'s
-`agents.chat_agents`, keeping the file's comments
-(`POST /integrations/definition/new-agent`); the save checks that the project
-loads with it. Publishing a commit that only adds agents or changes which are in
-Chat reloads the running factory's agents, with no restart: each agent's
-runtime is built on first use, and Chat lists it.
+**An agent's page** (the pencil in Chat's header, `/agents/<agent>`;
+administrators) has:
+
+- **Instructions**, and a link to the template it builds on.
+- **Settings** as fields: the name shown, what it does, its model (or the
+  template's), what it can do (capabilities; those its template gives are
+  marked), the agents it can hand work to, whether people can chat with it,
+  whether Chat opens with it, and whether automations that name no agent run
+  it. **Edit the settings file** shows its `agent.yml` for anything else (MCP
+  servers, memory). **Delete agent** removes its folder and its place in Chat;
+  it is refused while it is a default or another agent hands work to it.
+- **Skills**: every skill it has, in the order the framework searches them
+  (its own, its template's, the factory's), each saying who has it and which
+  skill of the same name it replaces; edited as fields (when to use it, its
+  steps), added for one agent or every agent, moved between the two, deleted
+  with their folder.
+
+**Add agent** (beside the agent menu) takes a name, what it does, its template
+and whether people can chat with it. A **template** (a base agents extend) has
+its own page under Templates in the agent menu: its instructions, settings
+file and shared skills.
+
+**Automations**: **New automation** on the Automations page, and **Edit** and
+delete on each one's page, as fields: what it does, when (a schedule in words
+or a cron, or an event with its repositories, labels, branches, channels or
+teams; several triggers allowed), which agent does it, and what it's told.
+Settings the form doesn't show are kept; an automation whose file has template
+logic is edited as its file.
 
 Repositories' own skills (`<repo>/.<product>/skills`, a mounted repository's
 `skills/`) belong to those repositories and change by pull request there; a
@@ -469,29 +478,23 @@ run's page lists the skills it was offered and loaded and where each came from.
 A factory never reads the installation's global skills folder, which is outside
 version control.
 
-The factory lists and checks every edit (`GET /integrations/definition`,
-`POST /integrations/definition/check`): an instructions file must be a valid
-template, a skill's frontmatter must name its folder, an automation must load.
-Saving is a commit on the factory repository's `main`, as the person who saved,
-and publishes it: the Workplace asks the factory to move its checkout to that
-commit (`POST /integrations/definition/advance`). The factory reads
-instructions, skills and automations again on each run, so the next run uses
-the edit and nothing restarts. Runs record the commit they ran. A save over a
-file someone else changed since it was opened is refused. **Version history**
-lists a file's versions with their changes, and **Restore** saves an old one
-as a new version.
-
-**Require review for changes to agents and automations** (Account → Factory
-changes, `factory.definition.require_review`) turns each save into a pull
-request instead; merging it publishes it. Any move of `main` (a merged pull
-request, the improver's included) is offered to the factory the same way. The
-factory moves only when everything between its commit and the new one is read
-on each run; agent settings, tools, dependencies and sandbox profiles still
-change by release, and the page says so. It refuses to move while its
-checkout has changes that aren't committed, so edits made on the server are
-never overwritten: commit them to the repository first. The repository is the
-one the factory runs from (workplace.yml's `factory.repository`, else the one
-its checkout came from), whichever provider serves the product repositories.
+How it works: the factory lists and checks every edit
+(`GET /integrations/definition`, `POST /integrations/definition/check`); a
+change to an agent's or a template's settings, an agent added or deleted, a
+capability, or project.yml's `agents` section is checked by loading the project
+with it. Saving is a commit on the factory repository's `main` as the person who
+saved, and the Workplace asks the factory to move its checkout to it
+(`POST /integrations/definition/advance`). Instructions, skills and automations
+are read again on each run; settings, agents and the agents section reload the
+running factory's agents (each running agent's next run is built from its new
+settings; MCP servers change for new conversations). Code (`.py`),
+dependencies, sandbox profiles and the rest of project.yml (connections,
+tracing) still change by release. Runs record the commit they ran. A save over
+a file someone else changed since it was opened is refused; **Version history**
+restores old versions. The factory refuses to move while its checkout has
+changes that aren't committed. The repository is the one the factory runs from
+(workplace.yml's `factory.repository`, else the one its checkout came from),
+whichever provider serves the product repositories.
 
 ## Repository connections and self-improvement
 

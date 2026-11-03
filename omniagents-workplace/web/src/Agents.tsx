@@ -14,6 +14,9 @@ import { factoryFetch } from "./factory-scope";
 import { API, json, loadTree, savedMessage, scopeLabel, send, type Definition, type DefinitionError, type EffectiveSkill, type Saved, type Tree } from "./definition-api";
 import { VersionHistory } from "./VersionHistory";
 
+/** The folder holding ``<folder>/skills``. */
+const PurePath = (skillsFolder: string | null) => (skillsFolder ?? "").replace(/\/skills$/, "");
+
 /** A template's page: `/agents/template:<base>`. */
 const TEMPLATE = "template:";
 
@@ -228,6 +231,16 @@ export function AgentsApp({ agent, navigate }: { agent?: string; navigate: (path
             </p>
           ))}
         </section>
+
+        {template ? (
+          <section aria-label="Settings" className="flex flex-col gap-2">
+            <h2 className="font-semibold">Settings</h2>
+            <p className="text-sm text-muted-foreground">The model, capabilities and other settings every agent built on this template starts with.</p>
+            <FileEditor path={`${PurePath(template.skills_folder)}/agent.yml`} label={`${template.name} template settings`} onSaved={() => void load()} />
+          </section>
+        ) : (
+          <AgentSettings key={current.key} agent={current} navigate={navigate} onChanged={() => void load()} />
+        )}
 
         <section aria-label="Skills" className="flex flex-col gap-2">
           <div className="flex items-center">
@@ -494,5 +507,188 @@ function SkillDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+type Settings = {
+  key: string;
+  path: string;
+  label: string;
+  description: string;
+  model: string | null;
+  capabilities: string[];
+  calls: string[];
+  chat: boolean;
+  chat_default: boolean;
+  automation_default: boolean;
+  inherited: { capabilities: string[]; model: string | null };
+  called_by: string[];
+  options: {
+    models: { id: string; label: string }[];
+    capabilities: { name: string; description: string }[];
+    agents: { key: string; name: string }[];
+  };
+};
+
+/** An agent's settings as fields: its name, model, what it can do and call, and its place in Chat. */
+function AgentSettings({ agent, navigate, onChanged }: { agent: Definition; navigate: (path: string) => void; onChanged: () => void }) {
+  const [settings, setSettings] = useState<Settings>();
+  const [draft, setDraft] = useState<Settings>();
+  const [busy, setBusy] = useState(false);
+  const [problems, setProblems] = useState<string[]>([]);
+  const [file, setFile] = useState(false);
+  const read = useCallback(async () => {
+    try {
+      const found = await factoryFetch(`${API}/agents/${encodeURIComponent(agent.key)}`).then(r => json<Settings>(r, "Unable to read the agent"));
+      setSettings(found);
+      setDraft(found);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Unable to read the agent");
+    }
+  }, [agent.key]);
+  useEffect(() => {
+    void read();
+  }, [read]);
+  if (!settings || !draft) return <p className="text-sm text-muted-foreground">Loading settings…</p>;
+  const set = (next: Partial<Settings>) => setDraft({ ...draft, ...next });
+  const changed = (["label", "description", "model", "capabilities", "calls", "chat", "chat_default", "automation_default"] as const).filter(
+    field => JSON.stringify(draft[field]) !== JSON.stringify(settings[field]),
+  );
+  const toggle = (list: string[], item: string, on: boolean) => (on ? [...list.filter(i => i !== item), item] : list.filter(i => i !== item));
+  const save = async () => {
+    setBusy(true);
+    setProblems([]);
+    try {
+      const body = Object.fromEntries(changed.map(field => [field, draft[field]]));
+      const saved = await send<Saved>(`/agents/${encodeURIComponent(agent.key)}`, "PUT", body, "Unable to save the settings");
+      const message = savedMessage(saved, "Saved. It works this way from its next run.");
+      toast[message.kind](message.text);
+      await read();
+      onChanged();
+    } catch (e) {
+      const err = e as DefinitionError;
+      if (err.problems) setProblems(Object.values(err.problems).flat());
+      else toast.error(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const remove = async () => {
+    if (!window.confirm(`Delete ${agent.name}? Its chats stay readable; it can't be given new work. Its history is kept.`)) return;
+    setBusy(true);
+    try {
+      const saved = await send<Saved>(`/agents/${encodeURIComponent(agent.key)}`, "DELETE", undefined, "Unable to delete the agent");
+      const message = savedMessage(saved, "Deleted.");
+      toast[message.kind](message.text);
+      navigate("/agents");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Unable to delete the agent");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const inheritedModel = settings.inherited.model;
+  return (
+    <section aria-label="Settings" className="flex flex-col gap-4">
+      <h2 className="font-semibold">Settings</h2>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="agent-label">Name shown</Label>
+          <Input id="agent-label" value={draft.label} placeholder={agent.name} onChange={e => set({ label: e.target.value })} />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="agent-model">Model</Label>
+          <NativeSelect id="agent-model" value={draft.model ?? ""} onChange={e => set({ model: e.target.value || null })}>
+            <NativeSelectOption value="">{inheritedModel ? `The template's (${inheritedModel})` : "The factory's default"}</NativeSelectOption>
+            {settings.options.models.map(m => <NativeSelectOption key={m.id} value={m.id}>{m.label}</NativeSelectOption>)}
+            {draft.model && !settings.options.models.some(m => m.id === draft.model) && <NativeSelectOption value={draft.model}>{draft.model}</NativeSelectOption>}
+          </NativeSelect>
+        </div>
+        <div className="flex flex-col gap-1.5 sm:col-span-2">
+          <Label htmlFor="agent-settings-description">What it does</Label>
+          <Input id="agent-settings-description" value={draft.description} onChange={e => set({ description: e.target.value })} />
+        </div>
+      </div>
+      <fieldset className="flex flex-col gap-2">
+        <legend className="mb-1 text-sm font-medium">What it can do</legend>
+        <div className="grid gap-x-4 gap-y-1.5 sm:grid-cols-2">
+          {settings.options.capabilities.map(c => {
+            const inherited = settings.inherited.capabilities.includes(c.name);
+            return (
+              <label key={c.name} className="flex items-start gap-2 text-sm" title={c.description}>
+                <Checkbox
+                  className="mt-0.5"
+                  checked={inherited || draft.capabilities.includes(c.name)}
+                  disabled={inherited}
+                  onCheckedChange={value => set({ capabilities: toggle(draft.capabilities, c.name, value === true) })}
+                />
+                <span>
+                  {c.name}
+                  {inherited && <span className="text-xs text-muted-foreground"> · from the template</span>}
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      </fieldset>
+      {settings.options.agents.length > 0 && (
+        <fieldset className="flex flex-col gap-2">
+          <legend className="mb-1 text-sm font-medium">Agents it can hand work to</legend>
+          <div className="grid gap-x-4 gap-y-1.5 sm:grid-cols-3">
+            {settings.options.agents.map(a => (
+              <label key={a.key} className="flex items-center gap-2 text-sm">
+                <Checkbox checked={draft.calls.includes(a.key)} onCheckedChange={value => set({ calls: toggle(draft.calls, a.key, value === true) })} />
+                {a.name}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
+      <fieldset className="flex flex-col gap-1.5">
+        <legend className="mb-1 text-sm font-medium">Where it works</legend>
+        <label className="flex items-center gap-2 text-sm">
+          <Checkbox checked={draft.chat} disabled={settings.chat_default} onCheckedChange={value => set({ chat: value === true })} />
+          People can chat with it
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          <Checkbox checked={draft.chat_default} disabled={settings.chat_default} onCheckedChange={value => set({ chat_default: value === true, ...(value === true ? { chat: true } : {}) })} />
+          Chat opens with it
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          <Checkbox checked={draft.automation_default} disabled={settings.automation_default} onCheckedChange={value => set({ automation_default: value === true })} />
+          Automations that don't name an agent run it
+        </label>
+      </fieldset>
+      {problems.length > 0 && (
+        <ul role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm">
+          {problems.map(p => <li key={p}>{p}</li>)}
+        </ul>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" disabled={busy || changed.length === 0} onClick={() => void save()}>Save settings</Button>
+        {changed.length > 0 && <Button size="sm" variant="ghost" disabled={busy} onClick={() => setDraft(settings)}>Discard changes</Button>}
+        <Button size="sm" variant="ghost" className="ml-auto" aria-expanded={file} onClick={() => setFile(f => !f)}>
+          {file ? "Hide the settings file" : "Edit the settings file"}
+        </Button>
+      </div>
+      {file && <FileEditor path={settings.path} label={`${agent.name}'s settings file`} onSaved={() => { void read(); onChanged(); }} />}
+      <div className="flex items-center gap-3 rounded-md border border-destructive/40 px-3 py-2">
+        <p className="min-w-0 flex-1 text-sm text-muted-foreground">
+          {settings.chat_default || settings.automation_default
+            ? "Make another agent the default before deleting this one."
+            : settings.called_by.length
+              ? `${settings.called_by.join(", ")} hand work to this agent; remove it from them before deleting it.`
+              : "Deleting an agent keeps its chats readable and its history."}
+        </p>
+        <Button
+          size="sm"
+          variant="destructive"
+          disabled={busy || settings.chat_default || settings.automation_default || settings.called_by.length > 0}
+          onClick={() => void remove()}
+        >
+          Delete agent
+        </Button>
+      </div>
+    </section>
   );
 }
