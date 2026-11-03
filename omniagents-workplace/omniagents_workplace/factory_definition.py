@@ -110,12 +110,8 @@ class FactoryDefinition:
         return bool(self.w.store.meta(REVIEW_KEY, False))
 
     def repo(self) -> Any:
-        settings = self.w.repository_settings.settings()
-        if settings["provider"] != "standin":
-            raise HTTPException(
-                409,
-                "The factory's repository is on GitHub. Change it with a pull request there.",
-            )
+        """The repository the factory runs from: its own here, whichever
+        provider serves the product repositories."""
         name = self.repository()
         repo = self.w.github.repos.get(name or "")
         if repo is None:
@@ -374,8 +370,6 @@ class FactoryDefinition:
         if repo is None or repo.full_name != self.repository():
             return
         if data.get("ref") != f"refs/heads/{repo.default_branch}":
-            return
-        if self.w.repository_settings.settings()["provider"] != "standin":
             return
         commit = data["after"]
 

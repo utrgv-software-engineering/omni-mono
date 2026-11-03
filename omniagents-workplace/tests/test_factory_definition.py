@@ -197,19 +197,23 @@ def test_main_moving_is_offered_to_the_factory(editor):
     assert merged in e.fake.advanced()
 
 
-def test_editing_needs_the_repository_here(editor):
+def test_editing_works_while_github_serves_the_product_repositories(editor):
+    # The factory runs from its own repository here; connecting GitHub for
+    # the product repositories doesn't move it.
     e = editor
     e.w.repository_settings.activate(
         {
             "provider": "github",
-            "repositories": [],
+            "repositories": ["acme/webapp"],
             "factory_repository": None,
             "self_improvement": False,
         }
     )
-    with pytest.raises(HTTPException) as refused:
-        e.definition.tree()
-    assert refused.value.status_code == 409
+    assert e.definition.tree()["repository"] == "acme/factory"
+    result = e.definition.save(
+        e.admin, _main(e), [Change(path=INSTRUCTIONS, content="After.\n")], None
+    )
+    assert result["published"] is True
 
 
 def test_commit_messages_say_what_changed():

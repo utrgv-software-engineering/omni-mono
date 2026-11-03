@@ -464,8 +464,9 @@ only when everything between its commit and the new one is read on each run;
 agent settings, tools, dependencies and sandbox profiles still change by release,
 and the editor says so. It refuses to move while its checkout has changes that
 aren't committed, so edits made on the server are never overwritten: commit them
-to the repository first. Editing needs the factory's repository in the
-Workplace; with GitHub connected, change it by pull request there.
+to the repository first. The repository is always the one the factory runs
+from (workplace.yml's `factory.repository`, in the Workplace), whichever
+provider serves the product repositories.
 
 ## Repository connections and self-improvement
 
