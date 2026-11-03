@@ -629,8 +629,7 @@ function AgentSettings({ agent, navigate, onChanged }: { agent: Definition; navi
               <label key={c.name} className="flex items-start gap-2 text-sm" title={c.description}>
                 <Checkbox
                   className="mt-0.5"
-                  checked={inherited || draft.capabilities.includes(c.name)}
-                  disabled={inherited}
+                  checked={draft.capabilities.includes(c.name)}
                   onCheckedChange={value => set({ capabilities: toggle(draft.capabilities, c.name, value === true) })}
                 />
                 <span>

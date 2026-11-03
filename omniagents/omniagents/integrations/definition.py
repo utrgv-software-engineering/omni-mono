@@ -581,6 +581,7 @@ def agent_settings(root: Path, key: str) -> Dict[str, Any]:
 
     path = agent_paths(root)[key]
     data = _yaml(path)
+    without = [str(c) for c in data.get("without_capabilities") or []]
     inherited: Dict[str, Any] = {"capabilities": [], "model": None}
     for base_key in agent["extends_chain"]:
         base = _yaml(root / base_key / "agent.yml")
@@ -601,7 +602,9 @@ def agent_settings(root: Path, key: str) -> Dict[str, Any]:
         "label": data.get("label") or "",
         "description": str(data.get("description") or ""),
         "model": data.get("model") or None,
-        "capabilities": [
+        # What it has: the template's, less those it removes, and its own.
+        "capabilities": [c for c in inherited["capabilities"] if c not in without]
+        + [
             c if isinstance(c, str) else c.get("name")
             for c in data.get("capabilities") or []
         ],
@@ -691,8 +694,13 @@ def agent_changes(
     if "model" in settings:
         put("model", settings["model"] or None)
     if "capabilities" in settings:
-        inherited = set(current["inherited"]["capabilities"])
+        # The template's capabilities it goes without; its own beyond them.
+        inherited = current["inherited"]["capabilities"]
         put("capabilities", [c for c in settings["capabilities"] if c not in inherited])
+        put(
+            "without_capabilities",
+            [c for c in inherited if c not in settings["capabilities"]],
+        )
     if "calls" in settings:
         existing = {
             t.get("agent"): t

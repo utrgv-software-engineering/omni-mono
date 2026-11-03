@@ -277,9 +277,8 @@ def configure_worker(service, parent_id, worker_id):
         )
 
     def configure(spec):
-        from omniagents.builtin.tools.swarm_tools import _validate_worker_spec
-
-        _validate_worker_spec(spec)
+        # Whether this worker may spawn workers is its definition's
+        # max_depth, applied when its spec was loaded.
         spec.available_tools = list(spec.available_tools) + [
             worker_context,
             worker_message,

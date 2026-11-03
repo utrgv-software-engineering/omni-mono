@@ -272,7 +272,7 @@ async def test_preallocated_worker_is_owned_before_configuration(monkeypatch, tm
     async def build(settings, mcp, app):
         return Agent(name="worker", model="gpt-4.1", instructions="Test worker")
 
-    def loader(model):
+    def loader(model, **_):
         return (
             AgentSpec(
                 name="worker",
@@ -603,7 +603,7 @@ def test_worker_cache_scopes_identical_ids_to_parent_and_namespace(monkeypatch):
         reset_current_session_id,
     )
 
-    manager = WorkerManager(spec_loader=lambda model: None)
+    manager = WorkerManager(spec_loader=lambda model, **_: None)
     for project, parent in [
         ("project-a", "parent"),
         ("project-b", "parent"),

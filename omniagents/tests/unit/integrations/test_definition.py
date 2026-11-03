@@ -486,6 +486,29 @@ def test_changing_settings_keeps_the_rest_and_checks(factory):
         agent_changes(live, "foreman", {"chat": False})  # Chat's default
 
 
+def test_an_agent_can_go_without_a_capability_from_its_template(factory):
+    live = _with_designer(factory)
+    _commit_in_source(
+        factory,
+        "base/agent.yml",
+        "name: base\ninstructions_file: instructions.md\n"
+        "capabilities: [filesystem, shell]\n",
+    )
+    _git(live, "pull", "-q")
+    assert agent_settings(live, "foreman")["capabilities"] == ["filesystem", "shell"]
+    changes = agent_changes(live, "foreman", {"capabilities": ["filesystem", "web"]})
+    data = yaml_load(changes[0]["content"])
+    assert data["capabilities"] == ["web"]
+    assert data["without_capabilities"] == ["shell"]
+    assert check_changes(live, changes) == {}
+    _commit_changes_in_source(factory, changes, "Without shell")
+    _git(live, "pull", "-q")
+    assert agent_settings(live, "foreman")["capabilities"] == ["filesystem", "web"]
+    back = agent_changes(live, "foreman", {"capabilities": ["filesystem", "shell"]})
+    data = yaml_load(back[0]["content"])
+    assert "capabilities" not in data and "without_capabilities" not in data
+
+
 def test_deleting_an_agent_removes_its_folder_and_place_in_chat(factory):
     live = _with_designer(factory)
     with pytest.raises(DefinitionError) as refused:

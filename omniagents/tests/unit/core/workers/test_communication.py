@@ -130,10 +130,6 @@ async def test_reconstructed_tools_bind_child_identity(journal):
     for name, args in (("worker_context", ()), ("worker_message", ("owner", "spoof"))):
         with pytest.raises(PermissionError):
             await tools[name]._original_func(wrong, *args)
-    with pytest.raises(ValueError, match="recruitment"):
-        configure(
-            SimpleNamespace(available_tools=[SimpleNamespace(name="spawn_worker")])
-        )
 
 
 @pytest.mark.asyncio

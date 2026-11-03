@@ -64,6 +64,9 @@ class WorkerHandle:
     #: model), reused on resume so a resumed worker keeps it. None = the
     #: product default.
     model: str | None = None
+    #: How many workers deep this one runs: 1 for an agent's own worker, 2
+    #: for a worker's. The spec loader stops spawning at the definition's limit.
+    depth: int = 1
     journal: Any = None
     record: dict | None = None
     heartbeat_task: asyncio.Task | None = None
@@ -102,7 +105,7 @@ class WorkerManager:
     def __init__(
         self,
         *,
-        spec_loader: Callable[[str | None], tuple[Any, dict | None]],
+        spec_loader: Callable[..., tuple[Any, dict | None]],
         agent_factory: Callable[[Any, Any], Any] | None = None,
         on_complete: Callable[["WorkerHandle"], Awaitable[None]] | None = None,
         on_event: Callable[["WorkerHandle", str, dict], Awaitable[None]] | None = None,
@@ -315,13 +318,14 @@ class WorkerManager:
         journal: Any = None,
         record: dict | None = None,
         queued_only: bool = False,
+        depth: int = 1,
     ) -> WorkerHandle:
         if journal is not None and not queued_only:
             assert record is not None
             journal.change(
                 worker_id, record["generation"], record["owner"], status="ready"
             )
-        spec, _runtime = self._spec_loader(model)
+        spec, _runtime = self._spec_loader(model, spawner=agent_slug, depth=depth)
         spec = copy.copy(spec)
         if configure_spec is not None:
             spec = copy.copy(spec)
@@ -355,6 +359,8 @@ class WorkerManager:
             worker_service._worker_approval_context = WorkerApprovalContext(
                 parent_service, parent_session_id, worker_id, auto_approve
             )
+            # A worker this one spawns runs one level deeper.
+            worker_service._worker_depth = depth
         await agent._ensure_client()
         client = agent._client
         assert client is not None  # _ensure_client() guarantees a live client
@@ -477,6 +483,7 @@ class WorkerManager:
             agent_slug=agent_slug,
             configure_spec=configure_spec,
             model=model,
+            depth=depth,
             journal=journal,
             record=record,
             managed_queue=worker_service is not None,
@@ -558,6 +565,7 @@ class WorkerManager:
         configure_spec: Callable[[Any], None] | None = None,
         journal: Any = None,
         record: dict | None = None,
+        depth: int = 1,
     ) -> WorkerHandle:
         handle = await self._create_worker(
             worker_id=worker_id,
@@ -573,6 +581,7 @@ class WorkerManager:
             session_id=record["session_id"] if record else None,
             journal=journal,
             record=record,
+            depth=depth,
         )
         self._remember(handle)
         return handle
@@ -655,6 +664,7 @@ class WorkerManager:
                 parent_service=service,
                 project_slug=project_slug,
                 agent_slug=agent_slug,
+                depth=int((row.get("recipe") or {}).get("depth") or 1),
                 journal=journal,
                 record=row,
                 closed=bool(row.get("closed")),
@@ -807,6 +817,7 @@ class WorkerManager:
                 journal=handle.journal,
                 record=row,
                 queued_only=True,
+                depth=handle.depth,
             )
             self._remember(restored)
             return restored
@@ -948,6 +959,7 @@ class WorkerManager:
             configure_spec=handle.configure_spec,
             journal=handle.journal,
             record=handle.record,
+            depth=handle.depth,
         )
         new_handle.result = None
         self._remember(new_handle)

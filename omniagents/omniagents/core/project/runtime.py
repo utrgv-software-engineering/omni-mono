@@ -664,7 +664,13 @@ def resolve_agent(
 def build_spec_from_project(
     project: ProjectContext,
     agent_key: Optional[str] = None,
+    *,
+    spawner: Optional[str] = None,
+    worker_depth: int = 0,
 ):
+    """The AgentSpec of ``agent_key``. For a worker, ``spawner`` is the key
+    of the agent that spawned it and ``worker_depth`` how many workers deep
+    it runs (see ``load_agent_spec_from_yaml``)."""
     raw_agents_config = (
         project.raw.get("agents") if isinstance(project.raw, dict) else {}
     )
@@ -711,6 +717,12 @@ def build_spec_from_project(
         user_mcp_servers=(
             project.user_mcp_servers if project.allow_user_mcp_servers else None
         ),
+        spawner_path=(
+            str(project.agents_map[spawner])
+            if spawner and spawner in project.agents_map
+            else None
+        ),
+        worker_depth=worker_depth,
     )
     spec.project_slug = project.product.slug
     spec.agent_slug = _slugify(key, key)

@@ -54,7 +54,7 @@ async def test_messages_wake_idle_workers_serialize_busy_workers_and_survive_rea
     async def build(settings, mcp, app):
         return Agent(name="worker", model="gpt-4.1", instructions="Test")
 
-    def loader(model):
+    def loader(model, **_):
         return (
             AgentSpec(
                 name="worker",

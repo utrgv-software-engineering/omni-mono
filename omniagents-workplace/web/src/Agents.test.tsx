@@ -62,7 +62,7 @@ const settings = {
   label: "",
   description: "Runs the line.",
   model: null,
-  capabilities: ["web"],
+  capabilities: ["shell", "web"],
   calls: ["implementer"],
   chat: true,
   chat_default: true,
@@ -239,10 +239,12 @@ it("changes an agent's settings as fields, sending only what changed", async () 
   });
   const canvas = [...section.querySelectorAll("label")].find(l => l.textContent?.startsWith("canvas"))!.querySelector<HTMLButtonElement>('[role="checkbox"]')!;
   await act(async () => canvas.click());
+  const shell = [...section.querySelectorAll("label")].find(l => l.textContent?.startsWith("shell"))!.querySelector<HTMLButtonElement>('[role="checkbox"]')!;
+  await act(async () => shell.click());
   answers["PUT /definition/agents/foreman"] = () => ({ body: { commit: "e".repeat(40), published: true } });
   await act(async () => button("Save settings").click());
   const save = fetcher.mock.calls.find(([url, options]) => url.endsWith("/definition/agents/foreman") && options?.method === "PUT")!;
-  expect(JSON.parse(save[1]!.body as string)).toEqual({ model: "gpt-x", capabilities: ["web", "canvas"] });
+  expect(JSON.parse(save[1]!.body as string)).toEqual({ model: "gpt-x", capabilities: ["web", "canvas"] }); // shell, from the template, off
   expect(toast.success).toHaveBeenCalledWith("Saved. It works this way from its next run.");
 });
 

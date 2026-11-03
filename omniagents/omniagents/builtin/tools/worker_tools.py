@@ -691,6 +691,8 @@ async def spawn_worker_run(
     worker_workspace_obj: Optional[WorkerWorkspace] = None
     worker_workspace = workspace_root
 
+    # An agent's workers run one deep; a worker's own workers, two.
+    depth = getattr(service, "_worker_depth", 0) + 1
     if journal is not None:
         if configure_spec is not None and recipe is None:
             raise ValueError(
@@ -704,7 +706,7 @@ async def spawn_worker_run(
             "communication": peer_communication,
             "messaging": "explicit",
         }
-        recipe = {**recipe, "definition": worker_defaults().recipe_id}
+        recipe = {**recipe, "definition": worker_defaults().recipe_id, "depth": depth}
         environment = await capture_environment(
             _host_resources(),
             _environment_id_from_ctx(ctx),
@@ -749,7 +751,7 @@ async def spawn_worker_run(
     if name:
         task = f"Your name: {name}\n{task}"
     if journal is not None and (recipe or {}).get("messaging") == "explicit":
-        task += "\nUse worker_message(recipient='owner', message=...) to report findings, ask questions, or hand work back. Ordinary text responses stay in your transcript and do not notify the parent. Use worker_context for your mailbox and any opted-in peers. Do not recruit workers."
+        task += "\nUse worker_message(recipient='owner', message=...) to report findings, ask questions, or hand work back. Ordinary text responses stay in your transcript and do not notify the parent. Use worker_context for your mailbox and any opted-in peers."
 
     def preparation_failed(reason):
         if journal is not None and record is not None:
@@ -925,6 +927,7 @@ async def spawn_worker_run(
             project_slug=parent_project_slug,
             agent_slug=parent_agent_slug,
             model=parent_model,
+            depth=depth,
             **spawn_options,
         )
     except Exception as e:

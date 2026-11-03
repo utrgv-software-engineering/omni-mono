@@ -221,6 +221,7 @@ capabilities: [github]      # added to the base's capabilities
 - The extending agent's own keys override the base's (a whole key at a
   time: `model_settings` replaces the base's `model_settings`).
 - `capabilities` add to the base's list, in order, without duplicates.
+  `without_capabilities: [shell]` removes ones the base gives it.
 - The extending agent's instructions are rendered into the base's
   `{{ role }}` slot. A base without a slot gets them appended.
 - Includes resolve from both agents' folders (and their `_shared/`
@@ -233,6 +234,32 @@ with `base/agent.yml`, `base/instructions.md`, `base/fragments/`,
 `base/context.py`, `base/capabilities/` and `base/agents/` for the base's
 sub-agents, wired with `paths.agents: [agents, base/agents]`,
 `paths.capabilities`, `paths.instruction_fragments` and `paths.context`.
+
+#### Workers built from their spawner (`inherit: spawner`)
+
+The agent the `workers` capability spawns (the project's `worker` agent) can
+be built from whichever agent spawns it:
+
+```yaml
+# base/agents/worker/agent.yml
+name: worker
+instructions_file: instructions.md
+inherit: spawner            # the spawning agent's setup
+without_capabilities: [chat]
+max_depth: 2                # its workers can spawn workers; theirs cannot
+max_turns: 200
+```
+
+- The worker takes the spawner's capabilities, MCP servers, memory store,
+  skills, approvals, model and the agent tools it calls, so a worker of an
+  agent with a GitHub MCP server has it too.
+- It keeps its own instructions, limits and model settings, and none of the
+  spawner's identity (name, label, voice) or `handoffs`. `agent_tools` with
+  `mode: conversation` stay with the spawner: a worker reports to it.
+- `max_depth` (default 1) is how many workers deep spawning goes: a worker at
+  that depth has no `workers` capability. With the default, workers never
+  spawn workers.
+- Without `inherit: spawner`, a worker is its own definition.
 
 #### Context factories (`context:`)
 

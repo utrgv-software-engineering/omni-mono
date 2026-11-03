@@ -50,7 +50,7 @@ async def test_worker_can_resume_with_history_and_remain_out_of_chat_lists(
     async def build(settings, mcp, app):
         return Agent(name="worker", model="gpt-4.1", instructions="Test worker")
 
-    def loader(model):
+    def loader(model, **_):
         return (
             AgentSpec(
                 name="worker",

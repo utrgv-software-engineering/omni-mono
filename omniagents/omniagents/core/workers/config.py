@@ -17,9 +17,11 @@ from typing import Any, Callable, Optional
 class WorkerDefaults:
     """Product-supplied wiring for the worker tools.
 
-    ``spec_loader(model)`` returns ``(AgentSpec, model_runtime)`` for a new
-    worker — the same callable shape ``WorkerManager`` expects. It is the
-    only required field: without it workers cannot be spawned.
+    ``spec_loader(model, spawner=, depth=)`` returns ``(AgentSpec,
+    model_runtime)`` for a new worker — the same callable shape
+    ``WorkerManager`` expects. ``spawner`` is the spawning agent's slug and
+    ``depth`` how many workers deep the worker runs (1 for an agent's own).
+    It is the only required field: without it workers cannot be spawned.
 
     ``history_loader(entry, tail)`` returns the last ``tail`` history items
     for a worker (used by ``get_worker_status`` and resume flows). None
