@@ -38,7 +38,7 @@ import time
 import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Awaitable, Callable, Dict, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Optional
 
 from omniagents.core.automations import Automation, list_automations
 
@@ -219,11 +219,66 @@ class EventIntake:
             *(self._dispatch(event_id, event, automation) for automation in matched)
         )
 
+    async def hand_off(
+        self, session_id: Optional[str], caller: str, agent: str, request: str
+    ) -> Dict[str, Any]:
+        """``caller`` hands ``request`` to ``agent``: a run of ``agent``'s own,
+        in its conversation for where the caller's request came from (a later
+        hand-off from the same Slack thread or issue continues it), which it
+        reports on itself. Returns at once; the run goes on."""
+        origin = self.store.session_origin(session_id) if session_id else None
+        note = (
+            f"The {caller} handed this to you. Do it, and report the result where "
+            f"the request came from.\n\nIts note: {request}"
+        )
+        if origin is not None:
+            event = IncomingEvent(
+                provider=origin["provider"],
+                event=origin["event"],
+                delivery_id=f"hand-off-{uuid.uuid4()}",
+                thread_key=origin["thread_key"],
+                payload=origin["payload"],
+                context=note,
+            )
+            name = origin["automation"]
+        else:
+            # Asked directly (a chat): the hand-off is its own thread.
+            event = IncomingEvent(
+                provider="hand_off",
+                event="handed_off",
+                delivery_id=f"hand-off-{uuid.uuid4()}",
+                thread_key=f"{caller}:{session_id}" if session_id else None,
+                payload={"from": caller, "request": request},
+                context=note,
+            )
+            name = f"hand-off from {caller}"
+        event_id = self.store.record(event)
+        if event_id is None:
+            return {"error": "That hand-off was already made."}
+        self.store.set_status(event_id, "dispatched", f"handed to {agent} by {caller}")
+        automation = Automation(
+            name=name,
+            path=Path(),
+            instruction=f"The {caller} handed you a request.",
+            agent=agent,
+        )
+        task = asyncio.get_running_loop().create_task(
+            self._dispatch(event_id, event, automation, agent=agent)
+        )
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return {"handed_to": agent, "status": "started"}
+
     async def _dispatch(
-        self, event_id: int, event: IncomingEvent, automation: Automation
+        self,
+        event_id: int,
+        event: IncomingEvent,
+        automation: Automation,
+        *,
+        agent: Optional[str] = None,
     ) -> None:
         route = self.store.automation_routes().get(automation.name, {})
-        agent = route.get("agent") or automation.agent or self.entrypoint
+        agent = agent or route.get("agent") or automation.agent or self.entrypoint
         grouping = route.get("conversation") or automation.conversation
         # Scheduled/Shared occurrences are independent tasks by default. Explicit
         # thread grouping can retain a conversation across those occurrences.

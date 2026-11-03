@@ -529,6 +529,10 @@ def mount_integrations(
     )
     # The factory's version, from whoever runs it (the supervisor: the commit it promoted).
     intake.version = os.environ.get("FACTORY_VERSION") or None
+    from omniagents.core.agents.handoffs import set_handler
+
+    # Agents hand work to each other's own conversations through the intake.
+    set_handler(intake.hand_off)
 
     def reload_agents() -> None:
         """Agents' settings, agents added or deleted, or the project's agents

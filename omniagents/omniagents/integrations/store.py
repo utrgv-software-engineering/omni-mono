@@ -287,6 +287,22 @@ class EventStore:
             )
             self._db.commit()
 
+    def session_origin(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Where the latest run in ``session_id`` came from: its automation and
+        its event (provider, event, thread, payload), or ``None``."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT d.automation, e.id AS event_id, e.provider, e.event,"
+                " e.thread_key, e.payload FROM dispatches d JOIN events e ON e.id = d.event_id"
+                " WHERE d.session_id = ? ORDER BY d.id DESC LIMIT 1",
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        found = dict(row)
+        found["payload"] = json.loads(found["payload"])
+        return found
+
     def start_dispatch(
         self,
         event_id: int,

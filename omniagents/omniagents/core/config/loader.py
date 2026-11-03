@@ -1840,6 +1840,12 @@ def load_agent_spec_from_yaml(
                 else resolve_predicate(needs_approval_raw, predicate_registry)
             )
             max_turns_val = at_item.get("max_turns")
+            mode = at_item.get("mode", "call")
+            if mode not in ("call", "conversation"):
+                _report(
+                    f"agent_tool 'mode' must be call or conversation in {config_path}. Skipping."
+                )
+                continue
 
             # `agent: <name>` resolves against the project agent registry
             # (built by core/project/runtime.py from paths.agents). Translates
@@ -1874,6 +1880,7 @@ def load_agent_spec_from_yaml(
                         needs_approval=needs_approval_resolved,
                         max_turns=max_turns_val,
                         observable=bool(at_item.get("observable", True)),
+                        mode=mode,
                     )
                 )
             elif "yaml" in at_item:
@@ -1896,6 +1903,7 @@ def load_agent_spec_from_yaml(
                         needs_approval=needs_approval_resolved,
                         max_turns=max_turns_val,
                         observable=bool(at_item.get("observable", True)),
+                        mode=mode,
                     )
                 )
             elif "inline" in at_item:
@@ -1921,6 +1929,7 @@ def load_agent_spec_from_yaml(
                         needs_approval=needs_approval_resolved,
                         max_turns=max_turns_val,
                         observable=bool(at_item.get("observable", True)),
+                        mode=mode,
                     )
                 )
             else:

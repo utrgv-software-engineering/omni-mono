@@ -450,7 +450,9 @@ administrators) has:
 - **Instructions**, and a link to the template it builds on.
 - **Settings** as fields: the name shown, what it does, its model (or the
   template's), what it can do (capabilities; those its template gives are
-  marked), the agents it can hand work to, whether people can chat with it,
+  marked), the agents it can hand work to (a hand-off is a run of that agent's
+  own, in its conversation for where the request came from, so it shows under
+  that agent in Chat; `agent_tools` `mode: conversation`), whether people can chat with it,
   whether Chat opens with it, and whether automations that name no agent run
   it. **Edit the settings file** shows its `agent.yml` for anything else (MCP
   servers, memory). **Delete agent** removes its folder and its place in Chat;

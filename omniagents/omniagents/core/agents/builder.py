@@ -391,6 +391,69 @@ def _connected_for(
     return chosen
 
 
+def _hand_off_tool(
+    at_cfg: "AgentToolConfig", parent_spec: Optional["AgentSpec"]
+) -> Any:
+    """A tool handing a request to another agent's own conversation (an
+    ``agent_tools`` entry with ``mode: conversation``; core/agents/handoffs.py)."""
+    import yaml as _yaml
+    from agents import FunctionTool
+
+    from omniagents.core.agents.handoffs import handler
+
+    yaml_path = Path(str(at_cfg.yaml_path))
+    target = yaml_path.parent.name
+    try:
+        definition = _yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+    except (OSError, _yaml.YAMLError):
+        definition = {}
+    label = definition.get("label") or target.replace("_", " ").title()
+    description = at_cfg.tool_description or (
+        f"Hand a request to {label} ({definition.get('description') or 'another agent'}). "
+        f"{label} does it in its own conversation for where the request came from, "
+        "and reports the result there itself. Returns at once."
+    )
+    caller = getattr(parent_spec, "name", None) or "agent"
+
+    async def invoke(ctx: Any, args: str) -> str:
+        hand_off = handler()
+        if hand_off is None:
+            return _json.dumps(
+                {"error": "Handing work over needs a factory; none is running."}
+            )
+        try:
+            request = str((_json.loads(args or "{}") or {}).get("request") or "")
+        except ValueError:
+            request = ""
+        if not request.strip():
+            return _json.dumps({"error": "Say what the request is."})
+        context = getattr(ctx, "context", None)
+        session_id = context.get("session_id") if isinstance(context, dict) else None
+        result = await hand_off(session_id, caller, target, request.strip())
+        return _json.dumps(result)
+
+    return FunctionTool(
+        name=at_cfg.tool_name or target,
+        description=description,
+        params_json_schema={
+            "type": "object",
+            "properties": {
+                "request": {
+                    "type": "string",
+                    "description": (
+                        "The request in the requester's exact words, with who "
+                        "asked, links, and any decisions already made."
+                    ),
+                }
+            },
+            "required": ["request"],
+            "additionalProperties": False,
+        },
+        on_invoke_tool=invoke,
+        strict_json_schema=True,
+    )
+
+
 async def _build_agent_tools_from_configs(
     agent_tool_configs: List["AgentToolConfig"],
     settings: Dict[str, Any],
@@ -413,6 +476,9 @@ async def _build_agent_tools_from_configs(
 
     built_tools: List[Any] = []
     for at_cfg in agent_tool_configs:
+        if at_cfg.mode == "conversation" and at_cfg.yaml_path:
+            built_tools.append(_hand_off_tool(at_cfg, parent_spec))
+            continue
         try:
             if at_cfg.yaml_path:
                 yaml_path = Path(at_cfg.yaml_path).resolve()

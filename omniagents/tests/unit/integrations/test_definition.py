@@ -515,3 +515,13 @@ def test_deleting_an_agent_removes_its_folder_and_place_in_chat(factory):
     assert advance(live, commit) == {"commit": commit, "reload": True}
     with pytest.raises(DefinitionError):
         delete_agent_changes(live, "foreman")  # the defaults
+
+
+def test_a_new_hand_off_goes_to_the_agents_own_conversation(factory):
+    live = _with_designer(factory)
+    (change,) = agent_changes(live, "designer", {"calls": ["foreman"]})
+    assert yaml_load(change["content"])["agent_tools"] == [
+        {"agent": "foreman", "tool_name": "foreman", "mode": "conversation"}
+    ]
+    # One already there keeps its own settings.
+    assert agent_changes(live, "foreman", {"calls": ["designer"]}) == []

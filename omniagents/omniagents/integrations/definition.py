@@ -159,7 +159,8 @@ def definition_tree(root: Path) -> Dict[str, Any]:
 
     root = Path(root).resolve()
     project = _yaml(root / "project.yml")
-    section = project.get("agents") if isinstance(project.get("agents"), dict) else {}
+    agents_section = project.get("agents")
+    section: Dict[str, Any] = agents_section if isinstance(agents_section, dict) else {}
     chat = [
         str(a)
         for a in [section.get("chat_entrypoint"), *(section.get("chat_agents") or [])]
@@ -188,7 +189,9 @@ def definition_tree(root: Path) -> Dict[str, Any]:
             k for k, chain in chains.items() if base["key"] in chain
         )
     folders = _project_skill_folders(root)
-    skills = [{"folder": f, "skills": _skills(root, root / f)} for f in folders]
+    skills: List[Dict[str, Any]] = [
+        {"folder": f, "skills": _skills(root, root / f)} for f in folders
+    ]
     for agent in agents:
         sources: List[Tuple[Dict[str, Any], List[Dict[str, str]]]] = [
             ({"kind": "agent", "agent": agent["key"]}, agent["skills"])
@@ -587,7 +590,8 @@ def agent_settings(root: Path, key: str) -> Dict[str, Any]:
         ]
         inherited["model"] = inherited["model"] or base.get("model")
     project = _yaml(root / "project.yml")
-    section = project.get("agents") if isinstance(project.get("agents"), dict) else {}
+    agents_section = project.get("agents")
+    section: Dict[str, Any] = agents_section if isinstance(agents_section, dict) else {}
     chat = [str(a) for a in section.get("chat_agents") or []]
     chat_default = section.get("chat_entrypoint") or section.get("entrypoint")
     registry = load_project(str(root / "project.yml")).capability_registry
@@ -698,7 +702,7 @@ def agent_changes(
         put(
             "agent_tools",
             [
-                existing.get(a) or {"agent": a, "tool_name": a}
+                existing.get(a) or {"agent": a, "tool_name": a, "mode": "conversation"}
                 for a in settings["calls"]
             ],
         )

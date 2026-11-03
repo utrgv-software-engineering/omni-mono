@@ -701,3 +701,59 @@ async def test_publishing_an_edit_moves_the_factory_and_its_runs(tmp_path, monke
     await intake.drain()
     (run,) = intake.store.runs_since(0)
     assert run["version"] == edit
+
+
+@pytest.mark.asyncio
+async def test_a_hand_off_runs_in_the_agents_own_conversation_for_its_origin(
+    tmp_path,
+):
+    """The dispatcher hands a Slack request to the developer: a run of the
+    developer's own, in its conversation for that thread, which a later
+    hand-off from the same thread continues."""
+    directory = tmp_path / "automations" / "slack-app-mentions"
+    directory.mkdir(parents=True)
+    (directory / "automation.md").write_text(
+        "---\ntriggers:\n  - provider: slack\n    event: app_mention\n---\nTake it on.\n"
+    )
+    calls = []
+
+    async def run(agent, session, prompt, progress):
+        calls.append((agent, session, prompt))
+        return RunResult(output="done")
+
+    store = EventStore(tmp_path / "events.db")
+    intake = EventIntake(
+        project_root=tmp_path, entrypoint="foreman", store=store, run=run
+    )
+    for n in (1, 2):
+        await intake.accept(
+            IncomingEvent(
+                provider="slack",
+                event="app_mention",
+                delivery_id=f"m{n}",
+                thread_key="C1:100",
+                payload={"text": f"@factory fix the login page ({n})"},
+            )
+        )
+        await intake.drain()
+        dispatcher_session = calls[-1][1]
+        assert calls[-1][0] == "foreman"
+        result = await intake.hand_off(
+            dispatcher_session, "foreman", "generalist", f"Fix the login page ({n})."
+        )
+        assert result == {"handed_to": "generalist", "status": "started"}
+        await intake.drain()
+    developer = [c for c in calls if c[0] == "generalist"]
+    assert len(developer) == 2
+    assert developer[0][1] == developer[1][1]  # one conversation for the thread
+    assert "The foreman handed this to you" in developer[0][2]
+    assert "Its note: Fix the login page (1)." in developer[0][2]
+    assert "fix the login page (1)" in developer[0][2]  # the original event
+    # The developer's conversation is listed, so Chat shows it under the developer.
+    listed = {(c["agent"], c["id"]) for c in store.conversations()}
+    assert ("generalist", developer[0][1]) in listed
+    # Asked directly, with no origin: a thread of its own.
+    await intake.hand_off("chat-session", "foreman", "gym", "Who missed a payment?")
+    await intake.drain()
+    assert calls[-1][0] == "gym" and "Who missed a payment?" in calls[-1][2]
+    store.close()
