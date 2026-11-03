@@ -2490,10 +2490,15 @@ def create_app(
         chat_agents = list(config.get("chat_agents", config.get("agents", [])))
         personal.ensure_mains(chat_agents, config.get("chat_agent"))
         chats = await personal.summaries(account, url, token, _names())
-        # An agent no longer offered for chat still shows while it has Side or
-        # automation chats; a leftover Main Chat alone does not keep it.
+        # An agent not offered for chat still shows while people have Side
+        # Chats with it. Its automation conversations alone do not keep it (they
+        # open from Automations), nor does a leftover Main Chat.
         agents = chat_agents + sorted(
-            {c["agent"] for c in chats if c.get("agent") and c.get("kind") != "main"}
+            {
+                c["agent"]
+                for c in chats
+                if c.get("agent") and c.get("kind") == "side" and not c.get("archived")
+            }
             - set(chat_agents)
         )
         return {

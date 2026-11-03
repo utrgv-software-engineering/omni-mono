@@ -337,7 +337,8 @@ For agent configuration, see [the memory guide](../omniagents/docs/guide/memory.
 
 The **Chat** tab (`/personal`) lists agents first: the project's
 `agents.chat_entrypoint` (the default), the rest of `agents.chat_agents`, and any
-other agent that has Side or automation chats. Each agent row shows whether any
+other agent people have Side Chats with. An agent only automations use is not
+listed; its automation conversations open from Automations ("Open chat"). Each agent row shows whether any
 of its chats needs input, is working, or has unread activity. Selecting an agent
 shows its chats:
 

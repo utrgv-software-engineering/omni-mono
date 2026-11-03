@@ -704,8 +704,9 @@ def test_automation_chats_are_titled_and_archive_once_when_their_item_closes(
     row = next(c for c in listing["chats"] if c["id"] == "auto-1")
     assert row["kind"] == "automation" and row["title"] == "PR #12 · Add pagination"
     assert row["automation"] == "pr-opened" and not row["archived"]
-    # An agent only automations use still appears, after the chat agents.
-    assert listing["agents"] == ["generalist", "code_reviewer"]
+    # An agent only automations use is not listed: its conversations open from
+    # Automations. Side Chats people started with it would keep it listed.
+    assert listing["agents"] == ["generalist"]
     conversation["closed"] = True
     row = next(c for c in client.get(base).json()["chats"] if c["id"] == "auto-1")
     assert row["archived"]
