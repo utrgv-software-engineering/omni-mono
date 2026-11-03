@@ -53,8 +53,14 @@ def test_setup_is_repeatable_and_keeps_generated_secrets(tmp_path, monkeypatch):
         "preview",
         github._who("factory"),
     )
+    repo.bare.write_files("fix", [("fix.txt", b"fix")], "fix", github._who("factory"))
+    pull = github.create_pull(repo, "factory", "Fix the page", "fix", "main")
+    from omniagents_workplace.github.serialize import Serializer
+    from omniagents_workplace.store import Store
+
     w = SimpleNamespace(
         github=github,
+        github_json=Serializer(github, lambda: "http://local/factories/one"),
         base_url="http://local/factories/one",
         internal_url="http://internal/factories/one",
         sandbox_url="http://sandbox/factories/one",
@@ -100,22 +106,33 @@ def test_setup_is_repeatable_and_keeps_generated_secrets(tmp_path, monkeypatch):
         prepare=lambda _: (tmp_path, {}),
         url=lambda _: "http://coolify",
     )
-    i = SimpleNamespace(instances={"one": (w, None)}, deployments=deployments)
+    store = Store(tmp_path / "installation.db")
+    i = SimpleNamespace(
+        instances={"one": (w, None)}, deployments=deployments, store=store
+    )
     operation = setup.PreviewSetup(i, "one")
     monkeypatch.setattr(setup, "compose", AsyncMock(return_value="LOADED"))
 
     async def scenario():
         plan = await operation.inspect("org/site")
+        # Open now, so previewed only if chosen.
+        assert plan["open_pulls"] == [{"number": pull.number, "title": "Fix the page"}]
         request = {
             **plan,
             "services": {"web": 3000},
             "variables": {"TEST_API_KEY": "test-only"},
+            "include": [pull.number],
         }
         result = await operation.enable(request)
         assert result["status"] == "enabled"
+        [(key, scope)] = store.docs(setup.SCOPE)
+        assert key == "app" and scope["include"] == [pull.number]
+        since = scope["since"]
         first = [c[2] for c in calls if c[1].endswith("/envs/bulk")]
         await operation.enable(request)
         assert len([c for c in calls if c[1] == "/applications/public"]) == 1
+        # Enabling again keeps when previews began.
+        assert store.docs(setup.SCOPE)[0][1]["since"] == since
         assert first == [c[2] for c in calls if c[1].endswith("/envs/bulk")][2:]
         assert bridge.wake.is_set()
         with pytest.raises(ValueError, match="changed"):

@@ -60,6 +60,8 @@ class PreviewSetupRequest(BaseModel):
     provider: Literal["standin", "github"] | None = None
     services: dict[str, StrictInt] = {}
     variables: dict[str, str] = {}
+    # Open pull requests to preview as well as those opened from now on.
+    include: list[StrictInt] = []
 
 
 class FactoryRouter:

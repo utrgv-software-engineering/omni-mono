@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import secrets
+import time
 from urllib.parse import quote
 
 import yaml
@@ -13,7 +14,7 @@ from fastapi import HTTPException
 
 from .coolify import compose, write_private
 from .managed import php
-from .previews import repository
+from .previews import SCOPE, repository
 
 CANDIDATES = (
     "compose.preview.yml",
@@ -109,6 +110,11 @@ class PreviewSetup:
         if provider == "standin":
             r = self.w.github.repos[repo]
             branch = r.default_branch
+            pulls = [
+                self.w.github_json.pull(r, issue)
+                for issue in list(r.issues.values())
+                if issue.pull
+            ]
             files = await asyncio.to_thread(r.bare.files, branch)
             selected = path or next((p for p in CANDIDATES if p in files), "")
             blob = (
@@ -122,6 +128,10 @@ class PreviewSetup:
                 self.w.repository_settings.github, f"/repos/{repo}"
             )
             branch = meta["default_branch"]
+            pulls = await asyncio.to_thread(
+                self.w.repository_settings.github,
+                f"/repos/{repo}/pulls?state=open&base={quote(branch, safe='')}&per_page=100",
+            )
             listing = await asyncio.to_thread(
                 self.w.repository_settings.github,
                 f"/repos/{repo}/contents?ref={quote(branch, safe='')}",
@@ -153,6 +163,17 @@ class PreviewSetup:
             "branch": branch,
             "path": selected,
             "revision": hashlib.sha256(raw.encode()).hexdigest(),
+            # Open now, so not previewed unless chosen: same-repository PRs into the branch.
+            "open_pulls": [
+                {"number": p["number"], "title": p["title"]}
+                for p in pulls
+                if p["state"] == "open"
+                and p["base"]["ref"] == branch
+                and ((p.get("head") or {}).get("repo") or {})
+                .get("full_name", "")
+                .lower()
+                == repo.lower()
+            ],
             **inspect_compose(raw),
             "_raw": raw,
         }
@@ -287,6 +308,20 @@ class PreviewSetup:
             repository=plan["repository"],
         )
         write_private(state_path, json.dumps(saved))
+        include = request.get("include") or []
+        if any(not isinstance(n, int) or isinstance(n, bool) or n < 1 for n in include):
+            raise ValueError("Choose pull requests by number")
+        # Previews begin with PRs opened from now on, plus the open ones chosen.
+        scope = dict(self.i.store.docs(SCOPE)).get(app["uuid"]) or {}
+        self.i.store.put(
+            SCOPE,
+            app["uuid"],
+            {
+                "factory": self.factory_id,
+                "since": scope.get("since") or time.time(),
+                "include": sorted(set(scope.get("include", [])) | set(include)),
+            },
+        )
         await refresh_git_credentials(bridge, self.w)
         path = "/applications/" + app["uuid"]
         await bridge.api(

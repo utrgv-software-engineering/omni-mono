@@ -7,7 +7,8 @@ import { Input } from "@omniagents/ui/input";
 import { factoryBase } from "./factory-scope";
 
 type Plan = { repository: string; provider: string; branch: string; path: string; revision: string;
-  services: {name: string; ports: number[]}[]; variables: string[]; generated: string[] };
+  services: {name: string; ports: number[]}[]; variables: string[]; generated: string[];
+  open_pulls: {number: number; title: string}[] };
 
 async function request(action: string, body: unknown) {
   const id = factoryBase().split("/").pop();
@@ -27,7 +28,9 @@ export function PreviewSetup({ repository, onClose }: {repository: string | null
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [enabled, setEnabled] = useState(false);
-  useEffect(() => { setPath(""); setPlan(null); setError(""); setVariables({}); setServices({}); setEnabled(false); }, [repository]);
+  // Open pull requests to preview too; previews otherwise begin with PRs opened after enabling.
+  const [include, setInclude] = useState<number[]>([]);
+  useEffect(() => { setPath(""); setPlan(null); setError(""); setVariables({}); setServices({}); setEnabled(false); setInclude([]); }, [repository]);
   async function inspect() {
     setBusy(true); setError(""); setPlan(null);
     try {
@@ -39,7 +42,7 @@ export function PreviewSetup({ repository, onClose }: {repository: string | null
   }
   return <Dialog open={!!repository} onOpenChange={open => { if (!open && !busy) onClose(); }}>
     <DialogContent><DialogHeader><DialogTitle>PR previews</DialogTitle><DialogDescription>{repository}</DialogDescription></DialogHeader>
-      {enabled ? <p>Enabled. Open pull requests targeting {plan?.branch} deploy automatically. Preview links and build status appear on each PR.</p> : <FieldGroup>
+      {enabled ? <p>Enabled. Pull requests opened from now on targeting {plan?.branch}{include.length ? `, and ${include.map(n => `#${n}`).join(", ")},` : ""} deploy automatically. Preview links and build status appear on each PR.</p> : <FieldGroup>
         <Field><FieldLabel htmlFor="preview-compose">Compose file</FieldLabel><Input id="preview-compose" value={path} placeholder="Detect automatically" disabled={busy} onChange={e => {setPath(e.target.value); setPlan(null);}} />
           <Button variant="outline" disabled={busy} onClick={() => void inspect()}>{busy && !plan ? "Inspecting…" : "Inspect repository"}</Button></Field>
         {plan && <>
@@ -52,9 +55,14 @@ export function PreviewSetup({ repository, onClose }: {repository: string | null
           </Field>)}
           {plan.variables.map(name => <Field key={name}><FieldLabel htmlFor={`preview-var-${name}`}>{name}</FieldLabel><Input id={`preview-var-${name}`} type="password" autoComplete="new-password" placeholder={plan.generated.includes(name) ? "Generate automatically" : "Preview value"} value={variables[name] || ""} disabled={busy} onChange={e => setVariables({...variables, [name]: e.target.value})} /></Field>)}
           {plan.generated.length > 0 && <FieldDescription>Generated automatically: {plan.generated.join(", ")}.</FieldDescription>}
+          <FieldDescription>Previews begin with pull requests opened from now on.{plan.open_pulls.length > 0 && " Choose any open ones to preview as well."}</FieldDescription>
+          {plan.open_pulls.length > 0 && <div className="flex max-h-48 flex-col gap-2 overflow-y-auto">{plan.open_pulls.map(pull => <Field key={pull.number} orientation="horizontal">
+            <Checkbox id={`preview-pull-${pull.number}`} checked={include.includes(pull.number)} disabled={busy} onCheckedChange={checked => setInclude(current => checked ? [...current, pull.number] : current.filter(n => n !== pull.number))} />
+            <FieldLabel htmlFor={`preview-pull-${pull.number}`} className="font-normal">#{pull.number} {pull.title}</FieldLabel>
+          </Field>)}</div>}
           <Button disabled={busy || !Object.keys(services).length} onClick={() => {
             setBusy(true); setError("");
-            void request("enable", {...plan, services, variables}).then(() => {setEnabled(true); setVariables({});}).catch(e => setError(e.message)).finally(() => setBusy(false));
+            void request("enable", {...plan, services, variables, include}).then(() => {setEnabled(true); setVariables({});}).catch(e => setError(e.message)).finally(() => setBusy(false));
           }}>{busy ? "Setting up previews…" : "Enable PR previews"}</Button>
         </>}
       </FieldGroup>}

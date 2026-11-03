@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from omniagents_workplace.deployments.previews import Previews, repository
+from omniagents_workplace.deployments.previews import SCOPE, Previews, repository
 from omniagents_workplace.store import Store
 
 
@@ -88,6 +88,28 @@ def test_create_repeat_update_restart_close_reopen(bridge):
         assert len(calls) == count
         await resumed.apply(app(), "org/site", "github", pull("b" * 40))
         assert calls[-1][0] == "POST"
+
+    asyncio.run(scenario())
+
+
+def test_previews_begin_with_prs_opened_after_enabling_and_chosen_ones(bridge):
+    p, calls, _, _ = bridge
+    p.store.put(
+        SCOPE, "application", {"factory": "one", "since": 1_800_000_000, "include": [7]}
+    )
+
+    def opened(number, when):
+        return {**pull(), "number": number, "created_at": when}
+
+    async def scenario():
+        # Open before previews were enabled, and not chosen: left alone.
+        await p.apply(app(), "org/site", "github", opened(42, "2026-11-01T00:00:00Z"))
+        assert calls == []
+        # Chosen when previews were enabled, though opened before.
+        await p.apply(app(), "org/site", "github", opened(7, "2026-01-01T00:00:00Z"))
+        # Opened after.
+        await p.apply(app(), "org/site", "github", opened(43, "2027-01-20T00:00:00Z"))
+        assert sorted(r["number"] for r in p.records().values()) == [7, 43]
 
     asyncio.run(scenario())
 

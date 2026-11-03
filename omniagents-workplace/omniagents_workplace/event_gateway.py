@@ -164,9 +164,7 @@ class EventGateway:
             settings = self.w.repository_settings
             if settings.settings()["provider"] != "github":
                 raise ValueError("Repository provider changed; delivery retained")
-            return settings.oauth_config().get("webhook_secret") or self.w.environ.get(
-                "WORKPLACE_GITHUB_WEBHOOK_SECRET", ""
-            )
+            return settings.webhook_secret()
         if (
             provider == "github"
             and self.w.repository_settings.settings()["provider"] != "standin"

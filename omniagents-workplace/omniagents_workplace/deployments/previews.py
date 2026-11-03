@@ -10,6 +10,7 @@ import json
 import logging
 import re
 import time
+from datetime import datetime
 from urllib.parse import urlsplit
 
 import httpx
@@ -18,6 +19,20 @@ from .coolify import compose
 
 log = logging.getLogger(__name__)
 KIND = "deployment.preview"
+# Which pull requests an application previews, set when previews are enabled:
+# {"factory", "since": epoch, "include": [numbers]}, keyed by application uuid.
+# Those opened since then, and the open ones chosen then; none means every one.
+SCOPE = "deployment.preview.scope"
+
+
+def opened_at(pr):
+    """When a pull request was opened, in epoch seconds (0 when unknown)."""
+    try:
+        return datetime.fromisoformat(
+            pr["created_at"].replace("Z", "+00:00")
+        ).timestamp()
+    except (KeyError, AttributeError, ValueError):
+        return 0.0
 
 
 def repository(value, provider, workplace):
@@ -235,6 +250,14 @@ class Previews:
         sha = pr["head"]["sha"]
         if not re.fullmatch(r"[0-9a-fA-F]{40}", sha):
             return
+        scope = dict(self.store.docs(SCOPE)).get(app["uuid"])
+        if (
+            old is None
+            and scope
+            and number not in scope.get("include", [])
+            and opened_at(pr) < scope["since"]
+        ):
+            return  # Opened before previews were enabled, and not chosen then.
         if old and old["sha"] == sha and old["state"] == "queued":
             if old.get("deployment") and old.get("build_status") not in {
                 "finished",
