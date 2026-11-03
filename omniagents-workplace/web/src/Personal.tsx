@@ -305,7 +305,7 @@ export function PersonalApp({ account, navigate }: { account: Person; navigate?:
   });
   const view = views[selected];
   const closeViewer = () => setViews(previous => ({ ...previous, [selected]: undefined }));
-  const viewer = view ? <ChatViewer agentName={displayAgent(current?.agent)} chatId={selected} tab={panelTabs[selected] || "activity"} onTab={tab => setPanelTabs(previous => ({...previous, [selected]: tab}))} value={view} account={account} onClose={closeViewer} onPresent={value => present(selected, value)} /> : null;
+  const viewer = view ? <ChatViewer agentId={current?.agent} agentName={displayAgent(current?.agent)} chatId={selected} tab={panelTabs[selected] || "activity"} onTab={tab => setPanelTabs(previous => ({...previous, [selected]: tab}))} value={view} account={account} onClose={closeViewer} onPresent={value => present(selected, value)} /> : null;
   const sessionId = loaded && current ? selected : undefined;
   useEffect(() => {
     if (sessionId) setOpened(previous => previous.includes(sessionId) ? previous : [...previous, sessionId]);

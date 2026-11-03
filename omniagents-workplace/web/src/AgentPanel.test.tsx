@@ -3,7 +3,8 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 import { AgentPanel } from "./AgentPanel";
-vi.mock("@omniagents/chat-ui/components/omni-avatar/planet", () => ({OmniPlanet: class {setPaused() {} dispose() {}}}));
+const planets = vi.hoisted(() => [] as Record<string, unknown>[]);
+vi.mock("@omniagents/chat-ui/components/omni-avatar/planet", async original => ({...(await original<object>()), OmniPlanet: class {constructor(_: unknown, options: Record<string, unknown>) {planets.push(options);} setPaused() {} dispose() {}}}));
 vi.mock("./Memory", () => ({MemoryApp: ({agent}: {agent: boolean}) => <div>{agent ? "Scoped memory" : "All memory"}</div>}));
 vi.mock("@omniagents/chat-ui/components/ElicitationCard", () => ({ElicitationCard: () => null}));
 Object.assign(globalThis, {IS_REACT_ACT_ENVIRONMENT: true});
@@ -26,4 +27,19 @@ it("loads structured activity, worker activity, and scoped memory independently"
     expect(node.textContent).not.toContain("All memory");
     expect(fetcher.mock.calls.every(([url])=> !url.includes("runtime"))).toBe(true);
   } finally { await act(async()=>root.unmount());node.remove();vi.unstubAllGlobals(); }
+});
+
+it("draws the agent in its own colours, as the chat list does", async () => {
+  const { agentPalette } = await import("@omniagents/chat-ui/components/omni-avatar/agent-palette");
+  vi.stubGlobal("fetch", vi.fn(async () => ({ok:true,json:async()=>({agents:[],items:[],attention:[],next_cursor:null})})));
+  const node = document.createElement("div");document.body.append(node);const root=createRoot(node);
+  try {
+    planets.length = 0;
+    await act(async()=>root.render(<AgentPanel agentId="generalist" chatId="chat-one" tab="activity" onTab={()=>{}}/>));
+    expect(planets.at(-1)!.palette).toEqual(agentPalette("generalist"));
+    planets.length = 0;
+    await act(async()=>root.render(<AgentPanel key="no-id" chatId="chat-one" tab="activity" onTab={()=>{}}/>));
+    // Without an ID it keeps the planet's own colours rather than none.
+    expect(planets.at(-1)).not.toHaveProperty("palette");
+  } finally { act(()=>root.unmount()); node.remove(); vi.unstubAllGlobals(); }
 });

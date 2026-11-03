@@ -4,6 +4,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@omniagents/ui/tabs";
 import { Button } from "@omniagents/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@omniagents/ui/tooltip";
 import { OmniPlanet } from "@omniagents/chat-ui/components/omni-avatar/planet";
+import { agentPalette } from "@omniagents/chat-ui/components/omni-avatar/agent-palette";
 import { ElicitationCard } from "@omniagents/chat-ui/components/ElicitationCard";
 import type { ElicitationRequest } from "@omniagents/client/rpc/elicitation";
 import { factoryFetch } from "./factory-scope";
@@ -89,14 +90,15 @@ function ToolRow({ item }: { item: Item }) {
     </div>
   </details>;
 }
-function Identity({ connected, name }: { connected: boolean | null; name: string }) {
+/** The agent's face in its own colours (``agentPalette``), as in the chat list and header. */
+function Identity({ connected, name, agentId }: { connected: boolean | null; name: string; agentId?: string }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
-    const planet = new OmniPlanet(canvas.current!, {size: 128, mood: connected === false ? "asleep" : "idle"});
+    const planet = new OmniPlanet(canvas.current!, {size: 128, mood: connected === false ? "asleep" : "idle", ...(agentId ? {palette: agentPalette(agentId)} : {})});
     const pause = () => planet.setPaused(document.hidden);
     pause(); document.addEventListener("visibilitychange", pause);
     return () => { document.removeEventListener("visibilitychange", pause); planet.dispose(); };
-  }, [connected]);
+  }, [connected, agentId]);
   return <div className="flex flex-col items-center pb-7 pt-10">
     <canvas ref={canvas} className="size-32" aria-label={name} role="img" />
     <h2 className="mt-1 text-xl font-medium tracking-tight">{name}</h2>
@@ -165,7 +167,7 @@ function Agents({ chatId, agents, loaded, error }: { chatId: string; agents: Age
     </button>)}
   </div>;
 }
-export function AgentPanel({ agentName = "Agent", chatId, tab, onTab, onClose }: { agentName?: string; chatId: string; tab: string; onTab: (tab: string) => void; onClose?: () => void }) {
+export function AgentPanel({ agentName = "Agent", agentId, chatId, tab, onTab, onClose }: { agentName?: string; agentId?: string; chatId: string; tab: string; onTab: (tab: string) => void; onClose?: () => void }) {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [connected, setConnected] = useState<boolean | null>(null);
   const [error, setError] = useState("");
@@ -183,7 +185,7 @@ export function AgentPanel({ agentName = "Agent", chatId, tab, onTab, onClose }:
   }, [chatId]);
   return <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto" style={{scrollbarGutter: "stable"}}>
     {onClose && <Button className="absolute right-3 top-3" variant="ghost" size="icon-sm" aria-label="Close viewer" onClick={onClose}><X className="size-4" /></Button>}
-    <Identity connected={connected} name={agentName} />
+    <Identity connected={connected} name={agentName} agentId={agentId} />
     <TooltipProvider><Tabs value={tab} onValueChange={onTab} className="gap-0">
       <TabsList className="mx-4 grid w-auto grid-cols-3 rounded-full" aria-label="Agent details">
         {([{id:"activity",label:"Activity",Icon:List},{id:"agents",label:"Agents",Icon:Users},{id:"memory",label:"Memory",Icon:Brain}]).map(({id,label,Icon}) => <Tooltip key={id}><TooltipTrigger asChild><TabsTrigger value={id} aria-label={label} className="rounded-full"><Icon className="size-4" /></TabsTrigger></TooltipTrigger><TooltipContent>{label}</TooltipContent></Tooltip>)}

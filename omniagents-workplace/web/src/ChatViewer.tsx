@@ -68,6 +68,7 @@ function SavedArtifact({ id, account }: { id: string; account: Person }) {
 export function ChatViewer({
   value,
   chatId,
+  agentId,
   agentName,
   tab,
   onTab,
@@ -77,6 +78,8 @@ export function ChatViewer({
 }: {
   value: Presentation;
   chatId: string;
+  /** The agent's ID: its avatar's colours, as in the chat list. */
+  agentId?: string;
   agentName?: string;
   tab: string;
   onTab: (tab: string) => void;
@@ -111,7 +114,7 @@ export function ChatViewer({
       </header>}
       <div className="flex min-h-0 flex-1 flex-col overflow-auto">
         {value.kind === "activity" ? (
-          <AgentPanel agentName={agentName} chatId={chatId} tab={tab} onTab={onTab} onClose={onClose} />
+          <AgentPanel agentName={agentName} agentId={agentId} chatId={chatId} tab={tab} onTab={onTab} onClose={onClose} />
         ) : value.kind === "desktop" ? (
           <Desktop />
         ) : value.kind === "artifact" ? (
