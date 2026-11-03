@@ -234,3 +234,28 @@ def test_commit_messages_say_what_changed():
         )
         == "Edit foreman instructions and 1 more"
     )
+
+
+def test_a_hosted_factory_is_edited_in_the_repository_its_checkout_came_from(editor):
+    # A factory the installation hosts has no factory.repository in its config.
+    e = editor
+    e.definition.repository = lambda: None
+    answer = e.fake.__call__
+
+    def factory(method, path, body=None):
+        status, data = answer(method, path, body)
+        if path == "/integrations/definition":
+            data = {**data, "origin": "http://workplace:7301/github/acme/factory.git"}
+        return status, data
+
+    e.definition.factory = factory
+    assert e.definition.tree()["repository"] == "acme/factory"
+    e.definition.save(
+        e.admin, _main(e), [Change(path=INSTRUCTIONS, content="After.\n")], None
+    )
+    assert e.repo.bare.blob("main", INSTRUCTIONS)[1] == b"After.\n"
+    e.definition.factory = answer
+    e.definition._origin = None
+    with pytest.raises(HTTPException) as refused:
+        e.definition.tree()
+    assert refused.value.status_code == 409

@@ -39,6 +39,10 @@ from .github.state import GitHubError
 logger = logging.getLogger(__name__)
 
 REVIEW_KEY = "factory.definition.require_review"
+#: A repository in this Workplace, as a git URL names it (``.../github/<owner>/<name>.git``).
+_REPOSITORY_URL = re.compile(
+    r"/github/(?P<owner>[A-Za-z0-9_.-]+)/(?P<name>[A-Za-z0-9_.-]+?)(?:\.git)?/?$"
+)
 
 
 class Change(BaseModel):
@@ -102,6 +106,8 @@ class FactoryDefinition:
         self.endpoint = endpoint
         #: The last time main was offered to the factory, and what it said.
         self.published: Optional[Dict[str, Any]] = None
+        #: The repository the factory said its checkout came from.
+        self._origin: Optional[str] = None
         self._lock = threading.Lock()
 
     # -- the parts ------------------------------------------------------------
@@ -109,15 +115,28 @@ class FactoryDefinition:
     def require_review(self) -> bool:
         return bool(self.w.store.meta(REVIEW_KEY, False))
 
+    def known_name(self) -> Optional[str]:
+        """The factory's repository, as far as is known without asking it."""
+        return self.repository() or self._origin
+
     def repo(self) -> Any:
-        """The repository the factory runs from: its own here, whichever
-        provider serves the product repositories."""
-        name = self.repository()
+        """The repository the factory runs from, here, whichever provider
+        serves the product repositories: workplace.yml's ``factory.repository``,
+        else the one the factory's checkout came from (a hosted factory's)."""
+        name = self.known_name()
+        if self.w.github.repos.get(name or "") is None:
+            status, data = self.factory("GET", "/integrations/definition")
+            found = _REPOSITORY_URL.search(
+                (data.get("origin") or "") if status < 400 else ""
+            )
+            name = f"{found['owner']}/{found['name']}" if found else None
+            if name in self.w.github.repos:
+                self._origin = name
         repo = self.w.github.repos.get(name or "")
         if repo is None:
             raise HTTPException(
                 409,
-                "The factory has no repository here (workplace.yml's factory.repository).",
+                "The factory doesn't run from a repository in this Workplace, so it can't be edited here.",
             )
         return repo
 
@@ -367,14 +386,18 @@ class FactoryDefinition:
         if kind != "push" or data.get("after") in (None, NULL_SHA):
             return
         repo = data.get("repo")
-        if repo is None or repo.full_name != self.repository():
+        if repo is None or data.get("ref") != f"refs/heads/{repo.default_branch}":
             return
-        if data.get("ref") != f"refs/heads/{repo.default_branch}":
+        known = self.known_name()
+        if known and repo.full_name != known:
             return
         commit = data["after"]
 
         def offer():
             try:
+                # Not known yet: ask the factory which repository it runs from.
+                if not known and self.repo().full_name != repo.full_name:
+                    return
                 self.publish(commit)
             except Exception:  # never breaks the push; the editor shows the status
                 logger.exception("factory definition: publishing %s failed", commit[:7])

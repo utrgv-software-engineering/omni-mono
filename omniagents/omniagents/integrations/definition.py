@@ -29,6 +29,7 @@ __all__ = [
     "check_changes",
     "definition_tree",
     "live_commit",
+    "origin",
     "read_each_run",
 ]
 
@@ -264,6 +265,26 @@ def _git(
     if done.returncode != 0:
         raise DefinitionError(409, f"git {args[0]}: {done.stderr.strip()}")
     return done.stdout.strip() if strip else done.stdout
+
+
+def origin(root: Path) -> Optional[str]:
+    """Where the checkout at ``root`` comes from (its ``origin``'s URL, with
+    no credentials), or ``None``."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    root = Path(root).resolve()
+    if not (root / ".git").exists():
+        return None
+    try:
+        url = _git(root, "remote", "get-url", "origin")
+    except DefinitionError:
+        return None
+    parts = urlsplit(url)
+    if parts.scheme and parts.netloc:
+        host = parts.hostname or ""
+        netloc = f"{host}:{parts.port}" if parts.port else host
+        return urlunsplit(parts._replace(netloc=netloc))
+    return url
 
 
 def live_commit(root: Path) -> Optional[str]:

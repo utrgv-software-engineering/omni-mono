@@ -723,6 +723,7 @@ def _mount_definition_routes(
         return {
             **tree,
             "commit": commit,
+            "origin": await asyncio.to_thread(definition.origin, root),
             "uncommitted": (
                 await asyncio.to_thread(definition.uncommitted, root) if commit else []
             ),

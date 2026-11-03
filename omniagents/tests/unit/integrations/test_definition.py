@@ -12,6 +12,7 @@ from omniagents.integrations.definition import (
     check_changes,
     definition_tree,
     live_commit,
+    origin,
     read_each_run,
 )
 
@@ -222,3 +223,16 @@ def test_advance_needs_a_checkout(tmp_path):
     with pytest.raises(DefinitionError) as refused:
         advance(tmp_path, "a" * 40)
     assert refused.value.status == 409
+
+
+def test_origin_names_the_repository_without_credentials(factory):
+    live = factory["live"]
+    assert origin(live) == str(factory["origin"])
+    _git(
+        live,
+        "remote",
+        "set-url",
+        "origin",
+        "http://x:secret@workplace:7301/github/acme/factory.git",
+    )
+    assert origin(live) == "http://workplace:7301/github/acme/factory.git"
