@@ -510,7 +510,6 @@ def main(argv=None) -> None:
 
     if args.command == "egress-proxy":
         import asyncio
-        import logging
 
         from .egress_proxy import EgressProxy
 
