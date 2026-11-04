@@ -41,6 +41,7 @@ class ActDockerSpace(DockerSpace):
                 image="docker:27-dind",
                 docker_socket=False,
                 volumes=[],
+                # The private daemon pulls images through the proxy too.
                 env={"DOCKER_TLS_CERTDIR": ""},
                 extra=["--privileged"],
             ),

@@ -311,8 +311,9 @@ because `--trust-proxy` rewrites the client address; the host firewall is
 managed identity (the account takes no shared keys) and keys are escrowed by a
 daily timer. Runtimes started by Compose get the policy, allowed services, proxy
 and AI name through the env file Workplace writes, and apply the proxy to their
-own sandboxes (`OMNIAGENTS_SANDBOX_PROXY`). Remaining: proxy settings for
-Actions jobs and previews, and wildcard preview hostnames on App Service.
+own sandboxes (`OMNIAGENTS_SANDBOX_PROXY`). Workflow jobs and previews also go
+through the proxy (their containers join `WORKPLACE_EGRESS_NETWORK`). Remaining:
+wildcard preview hostnames on App Service.
 
 Exists: the Easy Auth adapter (`easy_auth.py`), which assumes Workplace runs on
 App Service itself; the 80/20 Compose stack and its DigitalOcean overlay

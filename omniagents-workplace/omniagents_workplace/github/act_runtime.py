@@ -149,7 +149,9 @@ class RuntimeBridge:
                 self.run.id, runner.agent_profile, environment=runner.agent_environment
             )
         elif runner.self_hosted:
-            self.host = DockerSpace(self.run.id, runner.self_hosted, runner.instance)
+            self.host = DockerSpace(
+                self.run.id, runner.with_proxy(runner.self_hosted), runner.instance
+            )
         elif runner.container:
             raise ValueError("No factory self-hosted runtime is configured")
         else:

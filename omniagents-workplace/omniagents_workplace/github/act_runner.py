@@ -15,6 +15,7 @@ from .act_space import (
     RUNNER_IMAGE,
     ActDockerSpace,
 )
+from .spaces import ContainerSettings
 
 
 class ActionsRunner:
@@ -79,12 +80,43 @@ class ActionsRunner:
         self.wait(ids, timeout)
         self._threads = [t for t in self._threads if t.is_alive()]
 
+    #: The factory's egress proxy for jobs (Workplace sets it): its
+    #: environment, and the Docker network the proxy is reachable on.
+    proxy_environment = None
+    proxy_network = None
+
+    def proxy(self):
+        return dict(self.proxy_environment()) if self.proxy_environment else {}
+
+    def with_proxy(self, settings):
+        """``settings`` with the factory's egress proxy, when it has one."""
+        from dataclasses import replace
+
+        proxy = self.proxy()
+        if settings is None or not proxy:
+            return settings
+        return replace(settings, proxy=proxy, proxy_network=self.proxy_network)
+
     def _space(self, run_id):
         if self.quicksand:
+            from dataclasses import replace
+
             from .quicksand_space import QuicksandSpace
 
-            return QuicksandSpace(run_id, self.quicksand)
-        return ActDockerSpace(run_id, self.container, self.instance)
+            proxy = self.proxy()
+            return QuicksandSpace(
+                run_id,
+                (
+                    replace(self.quicksand, proxy=proxy.get("HTTPS_PROXY"))
+                    if proxy
+                    else self.quicksand
+                ),
+            )
+        return ActDockerSpace(
+            run_id,
+            self.with_proxy(self.container or ContainerSettings(image=RUNNER_IMAGE)),
+            self.instance,
+        )
 
     def _run(self, repo, run, workflow, github, cancel):
         state = self.state
@@ -267,6 +299,11 @@ class ActionsRunner:
                     [
                         "docker",
                         "build",
+                        *(
+                            arg
+                            for key, value in self.proxy().items()
+                            for arg in ("--build-arg", f"{key}={value}")
+                        ),
                         "-t",
                         JOB_IMAGE,
                         "-f",
@@ -303,6 +340,12 @@ class ActionsRunner:
                 "GITHUB_RUN_NUMBER=" + str(getattr(run, "run_number", run.id)),
                 "--env",
                 "GITHUB_RUN_ATTEMPT=" + str(getattr(run, "run_attempt", 1)),
+                # Every job container reaches the internet through the proxy.
+                *(
+                    arg
+                    for key, value in self.proxy().items()
+                    for arg in ("--env", f"{key}={value}")
+                ),
                 "--secret-file",
                 space.path("workflow-secrets.env"),
                 "--var-file",

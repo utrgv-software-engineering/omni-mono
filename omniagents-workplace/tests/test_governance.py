@@ -249,7 +249,9 @@ def test_raising_is_immediate_and_lowering_waits_for_the_governance_owner(strict
         base, json={"classification": "confidential", "heightened_risk": True}
     ).json()
     assert raised["profile"]["classification"] == "confidential"
-    assert raised["pending"] is None and raised["startable"]
+    assert raised["pending"] is None
+    # Classified, but no model is an allowed service yet.
+    assert not raised["startable"] and "No model" in raised["blocked"]
     # Lowering waits.
     lowered = client.put(
         base,
@@ -437,3 +439,30 @@ def test_cards_reviews_reports_and_evidence(strict):
     assert any(d["kind"] == "labels" for d in evidence["decisions"])
     assert evidence["scheduled_reviews"]["completed"][0]["kind"] == "risk_review"
     assert "password" not in json.dumps(evidence).lower()
+
+
+def test_a_strict_factory_without_allowed_models_says_so_and_takes_no_work(strict):
+    i, client, record = strict
+    base = prefix(record) + "/workplace/api/factory/profile"
+    client.put(
+        base,
+        json={
+            "classification": "published",
+            "heightened_risk": False,
+            "reason": "Public",
+        },
+    )
+    view = client.get(base).json()
+    assert "No model is an allowed service" in view["blocked"]
+    started = client.post(f"/workplace/api/factories/{record['id']}/start")
+    assert started.status_code == 422 and "No model" in started.json()["detail"]
+    sent = client.post(
+        prefix(record) + "/workplace/api/personal/chats/main/messages",
+        json={"text": "hi", "submission_id": "00000000-0000-0000-0000-000000000002"},
+    )
+    assert sent.status_code == 409 and "No model" in sent.json()["detail"]
+    client.put(
+        "/workplace/api/installation/allowed-services",
+        json={"services": SERVICES, "reason": "Our Azure tenant"},
+    )
+    assert client.get(base).json()["blocked"] is None

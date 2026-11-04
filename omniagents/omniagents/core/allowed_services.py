@@ -86,6 +86,17 @@ def model_allowed(runtime: Mapping[str, Any], environ=None) -> bool:
     )
 
 
+def require_any_model(environ=None) -> None:
+    """Refuse work when the deployment allows no model at all: say so at the
+    start, rather than at the first model call."""
+    entries = _entries(MODELS_ENV, environ)
+    if entries is not None and not entries:
+        raise ServiceNotAllowed(
+            "No model is an allowed service for this factory: ask an administrator "
+            "to add the deployment's models to its allowed services"
+        )
+
+
 def require_model(runtime: Mapping[str, Any], environ=None) -> None:
     if not model_allowed(runtime, environ):
         provider = runtime.get("provider") or "openai"

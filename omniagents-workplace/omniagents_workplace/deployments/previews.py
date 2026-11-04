@@ -398,6 +398,18 @@ class Previews:
                     f"/applications/{app['uuid']}/envs/bulk",
                     environment(missing, preview),
                 )
+        proxy = preview_proxy(w, raw)
+        if proxy and saved.get("proxy") != proxy:
+            # Previews build and run with the factory's egress proxy: on a
+            # deployment with one, it is their only way out.
+            saved["proxy"] = proxy
+            write_private(state, json.dumps(saved))
+            for preview in (False, True):
+                await self.api(
+                    "PATCH",
+                    f"/applications/{app['uuid']}/envs/bulk",
+                    environment(proxy, preview),
+                )
         return plan["login"]
 
     def sign_in(self, record):
@@ -440,7 +452,9 @@ class Previews:
 
                     await publish(self)
                 self.d.preview_errors.pop(self.factory_id, None)
-            except Exception as exc:  # noqa: BLE001 - one outage must not stop reconciliation
+            except (
+                Exception
+            ) as exc:  # noqa: BLE001 - one outage must not stop reconciliation
                 self.d.preview_errors[self.factory_id] = str(exc)[:500]
                 log.warning(
                     "Factory %s preview reconciliation failed: %s", self.factory_id, exc
@@ -457,3 +471,30 @@ class Previews:
                 for task in tasks:
                     task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def preview_proxy(w, compose_text):
+    """The proxy variables a preview builds and runs with, or ``{}``. Its own
+    Compose services talk to each other directly (``NO_PROXY``)."""
+    egress = getattr(w, "egress", None)
+    env = egress.runtime_environment([]) if egress is not None else {}
+    if not env:
+        return {}
+    import yaml
+
+    try:
+        services = list(
+            (yaml.safe_load(compose_text or "") or {}).get("services") or {}
+        )
+    except yaml.YAMLError:
+        services = []
+    no_proxy = ",".join(sorted({"localhost", "127.0.0.1", *services}))
+    proxy = env["HTTPS_PROXY"]
+    return {
+        "HTTP_PROXY": proxy,
+        "HTTPS_PROXY": proxy,
+        "http_proxy": proxy,
+        "https_proxy": proxy,
+        "NO_PROXY": no_proxy,
+        "no_proxy": no_proxy,
+    }

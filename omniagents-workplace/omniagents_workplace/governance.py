@@ -196,10 +196,15 @@ class Governance:
 
     def startable(self) -> Optional[str]:
         """Why the factory may not start, or ``None``."""
-        if self.w.policy.strict and (
-            not self.classification() or self.heightened_risk() is None
-        ):
+        if not self.w.policy.strict:
+            return None
+        if not self.classification() or self.heightened_risk() is None:
             return "Classify the factory's data and risk before starting it"
+        if not any(s["kind"] == "model" for s in self.services()):
+            return (
+                "No model is an allowed service, so under the strict policy the "
+                "factory can use none: add the deployment's models to its allowed services"
+            )
         return None
 
     def _apply_labels(self, labels: dict) -> None:
@@ -368,6 +373,7 @@ class Governance:
             "strict": self.w.policy.strict,
             "review_forced": self.review_forced(),
             "startable": self.startable() is None,
+            "blocked": self.startable(),
             "pending": [d for d in self.decisions.pending() if d["kind"] == "labels"],
         }
 

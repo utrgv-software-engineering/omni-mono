@@ -1197,6 +1197,17 @@ def create_app(
     app.include_router(workplace.governance.router())
     app.include_router(workplace.egress.router())
     app.include_router(workplace.approvals.router())
+    if workplace.github.actions is not None:
+        # Jobs reach the internet through the factory's egress proxy, on the
+        # network it is reachable on (WORKPLACE_EGRESS_NETWORK).
+        workplace.github.actions.proxy_environment = lambda: (
+            workplace.egress.runtime_environment([])
+        )
+        workplace.github.actions.proxy_network = (
+            workplace.environ.get("WORKPLACE_EGRESS_NETWORK")
+            or os.environ.get("WORKPLACE_EGRESS_NETWORK")
+            or None
+        )
     app.add_middleware(RepositoryProviderBoundary, workplace=workplace)
     app.add_middleware(RequestLimits)
     from .easy_auth import EasyAuth
@@ -2794,6 +2805,9 @@ def create_app(
     @app.post("/workplace/api/personal/chats/{chat_id}/messages")
     async def personal_send(body: PersonalMessage, request: Request):
         workplace.kill_switch.check()
+        blocked = workplace.governance.startable()
+        if blocked:
+            raise HTTPException(409, blocked)
         connection = await personal_connection(request)
         if not body.text.strip():
             raise HTTPException(422, "Write a message first.")

@@ -35,8 +35,10 @@ The runtime enforces the list, from what Workplace gives it when it starts:
 
 - **Models** (`OMNIAGENTS_ALLOWED_MODEL_ENDPOINTS`): every model a run resolves
   passes through the model store, which refuses one not on the list. The Factory
-  model page refuses them too. Under the strict policy an empty list allows no
-  model, so add the deployment's models before turning the policy on.
+  model page refuses them too. Under the strict policy, with no model on the
+  list, the factory says so on its Factory tab, does not start, refuses chat
+  with the reason, and its runtime refuses every turn the same way, rather than
+  failing at the first model call.
 - **Integrations** (`OMNIAGENTS_ALLOWED_INTEGRATIONS`, Controlled and
   Confidential factories): an integration not on the list does not start.
 - **MCP servers** (Controlled and Confidential): the managed configuration

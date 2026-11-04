@@ -1736,6 +1736,8 @@ export interface FactoryProfileView {
   strict: boolean;
   review_forced: boolean;
   startable: boolean;
+  /** Why the factory may not start or take work, under the strict policy. */
+  blocked: string | null;
   pending: GovernanceDecision[];
 }
 

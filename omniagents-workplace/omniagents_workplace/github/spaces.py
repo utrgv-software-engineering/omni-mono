@@ -182,6 +182,11 @@ class ContainerSettings:
     env: Dict[str, str] = field(default_factory=dict)
     #: The job log's name for it.
     label: str = "a container of its own"
+    #: The factory's egress proxy (``HTTP_PROXY`` and the rest), for the job and
+    #: everything it starts; and the Docker network the proxy is reachable on,
+    #: which the job's container joins too.
+    proxy: Dict[str, str] = field(default_factory=dict)
+    proxy_network: Optional[str] = None
 
 
 class DockerSpace(Space):
@@ -261,7 +266,7 @@ class DockerSpace(Space):
             given: List[str] = []
             for volume in s.volumes:
                 given += ["--volume", volume]
-            for key, value in s.env.items():
+            for key, value in {**s.env, **s.proxy}.items():
                 given += ["--env", f"{key}={value}"]
             if s.docker_socket:
                 given += [
@@ -301,6 +306,11 @@ class DockerSpace(Space):
             if started.returncode != 0:
                 return f"Could not start the job's container: {started.stderr.strip()}"
             self._started = True
+            if s.proxy_network:
+                # Its own network has no way out; the proxy's is how it gets one.
+                joined = self._docker("network", "connect", s.proxy_network, self.name)
+                if joined.returncode != 0:
+                    return f"Could not reach the egress proxy: {joined.stderr.strip()}"
             made = self._docker("exec", self.name, "mkdir", "-p", self.root)
             copied = (
                 self._docker("cp", f"{local}/.", f"{self.name}:{self.checkout}")

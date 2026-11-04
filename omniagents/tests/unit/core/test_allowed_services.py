@@ -144,3 +144,24 @@ def test_mcp_servers_are_allowed_by_name_and_pinned_address():
     assert not mcp_server_allowed(
         server("other", url="https://workplace.example/github/mcp"), allowed
     )
+
+
+def test_a_runtime_allowed_no_model_takes_no_turn(monkeypatch):
+    import asyncio
+
+    from omniagents.core.runtime.release_gate import ReleaseGate, admission
+
+    @admission
+    async def run(service):
+        return "started"
+
+    service = SimpleNamespace(_release_gate=ReleaseGate(lambda: 0))
+    monkeypatch.setenv(MODELS_ENV, "[]")
+    with pytest.raises(ServiceNotAllowed, match="No model is an allowed service"):
+        asyncio.run(run(service))
+    monkeypatch.setenv(
+        MODELS_ENV, json.dumps([{"provider": "azure", "base_url": AZURE}])
+    )
+    assert asyncio.run(run(service)) == "started"
+    monkeypatch.delenv(MODELS_ENV)
+    assert asyncio.run(run(service)) == "started"

@@ -17,8 +17,13 @@ import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 from .spaces import Space
+
+#: Where a job VM reaches the forwarded egress proxy.
+PROXY_GUEST = "10.0.2.101"
+PROXY_PORT = 3128
 
 
 @dataclass(frozen=True)
@@ -26,6 +31,9 @@ class QuicksandSettings:
     image: str
     memory: str = "2G"
     cpus: int = 2
+    #: The factory's egress proxy URL, with its credentials: the job VM then
+    #: has no route out but this proxy, forwarded in.
+    proxy: Optional[str] = None
 
 
 class GuestProcess:
@@ -102,19 +110,40 @@ class QuicksandSpace(Space):
         return self._submit(coroutine).result()
 
     async def _start(self):
-        from quicksand import Sandbox, NetworkMode
+        from quicksand import Forward, Guest, Host, NetworkMode, Sandbox
 
         # No host mounts, Docker socket, credentials, or inherited host environment.
+        proxied = self.proxy_url()
         self.vm = Sandbox(
             image=self.settings.image,
             memory=self.settings.memory,
             cpus=self.settings.cpus,
-            network_mode=NetworkMode.FULL,
+            network_mode=NetworkMode.MOUNTS_ONLY if proxied else NetworkMode.FULL,
+            **(
+                {
+                    "port_forwards": [
+                        Forward(Guest(PROXY_PORT), Host(self.proxy_target()))
+                    ]
+                }
+                if proxied
+                else {}
+            ),
         )
         await self.vm.start()
-        result = await self.vm.execute(
-            "systemctl start docker && docker info >/dev/null", stdin=b"", timeout=120
-        )
+        start_docker = "systemctl start docker && docker info >/dev/null"
+        if proxied:
+            # The guest's Docker daemon pulls through the proxy as well.
+            drop_in = (
+                "[Service]\n"
+                f'Environment="HTTP_PROXY={proxied}" "HTTPS_PROXY={proxied}" '
+                f'"NO_PROXY={PROXY_GUEST},localhost,127.0.0.1"\n'
+            )
+            start_docker = (
+                "mkdir -p /etc/systemd/system/docker.service.d && "
+                f"printf %b {shlex.quote(drop_in)} > /etc/systemd/system/docker.service.d/proxy.conf && "
+                "systemctl daemon-reload && " + start_docker
+            )
+        result = await self.vm.execute(start_docker, stdin=b"", timeout=120)
         if result.exit_code:
             raise RuntimeError(f"Guest Docker daemon failed: {result.stderr[-4000:]}")
 
@@ -173,11 +202,33 @@ class QuicksandSpace(Space):
             )
             return result.stderr if result.exit_code else None
 
+    def proxy_url(self):
+        """The proxy as the guest reaches it (forwarded in), or ``None``."""
+        if not self.settings.proxy:
+            return None
+        from urllib.parse import urlsplit
+
+        url = urlsplit(self.settings.proxy)
+        credentials = url.netloc.rpartition("@")[0]
+        return f"http://{credentials + '@' if credentials else ''}{PROXY_GUEST}:{PROXY_PORT}"
+
+    def proxy_target(self):
+        from urllib.parse import urlsplit
+
+        url = urlsplit(self.settings.proxy)
+        return f"{url.hostname}:{url.port or PROXY_PORT}"
+
     def base_env(self):
         result = self.run(["env"])
-        return dict(
+        env = dict(
             line.split("=", 1) for line in result.stdout.splitlines() if "=" in line
         )
+        proxied = self.proxy_url()
+        if proxied:
+            for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+                env[key] = proxied
+            env["NO_PROXY"] = env["no_proxy"] = f"{PROXY_GUEST},localhost,127.0.0.1"
+        return env
 
     def read(self, name):
         return self.run(["cat", self.path(name)]).stdout

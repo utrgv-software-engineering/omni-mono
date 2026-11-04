@@ -41,9 +41,11 @@ class ReleaseGate:
 def admission(method):
     @functools.wraps(method)
     async def guarded(self, *args, **kwargs):
+        from omniagents.core.allowed_services import require_any_model
         from omniagents.core.runtime.factory_stop import raise_if_stopped
 
         raise_if_stopped()
+        require_any_model()
         gate = getattr(self, "_release_gate", None)
         if gate is None:
             return await method(self, *args, **kwargs)

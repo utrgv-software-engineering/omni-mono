@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import json
+import os
 import logging
 import secrets
 import socket
@@ -405,6 +406,11 @@ class Deployments:
                     f"type=bind,src={source}/engine,dst=/var/lib/docker",
                 ]
                 (data / "engine").mkdir(exist_ok=True)
+                # The engine pulls images through the factory's egress proxy.
+                proxy = i.instances[factory_id][0].egress.runtime_environment([])
+                for key in ("HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"):
+                    if key in proxy:
+                        argv += ["--env", f"{key}={proxy[key]}"]
                 if i.docker_network:
                     argv += ["--network", i.docker_network]
                 else:
@@ -422,6 +428,11 @@ class Deployments:
                     "--default-address-pool=base=172.28.0.0/16,size=24",
                 ]
                 await host.run(argv)
+                proxy_network = os.environ.get("WORKPLACE_EGRESS_NETWORK")
+                if proxy and proxy_network:
+                    await host.run(
+                        ["docker", "network", "connect", proxy_network, name]
+                    )
             else:
                 if (existing.get("Config", {}).get("Labels") or {}).get(
                     "omniagents.deployment"

@@ -50,6 +50,18 @@ Changes are audited (`egress.deployment_changed`, `egress.factory_changed`).
 A runtime Compose runs (rather than Workplace) reads the same variables from
 the env file Workplace writes for it.
 
+- **Workflow jobs**: every job's container gets the proxy variables, and so do
+  the containers `act` starts and the job image it builds; a QuickSand job VM
+  gets `mounts_only` with the proxy forwarded in, its Docker daemon included.
+  Job containers also join `WORKPLACE_EGRESS_NETWORK`, the Docker network where
+  the proxy is their only neighbour.
+- **Previews**: the proxy variables are set for the build and the run (its own
+  Compose services stay direct, in `NO_PROXY`), and the preview engine pulls
+  through the proxy and joins the same network. Preview engines made before the
+  proxy was configured keep their settings until they are recreated.
+
+Software that ignores the proxy variables gets no way out.
+
 ## Denials
 
 Every refused connection is audited on its factory (`egress.denied`, with the

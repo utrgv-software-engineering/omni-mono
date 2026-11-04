@@ -392,3 +392,17 @@ export function ApprovalInbox() {
     </section>
   );
 }
+
+/** On the Factory tab: why the factory may not start or take work, if so. */
+export function FactoryBlocked() {
+  const [blocked, setBlocked] = useState<string | null>(null);
+  useEffect(() => {
+    void factoryProfile.get().then((view) => setBlocked(view.blocked ?? null), () => undefined);
+  }, []);
+  if (!blocked) return null;
+  return (
+    <p role="alert" className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+      {blocked}
+    </p>
+  );
+}
