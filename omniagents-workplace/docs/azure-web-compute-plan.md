@@ -305,8 +305,9 @@ who proposed and approved each change. Three additions:
    integrations, egress allowlists, the approved list and the kill switch are
    Workplace settings, not files. Every change to them goes in the audit log.
    A **material change** is any change of model, a new integration or MCP
-   server, a widened allowlist, a lowered classification, or a change to risk
-   level; Workplace marks it and flags the factory for reassessment.
+   server, a widened allowlist, a lowered classification, a change to risk
+   level, or a change to the tools that need approval; Workplace marks it and
+   flags the factory for reassessment.
 
 ### Inventory and system cards
 
@@ -325,15 +326,37 @@ documents) carries an AI attribution naming the factory and agent. Commits and
 generated files carry provenance metadata, such as commit trailers and document
 metadata, which covers labeling synthetic content.
 
-### Heightened-risk factories
+### Consequential decisions
 
-Systems that may materially affect rights, opportunities, safety or access to
-services are heightened-risk. Most factories, such as software and operations
-work, are not. A factory marked heightened-risk:
+Factories exist to automate and integrate, so oversight targets **decisions
+about people**, not traffic leaving the factory. SB 1964's heightened-scrutiny
+systems are those intended to make, or be a controlling factor in, a
+consequential decision; it excludes narrow procedural tasks, preparatory work
+for an assessment, improving completed human work and detecting decision
+patterns. UTRGV's heightened-risk systems are those that may materially affect
+rights, opportunities, safety or access to services. Posting updates, syncing
+data, opening tickets and PRs, drafting and reporting stay fully automated.
 
-- requires human approval for every action that leaves the factory;
-- samples conversations for quality review, at a rate its owner sets;
-- reminds its owners when its six-monthly reassessment is due.
+Two mechanisms enforce it, both configured per factory:
+
+1. **Credential scoping.** Each integration's credentials grant only what the
+   factory's work needs. Where a decision belongs to a system of record, the
+   factory's account there can prepare it (a draft, a pending item, a queue
+   entry) but not finalize it; a person decides in that system's own workflow.
+   This is the preferred design: the factory is then preparatory, which the
+   Information Security Office can take into account when classifying its risk.
+2. **Human approval for named tools.** When the factory itself must carry out a
+   decision, its definition names the tools or integrations that need approval.
+   Only those pause; everything else runs unattended. Approval uses omniagents'
+   existing tool approvals, but for these tools it is always a person's:
+   autopilot's allow-all pattern, "always allow", the Guardian reviewer and
+   contained-sandbox auto-approval never cover them. The list lives in the
+   factory's repository, so changing it is a reviewed PR and a material change.
+
+A factory marked **heightened-risk** also samples conversations for quality
+review at a rate its owner sets, and reminds its owners when its six-monthly
+reassessment is due. Together with the Factory tab metrics, the audit log and
+the kill switch, this is its human oversight plan.
 
 ### Operational metrics
 
@@ -401,8 +424,9 @@ Verify these against current Azure capabilities rather than assume them:
 6. Add the kill switch for one factory and for all factories, and write the
    out-of-band runbook.
 7. Add the UTRGV policy work: audited settings and material changes, system
-   cards, AI attribution, heightened-risk factories, Factory tab metrics, adversarial tests
-   and incident alerts. Configure the Entra setup.
+   cards, AI attribution, approval-required tools and heightened-risk review,
+   Factory tab metrics, adversarial tests and incident alerts. Configure the
+   Entra setup.
 8. Prove the deployment with an isolated example factory and no sensitive data,
    and register it in the AI Inventory, before onboarding real work.
 
@@ -426,6 +450,8 @@ Verify these against current Azure capabilities rather than assume them:
   reassessment.
 - Each factory's system card is generated from its configuration.
 - Everything agents post outside Workplace is attributed to AI.
+- A tool a factory names as needing approval waits for a person, whatever the
+  session's approval settings, autopilot or reviewer.
 - Encryption keys are not stored with data backups.
 - A full restore from backup to a fresh VM has been performed.
 - One factory and all factories can be stopped from the UI. A stop takes effect
