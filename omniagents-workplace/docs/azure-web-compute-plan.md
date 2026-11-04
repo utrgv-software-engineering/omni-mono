@@ -70,7 +70,7 @@ snapshotted and restored on a schedule.
 | Azure Backup | Scheduled, encrypted backups of the data in [Backups](#backups), with automatic expiry |
 | Key Vault | Workplace's encryption keys, kept apart from data backups |
 | Azure Firewall or NSG rules | Inbound only from the App Service subnet; outbound allowlist |
-| Log Analytics | Entra sign-in logs, platform logs and Workplace audit events, outside the VM's write access |
+| Log Analytics | Entra sign-in logs, platform logs and Workplace audit events, outside the VM's write access; the health-check alert |
 
 ### Front door
 
@@ -337,9 +337,12 @@ work, are not. A factory marked heightened-risk:
 
 ### Operational metrics
 
-Export per-factory metrics to Azure Monitor: turn latency, error and tool-failure
-rates, uptime and cost. These are the policy's operational metrics; rollback
-uses factory releases.
+The policy's operational metrics belong on each factory's **Factory** tab,
+which already shows accuracy (judges' pass rate on live runs), latency (run
+duration and time to ship) and cost. Add the rest there: error rate across runs,
+tool-failure rate and runtime uptime. Rollback uses factory releases. A
+dashboard cannot report that Workplace itself is down, so App Service's health
+check alerts on that instead.
 
 ### Adversarial tests
 
@@ -398,7 +401,7 @@ Verify these against current Azure capabilities rather than assume them:
 6. Add the kill switch for one factory and for all factories, and write the
    out-of-band runbook.
 7. Add the UTRGV policy work: audited settings and material changes, system
-   cards, AI attribution, heightened-risk factories, metrics, adversarial tests
+   cards, AI attribution, heightened-risk factories, Factory tab metrics, adversarial tests
    and incident alerts. Configure the Entra setup.
 8. Prove the deployment with an isolated example factory and no sensitive data,
    and register it in the AI Inventory, before onboarding real work.
