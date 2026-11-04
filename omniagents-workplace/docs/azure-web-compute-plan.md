@@ -44,7 +44,7 @@ Why not split web and compute or use serverless containers:
 | Install | omni-desktop installer | Compose on one VM | Same Compose stack on one VM |
 | Front door | localhost | Traefik, public | App Service + Easy Auth, VM private |
 | State | SQLite, local files | SQLite, VM disk | SQLite, VM managed disk |
-| Backups | None required | Disk snapshots | Azure Backup, tested restores |
+| Backups | None required | Disk snapshots | Workplace backup to Blob Storage, tested restores |
 | Integrations | Stand-ins | Stand-ins or real | Stand-ins or real, allowlisted |
 | Models | Student's own provider | Any configured provider | Approved list (BAA-covered) |
 | Egress | Open | Open | Denied by default, allowlisted |
@@ -67,7 +67,7 @@ snapshotted and restored on a schedule.
 | App Service | Public HTTPS hostnames, Easy Auth (Microsoft Entra), reverse proxy to the VM over VNet integration, WebSocket forwarding |
 | Private VM | Workplace, factory runtimes, QuickSand sandboxes, Actions, Coolify and previews; the same Compose stack as 80/20 |
 | Managed disk | All durable state: Workplace and factory databases, Shared, workspaces, sandbox disks, caches |
-| Azure Backup | Scheduled, encrypted backups of the data in [Backups](#backups), with automatic expiry |
+| Blob Storage | Workplace's backups of the data in [Backups](#backups), with a 30-day lifecycle rule |
 | Key Vault | Workplace's encryption keys, kept apart from data backups |
 | Azure Firewall or NSG rules | Inbound only from the App Service subnet; outbound allowlist |
 | Log Analytics | Entra sign-in logs, platform logs and Workplace audit events, outside the VM's write access; the health-check alert |
@@ -174,9 +174,12 @@ That means:
 | Shared uploads, agent workspaces | In Confidential factories | Only in Published and Controlled factories |
 | Previews, images, caches, source checkouts | Never (previews use seed data only) | No: rebuildable |
 
-Backups go to Azure Backup in the same tenant, under the same access controls
-as the VM. They run **daily and are kept for 30 days**, with no longer-term
-copies, so deleted data is fully disposed of within 30 days. Restore to a fresh
+Backups are Workplace's own (`omniagents-workplace backup`), written to Blob
+Storage in the same tenant, under the same access controls as the VM. Disk
+snapshots cannot leave out Confidential factories' uploads and workspaces; the
+application backup can, and it copies running SQLite databases consistently.
+They run **daily and are kept for 30 days** by a lifecycle rule, with no
+longer-term copies, so deleted data is fully disposed of within 30 days. Restore to a fresh
 VM **every quarter** and record the result.
 
 ### Other controls
@@ -407,8 +410,8 @@ Verify these against current Azure capabilities rather than assume them:
 - A VM SKU that exposes nested virtualization (KVM) for accelerated QuickSand.
 - Egress controls: Azure Firewall versus NSG service tags, and the allowlist each
   factory needs.
-- Azure Backup consistency for running SQLite databases, and how to exclude
-  Shared and workspaces of Confidential factories from it.
+- Blob Storage access from the private VM (private endpoint) and lifecycle
+  deletion for backups.
 
 ## Suggested implementation sequence
 
