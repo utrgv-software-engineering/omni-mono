@@ -33,8 +33,7 @@ from .accounts import admin, me
 FACTORY_KEY = "factory.egress"
 TOKEN_KEY = "egress.token"
 DEPLOYMENT_KEY = "egress.deployment"
-#: The guest address QuickSand gives a forwarded host service.
-GUEST_PROXY = "10.0.2.101"
+#: The proxy's port when its URL names none.
 GUEST_PORT = 3128
 
 
@@ -165,6 +164,9 @@ class Egress:
         proxy = self.credentials_url(url.hostname or "egress", url.port or GUEST_PORT)
         no_proxy = ",".join(sorted({"localhost", "127.0.0.1", *internal_hosts}))
         return {
+            # The runtime gives its sandboxes the proxy too (omniagents'
+            # sandbox profiles): QuickSand guests through a forward.
+            "OMNIAGENTS_SANDBOX_PROXY": proxy,
             "HTTP_PROXY": proxy,
             "HTTPS_PROXY": proxy,
             "http_proxy": proxy,
@@ -172,44 +174,6 @@ class Egress:
             "NO_PROXY": no_proxy,
             "no_proxy": no_proxy,
         }
-
-    def sandbox_profile(self, profile: dict) -> dict:
-        """A QuickSand sandbox reaches only the proxy (and Workplace's own
-        forwarded services): ``mounts_only``, with the proxy forwarded in."""
-        kind = (profile.get("client") or {}).get("type")
-        if not self.proxy or kind not in ("quicksand", "docker"):
-            return profile
-        url = urlsplit(self.proxy)
-        values = (
-            profile.setdefault("manifest", {})
-            .setdefault("environment", {})
-            .setdefault("value", {})
-        )
-        if kind == "docker":
-            # A container on the deployment's internal network reaches the
-            # proxy by its name; the network has no other way out.
-            proxy = self.credentials_url(
-                url.hostname or "egress", url.port or GUEST_PORT
-            )
-            for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
-                values[key] = proxy
-            values["NO_PROXY"] = values["no_proxy"] = "localhost,127.0.0.1"
-            return profile
-        options = profile.setdefault("options", {})
-        options["network_mode"] = "mounts_only"
-        options.setdefault("host_services", {})[
-            GUEST_PORT
-        ] = f"{url.hostname or 'egress'}:{url.port or GUEST_PORT}"
-        values = (
-            profile.setdefault("manifest", {})
-            .setdefault("environment", {})
-            .setdefault("value", {})
-        )
-        proxy = self.credentials_url(GUEST_PROXY, GUEST_PORT)
-        for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
-            values[key] = proxy
-        values["NO_PROXY"] = values["no_proxy"] = f"{GUEST_PROXY},localhost,127.0.0.1"
-        return profile
 
     # -- changes -------------------------------------------------------------
 

@@ -300,7 +300,19 @@ Build:
 - **Restore drill.** A scripted restore to a fresh VM (omni-factory), run
   quarterly; its result is recorded.
 
-## 7. Azure front door and infrastructure (L)
+## 7. Azure front door and infrastructure (L) — done (untested on Azure)
+
+Built 2026-11-04 in omni-factory's `deploy/azure/` and `deploy/azure.compose.yml`;
+validated offline (`az bicep build`, `docker compose config`, `sh -n`), not yet
+deployed. Where it differs from the design below: Workplace trusts Easy Auth
+headers by a proxy secret (`WORKPLACE_AZURE_PROXY_TOKEN`) rather than by address,
+because `--trust-proxy` rewrites the client address; the host firewall is
+`iptables` in `DOCKER-USER`; backups reach Blob Storage with `azcopy` and the VM's
+managed identity (the account takes no shared keys) and keys are escrowed by a
+daily timer. Runtimes started by Compose get the policy, allowed services, proxy
+and AI name through the env file Workplace writes, and apply the proxy to their
+own sandboxes (`OMNIAGENTS_SANDBOX_PROXY`). Remaining: proxy settings for
+Actions jobs and previews, and wildcard preview hostnames on App Service.
 
 Exists: the Easy Auth adapter (`easy_auth.py`), which assumes Workplace runs on
 App Service itself; the 80/20 Compose stack and its DigitalOcean overlay

@@ -102,3 +102,21 @@ Before admitting users, verify the actual Azure ingress boundary:
 Automated tests cover the application boundary with simulated Azure headers.
 They cannot establish that a future Azure deployment has correctly configured
 its ingress; that requires the checks above on that deployment.
+
+## Behind Workplace's own App Service proxy
+
+On the Azure deployment, App Service runs only a reverse proxy, and Workplace
+runs on a private VM behind it (omni-factory's `deploy/azure/`). Easy Auth's
+headers then reach Workplace through the proxy, so Workplace must know they
+came from it:
+
+- Set `WORKPLACE_AZURE_PROXY_TOKEN` on Workplace to a secret the proxy also
+  holds (Key Vault). The proxy sets `X-Workplace-Proxy-Token` on every request,
+  replacing any copy a client sent; Workplace honors Microsoft identity headers
+  only on requests carrying it, and refuses them from anywhere else (sandboxes,
+  previews, anything inside the network).
+- Under `WORKPLACE_POLICY=strict`, password sign-in is off, and every request's
+  Microsoft identity must still be the session's: signing out of Microsoft, or
+  being removed there, ends the Workplace session at once.
+- The network adds the rest: the VM accepts HTTPS only from App Service's
+  integration subnet.

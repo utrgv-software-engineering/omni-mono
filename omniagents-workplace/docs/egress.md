@@ -39,12 +39,16 @@ Changes are audited (`egress.deployment_changed`, `egress.factory_changed`).
 
 ## What factories are given
 
-- **Runtimes**: `HTTP_PROXY`/`HTTPS_PROXY` with the factory's credentials, and
-  `NO_PROXY` for Workplace itself.
+- **Runtimes**: `HTTP_PROXY`/`HTTPS_PROXY` with the factory's credentials,
+  `NO_PROXY` for Workplace itself, and `OMNIAGENTS_SANDBOX_PROXY`, which the
+  runtime applies to every sandbox it brings up, however it was started:
 - **QuickSand sandboxes**: `network_mode: mounts_only`, which leaves the guest no
   route out, with the proxy forwarded in at `10.0.2.101:3128` and the proxy
   variables set for every command.
 - **Docker sandboxes**: the proxy variables; their network must be internal.
+
+A runtime Compose runs (rather than Workplace) reads the same variables from
+the env file Workplace writes for it.
 
 ## Denials
 

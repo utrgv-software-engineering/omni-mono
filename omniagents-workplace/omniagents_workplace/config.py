@@ -513,6 +513,11 @@ class FactoryConfig:
                 factory_env["OMNIAGENTS_AGENT_HOST_CONTROL_TOKEN"] = str(
                     config["factory"]["admin_auth_token"]
                 )
+            # A runtime Workplace does not start (Compose's) is held to the
+            # policy too: the overlay goes beside the env file it reads.
+            factory_env.update(
+                workplace.runtime_policy_environment(app, self.env_file.parent)
+            )
             write_env(self.env_file, factory_env)
 
     def save(self, workplace: "Workplace", raw: Dict[str, Any]) -> Applied:

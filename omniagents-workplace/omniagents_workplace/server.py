@@ -552,6 +552,25 @@ class Workplace:
                 self.accounts.set_password(account, str(password))
             self.canvas.add_member(account.id, account.name, "person")
 
+    def runtime_policy_environment(self, app: Any, directory: Path) -> Dict[str, str]:
+        """What a factory runtime is given to hold it to the deployment's policy:
+        the managed overlay and allowed services (``governance``), the egress
+        proxy, and the AI name its commits carry."""
+        from urllib.parse import urlsplit
+
+        env = {
+            # Its commits say they are AI's (omniagents' sandbox git identity).
+            "FACTORY_AI_NAME": app.name if "(AI)" in app.name else f"{app.name} (AI)",
+        }
+        env.update(self.governance.runtime_environment(directory))
+        # What factories run reaches the internet only through the egress proxy.
+        env.update(
+            self.egress.runtime_environment(
+                [h for h in {urlsplit(self.internal_url).hostname} if h]
+            )
+        )
+        return env
+
     def close(self) -> None:
         if self.github.actions is not None:
             self.github.actions.stop()

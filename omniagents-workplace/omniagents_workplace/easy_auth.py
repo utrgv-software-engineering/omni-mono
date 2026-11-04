@@ -32,6 +32,10 @@ class EasyAuth:
         if value not in {"true", "false"}:
             raise ValueError("WORKPLACE_AZURE_EASY_AUTH must be true or false")
         self.enabled = value == "true"
+        #: Behind Workplace's own App Service proxy: identity headers count only
+        #: on requests the proxy marked with this secret (it overwrites any copy
+        #: a client sends), never from sandboxes, previews or anything else.
+        self.proxy_token = env.get("WORKPLACE_AZURE_PROXY_TOKEN", "").strip() or None
         self.tenant = None
         self.accounts = {}
         self.origin = ""
@@ -75,8 +79,19 @@ class EasyAuth:
     def account_id(self, request):
         return self.account_id_from(request.headers)
 
+    def from_proxy(self, headers) -> bool:
+        if self.proxy_token is None:
+            return True  # Workplace runs on App Service itself
+        return secrets.compare_digest(
+            str(headers.get("x-workplace-proxy-token", "")), self.proxy_token
+        )
+
     def account_id_from(self, headers):
         """The Workplace account a request's Microsoft identity maps to."""
+        if not self.from_proxy(headers):
+            raise HTTPException(
+                403, "This Microsoft identity did not come through the front door"
+            )
         try:
             raw = headers.get("x-ms-client-principal", "")
             if len(raw) > 65536:

@@ -207,3 +207,19 @@ def test_malformed_callback_state_is_rejected(setup):
     )
     assert response.status_code == 403
     assert not accounts._sessions
+
+
+def test_behind_the_proxy_identity_counts_only_from_the_proxy(tmp_path):
+    store = Store(tmp_path / "accounts.db")
+    accounts = Accounts(store)
+    accounts.add(Account("alice", "alice", "Alice", "alice@example.test", "", "", ""))
+    azure = EasyAuth(BASE, config(WORKPLACE_AZURE_PROXY_TOKEN="front-door"))
+    marked = {**principal(), "x-workplace-proxy-token": "front-door"}
+    assert azure.account_id_from(marked) == "alice"
+    for headers in (principal(), {**principal(), "x-workplace-proxy-token": "guess"}):
+        with pytest.raises(Exception) as refused:
+            azure.account_id_from(headers)
+        assert getattr(refused.value, "status_code", None) == 403
+    assert azure.matches(marked, accounts.accounts["alice"], accounts)
+    assert not azure.matches(principal(), accounts.accounts["alice"], accounts)
+    store.close()

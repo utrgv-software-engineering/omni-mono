@@ -197,6 +197,7 @@ def resolve_profile(
     merged = _substitute(merged, {"workspace_dir": str(workspace_dir.resolve())})
     _inject_network_allowlist(merged, config_dir)
     _inject_user_env(merged, config_dir)
+    _inject_egress_proxy(merged)
     build = _parse_init(merged.get("build"), key="build")
     init = _parse_init(merged.get("init"))
     services = _parse_services(merged.get("services") or {})
@@ -348,6 +349,51 @@ def _inject_network_allowlist(profile: Dict[str, Any], config_dir: Path) -> None
     if values is None or NETWORK_ALLOWLIST_ENV in values:
         return  # bad shape, or explicit profile value wins (including "")
     values[NETWORK_ALLOWLIST_ENV] = ",".join(hosts)
+
+
+#: The guest address QuickSand gives a forwarded host service.
+_QUICKSAND_GUEST = "10.0.2.101"
+_PROXY_PORT = 3128
+
+
+def _inject_egress_proxy(profile: Dict[str, Any]) -> None:
+    """Send everything a sandbox runs through the deployment's egress proxy.
+
+    ``OMNIAGENTS_SANDBOX_PROXY`` (set by whoever runs the factory) is the
+    proxy's URL, with this factory's credentials, as the runtime reaches it.
+    A QuickSand sandbox gets ``mounts_only`` networking, which leaves its guest
+    no route out, with the proxy forwarded in; a container gets the proxy
+    variables, and its network must have no other way out. The proxy
+    variables override the profile's: they are the deployment's to set."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    proxy = os.environ.get("OMNIAGENTS_SANDBOX_PROXY", "").strip()
+    if not proxy:
+        return
+    url = urlsplit(proxy)
+    if not url.hostname:
+        return
+    port = url.port or _PROXY_PORT
+    values = _manifest_env_values(profile)
+    if values is None:
+        return
+    client = profile.get("client") or {}
+    if client.get("type") == "quicksand":
+        options = profile.setdefault("options", {})
+        options["network_mode"] = "mounts_only"
+        services = options.get("host_services") or {}
+        options["host_services"] = {**services, _PROXY_PORT: f"{url.hostname}:{port}"}
+        credentials = url.netloc.rpartition("@")[0]
+        netloc = (
+            credentials + "@" if credentials else ""
+        ) + f"{_QUICKSAND_GUEST}:{_PROXY_PORT}"
+        proxy = urlunsplit((url.scheme or "http", netloc, "", "", ""))
+        no_proxy = f"{_QUICKSAND_GUEST},localhost,127.0.0.1"
+    else:
+        no_proxy = "localhost,127.0.0.1"
+    for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        values[key] = proxy
+    values["NO_PROXY"] = values["no_proxy"] = no_proxy
 
 
 def _inject_user_env(profile: Dict[str, Any], config_dir: Path) -> None:

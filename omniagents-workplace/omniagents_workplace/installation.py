@@ -528,7 +528,7 @@ class Installation:
                     from .github.quicksand_space import QuicksandSettings
 
                     profile = process.prepare_profile(
-                        urlsplit(self.internal_url).port or 80, egress=w.egress
+                        urlsplit(self.internal_url).port or 80
                     )
                     cfg = w.factory_config.load()["factory"]
                     runtime_env = process.environment(

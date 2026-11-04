@@ -189,27 +189,14 @@ def test_allowlists_narrow_at_once_and_widen_by_decision(egress):
     assert config["factories"][record["id"]]["allow"] == ["eastus.openai.azure.com"]
 
 
-def test_runtimes_and_sandboxes_are_given_the_proxy(egress):
+def test_runtimes_are_given_the_proxy_for_themselves_and_their_sandboxes(egress):
     i, client, record, tmp_path = egress
     w, _ = i.instances[record["id"]]
     token = w.egress.token()
     env = w.egress.runtime_environment(["workplace"])
-    assert env["HTTPS_PROXY"] == f"http://{record['id']}:{token}@egress:3128"
+    proxy = f"http://{record['id']}:{token}@egress:3128"
+    assert env["HTTPS_PROXY"] == env["OMNIAGENTS_SANDBOX_PROXY"] == proxy
     assert "workplace" in env["NO_PROXY"].split(",")
-    profile = w.egress.sandbox_profile(
-        {
-            "client": {"type": "quicksand"},
-            "options": {"network_mode": "full", "host_services": {7300: 7300}},
-        }
-    )
-    assert profile["options"]["network_mode"] == "mounts_only"
-    assert profile["options"]["host_services"] == {7300: 7300, 3128: "egress:3128"}
-    values = profile["manifest"]["environment"]["value"]
-    assert values["HTTPS_PROXY"] == f"http://{record['id']}:{token}@10.0.2.101:3128"
-    docker = w.egress.sandbox_profile({"client": {"type": "docker"}})
-    assert docker["manifest"]["environment"]["value"]["HTTPS_PROXY"].endswith(
-        "@egress:3128"
-    )
 
 
 def test_denials_are_audited_and_confidential_ones_alert(egress):
