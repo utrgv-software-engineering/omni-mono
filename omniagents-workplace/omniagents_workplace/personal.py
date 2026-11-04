@@ -69,6 +69,14 @@ class PersonalConnection:
         self.serial = 0
         self.connect_lock = asyncio.Lock()
         self.messages = None
+        # The factory pushes every change of this conversation to this
+        # connection; reads are served from these until a push says they
+        # changed. ``None`` is unknown: read it from the factory.
+        self.cached_state = None
+        self.cached_workers = None
+        self.cached_items = {}
+        self.changes = 0
+        self.fetch_lock = asyncio.Lock()
 
     async def connect(self):
         async with self.connect_lock:
@@ -114,7 +122,8 @@ class PersonalConnection:
                             "replay": False,
                             "terminal": False,
                             "experimental_operations": ["queue_status"],
-                            "disabled_notifications": [],
+                            # Streaming deltas; the finished messages suffice.
+                            "disabled_notifications": ["token"],
                         },
                     },
                 )
@@ -139,10 +148,28 @@ class PersonalConnection:
                     "The agent is unavailable. Check the factory connection and selected agent."
                 ) from exc
 
+    def _changed(self, message):
+        params = message.get("params") or {}
+        if params.get("session_id") not in (None, self.session_id):
+            return
+        self.changes += 1
+        self.cached_state = None
+        self.cached_items = {}
+        if (
+            message["method"] == "client_request"
+            and params.get("function") == "ui.subagents.update"
+        ):
+            snapshot = (params.get("args") or {}).get("snapshot")
+            if isinstance(snapshot, list):
+                self.cached_workers = snapshot
+
     async def _read(self, socket):
         try:
             async for raw in socket:
                 message = json.loads(raw)
+                if "method" in message and "id" not in message:
+                    self._changed(message)
+                    continue
                 future = self.pending.get(message.get("id"))
                 if "method" not in message and future is not None and not future.done():
                     if "error" in message:
@@ -162,6 +189,9 @@ class PersonalConnection:
         except Exception:
             pass
         finally:
+            # Pushes missed while disconnected: read everything again.
+            self.cached_state = self.cached_workers = None
+            self.cached_items = {}
             for future in list(self.pending.values()):
                 if not future.done():
                     future.set_exception(
@@ -195,13 +225,69 @@ class PersonalConnection:
         await self.connect()
         return await self._call(method, params)
 
-    async def state(self):
-        return await self.call(
-            "queue_status", {"session_id": self.session_id, "include_snapshot": True}
-        )
+    async def state(self, *, fresh=False):
+        """The conversation's queue, run state and newest items. A decision
+        about acting on it passes ``fresh``; a display reads what the last
+        push left current."""
+        async with self.fetch_lock:
+            if not fresh and self.cached_state is not None:
+                return self.cached_state
+            seen = self.changes
+            state = await self.call(
+                "queue_status",
+                {
+                    "session_id": self.session_id,
+                    "include_snapshot": True,
+                    "snapshot_limit": SNAPSHOT_ITEMS,
+                },
+            )
+            snapshot = state.get("snapshot") or {}
+            if snapshot.get("stream_id"):
+                # Read through here: the factory may let go of older events.
+                await self.call(
+                    "ack_events",
+                    {
+                        "session_id": self.session_id,
+                        "stream_id": snapshot["stream_id"],
+                        "seq": snapshot.get("last_seq") or 0,
+                    },
+                )
+            if self.changes == seen:
+                self.cached_state = state
+            return state
 
-    async def snapshot(self):
-        state = await self.state()
+    async def items(self, params: dict):
+        """A page of ``list_items``. This conversation's pages are kept until
+        a push changes it; another thread's (a worker's) are read each time."""
+        if params.get("thread_id") != self.session_id:
+            return await self.call("list_items", params)
+        key = json.dumps(params, sort_keys=True)
+        if key not in self.cached_items:
+            seen = self.changes
+            page = await self.call("list_items", params)
+            if self.changes != seen:
+                return page
+            self.cached_items[key] = page
+        return self.cached_items[key]
+
+    async def workers(self):
+        """This conversation's workers, as last pushed by the factory."""
+        if self.cached_workers is None:
+            seen = self.changes
+            result = await self.call(
+                "server_call",
+                {
+                    "function": "workers.list",
+                    "args": {},
+                    "session_id": self.session_id,
+                },
+            )
+            if self.changes == seen or self.cached_workers is None:
+                self.cached_workers = result.get("snapshot", [])
+        return self.cached_workers
+
+    async def snapshot(self, *, fresh=False):
+        state = await self.state(fresh=fresh)
         snapshot = state.get("snapshot") or {}
         items = snapshot.get("items") or []
         return {
@@ -209,8 +295,8 @@ class PersonalConnection:
             "run_id": state.get("active_run_id"),
             "running": bool(state.get("run_active") or state.get("draining")),
             "queue_depth": state.get("depth", 0),
-            "items": items[-200:],
-            "truncated": len(items) > 200,
+            "items": items,
+            "truncated": bool(snapshot.get("earlier_cursor")),
             "revision": (
                 hashlib.sha256(json.dumps(items, sort_keys=True).encode()).hexdigest()
                 if items
@@ -280,7 +366,7 @@ class PersonalConnection:
         return result
 
     async def stop(self, run_id: str):
-        state = await self.state()
+        state = await self.state(fresh=True)
         if state.get("active_run_id") != run_id:
             raise HTTPException(
                 409, "That run is no longer active. Refresh to see the current work."
@@ -288,7 +374,7 @@ class PersonalConnection:
         return {"stopped": await self.call("stop_run", {"run_id": run_id})}
 
     async def decide(self, item_id: str, action: str, value: dict | None):
-        state = await self.state()
+        state = await self.state(fresh=True)
         item = next(
             (
                 i
@@ -340,6 +426,9 @@ class PersonalConnection:
                 await self.reader
         self.socket = self.reader = None
 
+
+#: The newest items a chat's state carries; older ones page in on demand.
+SNAPSHOT_ITEMS = 200
 
 MAIN_TITLE = "Main Chat"
 #: The default agent's Main Chat keeps the original shared conversation's ID,
@@ -549,7 +638,7 @@ class PersonalConversations:
             raise HTTPException(409, "Chat is being deleted.")
         self.deleting.add(sid)
         try:
-            state = await connection.state()
+            state = await connection.state(fresh=True)
             if state.get("run_active") or state.get("draining") or state.get("depth"):
                 raise HTTPException(
                     409, "Stop this chat's work and clear its queue before deleting it."

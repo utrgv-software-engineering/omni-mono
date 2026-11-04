@@ -90,6 +90,7 @@ def test_runtime_output_is_never_public(personal):
             "content": {"text": "[worker message] internal handoff"},
         },
     ]
+    states.push("factory-personal")
     assert client.get("/workplace/api/personal/chats/factory-personal").json()["items"]
     assert (
         client.get("/workplace/api/personal/chats/factory-personal/feed").json()[

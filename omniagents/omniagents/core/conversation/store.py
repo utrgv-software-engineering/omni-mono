@@ -126,13 +126,18 @@ def _optional_loads(raw: Any) -> Optional[Dict[str, Any]]:
 
 
 class ConversationStore(ABC):
-    def read_snapshot(self, thread_id: str) -> dict:
-        """Read all conversation items and the inbox in one database snapshot.
+    def read_snapshot(self, thread_id: str, *, limit: Optional[int] = None) -> dict:
+        """Read conversation items and the inbox in one database snapshot.
 
-        This is a full hydration boundary, not independently paginated reads.
-        Runtime/event-journal state is still owned by the serving process.
+        ``limit`` keeps only the newest items; ``before_seq`` is then the seq
+        to page back from with ``list_items``, or ``None`` when nothing is
+        older. Runtime/event-journal state is still owned by the serving process.
         """
         raise NotImplementedError("This store does not support consistent snapshots")
+
+    def read_queue(self, thread_id: str) -> dict:
+        """The durable inbox state ``mutate_queue`` would see, read only."""
+        raise NotImplementedError("This store does not support queue reads")
 
     @abstractmethod
     def mutate_queue(
@@ -919,6 +924,18 @@ _SQLITE_FTS_SCHEMA = (
     END
     """,
 )
+
+
+def _snapshot(rows, inbox, limit):
+    """A snapshot's result: rows in seq order, one beyond ``limit`` when
+    older items exist."""
+    earlier = limit is not None and len(rows) > limit
+    items = [_item_from_row(row) for row in (rows[1:] if earlier else rows)]
+    return {
+        "items": items,
+        "inbox": _loads(inbox[0]) if inbox else {"version": 1, "items": []},
+        "before_seq": items[0].seq if earlier else None,
+    }
 
 
 class SqliteConversationStore(ConversationStore):
@@ -1791,22 +1808,42 @@ class SqliteConversationStore(ConversationStore):
             )
         return [_item_from_row(row) for row in rows]
 
-    def read_snapshot(self, thread_id: str) -> dict:
+    def read_snapshot(self, thread_id: str, *, limit: Optional[int] = None) -> dict:
         with self._lock:
             conn = self._connect()
             with conn:
                 conn.execute("BEGIN")
-                rows = conn.execute(
-                    f"SELECT {', '.join(_ITEM_COLUMNS)} FROM items WHERE thread_id=? ORDER BY seq",
-                    (thread_id,),
-                ).fetchall()
+                if limit is None:
+                    rows = conn.execute(
+                        f"SELECT {', '.join(_ITEM_COLUMNS)} FROM items WHERE thread_id=? ORDER BY seq",
+                        (thread_id,),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        f"SELECT {', '.join(_ITEM_COLUMNS)} FROM items WHERE thread_id=? ORDER BY seq DESC LIMIT ?",
+                        (thread_id, limit + 1),
+                    ).fetchall()[::-1]
                 inbox = conn.execute(
                     "SELECT state FROM command_inboxes WHERE thread_id=?", (thread_id,)
                 ).fetchone()
-        return {
-            "items": [_item_from_row(row) for row in rows],
-            "inbox": _loads(inbox[0]) if inbox else {"version": 1, "items": []},
-        }
+        return _snapshot(rows, inbox, limit)
+
+    def read_queue(self, thread_id: str) -> dict:
+        with self._lock:
+            conn = self._connect()
+            with conn:
+                conn.execute("BEGIN")
+                thread_row = conn.execute(
+                    "SELECT status FROM threads WHERE thread_id=?", (thread_id,)
+                ).fetchone()
+                if thread_row is None:
+                    raise KeyError(f"Unknown thread: {thread_id}")
+                row = conn.execute(
+                    "SELECT state FROM command_inboxes WHERE thread_id=?", (thread_id,)
+                ).fetchone()
+        state = json.loads(row[0]) if row else {"version": 1, "items": []}
+        state["archived"] = thread_row[0] == "archived"
+        return state
 
     def count_items(
         self,
@@ -3086,24 +3123,45 @@ class PgConversationStore(ConversationStore):
                 rows = cur.fetchall()
         return [_item_from_row(row) for row in rows]
 
-    def read_snapshot(self, thread_id: str) -> dict:
+    def read_snapshot(self, thread_id: str, *, limit: Optional[int] = None) -> dict:
         with self._conn(snapshot=True) as conn:
             with conn.cursor() as cur:
                 scope = (*self._scope, thread_id)
-                cur.execute(
-                    f"{self._ITEM_SELECT} WHERE {self._THREAD_SCOPE} ORDER BY seq",
-                    scope,
-                )
-                rows = cur.fetchall()
+                if limit is None:
+                    cur.execute(
+                        f"{self._ITEM_SELECT} WHERE {self._THREAD_SCOPE} ORDER BY seq",
+                        scope,
+                    )
+                    rows = cur.fetchall()
+                else:
+                    cur.execute(
+                        f"{self._ITEM_SELECT} WHERE {self._THREAD_SCOPE} ORDER BY seq DESC LIMIT %s",
+                        (*scope, limit + 1),
+                    )
+                    rows = cur.fetchall()[::-1]
                 cur.execute(
                     f"SELECT state FROM conversation_inboxes WHERE {self._THREAD_SCOPE}",
                     scope,
                 )
                 inbox = cur.fetchone()
-        return {
-            "items": [_item_from_row(row) for row in rows],
-            "inbox": _loads(inbox[0]) if inbox else {"version": 1, "items": []},
-        }
+        return _snapshot(rows, inbox, limit)
+
+    def read_queue(self, thread_id: str) -> dict:
+        with self._conn(snapshot=True) as conn:
+            with conn.cursor() as cur:
+                scope = (*self._scope, thread_id)
+                cur.execute(f"{self._THREAD_SELECT} WHERE {self._THREAD_SCOPE}", scope)
+                thread_row = cur.fetchone()
+                if thread_row is None:
+                    raise KeyError(f"Unknown thread: {thread_id}")
+                cur.execute(
+                    f"SELECT state FROM conversation_inboxes WHERE {self._THREAD_SCOPE}",
+                    scope,
+                )
+                row = cur.fetchone()
+        state = row[0] if row else {"version": 1, "items": []}
+        state["archived"] = _thread_from_row(thread_row).status is ThreadStatus.ARCHIVED
+        return state
 
     def count_items(
         self,

@@ -281,7 +281,7 @@ def import_legacy(service, session, journal):
     from omniagents.core.conversation.model import ThreadFilter
     from omniagents.core.session.history_db import get_session_metadata
 
-    if journal.mutate(lambda data, state: data.get("legacy_imported", False)):
+    if journal.read(lambda data, state: data.get("legacy_imported", False)):
         return
     # Anonymous historical sessions have no reliably scoped owner index.
     if session.user_id is None:

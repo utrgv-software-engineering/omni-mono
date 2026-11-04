@@ -29,6 +29,14 @@ def php(value):
     return f"json_decode(base64_decode('{encoded}'), true)"
 
 
+# Out of memory, the kernel kills deployments' processes (builds, previews)
+# before the factory's own: an agent's computer, the Workplace. Everything in
+# the daemon descends from these processes and inherits the score.
+EXPENDABLE = (
+    "for p in /proc/[0-9]*; do echo 500 > $p/oom_score_adj; done 2>/dev/null; true"
+)
+
+
 class Engine:
     def __init__(self, host, name):
         self.host, self.name = host, name
@@ -430,6 +438,7 @@ class Deployments:
                     await asyncio.sleep(1)
             else:
                 raise ValueError("Deployment Docker daemon did not start")
+            await runner.run(["sh", "-c", EXPENDABLE])
             await start_stack(runner, data, state)
             await configure(runner)
             write_private(data / "configured", "yes\n")

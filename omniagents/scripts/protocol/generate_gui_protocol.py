@@ -223,7 +223,7 @@ OPTIONAL_FIELDS = {
     "mcp_approval_response": ("rejection_message",),
     "client_functions": ("version",),
     "client_response": ("result", "error"),
-    "queue_status": ("include_snapshot", "submission_id"),
+    "queue_status": ("include_snapshot", "submission_id", "snapshot_limit"),
     "server_call": (
         "args",
         "session_id",
@@ -469,6 +469,7 @@ BOOLEAN_FIELDS = {
 }
 INTEGER_FIELDS = {
     "after_seq",
+    "snapshot_limit",
     "environment_generation",
     "max_depth",
     "retention_days",

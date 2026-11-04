@@ -18,7 +18,24 @@ def personal(tmp_path, monkeypatch):
     PersonalConversations(workplace.store).ensure_mains(
         ["generalist", "foreman"], "generalist"
     )
-    calls, states = [], {}
+    calls = []
+    connections = []
+
+    class States(dict):
+        def push(self, sid):
+            """What the factory does after any change: push it."""
+            for connection in connections:
+                if connection.session_id == sid:
+                    connection._changed({"method": "queue_changed", "params": {}})
+
+    states = States()
+    opened = PersonalConnection.__init__
+
+    def tracked(self, *args, **kwargs):
+        opened(self, *args, **kwargs)
+        connections.append(self)
+
+    monkeypatch.setattr(PersonalConnection, "__init__", tracked)
 
     async def call(self, method, params):
         calls.append((self.session_id, method, copy.deepcopy(params)))
@@ -32,11 +49,19 @@ def personal(tmp_path, monkeypatch):
             },
         )
         if method == "queue_status":
-            assert params == {"session_id": self.session_id, "include_snapshot": True}
+            assert params == {
+                "session_id": self.session_id,
+                "include_snapshot": True,
+                "snapshot_limit": 200,
+            }
             return copy.deepcopy(state)
         if method == "enqueue_message":
             state["depth"] += 1
+            # The factory pushes the change to every connection.
+            self._changed({"method": "queue_changed", "params": {}})
             return {"accepted": True}
+        if method == "list_items":
+            return {"items": [], "has_more": False, "next_cursor": None, "total": 0}
         return True
 
     from omniagents_workplace.factory_models import FactoryRpc
@@ -190,6 +215,7 @@ def test_stop_only_current_owners_run(personal):
     )
     assert calls[-1] == (sid, "stop_run", {"run_id": "run-" + sid})
     states[sid]["active_run_id"] = None
+    states.push(sid)
     assert (
         client.post(
             "/workplace/api/personal/chats/factory-personal/stop",
@@ -244,6 +270,7 @@ def test_only_pending_controls_in_owners_snapshot_can_be_answered(
         "content": content,
     }
     states[sid]["snapshot"]["items"] = [item]
+    states.push(sid)
     body = {"item_id": "foreign-item", "action": action, "value": {"text": "answer"}}
     assert (
         client.post(
@@ -525,6 +552,7 @@ def test_side_chat_lifecycle_and_shared_registry(personal, tmp_path):
     assert client.delete(base + "/factory-personal").status_code == 409
     assert client.delete(base + "/" + sid).status_code == 409
     states[sid].update(run_active=False, depth=0, active_run_id=None)
+    states.push(sid)
     assert client.delete(base + "/" + sid).status_code == 200
     assert calls[-1] == (sid, "delete_session", {"session_id": sid})
     assert second.get(base + "/" + sid).status_code == 404
@@ -567,6 +595,7 @@ def test_auto_title_and_activity_from_actual_conversation(personal):
             "content": {"text": "[bill]\nPlan the next event"},
         }
     ]
+    states.push(sid)
     row = next(c for c in client.get(base).json()["chats"] if c["id"] == sid)
     assert row["title"] == "Plan the next event"
     assert row["running"] and not row["waiting"] and row["revision"]
@@ -579,6 +608,7 @@ def test_auto_title_and_activity_from_actual_conversation(personal):
             "content": {"call_id": "pending"},
         }
     )
+    states.push(sid)
     client.patch(base + "/" + sid, json={"title": "My title"})
     row = next(c for c in client.get(base).json()["chats"] if c["id"] == sid)
     assert row["waiting"] and row["revision"] != revision
@@ -727,6 +757,7 @@ def test_unread_is_per_admin_and_working_for_names_the_sender(personal):
     states["factory-personal"]["snapshot"]["items"] = [
         {"item_id": "m", "kind": "agent_message", "status": "completed"}
     ]
+    states.push("factory-personal")
     row = next(
         c for c in client.get(base).json()["chats"] if c["id"] == "factory-personal"
     )
@@ -879,3 +910,54 @@ def test_automations_view_marks_runs_whose_chat_can_be_opened(personal, monkeypa
     member = w.add_person(username="viewer", name="Viewer", email="v@example.test")
     signin(w, client, member)
     assert client.get("/workplace/api/factory/automations").status_code == 403
+
+
+def test_an_idle_chat_is_read_once_until_the_factory_pushes_a_change(personal):
+    w, client, calls, states = personal
+    signin(w, client)
+    chat = "/workplace/api/personal/chats/factory-personal"
+    client.get(chat)
+
+    def reads(method):
+        return sum(1 for _, called, _ in calls if called == method)
+
+    client.get(chat + "/activity")
+    before, pages = reads("queue_status"), reads("list_items")
+    for _ in range(5):
+        assert client.get(chat + "/activity").status_code == 200
+        client.get(chat)
+    assert reads("queue_status") == before
+    assert reads("list_items") == pages
+    states.push("factory-personal")
+    client.get(chat + "/activity")
+    client.get(chat + "/activity")
+    assert reads("queue_status") == before + 1
+    assert reads("list_items") == pages + 1
+
+
+@pytest.mark.asyncio
+async def test_the_worker_list_is_what_the_factory_last_pushed(monkeypatch):
+    connection = PersonalConnection("http://runtime.invalid", None, "parent")
+    listed = []
+
+    async def call(self, method, params):
+        listed.append(params["function"])
+        return {"snapshot": [{"worker_id": "first"}]}
+
+    monkeypatch.setattr(PersonalConnection, "call", call)
+    assert await connection.workers() == [{"worker_id": "first"}]
+    assert await connection.workers() == [{"worker_id": "first"}]
+    connection._changed(
+        {
+            "method": "client_request",
+            "params": {
+                "session_id": "parent",
+                "function": "ui.subagents.update",
+                "args": {"snapshot": [{"worker_id": "second"}]},
+            },
+        }
+    )
+    assert await connection.workers() == [{"worker_id": "second"}]
+    connection._changed({"method": "run_end", "params": {"session_id": "other"}})
+    assert await connection.workers() == [{"worker_id": "second"}]
+    assert listed == ["workers.list"]

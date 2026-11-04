@@ -104,7 +104,7 @@ def inspect_worker(journal, worker_id=None):
                 )
         return {"messages": messages, "legacy_swarms": legacy}
 
-    return journal.mutate(read)
+    return journal.read(read)
 
 
 def context(journal, worker_id):
@@ -131,7 +131,7 @@ def context(journal, worker_id):
             ],
         }
 
-    return journal.mutate(read)
+    return journal.read(read)
 
 
 def accept_message(journal, sender, recipient, message, operation_id):

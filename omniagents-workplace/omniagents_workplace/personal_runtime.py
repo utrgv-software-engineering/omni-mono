@@ -208,7 +208,7 @@ class PersonalRpcPolicy:
                 raise ValueError(
                     "Personal approvals apply once; factory policy cannot be changed here"
                 )
-            state = await self.connection.snapshot()
+            state = await self.connection.snapshot(fresh=True)
             item = next(
                 (
                     item
@@ -238,18 +238,10 @@ class PersonalRpcPolicy:
                 {k: v for k, v in params.items() if k != "thread_id"},
                 _FIELDS[method] - {"thread_id"},
             )
-            workers = await self.connection.call(
-                "server_call",
-                {
-                    "function": "workers.list",
-                    "args": {},
-                    "session_id": self.connection.session_id,
-                },
-            )
             if not any(
                 w.get("session_id") == params.get("thread_id")
                 and w.get("parent_session_id") == self.connection.session_id
-                for w in workers.get("snapshot", [])
+                for w in await self.connection.workers()
             ):
                 raise ValueError(
                     "Only workers belonging to the selected chat are available"

@@ -2404,20 +2404,9 @@ def create_app(
             raise HTTPException(503, str(exc)) from exc
 
     async def panel_workers(connection):
-        result = await personal_result(
-            connection.call(
-                "server_call",
-                {
-                    "function": "workers.list",
-                    "args": {},
-                    "session_id": connection.session_id,
-                },
-            )
-        )
+        workers = await personal_result(connection.workers())
         return [
-            w
-            for w in result.get("snapshot", [])
-            if w.get("parent_session_id") == connection.session_id
+            w for w in workers if w.get("parent_session_id") == connection.session_id
         ]
 
     @app.get("/workplace/api/personal/chats/{chat_id}/agents")
@@ -2443,7 +2432,7 @@ def create_app(
         }
         if cursor:
             params["cursor"] = cursor
-        result = await personal_result(connection.call("list_items", params))
+        result = await personal_result(connection.items(params))
         # Pending decisions remain actionable, without exposing the runtime transcript.
         attention = (
             []

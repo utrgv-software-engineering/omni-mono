@@ -1253,6 +1253,7 @@ class QueueStatus(BaseModel):
     )
     include_snapshot: bool | None = None
     session_id: str
+    snapshot_limit: int | None = None
     submission_id: str | None = None
 
 

@@ -271,6 +271,7 @@ export interface QueueStatusParams {
   session_id: string;
   include_snapshot?: boolean;
   submission_id?: string;
+  snapshot_limit?: number;
 }
 export interface EnqueueNotificationParams {
   session_id: string;

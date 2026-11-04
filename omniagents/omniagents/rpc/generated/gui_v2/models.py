@@ -694,6 +694,7 @@ class QueueStatusParams(BaseModel):
     session_id: str
     include_snapshot: bool | None = None
     submission_id: str | None = None
+    snapshot_limit: int | None = None
 
 
 class QueueStatusResult(RootModel[dict[str, Any]]):

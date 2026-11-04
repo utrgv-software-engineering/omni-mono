@@ -83,7 +83,7 @@ from omniagents.workspace.host import HostWorkspace
 from omniagents.core.providers.accounts import AccountManager
 from omniagents.core.providers.auth.base import UserIdentity
 from omniagents.core.conversation import service as _conversation_service_module
-from omniagents.core.conversation.model import UNSCOPED, ThreadFilter
+from omniagents.core.conversation.model import UNSCOPED, ThreadFilter, encode_cursor
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.agents.approval import configure_tool_approval
 from omniagents.core.session import Session, SessionManager
@@ -7107,8 +7107,15 @@ class AgentService(RpcMethodsBase):
         session_id: str,
         include_snapshot: bool = False,
         submission_id: str | None = None,
+        snapshot_limit: int | None = None,
     ) -> dict:  # noqa: D401
-        """Return the queue/run state for a session."""
+        """Return the queue/run state for a session.
+
+        ``snapshot_limit`` keeps the snapshot to the newest items; its
+        ``earlier_cursor`` then pages back with ``list_items(order="desc")``.
+        """
+        if snapshot_limit is not None and snapshot_limit < 1:
+            raise ValueError("snapshot_limit must be positive")
         sess = self._session_manager.get_or_create(
             session_id, user_id=self._current_user_id()
         )
@@ -7134,7 +7141,9 @@ class AgentService(RpcMethodsBase):
             # A conversation with no thread yet reads as empty; reading it
             # does not create it.
             self._existing_queue_store(sess)
-            stored = self._conversation_service().store.read_snapshot(sess.id)
+            stored = self._conversation_service().store.read_snapshot(
+                sess.id, limit=snapshot_limit
+            )
             items = [item.to_dict() for item in stored["items"]]
             queue = snapshot_queue(stored["inbox"], sess)
             result["depth"] = len(queue)
@@ -7149,6 +7158,11 @@ class AgentService(RpcMethodsBase):
                     "state_events": snapshot_state_events(sess),
                     "stream_id": sess.event_log.stream_id,
                     "last_seq": sess.event_log.last_seq,
+                    "earlier_cursor": (
+                        encode_cursor({"seq": stored["before_seq"]})
+                        if stored.get("before_seq") is not None
+                        else None
+                    ),
                 }
             )
         if submission_id is not None:

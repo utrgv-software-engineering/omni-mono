@@ -488,6 +488,7 @@ export interface SetSessionHold {
 export interface QueueStatus {
   include_snapshot?: boolean;
   session_id: string;
+  snapshot_limit?: number;
   submission_id?: string;
 }
 export interface EnqueueNotification {

@@ -280,7 +280,27 @@ def worker_state_dict(worker_id: str) -> Optional[dict]:
     handle = _workers().get(worker_id)
     if handle is None:
         return None
-    meta = _WORKER_META.get(worker_id, {})
+    return _state_dict(worker_id, handle, _WORKER_META.get(worker_id, {}))
+
+
+def _row_view(row: dict, parent_session_id: Optional[str]):
+    """A journal record in the shape of a recovered handle: what the
+    journal says, with no live agent in this process."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        record=row,
+        status=row["status"],
+        result=row.get("result"),
+        error=row.get("error"),
+        agent=None,
+        parent_session_id=parent_session_id,
+        session_id=row["session_id"],
+        run_id=row["run_id"],
+    )
+
+
+def _state_dict(worker_id: str, handle, meta: dict) -> dict:
     started = meta.get("started_at")
     finished = meta.get("finished_at")
     wall_ms: Optional[int] = None
@@ -319,17 +339,54 @@ def worker_state_dict(worker_id: str) -> Optional[dict]:
     }
 
 
+def _journal_rows(parent_session_id: Optional[str]) -> list[dict]:
+    """The parent's durable worker records, read without writing."""
+    from omniagents.core.agents.service import current_service
+    from omniagents.core.session.helpers import current_session_id
+    from omniagents.core.workers.durable import for_session
+
+    service = current_service()
+    sid = parent_session_id or current_session_id()
+    if (
+        service is None
+        or not sid
+        or not callable(getattr(service, "_queue_store", None))
+    ):
+        return []
+    session = service.get_session(sid)
+    if session is None:
+        return []
+    return for_session(service, session).rows()
+
+
 def workers_snapshot(parent_session_id: Optional[str] = None) -> list[dict]:
     """Return every worker visible to ``parent_session_id``. Untagged
     workers (test fixtures / direct invocation) are visible to every
     session so they don't get orphaned. Mirrors ``_bash_jobs``'s
-    visibility contract so the two panels behave identically."""
+    visibility contract so the two panels behave identically.
+
+    A read: the journal is the record of every worker, so this neither
+    restores handles nor runs recovery (operations and reconnects do)."""
+    from omniagents.core.session.helpers import current_session_id
+
+    sid = parent_session_id or current_session_id()
+    live = _MANAGER.workers if _MANAGER is not None else {}
     out: list[dict] = []
-    _restore_workers(parent_session_id)
-    for wid in list(_workers().keys()):
-        state = worker_state_dict(wid)
-        if state is None:
+    recorded = set()
+    for row in _journal_rows(sid):
+        wid = row["worker_id"]
+        recorded.add(wid)
+        handle = live.get(wid)
+        if handle is None or handle.agent is None:
+            handle = _row_view(row, sid)
+        env = row.get("environment") or {}
+        meta = {key: row.get(key) for key in ("task", "started_at", "finished_at")}
+        meta["isolation"] = env.get("isolation")
+        out.append(_state_dict(wid, handle, meta))
+    for wid, handle in list(live.items()):
+        if wid in recorded:
             continue
+        state = _state_dict(wid, handle, _WORKER_META.get(wid, {}))
         if parent_session_id is not None:
             owner = state.get("parent_session_id")
             if owner is not None and owner != parent_session_id:

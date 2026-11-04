@@ -364,16 +364,10 @@ async def test_side_chat_policy_binds_text_and_voice_to_selected_session():
 
 @pytest.mark.asyncio
 async def test_worker_transcript_read_is_scoped_and_never_permits_worker_writes(policy):
-    policy.connection.call = AsyncMock(
-        side_effect=[
-            {
-                "snapshot": [
-                    {"session_id": "child", "parent_session_id": "factory-personal"}
-                ]
-            },
-            {"items": [], "total": 0},
-        ]
+    policy.connection.workers = AsyncMock(
+        return_value=[{"session_id": "child", "parent_session_id": "factory-personal"}]
     )
+    policy.connection.call = AsyncMock(return_value={"items": [], "total": 0})
     forward, reply = await request(policy, "list_items", thread_id="child", limit=200)
     assert forward is None and reply["result"]["total"] == 0
     for method, params in [
@@ -383,10 +377,8 @@ async def test_worker_transcript_read_is_scoped_and_never_permits_worker_writes(
     ]:
         forward, reply = await request(policy, method, **params)
         assert forward is None and "error" in reply
-    policy.connection.call = AsyncMock(
-        return_value={
-            "snapshot": [{"session_id": "foreign", "parent_session_id": "other"}]
-        }
+    policy.connection.workers = AsyncMock(
+        return_value=[{"session_id": "foreign", "parent_session_id": "other"}]
     )
     for thread_id in ("foreign", "missing"):
         forward, reply = await request(policy, "list_items", thread_id=thread_id)
