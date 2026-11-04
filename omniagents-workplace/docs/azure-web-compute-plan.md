@@ -189,6 +189,74 @@ VM **every quarter** and record the result.
    between factories on the shared VM. Resource limits keep CI from starving chat
    and agents.
 
+## Kill switch
+
+Texas requires it. DIR's AI code of ethics (1 TAC §219.11(c)(2)(C), adopted
+under SB 1964, effective March 18, 2026, and applicable to institutions of
+higher education) says state agencies "must ensure AI systems can be paused,
+restricted, or disabled until harmful or inaccurate decision making can be
+remedied." The switch is a product feature in every profile, not only on Azure.
+
+Workplace can already stop one factory's runtime (installation administrators
+only, `POST /workplace/api/factories/{id}/stop`). That is the building block;
+the kill switch adds the rest below.
+
+### Scopes and who can use them
+
+| Switch | Who can stop | Who can resume |
+| --- | --- | --- |
+| One factory | That factory's administrators, installation administrators | Same, but a stop made by an installation administrator needs one to resume |
+| All factories | Installation administrators | Installation administrators |
+
+Stopping all factories does not change each factory's own switch; resuming
+all returns every factory to its own state. Every stop and resume requires a
+written reason and is recorded in the audit log.
+
+### What stopped means
+
+- **Immediately:** in-flight turns, workers and automation runs are cancelled,
+  the factory runtime and the commands it runs in sandboxes are terminated, and
+  anything still running after 10 seconds is killed.
+- **While stopped:** no model calls and no tool calls. Chat shows that the
+  factory is stopped, by whom and why, and refuses new messages. Incoming events
+  are recorded as skipped; scheduled automations are skipped.
+- **On resume:** nothing replays. Skipped events stay skipped and automations
+  continue from their next scheduled time, so stale work cannot act on its own
+  after a stop. A person decides what to rerun.
+- **Kept:** conversations, workspaces, configuration and files. A stop is a
+  pause, not a deletion; deleting a factory remains a separate action.
+- **Not stopped:** preview applications and Actions runs are ordinary software,
+  not AI; they keep running, and administrators stop them separately.
+
+### Enforcement
+
+- The stop is durable: it survives Workplace, runtime and VM restarts, and a
+  stopped factory never autostarts.
+- Workplace checks it before starting a runtime and before delivering any chat
+  message, event or automation to one. The runtime also checks it before every
+  model call, so a loop that escaped cancellation still halts at its next step.
+- It fails closed: if the switch state cannot be read, the factory is treated as
+  stopped.
+
+### Restrict
+
+"Restricted" is covered by each factory's existing controls rather than a third
+switch: turning automations off, disconnecting integrations, and narrowing its
+egress allowlist.
+
+### Out-of-band stops
+
+If Workplace itself is unavailable or misbehaving, two Azure-level stops halt
+every factory without it. Document both in the runbook, with who holds the
+access:
+
+1. **Disable the model deployment's keys** in Azure. Every agent loses its model
+   immediately; nothing on the VM needs to cooperate.
+2. **Stop the VM** in the Azure portal. Everything on it stops.
+
+Drill the kill switch every quarter, alongside the restore test: stop one
+factory, stop all, resume, and confirm nothing replayed.
+
 ## Investigations before implementation
 
 Verify these against current Azure capabilities rather than assume them:
@@ -219,7 +287,9 @@ Verify these against current Azure capabilities rather than assume them:
    endpoints, egress allowlists, self-improvement containment, audit export.
 5. Configure backups by the table above, keys in Key Vault, and exercise a full
    restore to a fresh VM.
-6. Prove the deployment with an isolated example factory and no PHI before
+6. Add the kill switch for one factory and for all factories, and write the
+   out-of-band runbook.
+7. Prove the deployment with an isolated example factory and no PHI before
    onboarding real work.
 
 ## Acceptance criteria
@@ -238,6 +308,10 @@ Verify these against current Azure capabilities rather than assume them:
   self-improvement output stays within the factory.
 - Encryption keys are not stored with data backups.
 - A full restore from backup to a fresh VM has been performed.
+- One factory and all factories can be stopped from the UI. A stop takes effect
+  within 10 seconds, survives restarts and fails closed, and resuming replays
+  nothing. Every stop and resume is audited with its reason.
+- Disabling the model deployment's keys halts every agent without Workplace.
 - The 80/20 deployment runs the same stack, and local installations still work
   with SQLite and stand-ins and no Azure dependencies.
 
