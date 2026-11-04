@@ -24,7 +24,7 @@ Sizes are relative: S is days, M is about a week, L is several weeks.
 1. **Kill switch.** Texas already requires it (1 TAC §219.11, in force since
    March 18, 2026), and it is useful everywhere. Build it first.
 2. **Audit log and deployment policy.** The foundation for every later setting.
-3. **Classification, approved list and forced review.**
+3. **Classification, allowed services and forced review.**
 4. **Egress control.**
 5. **Human approvals for named tools.**
 6. **Backups.**
@@ -103,7 +103,7 @@ Build:
   approving person's identity to approval events.
 - **Deployment policy.** One place in Workplace that holds what the profile
   requires, set in `workplace.yml` (`policy: strict`, on Azure and 80/20):
-  classification required, review forced, approved list enforced. Every rule in
+  classification required, review forced, allowed services enforced. Every rule in
   workstreams 3–6 reads it there, never from scattered flags.
 - **Sign-in and sessions under the strict policy** (UTS 165):
   - Workplace's own password sign-in is off; people sign in through Entra (or,
@@ -119,7 +119,7 @@ Build:
   setting for a Microsoft Teams incoming webhook; approval requests (workstream
   5) and alerts (workstream 8) post to it.
 
-## 3. Classification, approved list and forced review (M)
+## 3. Classification, allowed services and forced review (M)
 
 Exists: per-factory settings in each factory's store; `factory.definition.require_review`
 (off by default); omniagents' `security.mcp_require_allowlist` and
@@ -129,23 +129,21 @@ Build, in omniagents-workplace:
 
 - **Factory settings.** `classification` (Published, Controlled, Confidential),
   `purpose` and `owner`. Required under the strict policy; a factory without a
-  classification does not start. Classifying a factory Confidential requires
-  the reference of its documented approval (UTS 165.1.5.4.6). Every change is
-  audited.
-- **Approved list.** An installation-level list of model endpoints, integrations
-  and MCP servers, each with its assessment reference and, for cloud services,
-  its TX-RAMP certification. Enforcement:
+  classification does not start. Every change is audited.
+- **Allowed services.** An installation-level list of model endpoints,
+  integrations and MCP servers that administrators keep, audited like any
+  setting. It is a technical control, not an approval workflow. Enforcement:
   - models: under the strict policy every factory's `models.json` may name only
-    approved endpoints; the Factory model page refuses others and the runtime
+    allowed endpoints; the Factory model page refuses others and the runtime
     refuses to start with one;
   - MCP servers: for Controlled and Confidential factories, Workplace sets
     omniagents' `mcp_require_allowlist` and `mcp_allowed_servers` from the list,
     in the managed configuration layer (`OMNIAGENTS_PROJECT_OVERLAYS`), which
     the factory's `project.yml` cannot override. The allowlist matches servers
-    by name only today, so a factory could give an unapproved server an
-    approved name: change it to match the name and the server's URL or
+    by name only today, so a factory could give an outside server an
+    allowed name: change it to match the name and the server's URL or
     command;
-  - integrations: Workplace refuses to connect an unapproved one.
+  - integrations: Workplace refuses to connect one not allowed.
 - **Forced review.** For Controlled and Confidential factories `require_review`
   is on and the setting is locked.
 - **The factory cannot merge its own changes.** In the stand-in GitHub, a
@@ -188,7 +186,7 @@ factories run. Azure Firewall is not used.
   the VM out only on HTTPS, and Azure services (Key Vault, Blob Storage, Log
   Analytics, the model endpoints) through private endpoints.
 - **Workplace**: the deployment and per-factory allowlists as settings, audited,
-  with widening one a material change.
+  with every change audited.
 
 ## 5. Human approvals for named tools (L)
 
@@ -287,14 +285,6 @@ Access MFA.
 
 Build, in omniagents-workplace unless noted:
 
-- **Material changes.** Workplace compares each settings change, and each change
-  to the factory repository's models and `project.yml`, against the definition
-  of a material change; it flags the factory "reassessment needed" with what
-  changed, until an administrator records a reassessment.
-- **System card.** A page and export on the Factory tab, generated from the
-  factory's settings and configuration: purpose, owner, classification, risk,
-  models, integrations, MCP servers, egress allowlist, retention, tools needing
-  approval and the last material change.
 - **AI attribution.** Linear posts as an app. Slack posts as a dedicated user
   account the factory owns, marked "Sent using <app>" but not as a bot, and
   GitHub uses a dedicated factory account. Name both accounts as AI (for
@@ -308,10 +298,12 @@ Build, in omniagents-workplace unless noted:
 - **Heightened-risk review: deferred.** The first factory is not
   heightened-risk. When one is, add the setting, sampling of 5% of its
   conversations (adjustable by its owner) into a review list on the Factory
-  tab, and reminders when the six-monthly reassessment is due.
+  tab, reminders when the six-monthly reassessment is due, and flags for the
+  material changes that need it.
 - **Adversarial evaluations** (omni-factory): scenarios for prompt injection
   through fetched content, data sent to a destination not on the allowlist, and
-  data crossing between factories; required on every material change.
+  data crossing between factories; required in CI on every change to the
+  factory's definition.
 - **Incident alerts.** Kill-switch use, blocked egress from Confidential
   factories, repeated sign-in failures and policy-rejected changes are alert
   events, posted to the installation's Teams channel (workstream 2).
@@ -319,7 +311,7 @@ Build, in omniagents-workplace unless noted:
 ## 10. Later: Microsoft Teams and Azure DevOps (L each)
 
 The Azure deployment starts on Workplace's stand-ins. Once it runs, replace them
-with the institution's real services, each through the approved list:
+with the institution's real services, each added to the allowed services:
 
 - **Microsoft Teams**: a Workplace integration for chat and events, as Slack has
   today (incoming messages and mentions become events; the factory posts as its

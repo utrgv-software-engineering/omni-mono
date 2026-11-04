@@ -47,14 +47,14 @@ Why not split web and compute or use serverless containers:
 | Backups | None required | Disk snapshots | Workplace backup to Blob Storage, tested restores |
 | Integrations | Stand-ins | Stand-ins or real | Stand-ins now; real Teams and Azure DevOps later |
 | Policy | Open | `strict`, except Azure-only parts | `strict` |
-| Models | Student's own provider | Any configured provider | Approved list (BAA-covered) |
+| Models | Student's own provider | Any configured provider | The tenant's Azure OpenAI deployments (BAA-covered) |
 | Egress | Open | Open | Through the filtering proxy only |
 
 Local installations must remain supported with SQLite, stand-ins and local
 execution. Nothing Azure-specific becomes a requirement of the product.
 
 The 80/20 deployment runs the same `strict` policy as Azure (classification,
-approved list, forced review, kill switch, audit), leaving out only what needs
+allowed services, forced review, kill switch, audit), leaving out only what needs
 Azure: Easy Auth, Key Vault, Blob Storage and the private network. Otherwise the
 compliance code paths would never be dogfooded.
 
@@ -113,10 +113,12 @@ memory show it is needed rather than up front.
 
 ## Sensitive data
 
-Microsoft and the model providers in use have BAAs in place. Confirm the
-decisions in this section with the institution's privacy and security office,
-and record them in the HIPAA risk analysis and UTRGV's AI risk and impact
-assessments.
+Microsoft and the model providers in use have BAAs in place, and the Azure
+infrastructure, models included, is already approved for clinical and
+operational use; that approval is the documented approval UTS 165.1.5.4.6 asks
+for. The controls in this section are ones the deployment's administrators run;
+none adds an approval step outside the team. Record them in the HIPAA risk
+analysis.
 
 ### The factory is not a system of record
 
@@ -138,26 +140,27 @@ rules below only to those.
 
 | | Published | Controlled | Confidential |
 | --- | --- | --- | --- |
-| Models | [Approved list](#approved-list) only | Approved list only | Approved list only |
-| Integrations, MCP servers | Any configured | Approved list only | Approved list only |
+| Models | [Allowed services](#allowed-services) only | Allowed services only | Allowed services only |
+| Integrations, MCP servers | Any configured | Allowed services only | Allowed services only |
 | Changes to the factory definition | As configured | Always reviewed in a PR | Always reviewed in a PR |
 | Conversations, journals, traces | Kept, ordinary backups | Kept, ordinary backups | Kept as a governed record (below) |
 | Shared uploads, agent workspaces | Ordinary backups | Ordinary backups | Not backed up: working copies |
 | Self-improvement output | May be shared beyond the factory | May be shared beyond the factory | Stays within the factory |
 | Sandbox egress | Deployment allowlist | Deployment allowlist | The factory's own, narrower allowlist |
 
-Lowering a factory's classification does not reclassify data it already holds,
-and is a [material change](#change-management).
+Lowering a factory's classification does not reclassify data it already holds.
 
-### Approved list
+### Allowed services
 
-UTRGV allows Controlled and Confidential data only with AI tools that IT and the
-Information Security Office have assessed. Installation administrators keep an
-**approved list** of model endpoints, integrations and MCP servers, recording
-each one's assessment. Every factory reaches models only through the list,
-since any conversation may carry pasted data; Workplace refuses to connect a
-Controlled or Confidential factory to an integration or MCP server not on it. On Azure, every model endpoint on the list is
-covered by a BAA.
+A technical control, not an approval process: it keeps data inside the
+approved, BAA-covered boundary and stops a factory from connecting somewhere
+else, or giving an outside server the name of an allowed one. Installation
+administrators keep the deployment's list of **allowed services**: model
+endpoints, integrations and MCP servers. Every factory reaches models only
+through the list, since any conversation may carry pasted data; on Azure those
+are the tenant's own Azure OpenAI deployments. Workplace refuses to connect a
+Controlled or Confidential factory to an integration or MCP server not on it.
+Adding a service is an administrator's decision, audited like any setting.
 
 ### Conversations are a governed record
 
@@ -204,7 +207,7 @@ VM **every quarter** and record the result.
 ### Other controls
 
 1. **Model calls.** Prompts carry sensitive data. Factories reach models only
-   through the approved list; enforce this as a deployment policy that Workplace
+   through the allowed services; enforce this as a deployment policy that Workplace
    refuses to violate, not as a convention.
 2. **Egress.** An agent that reads sensitive data and can reach arbitrary hosts
    is an exfiltration path through prompt injection. Everything a factory runs
@@ -218,7 +221,7 @@ VM **every quarter** and record the result.
    for per-factory allowlists anyway.
 3. **Side channels.** Preview apps, Actions logs, CI artifacts and any real
    GitHub or Slack integration can carry data out of the VM. Integrations used by
-   Confidential factories must be on the approved list and covered by a BAA, or
+   Confidential factories must be allowed services covered by a BAA, or
    kept to non-sensitive content.
 4. **Stand-ins.** Stand-ins are allowed. They are Workplace's own services and
    keep their data on the VM, inside the protected boundary, under the same
@@ -308,17 +311,29 @@ factory, stop all, resume, and confirm nothing replayed.
 ## UTRGV AI policy
 
 UTRGV's [AI policy](https://www.utrgv.edu/ai/policy/index.htm) applies to the
-Azure deployment. Most of it is process: risk and impact assessments, approval
-by the AI Governance Committee and the AI Risk Officer, vendor contracts and
-annual training. The parts below are product and setup work; the kill switch
-and the approved list above cover its stop/override and approved-tools rules.
-UTS 165 and UTRGV's "Implementation Steps and Procedures for AI Technologies"
-have not been reviewed here; the Information Security Office may add to this.
+Azure deployment. What it requires of this system:
+
+- **Approved AI tools for Controlled and Confidential data** ("approved AI tools
+  that have been evaluated by IT and the Information Security Office"): the
+  platform, Azure with its models, is already approved. Factories, models,
+  integrations and MCP servers within it need no separate approval.
+- **Technology Assessment before purchase**: done for Azure; nothing here is
+  purchased.
+- **Registration in the AI Inventory before pilot or deployment**: register the
+  system once, before the pilot.
+- **Risk and impact assessments, reassessment after material changes, and AI
+  Governance Committee approval**: these sit under the policy's
+  "Heightened-Risk" heading and apply only to heightened-risk systems. The
+  first factory is not one (see [Consequential decisions](#consequential-decisions)).
+
+The parts below are product and setup work. UTRGV's internal "Implementation
+Steps and Procedures for AI Technologies" is not public and is not reflected
+here.
 
 ### Change management
 
-The policy requires a new risk assessment after material changes, and UTS 165
-requires change management. Self-improvement already satisfies most of this:
+UTS 165 requires changes to be tracked, approved, tested and logged.
+Self-improvement already satisfies most of this:
 it opens a PR that a reviewer merges, changes that need a release (agent
 settings, dependencies) also need operator approval, and git history records
 who proposed and approved each change. Three additions:
@@ -331,22 +346,16 @@ who proposed and approved each change. Three additions:
    approving review, and the factory's own credentials can neither approve nor
    merge its pull requests.
 3. **Settings outside the repository are audited.** Data classification,
-   integrations, egress allowlists, the approved list and the kill switch are
-   Workplace settings, not files. Every change to them goes in the audit log.
-   A **material change** is any change of model, a new integration or MCP
-   server, a widened allowlist, a lowered classification, a change to risk
-   level, or a change to the tools that need approval; Workplace marks it and
-   flags the factory for reassessment.
+   integrations, egress allowlists, allowed services and the kill switch are
+   Workplace settings, not files. Every change to them goes in the audit log,
+   with who made it and when.
 
-### Inventory and system cards
+### AI Inventory
 
-Every AI system must be registered in the Information Security Office's AI
-Inventory before pilot or deployment, and public-facing systems need a system
-card. Workplace generates a **system card** per factory from data it already
-holds: purpose and owner, data classification, risk level, models, integrations
-and MCP servers, egress allowlist, retention, and the date of the last material
-change. Registering a factory, or updating its registration after a material
-change, is copying the card.
+The system is registered once in the AI Inventory before the pilot, by hand.
+The policy asks for system cards only for public-facing systems, and Workplace
+is internal, so no card generator is built. UTS 165 asks for the system
+inventory to be updated at least every 24 months.
 
 ### Never present AI as human
 
@@ -372,21 +381,22 @@ Two mechanisms enforce it, both configured per factory:
    factory's work needs. Where a decision belongs to a system of record, the
    factory's account there can prepare it (a draft, a pending item, a queue
    entry) but not finalize it; a person decides in that system's own workflow.
-   This is the preferred design: the factory is then preparatory, which the
-   Information Security Office can take into account when classifying its risk.
+   This is the preferred design: the factory is then preparatory, not a
+   controlling factor in the decision.
 2. **Human approval for named tools.** When the factory itself must carry out a
    decision, its definition names the tools or integrations that need approval.
    Only those pause; everything else runs unattended. Approval uses omniagents'
    existing tool approvals, but for these tools it is always a person's:
    autopilot's allow-all pattern, "always allow", the Guardian reviewer and
    contained-sandbox auto-approval never cover them. The list lives in the
-   factory's repository, so changing it is a reviewed PR and a material change.
+   factory's repository, so changing it is a reviewed PR.
 
 The first factory is **not heightened-risk**: it prepares work, and people make
 the decisions. The heightened-risk setting and its review features are built
 when a factory first needs them: it would sample conversations for quality
 review (5% by default, adjustable by its owner) and remind its owners when its
-six-monthly reassessment is due. Until then, the Factory tab metrics, the audit
+six-monthly reassessment is due, and would flag material changes for that
+reassessment. Until then, the Factory tab metrics, the audit
 log, the approval-required tools and the kill switch are the human oversight
 plan.
 
@@ -404,7 +414,7 @@ check alerts on that instead.
 Add a red-team evaluation suite to the existing evaluations, covering prompt
 injection through fetched content, sensitive data reaching a destination that
 is not allowlisted, and data crossing between factories. Run it before
-deployment and on every material change.
+deployment and in CI on every change to the factory's definition.
 
 ### Incidents
 
@@ -434,7 +444,7 @@ not reflected here.
 
 | Standard | Requirement | How it is met |
 | --- | --- | --- |
-| 165.1.5.4.6 | Confidential data in AI systems only with heightened security and documented approval | Classifying a factory Confidential records the approval's reference; the Confidential rules in [Sensitive data](#sensitive-data) |
+| 165.1.5.4.6 | Confidential data in AI systems only with heightened security and documented approval | The existing approval of the Azure infrastructure for clinical and operational use; the Confidential rules in [Sensitive data](#sensitive-data) |
 | 165.2.1.6.3 | MFA for systems with Confidential or Controlled data | Entra Conditional Access. Under the strict policy Workplace's own password sign-in is off; only Entra sign-in and machine tokens work |
 | 165.2.1.2.3, 165.1.6.2.5 | Session lock, risk-based; screens lock after 15 minutes idle | Workplace sessions end after **30 minutes** without activity and **12 hours** in total, under the strict policy. Device screen locks are the institution's device policy |
 | 165.2.1.2.2 | Disable accounts immediately | Workplace checks the Easy Auth identity on every request and ends its own session when it is missing or different, so removing someone in Entra takes effect at once |
@@ -444,14 +454,13 @@ not reflected here.
 | 165.2.3.3.5–6 | Install security updates within a defined period | Azure Update Manager: critical and high updates within **14 days**, the rest within **30** |
 | 165.2.5.6.1 | Scan for vulnerabilities | Container images are scanned in CI and fail on critical findings; Update Manager assesses the VM |
 | 165.1.5.4.2 | Protect data in transit by classification | TLS to App Service, and TLS again from App Service to the VM, inside the private network |
-| 165.1.2.3.3 | Cloud vendors certified under TX-RAMP | An approved-list entry for a cloud service records its TX-RAMP certification |
 | 165.2.4.4 | Back up and restore critical systems | [Backups](#backups) and the quarterly restore |
 | 165.2.5.1 | Keep audit records for an institution-defined period | Six years in Log Analytics |
 
 ## Decisions to present
 
-Every choice this plan makes without the institution, for review by the
-Information Security Office, the privacy office and AI governance:
+The controls this plan chooses, for the Information Security Office, the privacy
+office and AI governance to review:
 
 1. Factories are not systems of record; extracted data is recovered from its source.
 2. Factory data classification uses UTRGV's classes and is required per factory.
@@ -463,8 +472,9 @@ Information Security Office, the privacy office and AI governance:
 5. Encryption at rest uses Azure's platform-managed keys; Workplace's own keys
    live in Key Vault, apart from backups.
 6. Audit records are kept six years and contain no conversation content.
-7. Models, integrations and MCP servers come from an approved list; models are
-   BAA-covered and cloud services TX-RAMP certified.
+7. Models, integrations and MCP servers are limited to the deployment's allowed
+   services, kept by its administrators; models are the tenant's BAA-covered
+   Azure OpenAI deployments.
 8. The first factory is not heightened-risk: it prepares work and people decide;
    decisions in systems of record are protected by scoped credentials and,
    where needed, tools that always require a person's approval.
@@ -500,16 +510,15 @@ Verify these against current Azure capabilities rather than assume them:
 2. Write the VM's infrastructure-as-code and reuse the 80/20 Compose stack
    unchanged.
 3. Adapt the Easy Auth adapter to trust headers only from the App Service proxy.
-4. Add data classification, the approved list and the Azure profile's policies:
+4. Add data classification, allowed services and the Azure profile's policies:
    egress allowlists, forced review, self-improvement containment, audit export.
 5. Configure backups by the table above, keys in Key Vault, and exercise a full
    restore to a fresh VM.
 6. Add the kill switch for one factory and for all factories, and write the
    out-of-band runbook.
-7. Add the UTRGV policy work: audited settings and material changes, system
-   cards, AI attribution, approval-required tools,
-   Factory tab metrics, adversarial tests and incident alerts. Configure the
-   Entra setup.
+7. Add the UTRGV policy work: audited settings, AI attribution,
+   approval-required tools, Factory tab metrics, adversarial tests and incident
+   alerts. Configure the Entra setup.
 8. Prove the deployment with an isolated example factory and no sensitive data,
    and register it in the AI Inventory, before onboarding real work.
 
@@ -530,11 +539,9 @@ Verify these against current Azure capabilities rather than assume them:
 - Every factory has a data classification. Confidential factories back up
   conversations but not Shared uploads or workspaces, and their
   self-improvement output stays within the factory.
-- Controlled and Confidential factories use only the approved list, and every
+- Controlled and Confidential factories use only allowed services, and every
   change to their definition arrives by a reviewed PR the factory cannot merge.
-- Every settings change is audited, and material changes flag the factory for
-  reassessment.
-- Each factory's system card is generated from its configuration.
+- Every settings change is audited.
 - Everything agents post outside Workplace is attributed to AI.
 - A tool a factory names as needing approval waits for a person, whatever the
   session's approval settings, autopilot or reviewer.
