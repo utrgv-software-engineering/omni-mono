@@ -67,7 +67,8 @@ snapshotted and restored on a schedule.
 | App Service | Public HTTPS hostnames, Easy Auth (Microsoft Entra), reverse proxy to the VM over VNet integration, WebSocket forwarding |
 | Private VM | Workplace, factory runtimes, QuickSand sandboxes, Actions, Coolify and previews; the same Compose stack as 80/20 |
 | Managed disk | All durable state: Workplace and factory databases, Shared, workspaces, sandbox disks, caches |
-| Azure Backup | Scheduled, encrypted disk snapshots with defined retention |
+| Azure Backup | Scheduled, encrypted backups of the data in [Backups](#backups), with automatic expiry |
+| Key Vault | Workplace's encryption keys, kept apart from data backups |
 | Azure Firewall or NSG rules | Inbound only from the App Service subnet; outbound allowlist |
 | Log Analytics | Entra sign-in logs, platform logs and Workplace audit events, outside the VM's write access |
 
@@ -93,9 +94,70 @@ snapshotted and restored on a schedule.
 
 ## Protected health information
 
-Microsoft and the model providers in use have BAAs in place. PHI enters through
-uploaded Shared files, data agents read, and services agents access. These
-controls matter more than where the application tier runs:
+Microsoft and the model providers in use have BAAs in place. Confirm the
+decisions in this section with the institution's privacy and security office
+and record them in the HIPAA risk analysis.
+
+### The factory is not a system of record
+
+Factories read and process PHI; they never own it. Uploads to Shared are
+extractions from systems of record, and the data agents read and the services
+they access belong to those systems. Durable results go back to the system of
+record, not only into the factory. This is what keeps backups small: a lost
+working copy is recovered by extracting it again from its source.
+
+### Factories that handle PHI
+
+Each factory is marked as **handling PHI** or not. The Azure profile requires
+the setting to be chosen for every factory; there is no default. Only some
+factories touch PHI, depending on their use case, and the setting applies the
+rules below only to those.
+
+| | Factory without PHI | Factory handling PHI |
+| --- | --- | --- |
+| Conversations, journals, traces | Kept, ordinary backups | Kept as a governed record (below) |
+| Shared uploads, agent workspaces | Ordinary backups | Not backed up: working copies |
+| Self-improvement output | May be shared beyond the factory | Stays within the factory |
+| Sandbox egress | Deployment allowlist | The factory's own, narrower allowlist |
+
+Changing a factory from handling PHI to not handling it does not reclassify
+data it already holds.
+
+### Conversations are a governed record
+
+Conversations stay long-lived: users return to them and self-improvement learns
+from them. Not every conversation contains PHI, but in a factory handling PHI
+treat its conversations, worker journals and traces as PHI. That means:
+
+1. **Who can read them.** Only the factory's members, as Workplace enforces
+   already; sign-ins and access are audited.
+2. **Where copies are.** The live disk and its backups in the Azure tenant,
+   encrypted. No exports, CI logs, laptops or non-PHI factories.
+3. **How long they are kept.** A written retention period for conversations,
+   for example for the life of the factory.
+4. **How they are destroyed.** Deleting a conversation or factory removes it
+   from the live system at once; it then survives only in backups, until they
+   expire. The backup history (for example, 30 days) bounds disposal, not the
+   conversations' own retention.
+5. **What learns from them.** Self-improvement output (skills, notes,
+   factory-live changes) stays within the factory, and must not copy patient
+   details into skills, prompts or configuration.
+
+### Backups
+
+| Data | PHI? | Backup |
+| --- | --- | --- |
+| Workplace database: accounts, memberships, settings | No | Yes |
+| Factory configuration, factory-live, skills, stand-in repositories | No (code, not data) | Yes |
+| Encryption keys | No; they unlock PHI | Separately, in Key Vault, never with data backups |
+| Conversations, journals, traces | In factories handling PHI | Yes, encrypted, with a short backup history |
+| Shared uploads, agent workspaces | In factories handling PHI | Only in factories without PHI |
+| Previews, images, caches, source checkouts | Never (previews use seed data only) | No: rebuildable |
+
+Backups go to Azure Backup in the same tenant, under the same access controls
+as the VM, and expire automatically. Restore to a fresh VM on a schedule.
+
+### Other controls
 
 1. **Model calls.** Prompts carry PHI. The Azure profile uses only model
    endpoints covered by a BAA; enforce this as a deployment policy that
@@ -103,22 +165,18 @@ controls matter more than where the application tier runs:
 2. **Egress.** An agent that reads PHI and can reach arbitrary hosts is an
    exfiltration path through prompt injection. Deny outbound traffic by default
    at the VM's subnet and allowlist model endpoints, package registries and the
-   integrations each factory needs.
-3. **Traces and logs.** omniagents traces and worker journals hold full
-   transcripts, which makes them PHI. Keep them on the encrypted disk, cover them
-   with backups and retention, and restrict who can open Studio.
-4. **Side channels.** Preview apps, Actions logs, CI artifacts and any real
-   GitHub or Slack integration can carry PHI out of the VM. Integrations must be
-   covered by a BAA or kept to non-PHI content.
-5. **Stand-ins.** Stand-ins are allowed. They are Workplace's own services and
+   integrations factories need; factories handling PHI narrow it further.
+3. **Side channels.** Preview apps, Actions logs, CI artifacts and any real
+   GitHub or Slack integration can carry PHI out of the VM. Integrations used by
+   factories handling PHI must be covered by a BAA or kept to non-PHI content.
+4. **Stand-ins.** Stand-ins are allowed. They are Workplace's own services and
    keep their data on the VM, inside the protected boundary, under the same
    encryption, backup and factory permissions as everything else.
-6. **Encryption and backups.** Managed disks are encrypted at rest; decide whether
-   customer-managed keys are required. Backups are encrypted, retained for a
-   defined period, and restored on a schedule to prove they work.
-7. **Audit.** Entra sign-in logs and Workplace audit events go to a store that
+5. **Encryption.** Managed disks are encrypted at rest; decide whether
+   customer-managed keys are required.
+6. **Audit.** Entra sign-in logs and Workplace audit events go to a store that
    factory agents and sandboxes cannot modify.
-8. **Isolation.** Credentials, files and execution resources stay isolated
+7. **Isolation.** Credentials, files and execution resources stay isolated
    between factories on the shared VM. Resource limits keep CI from starving chat
    and agents.
 
@@ -138,7 +196,8 @@ Verify these against current Azure capabilities rather than assume them:
 - A VM SKU that exposes nested virtualization (KVM) for accelerated QuickSand.
 - Egress controls: Azure Firewall versus NSG service tags, and the allowlist each
   factory needs.
-- Azure Backup consistency for running SQLite databases and sandbox disks.
+- Azure Backup consistency for running SQLite databases, and how to exclude
+  Shared and workspaces of factories handling PHI from it.
 
 ## Suggested implementation sequence
 
@@ -147,9 +206,10 @@ Verify these against current Azure capabilities rather than assume them:
 2. Write the VM's infrastructure-as-code and reuse the 80/20 Compose stack
    unchanged.
 3. Adapt the Easy Auth adapter to trust headers only from the App Service proxy.
-4. Add the Azure profile's policies: allowed model endpoints, egress allowlist,
-   audit export.
-5. Configure backups and exercise a full restore to a fresh VM.
+4. Add the factory PHI setting and the Azure profile's policies: allowed model
+   endpoints, egress allowlists, self-improvement containment, audit export.
+5. Configure backups by the table above, keys in Key Vault, and exercise a full
+   restore to a fresh VM.
 6. Prove the deployment with an isolated example factory and no PHI before
    onboarding real work.
 
@@ -164,6 +224,10 @@ Verify these against current Azure capabilities rather than assume them:
   refused.
 - Agents can reach only allowlisted destinations; model calls go only to
   BAA-covered endpoints.
+- Every factory is marked as handling PHI or not. Factories handling PHI back up
+  conversations but not Shared uploads or workspaces, and their
+  self-improvement output stays within the factory.
+- Encryption keys are not stored with data backups.
 - A full restore from backup to a fresh VM has been performed.
 - The 80/20 deployment runs the same stack, and local installations still work
   with SQLite and stand-ins and no Azure dependencies.
