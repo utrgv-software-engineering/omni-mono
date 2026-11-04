@@ -1598,13 +1598,22 @@ class AgentService(RpcMethodsBase):
             ):
                 _use_safe = True
                 _skip_approvals = False
-            if _use_safe:
+            # Tools a person must approve (security.human_approval_tools): gated
+            # even when nothing else is.
+            session.human_approval_tools = list(
+                (build_spec.security_config or {}).get("human_approval_tools") or []
+            )
+            if _use_safe or session.human_approval_tools:
                 configure_tool_approval(
                     agent,
                     session=session,
-                    safe_tool_names=opts.safe_tool_names if opts else None,
-                    safe_tool_patterns=opts.safe_tool_patterns if opts else None,
-                    skip_approvals=_skip_approvals,
+                    safe_tool_names=(
+                        opts.safe_tool_names if opts and _use_safe else None
+                    ),
+                    safe_tool_patterns=(
+                        opts.safe_tool_patterns if opts and _use_safe else None
+                    ),
+                    skip_approvals=_skip_approvals if _use_safe else True,
                 )
 
             # (the last agent built: what an out-of-band tool call's guardrails
@@ -2886,6 +2895,20 @@ class AgentService(RpcMethodsBase):
             Message returned to the model in place of the tool result when
             the user rejects.
         """
+        return await self._answer_tool_approval(
+            call_id, decision, always_approve, rejection_message
+        )
+
+    async def _answer_tool_approval(
+        self,
+        call_id: str,
+        decision: str,
+        always_approve: bool = False,
+        rejection_message: str | None = None,
+        approver: str | None = None,
+    ) -> bool:
+        """``tool_approval_response``, with who decided (the factory's approval
+        inbox), recorded in the audit."""
         _debug_rpc(
             "tool_approval_response",
             {
@@ -2904,6 +2927,7 @@ class AgentService(RpcMethodsBase):
                     bool(always_approve) if decision == "approve" else False
                 ),
                 "rejection_message": rejection_message,
+                "approver": approver,
             },
         )
         if claim is None:
@@ -2912,8 +2936,19 @@ class AgentService(RpcMethodsBase):
         if not claimed:
             return True
 
+        from omniagents.core.agents.human_approval import (
+            requires_person,
+            session_entries,
+        )
+
+        tool_ref = getattr(sess, "_pending_approval_tool_names", {}).get(call_id)
+        if requires_person(
+            session_entries(sess),
+            tool_ref if isinstance(tool_ref, str) else None,
+            tool_ref if isinstance(tool_ref, tuple) else None,
+        ):
+            always_approve = False  # a person approves each call
         if decision == "approve" and always_approve:
-            tool_ref = getattr(sess, "_pending_approval_tool_names", {}).get(call_id)
             if isinstance(tool_ref, tuple):
                 # MCP-derived tool: grant is keyed by (server, tool) so a
                 # same-named tool on a different server still prompts.
@@ -3212,7 +3247,17 @@ class AgentService(RpcMethodsBase):
             ApprovalRoute,
             resolve_approval_route,
         )
+        from omniagents.core.agents.human_approval import (
+            requires_person,
+            session_entries,
+        )
 
+        from omniagents.core.agents.mcp_identity import lookup_identity
+
+        if requires_person(
+            session_entries(session), tool_name, lookup_identity(session, tool_name)
+        ):
+            return None  # a person's: never the guardian or the sandbox tier
         route, environment = await resolve_approval_route(self, session)
         if route is ApprovalRoute.HUMAN:
             return None
@@ -3419,6 +3464,14 @@ class AgentService(RpcMethodsBase):
         mcp_identity = lookup_identity(session, tool_name)
         if mcp_identity is not None:
             payload["server_label"], payload["tool_label"] = mcp_identity
+        from omniagents.core.agents.human_approval import (
+            requires_person,
+            session_entries,
+        )
+
+        payload["requires_person"] = requires_person(
+            session_entries(session), tool_name, mcp_identity
+        )
 
         resolved = await self._resolve_approval_without_client(
             session=session,
@@ -3501,6 +3554,8 @@ class AgentService(RpcMethodsBase):
             decision = response.get("decision")
             event_type = "tool_approved" if decision == "approve" else "tool_rejected"
             details: dict[str, Any] = {"tool": tool_name}
+            if response.get("approver"):
+                details["approver"] = response["approver"]
             if decision != "approve" and response.get("rejection_message"):
                 details["reason"] = response["rejection_message"]
             await self.emit_runtime_hook(
@@ -7775,6 +7830,15 @@ class AgentService(RpcMethodsBase):
         if held:
             raise _conversation_service_module.ThreadOnLegalHold(session_id, held)
 
+        # The sessions of the workers each conversation started: their own
+        # histories, kept by id in the conversation's worker journal.
+        workers = [
+            worker
+            for owner in [*descendant_ids, session_id]
+            for worker in self._worker_session_ids(owner)
+        ]
+        for worker in workers:
+            await self._delete_one_session(worker)
         # Deepest first, so a parent is never removed before a child that
         # still points at it — an interrupted cascade then leaves a shorter
         # valid chain rather than a broken one.
@@ -7818,6 +7882,27 @@ class AgentService(RpcMethodsBase):
             if on_hold:
                 held.append(session_id)
         return held
+
+    def _worker_session_ids(self, session_id: str) -> list[str]:
+        """The sessions of the workers ``session_id`` started (its journal)."""
+        try:
+            from omniagents.core.conversation.store import get_conversation_store
+
+            store = get_conversation_store(
+                getattr(self._session_manager, "_project_slug", None),
+                getattr(self._session_manager, "_agent_slug", None),
+            )
+            state = store.read_queue(session_id)
+        except Exception:  # noqa: BLE001 - no journal: no workers to delete
+            return []
+        workers = ((state or {}).get("worker_recovery") or {}).get("workers") or {}
+        return [
+            str(w["session_id"])
+            for w in workers.values()
+            if isinstance(w, dict)
+            and w.get("session_id")
+            and w["session_id"] != session_id
+        ]
 
     async def _delete_one_session(self, session_id: str) -> bool:
         """Delete exactly one session from every store that holds it."""

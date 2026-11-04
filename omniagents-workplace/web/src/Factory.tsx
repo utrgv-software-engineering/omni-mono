@@ -4,7 +4,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem } from "@omniagents/ui/dropdown-menu";
 import { factoryUrl } from "./factory-scope";
 import { FactoryStopControl } from "./FactoryStop";
-import { AllowedServicesEditor, AllowlistEditor, FactoryGovernance, FactoryProfileForm } from "./Governance";
+import { AllowedServicesEditor, AllowlistEditor, ApprovalInbox, FactoryGovernance, FactoryProfileForm } from "./Governance";
 import { allowedServices, factoryEgress } from "./api";
 // The factory, as its engineers watch it: what it is doing now, what its pull
 // requests took (cost, human touches, time to ship) and where its spend goes.
@@ -731,6 +731,7 @@ export function FactoryApp({ navigate, onConfigure, onModel, onSchedules }: { na
         <Dialog open={secretsOpen} onOpenChange={setSecretsOpen}><DialogContent><DialogHeader><DialogTitle>Factory secrets</DialogTitle><DialogDescription>Credentials available to this factory.</DialogDescription></DialogHeader>{secretsOpen && <FactorySecrets />}</DialogContent></Dialog>
       </div>
       {error && <p className="text-sm text-destructive">{error}</p>}
+      {onConfigure && <ApprovalInbox />}
       {report && !report.priced && !error && (
         <p className="text-sm text-amber-700 dark:text-amber-300">
           The factory has no prices (paths.pricing in its project.yml): costs

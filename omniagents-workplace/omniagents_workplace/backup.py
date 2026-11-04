@@ -22,7 +22,63 @@ import tempfile
 from contextlib import closing
 from pathlib import Path
 
-__all__ = ["backup", "restore"]
+__all__ = ["backup", "confidential_paths", "export_keys", "restore", "upload"]
+
+#: Encryption keys: under the strict policy never in a data backup; they are
+#: escrowed apart (``export_keys``, into Key Vault) and given back on restore.
+KEY_SUFFIX = ".key"
+
+
+def confidential_paths(data: Path) -> list[str]:
+    """What not to back up for Confidential factories: their Shared uploads
+    and their sandboxes' disks (working copies of data a system of record
+    holds), relative to ``data``."""
+    out: list[str] = []
+
+    def classification(db: Path):
+        try:
+            with closing(
+                sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True)
+            ) as c:
+                row = c.execute(
+                    "SELECT value FROM meta WHERE key = 'factory.profile'"
+                ).fetchone()
+        except sqlite3.Error:
+            return None
+        return (json.loads(row[0]) or {}).get("classification") if row else None
+
+    if (data / "workplace.db").is_file() and classification(
+        data / "workplace.db"
+    ) == "confidential":
+        out += ["shared", "shared-staging"]
+    factories = data / "installation" / "factories"
+    if factories.is_dir():
+        for factory in sorted(factories.iterdir()):
+            db = factory / "workplace" / "workplace.db"
+            if db.is_file() and classification(db) == "confidential":
+                base = f"installation/factories/{factory.name}"
+                out += [
+                    f"{base}/workplace/shared",
+                    f"{base}/workplace/shared-staging",
+                    f"{base}/vms",
+                ]
+    return out
+
+
+def export_keys(data: Path, to: Path) -> list[str]:
+    """Copy every encryption key under ``data`` to ``to``, by relative path."""
+    data, to = Path(data), Path(to)
+    copied = []
+    for key in sorted(data.rglob("*" + KEY_SUFFIX)):
+        if key.is_file() and not key.is_symlink():
+            relative = key.relative_to(data)
+            target = to / relative
+            target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            shutil.copy2(key, target)
+            target.chmod(0o600)
+            copied.append(str(relative))
+    return copied
+
 
 #: What a push or a gc has in progress: not part of a repository yet.
 _TRANSIENT = shutil.ignore_patterns(
@@ -153,8 +209,13 @@ def backup(
     keep: int = 14,
     include: dict[str, Path] | None = None,
     exclude: tuple[str, ...] = (),
+    keys: bool = True,
+    confidential: bool = False,
 ) -> Path:
+    """``keys=False``: no encryption keys in the backup. ``confidential=True``:
+    no Shared uploads or sandbox disks of Confidential factories."""
     data, to = Path(data), Path(to)
+    left_out = confidential_paths(data) if confidential else []
     include = include or {}
     for name, path in include.items():
         if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]*", name):
@@ -226,6 +287,8 @@ def backup(
                 copy_function=_copy,
             )
         for name in ("shared", "shared-staging"):
+            if name in left_out:
+                continue
             if (data / name).is_dir():
                 shutil.copytree(
                     data / name, partial / name, symlinks=True, copy_function=_copy
@@ -236,10 +299,17 @@ def backup(
             "workflow-settings.key",
             "workflow-settings.enc",
         ):
+            if name.endswith(KEY_SUFFIX) and not keys:
+                continue
             if (data / name).is_file():
                 shutil.copy2(data / name, partial / name)
         if (data / "installation").is_dir():
-            _copy_installation(data / "installation", partial / "installation")
+            _copy_installation(
+                data / "installation",
+                partial / "installation",
+                exclude=tuple(left_out) + (() if keys else ("*" + KEY_SUFFIX,)),
+                relative="installation",
+            )
         for name, path in include.items():
             _copy_installation(
                 Path(path),
@@ -252,6 +322,10 @@ def backup(
                 {
                     "format": 2,
                     "excluded_additional_paths": list(exclude),
+                    "keys": (
+                        "included" if keys else "excluded; restore them from escrow"
+                    ),
+                    "confidential_excluded": left_out,
                     "created_at": now,
                     "additional": {
                         name: str(Path(path).resolve())
@@ -282,6 +356,7 @@ def restore(
     *,
     mode: str = "staging",
     include: dict[str, Path] | None = None,
+    keys: Path | None = None,
 ) -> Path:
     """Replace ``data``'s database and repositories with a backup's (``source``,
     or the latest in a directory of them); the backup restored."""
@@ -405,4 +480,72 @@ def restore(
         shutil.copytree(
             source / "additional" / name, destination, symlinks=True, dirs_exist_ok=True
         )
+    if keys is not None and mode == "production":
+        # Keys escrowed apart from the data backup (export_keys) go back in place.
+        for key in sorted(Path(keys).rglob("*" + KEY_SUFFIX)):
+            target = data / key.relative_to(keys)
+            target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            shutil.copy2(key, target)
+            target.chmod(0o600)
     return source
+
+
+def upload(backup_dir: Path, container_url: str, client=None) -> int:
+    """Upload a backup directory to Azure Blob Storage, under its name.
+
+    ``container_url`` is the container's URL with a SAS token
+    (``https://<account>.blob.core.windows.net/<container>?<sas>``). Each file
+    is a block blob, sent in 64 MiB blocks. The container's lifecycle rule
+    deletes backups after 30 days. Returns the bytes uploaded."""
+    import base64
+    from urllib.parse import quote, urlsplit, urlunsplit
+
+    import httpx
+
+    url = urlsplit(container_url)
+    if url.scheme != "https" or not url.query:
+        raise ValueError("Give the container's https:// URL with a SAS token")
+    backup_dir = Path(backup_dir)
+    own = client is None
+    client = client or httpx.Client(timeout=300)
+    sent = 0
+    block = 64 * 1024**2
+    headers = {"x-ms-version": "2021-08-06"}
+    try:
+        for path in sorted(p for p in backup_dir.rglob("*") if p.is_file()):
+            name = quote(f"{backup_dir.name}/{path.relative_to(backup_dir).as_posix()}")
+            blob = urlunsplit(
+                (
+                    url.scheme,
+                    url.netloc,
+                    f"{url.path.rstrip('/')}/{name}",
+                    url.query,
+                    "",
+                )
+            )
+            ids = []
+            with path.open("rb") as source:
+                while True:
+                    chunk = source.read(block)
+                    if not chunk and ids:
+                        break
+                    block_id = base64.b64encode(f"{len(ids):08d}".encode()).decode()
+                    client.put(
+                        blob + "&comp=block&blockid=" + quote(block_id, safe=""),
+                        content=chunk,
+                        headers=headers,
+                    ).raise_for_status()
+                    ids.append(block_id)
+                    sent += len(chunk)
+                    if not chunk:
+                        break
+            listing = "".join(f"<Latest>{i}</Latest>" for i in ids)
+            client.put(
+                blob + "&comp=blocklist",
+                content=f'<?xml version="1.0" encoding="utf-8"?><BlockList>{listing}</BlockList>',
+                headers={**headers, "Content-Type": "application/xml"},
+            ).raise_for_status()
+    finally:
+        if own:
+            client.close()
+    return sent

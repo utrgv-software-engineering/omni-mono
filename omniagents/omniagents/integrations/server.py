@@ -570,6 +570,70 @@ def mount_integrations(
         "/integrations/release-lease", release_lease, methods=["POST", "DELETE"]
     )
 
+    from .approvals import PersonApprovals
+
+    approvals = PersonApprovals(store, runtimes)
+    if store.interrupt_approvals():
+        logger.info("integrations: approvals a person must give carried over a restart")
+
+    def _controlled(request: Request) -> bool:
+        import hmac
+
+        expected = os.environ.get("OMNIAGENTS_AGENT_HOST_CONTROL_TOKEN", "")
+        supplied = request.headers.get("authorization", "")
+        return bool(expected) and hmac.compare_digest(supplied, "Bearer " + expected)
+
+    async def approvals_listing(request: Request):
+        """The approvals people must give, for whoever runs the factory."""
+        if not _controlled(request):
+            return Response(status_code=403)
+        return JSONResponse({"approvals": approvals.listing()})
+
+    async def approval_decision(request: Request):
+        if not _controlled(request):
+            return Response(status_code=403)
+        body = await request.json()
+        approver = str(body.get("approver") or "").strip()
+        if not approver or body.get("decision") not in ("approve", "reject"):
+            return JSONResponse(
+                {"detail": "Give the decision and who made it"}, status_code=422
+            )
+        try:
+            row = await approvals.decide(
+                request.path_params["call_id"],
+                body["decision"] == "approve",
+                approver,
+                str(body.get("reason") or ""),
+            )
+        except LookupError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=409)
+        return JSONResponse(row)
+
+    app.add_api_route("/integrations/approvals", approvals_listing, methods=["GET"])
+    app.add_api_route(
+        "/integrations/approvals/{call_id}", approval_decision, methods=["POST"]
+    )
+
+    async def keep_approvals():
+        while True:
+            try:
+                approvals.sync()
+                await approvals.expire()
+            except Exception:  # noqa: BLE001 - the loop outlives a failure
+                logger.exception("integrations: approvals upkeep failed")
+            await asyncio.sleep(15)
+
+    async def start_approvals():
+        app.state.approvals_task = asyncio.create_task(keep_approvals())
+
+    async def stop_approvals():
+        task = getattr(app.state, "approvals_task", None)
+        if task:
+            task.cancel()
+
+    app.router.on_startup.append(start_approvals)
+    app.router.on_shutdown.append(stop_approvals)
+
     async def stop_control(request: Request):
         """``POST`` stops the factory (``{stopped_by, stopped_at, reason}``),
         ``DELETE`` resumes it, ``GET`` says which; whoever runs the factory

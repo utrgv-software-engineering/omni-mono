@@ -69,6 +69,9 @@ class SecurityConfig:
     mcp_require_allowlist: bool = False
     mcp_allowed_servers: List[str] = field(default_factory=list)
 
+    # --- Tools a person must approve (names, re:<pattern>, server/tool) ---
+    human_approval_tools: List[str] = field(default_factory=list)
+
     # --- Per-tool timeouts (seconds) ---
     # Keys are tool names; "default" key sets the fallback.
     tool_timeouts: Dict[str, int] = field(default_factory=dict)
@@ -94,6 +97,7 @@ class SecurityConfig:
             "blocked_tool_patterns": self.blocked_tool_patterns,
             "mcp_require_allowlist": self.mcp_require_allowlist,
             "mcp_allowed_servers": self.mcp_allowed_servers,
+            "human_approval_tools": self.human_approval_tools,
             "tool_timeouts": self.tool_timeouts,
             "audit": {
                 "enabled": self.audit.enabled,
@@ -132,6 +136,7 @@ class SecurityConfig:
             blocked_tool_patterns=_str_list(d.get("blocked_tool_patterns")),
             mcp_require_allowlist=bool(d.get("mcp_require_allowlist", False)),
             mcp_allowed_servers=_str_list(d.get("mcp_allowed_servers")),
+            human_approval_tools=_str_list(d.get("human_approval_tools")),
             tool_timeouts=_int_dict(d.get("tool_timeouts")),
             audit=AuditConfig.from_dict(d.get("audit") or {}),
             sessions=SessionSecurityConfig.from_dict(d.get("sessions") or {}),

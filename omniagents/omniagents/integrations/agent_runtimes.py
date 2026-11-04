@@ -51,6 +51,14 @@ class AgentRuntimes:
         )
         return [app.state.agent_service for app in apps]
 
+    def keyed_services(self):
+        """``(agent key, service)`` for each running agent."""
+        out = []
+        if self.primary_app is not None:
+            out.append((self.primary_agent, self.primary_app.state.agent_service))
+        out += [(key, app.state.agent_service) for key, app in self._apps.items()]
+        return out
+
     def busy(self):
         return sum(
             len(service.active_run_ids())

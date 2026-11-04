@@ -269,6 +269,9 @@ class Workplace:
         from .egress import Egress
 
         self.egress = Egress(self)
+        from .approval_inbox import ApprovalInbox
+
+        self.approvals = ApprovalInbox(self)
 
         def apply_egress(change):
             self.store.set_meta("factory.egress", change["after"])
@@ -1131,6 +1134,7 @@ def create_app(
             workplace.repository_settings.maintain()
         )
         kill_switch = asyncio.create_task(workplace.kill_switch.maintain())
+        approvals = asyncio.create_task(workplace.approvals.maintain())
         async with workplace.mcp.run(), workplace.github_mcp.run(), workplace.linear_mcp.run(), workplace.canvas_mcp.run(), workplace.memory_mcp.run(), extension_apps.run():
             try:
                 yield
@@ -1138,10 +1142,11 @@ def create_app(
                 scheduler.cancel()
                 repository_refresh.cancel()
                 kill_switch.cancel()
+                approvals.cancel()
                 with workplace.repository_settings.lock:
                     workplace.repository_settings.device.close()
                 await asyncio.gather(
-                    repository_refresh, kill_switch, return_exceptions=True
+                    repository_refresh, kill_switch, approvals, return_exceptions=True
                 )
                 await workplace.shared.close()
                 await workplace.event_gateway.close()
@@ -1169,6 +1174,7 @@ def create_app(
     app.include_router(workplace.kill_switch.router())
     app.include_router(workplace.governance.router())
     app.include_router(workplace.egress.router())
+    app.include_router(workplace.approvals.router())
     app.add_middleware(RepositoryProviderBoundary, workplace=workplace)
     app.add_middleware(RequestLimits)
     from .easy_auth import EasyAuth

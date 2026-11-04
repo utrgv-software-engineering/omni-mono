@@ -32,6 +32,20 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS automation_routes (name TEXT PRIMARY KEY, configuration TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS automation_switches (name TEXT PRIMARY KEY, enabled INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS factory_stop (id INTEGER PRIMARY KEY CHECK (id = 1), state TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS approvals (
+    call_id TEXT PRIMARY KEY,
+    agent TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    server TEXT,
+    arguments TEXT,
+    run_id TEXT,
+    requested_at REAL NOT NULL,
+    status TEXT NOT NULL,
+    decided_by TEXT,
+    decided_at REAL,
+    reason TEXT
+);
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     provider TEXT NOT NULL,
@@ -200,6 +214,68 @@ class EventStore:
             else:
                 self._db.execute("DELETE FROM factory_stop")
             self._db.commit()
+
+    # -- approvals a person must give ------------------------------------------
+
+    def record_approval(self, request: Dict[str, Any]) -> bool:
+        """Keep a pending approval; ``False`` when it is already kept."""
+        with self._lock:
+            cursor = self._db.execute(
+                "INSERT OR IGNORE INTO approvals (call_id, agent, session_id, tool, server, "
+                "arguments, run_id, requested_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')",
+                (
+                    request["call_id"],
+                    request["agent"],
+                    request["session_id"],
+                    request["tool"],
+                    request.get("server"),
+                    request.get("arguments"),
+                    request.get("run_id"),
+                    request["requested_at"],
+                ),
+            )
+            self._db.commit()
+            return cursor.rowcount == 1
+
+    def approvals(self, statuses=("pending", "interrupted")) -> List[Dict[str, Any]]:
+        marks = ",".join("?" * len(statuses))
+        with self._lock:
+            rows = self._db.execute(
+                f"SELECT * FROM approvals WHERE status IN ({marks}) ORDER BY requested_at",
+                tuple(statuses),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def approval(self, call_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT * FROM approvals WHERE call_id = ?", (call_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def settle_approval(
+        self,
+        call_id: str,
+        status: str,
+        decided_by: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> None:
+        with self._lock:
+            self._db.execute(
+                "UPDATE approvals SET status = ?, decided_by = ?, decided_at = ?, reason = ? "
+                "WHERE call_id = ? AND status IN ('pending', 'interrupted')",
+                (status, decided_by, time.time(), reason, call_id),
+            )
+            self._db.commit()
+
+    def interrupt_approvals(self) -> int:
+        """A new runtime: approvals whose runs ended with the old one."""
+        with self._lock:
+            cursor = self._db.execute(
+                "UPDATE approvals SET status = 'interrupted' WHERE status = 'pending'"
+            )
+            self._db.commit()
+            return cursor.rowcount
 
     def turned_off(self) -> set:
         """Automations an admin turned off: they start nothing until turned on."""

@@ -1779,6 +1779,23 @@ export const factoryEgress = {
     call<{ pending: unknown }>("/factory/egress", { method: "PUT", body: JSON.stringify({ allow, reason }) }),
 };
 
+export interface PendingApproval {
+  call_id: string;
+  agent: string;
+  session_id: string;
+  tool: string;
+  server: string | null;
+  arguments: string | null;
+  requested_at: number;
+  status: "pending" | "interrupted";
+}
+
+export const factoryApprovals = {
+  list: () => call<{ approvals: PendingApproval[] }>("/factory/approvals"),
+  decide: (callId: string, decision: "approve" | "reject", reason: string) =>
+    post<PendingApproval>(`/factory/approvals/${encodeURIComponent(callId)}`, { decision, reason }),
+};
+
 export const factoryReport = {
   get: (days: number) => call<FactoryReport>(`/factory/report?days=${days}`),
 };

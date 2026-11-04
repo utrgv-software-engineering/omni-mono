@@ -227,7 +227,14 @@ factories run. Azure Firewall is not used.
 - **Workplace**: the deployment and per-factory allowlists as settings, audited,
   with every change audited.
 
-## 5. Human approvals for named tools (L)
+## 5. Human approvals for named tools (L) — done
+
+Built 2026-11-04; see [Approvals a person must give](approvals.md). Where it
+differs from the design below: durable waiting re-drives the call instead of
+restoring the SDK's saved run state. A run cut off by a restart cannot be resumed
+safely once the agent or its tools may have changed (a release, a reload), so
+the approval is kept; approving it starts a new turn in its conversation, with
+exactly that call (tool and arguments) approved once.
 
 Exists: per-tool `needs_approval` predicates and MCP approval keyed by
 `(server, tool)` (`core/agents/approval.py`); routes HUMAN, GUARDIAN and
@@ -260,7 +267,15 @@ Tests: a named tool pauses under autopilot, Guardian and always-allow; an
 automation run's approval appears in the inbox and resumes on approval; expiry
 rejects; approvals survive restart.
 
-## 6. Backups (M)
+## 6. Backups (M) — done (code)
+
+Built 2026-11-04; see [Backups under the strict policy](backups.md). Where it
+differs from the design below: Workplace does not read keys from Key Vault
+itself; keys stay on the encrypted disk, are never in data backups, and are
+escrowed with `keys export` for the deployment to put in Key Vault, then given
+back on restore (`restore --keys`). Worker sessions are deleted with their
+conversation when they belong to the same agent's store. The scripted restore
+drill is deployment work, with workstream 7.
 
 Exists: `omniagents-workplace backup` (online SQLite copies, `--include`,
 `--exclude` patterns, `--keep`), run nightly by the Compose `backup` service;

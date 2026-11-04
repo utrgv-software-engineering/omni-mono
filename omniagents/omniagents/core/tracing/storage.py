@@ -502,6 +502,30 @@ class SQLiteStorage:
                     ),
                 )
 
+    def delete_group(self, group_id: str) -> int:
+        """Delete every trace in a group (a conversation's), with its spans and
+        analysis; how many traces."""
+        with self._lock:
+            with self.conn:
+                ids = [
+                    row["trace_id"]
+                    for row in self.conn.execute(
+                        "SELECT trace_id FROM traces WHERE group_id = ?", (group_id,)
+                    )
+                ]
+                if ids:
+                    marks = ",".join("?" * len(ids))
+                    self.conn.execute(
+                        f"DELETE FROM spans WHERE trace_id IN ({marks})", ids
+                    )
+                    self.conn.execute(
+                        f"DELETE FROM traces WHERE trace_id IN ({marks})", ids
+                    )
+                self.conn.execute(
+                    "DELETE FROM analysis WHERE group_id = ?", (group_id,)
+                )
+        return len(ids)
+
     def delete_analysis(self, group_id: str):
         """Delete analysis data for a conversation"""
         with self.conn:

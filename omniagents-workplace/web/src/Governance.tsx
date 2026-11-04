@@ -4,7 +4,7 @@ import { Button } from "@omniagents/ui/button";
 import { Input } from "@omniagents/ui/input";
 import { NativeSelect, NativeSelectOption } from "@omniagents/ui/native-select";
 import { toast } from "sonner";
-import { factoryProfile, governance, type AllowedService, type GovernanceDecision } from "./api";
+import { factoryApprovals, factoryProfile, governance, type AllowedService, type GovernanceDecision, type PendingApproval } from "./api";
 
 const CLASSES: Record<string, string> = {
   published: "Published: public information",
@@ -346,5 +346,49 @@ export function AllowlistEditor({
         )}
       </div>
     </form>
+  );
+}
+
+/** Approvals a person must give: the factory's whole inbox (administrators). */
+export function ApprovalInbox() {
+  const [approvals, setApprovals] = useState<PendingApproval[]>([]);
+  const load = () => void factoryApprovals.list().then((r) => setApprovals(r.approvals), () => undefined);
+  useEffect(() => {
+    load();
+    const timer = window.setInterval(load, 15000);
+    return () => window.clearInterval(timer);
+  }, []);
+  if (!approvals.length) return null;
+  const decide = (a: PendingApproval, decision: "approve" | "reject") => {
+    const reason = decision === "reject" ? (window.prompt("Why decline?") ?? "") : "";
+    void factoryApprovals
+      .decide(a.call_id, decision, reason)
+      .then(load)
+      .catch((e: unknown) => toast.error((e as Error).message));
+  };
+  return (
+    <section className="space-y-2 rounded-md border border-amber-500/40 p-3" aria-label="Approvals">
+      <h2 className="text-lg font-semibold">Waiting for your approval</h2>
+      <ul className="divide-y text-sm">
+        {approvals.map((a) => (
+          <li key={a.call_id} className="space-y-2 py-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="flex-1">
+                <span className="font-medium">{a.agent}</span> wants to use <span className="font-mono">{a.tool}</span>
+                <span className="block text-xs text-muted-foreground">
+                  {new Date(a.requested_at * 1000).toLocaleString()}
+                  {a.status === "interrupted" ? " · its run ended; approving runs it in a new turn" : ""}
+                </span>
+              </span>
+              <Button size="sm" onClick={() => decide(a, "approve")}>Approve</Button>
+              <Button size="sm" variant="outline" onClick={() => decide(a, "reject")}>Decline</Button>
+            </div>
+            {a.arguments && (
+              <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 text-xs">{a.arguments}</pre>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

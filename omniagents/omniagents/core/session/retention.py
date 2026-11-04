@@ -96,6 +96,20 @@ def purge_session_derivatives(
             "retention: saved tool outputs not deleted", extra={"session": session_id}
         )
 
+    try:
+        from omniagents.core.paths import get_traces_dir
+        from omniagents.core.tracing.storage import SQLiteStorage
+
+        # Traces hold the conversation too: every project's, by its group.
+        for path in sorted(get_traces_dir().glob("*.db")):
+            storage = SQLiteStorage(str(path))
+            try:
+                storage.delete_group(f"session_{session_id}")
+            finally:
+                storage.close()
+    except Exception:
+        logger.exception("retention: traces not deleted", extra={"session": session_id})
+
 
 def purge_expired_sessions(
     retention_days: int,

@@ -372,6 +372,30 @@ def main(argv=None) -> None:
         default=14,
         help="How many backups to keep (default: %(default)s)",
     )
+    backup.add_argument(
+        "--without-keys",
+        action="store_true",
+        help="Leave the encryption keys out (always, under WORKPLACE_POLICY=strict); escrow them with `keys export`",
+    )
+    backup.add_argument(
+        "--skip-confidential",
+        action="store_true",
+        help="Leave out Confidential factories' Shared uploads and sandbox disks (always, under WORKPLACE_POLICY=strict)",
+    )
+    backup.add_argument(
+        "--upload",
+        metavar="CONTAINER_SAS_URL",
+        help="Upload the backup to an Azure Blob Storage container",
+    )
+    backup.add_argument(
+        "--upload-only",
+        action="store_true",
+        help="Remove the local copy once it is uploaded",
+    )
+    keys = sub.add_parser("keys", help="Escrow a workplace's encryption keys")
+    keys.add_argument("action", choices=("export",))
+    keys.add_argument("--data", type=Path, default=default_data_dir())
+    keys.add_argument("--to", type=Path, required=True, help="An empty directory")
     restore = sub.add_parser(
         "restore",
         help="Replace a workplace's state with a backup's (stop the workplace first)",
@@ -401,6 +425,11 @@ def main(argv=None) -> None:
         default=[],
         metavar="NAME=EMPTY_PATH",
         help="Restore an additional runtime/config directory into an empty destination",
+    )
+    restore.add_argument(
+        "--keys",
+        type=Path,
+        help="Escrowed encryption keys (from `keys export`) to put back, for a production restore",
     )
     restore.add_argument(
         "--confirm-production-stopped",
@@ -586,7 +615,7 @@ def main(argv=None) -> None:
                 parser.error("Each --restore-include needs a unique NAME=EMPTY_PATH")
             included[name] = Path(path)
         print(
-            f"Restored {restore_backup(args.source, args.data, mode=args.mode, include=included)} into {args.data}"
+            f"Restored {restore_backup(args.source, args.data, mode=args.mode, include=included, keys=args.keys)} into {args.data}"
         )
         return
     if args.command == "backup":
@@ -598,15 +627,36 @@ def main(argv=None) -> None:
             if not sep or name in included:
                 parser.error("Each --include needs a unique NAME=PATH")
             included[name] = Path(path)
-        print(
-            make_backup(
-                args.data,
-                args.to,
-                keep=args.keep,
-                include=included,
-                exclude=tuple(args.exclude),
-            )
+        from .policy import Policy
+
+        strict = Policy().strict
+        made = make_backup(
+            args.data,
+            args.to,
+            keep=args.keep,
+            include=included,
+            exclude=tuple(args.exclude),
+            keys=not (args.without_keys or strict),
+            confidential=args.skip_confidential or strict,
         )
+        print(made)
+        if args.upload:
+            import shutil as _shutil
+
+            from .backup import upload
+
+            print(f"Uploaded {upload(made, args.upload)} bytes")
+            if args.upload_only:
+                _shutil.rmtree(made)
+        return
+
+    if args.command == "keys":
+        from .backup import export_keys
+
+        if args.to.exists() and any(args.to.iterdir()):
+            parser.error("--to must be an empty directory")
+        for key in export_keys(args.data, args.to):
+            print(key)
         return
 
     import sys
