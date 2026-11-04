@@ -87,7 +87,78 @@ def inspect_compose(raw):
         "generated": [
             v for v in variables if v.endswith(("_PASSWORD", "_SECRET_KEY_BASE"))
         ],
+        "login": login(data, variables),
     }
+
+
+def login(data, variables):
+    """The sample sign-in a Compose file declares for its previews:
+
+        x-preview:
+          login:
+            email: demo@example.com
+            password: PREVIEW_ADMIN_PASSWORD   # the variable holding it
+
+    ``{"email", "variable"}``, or None when it declares none.
+    """
+    section = data.get("x-preview")
+    value = section.get("login") if isinstance(section, dict) else None
+    if value is None:
+        return None
+    if (
+        not isinstance(value, dict)
+        or not isinstance(value.get("email"), str)
+        or value.get("password") not in variables
+    ):
+        raise ValueError(
+            "x-preview.login needs an email and, as password, a variable the Compose file requires"
+        )
+    return {"email": value["email"], "variable": value["password"]}
+
+
+def generate(name):
+    """A fresh value for a generated preview variable."""
+    return secrets.token_hex(64 if name.endswith("_SECRET_KEY_BASE") else 24)
+
+
+def environment(values, preview):
+    """Coolify's bulk environment payload: build and run time, one set each."""
+    return {
+        "data": [
+            {
+                "key": k,
+                "value": v,
+                "is_preview": preview,
+                "is_buildtime": True,
+                "is_runtime": True,
+            }
+            for k, v in values.items()
+        ]
+    }
+
+
+def saved_setup(directory, application):
+    """``(path, saved)`` for the application Workplace set previews up for, or None."""
+    for path in directory.glob("preview-setup-*.json"):
+        saved = json.loads(path.read_text())
+        if saved.get("application") == application:
+            return path, saved
+    return None
+
+
+async def read_compose(w, provider, repo, ref, path):
+    """The text of ``path`` at ``ref`` (a branch or commit), or None."""
+    if provider == "standin":
+        r = w.github.repos[repo]
+        blob = await asyncio.to_thread(r.bare.blob, ref, path)
+        return blob[1].decode() if blob else None
+    content = await asyncio.to_thread(
+        w.repository_settings.github,
+        f"/repos/{repo}/contents/{quote(path, safe='/')}?ref={quote(ref, safe='')}",
+    )
+    if content and content.get("encoding") == "base64":
+        return base64.b64decode(content["content"]).decode()
+    return None
 
 
 class PreviewSetup:
@@ -138,17 +209,9 @@ class PreviewSetup:
             )
             files = [v["path"] for v in listing]
             selected = path or next((p for p in CANDIDATES if p in files), "")
-            content = (
-                await asyncio.to_thread(
-                    self.w.repository_settings.github,
-                    f"/repos/{repo}/contents/{quote(selected, safe='/')}?ref={quote(branch, safe='')}",
-                )
-                if selected
-                else None
-            )
             raw = (
-                base64.b64decode(content["content"]).decode()
-                if content and content.get("encoding") == "base64"
+                await read_compose(self.w, provider, repo, branch, selected)
+                if selected
                 else None
             )
         if not raw:
@@ -252,9 +315,7 @@ class PreviewSetup:
             raise ValueError("Unexpected environment variable")
         values.update({k: v for k, v in supplied.items() if v})
         for name in plan["generated"]:
-            values.setdefault(
-                name, secrets.token_hex(64 if name.endswith("_SECRET_KEY_BASE") else 24)
-            )
+            values.setdefault(name, generate(name))
         missing = [v for v in plan["variables"] if not values.get(v)]
         if missing:
             raise ValueError("Provide preview values for: " + ", ".join(missing))
@@ -332,20 +393,7 @@ class PreviewSetup:
         for preview in (False, True):
             if values:
                 await bridge.api(
-                    "PATCH",
-                    path + "/envs/bulk",
-                    {
-                        "data": [
-                            {
-                                "key": k,
-                                "value": v,
-                                "is_preview": preview,
-                                "is_buildtime": True,
-                                "is_runtime": True,
-                            }
-                            for k, v in values.items()
-                        ]
-                    },
+                    "PATCH", path + "/envs/bulk", environment(values, preview)
                 )
         await compose(
             bridge.runner,

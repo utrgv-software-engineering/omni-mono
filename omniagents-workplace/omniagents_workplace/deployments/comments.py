@@ -34,8 +34,19 @@ def body_for(marker, records):
             line += " · " + " · ".join(
                 f"[Open preview]({url})" for url in record["urls"]
             )
+            if record.get("sign_in"):
+                email, password = record["sign_in"]
+                line += f" · Sign in as `{email}` with `{password}`"
         lines.append(line)
     return "\n".join(lines)
+
+
+async def is_private(w, repo):
+    try:
+        meta = await asyncio.to_thread(w.repository_settings.github, f"/repos/{repo}")
+    except Exception:  # noqa: BLE001 - unknown means not private
+        return False
+    return bool(meta.get("private"))
 
 
 async def publish(previews):
@@ -48,7 +59,15 @@ async def publish(previews):
             groups.setdefault((record["repository"], record["number"]), []).append(
                 record
             )
+    private = {}
     for (repo, number), records in groups.items():
+        if repo not in private:
+            private[repo] = provider == "standin" or await is_private(w, repo)
+        # A preview's sample sign-in goes only where the repository is private.
+        records = [
+            {**r, "sign_in": previews.sign_in(r) if private[repo] else None}
+            for r in records
+        ]
         key = hashlib.sha256(
             f"{previews.factory_id}:{provider}:{repo}:{number}".encode()
         ).hexdigest()

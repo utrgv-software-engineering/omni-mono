@@ -42,6 +42,20 @@ def test_compose_inspection_and_isolation():
         setup.inspect_compose(RAW + "  shared:\n    external: true\n")
 
 
+def test_compose_declares_the_sign_in_its_previews_seed():
+    assert setup.inspect_compose(RAW)["login"] is None
+    login = "x-preview:\n  login:\n    email: demo@example.com\n    password: {}\n"
+    declared = setup.inspect_compose(login.format("PREVIEW_DB_PASSWORD") + RAW)
+    assert declared["login"] == {
+        "email": "demo@example.com",
+        "variable": "PREVIEW_DB_PASSWORD",
+    }
+    # The password must name a variable the file requires, never a literal one.
+    for password in ["hunter2", "OPTIONAL"]:
+        with pytest.raises(ValueError, match="x-preview.login"):
+            setup.inspect_compose(login.format(password) + RAW)
+
+
 def test_setup_is_repeatable_and_keeps_generated_secrets(tmp_path, monkeypatch):
     github = GitHubState(tmp_path / "git", "example.test")
     github.add_user("org")

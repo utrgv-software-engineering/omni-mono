@@ -1,9 +1,12 @@
 import asyncio
+import json
 from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from omniagents_workplace.deployments import setup
+from omniagents_workplace.deployments.comments import body_for
 from omniagents_workplace.deployments.previews import SCOPE, Previews, repository
 from omniagents_workplace.store import Store
 
@@ -23,6 +26,7 @@ def bridge(tmp_path):
         installation=i,
         preview_url=lambda key: "https://preview-" + key + ".example.test",
         preview_errors={},
+        directory=lambda factory_id: tmp_path,
     )
     p = Previews(d, "one", None)
     calls = []
@@ -185,3 +189,90 @@ def test_repository_selection_and_factory_boundaries(bridge):
         repository("http://local/factories/one/github/org/site.git", "standin", w)
         == "org/site"
     )
+
+
+PREVIEW_COMPOSE = """
+x-preview:
+  login:
+    email: demo@example.com
+    password: PREVIEW_ADMIN_PASSWORD
+services:
+  web:
+    environment:
+      DATABASE_URL: postgres://preview:${PREVIEW_DB_PASSWORD:?}@postgres/preview
+      PREVIEW_ADMIN_PASSWORD: ${PREVIEW_ADMIN_PASSWORD:?Set it}
+    expose: ["3000"]
+"""
+
+
+def test_a_pr_that_adds_a_generated_variable_gets_it_and_shows_its_sign_in(
+    bridge, tmp_path, monkeypatch
+):
+    p, calls, _, _ = bridge
+    state = tmp_path / "preview-setup-site.json"
+    state.write_text(
+        json.dumps(
+            {"application": "application", "variables": {"PREVIEW_DB_PASSWORD": "db"}}
+        )
+    )
+    read = []
+
+    async def read_compose(w, provider, repo, ref, path):
+        read.append((repo, ref, path))
+        return PREVIEW_COMPOSE
+
+    monkeypatch.setattr(setup, "read_compose", read_compose)
+    plain = p.api
+
+    async def api(method, path, body=None):
+        if (method, path) == ("GET", "/applications/application"):
+            return {"docker_compose_location": "/compose.preview.yml"}
+        return await plain(method, path, body)
+
+    p.api = api
+
+    async def scenario():
+        await p.apply(app(), "org/site", "github", pull())
+        await p.apply(app(), "org/site", "github", pull("b" * 40))
+
+    asyncio.run(scenario())
+    # The compose file is read at each PR commit, not the default branch.
+    assert read == [
+        ("org/site", "a" * 40, "compose.preview.yml"),
+        ("org/site", "b" * 40, "compose.preview.yml"),
+    ]
+    envs = [c for c in calls if c[1] == "/applications/application/envs/bulk"]
+    # Only the missing value, once, for both the base and preview environments.
+    assert [[e["key"] for e in c[2]["data"]] for c in envs] == [
+        ["PREVIEW_ADMIN_PASSWORD"],
+        ["PREVIEW_ADMIN_PASSWORD"],
+    ]
+    assert [c[2]["data"][0]["is_preview"] for c in envs] == [False, True]
+    saved = json.loads(state.read_text())["variables"]
+    assert saved["PREVIEW_DB_PASSWORD"] == "db"
+    password = saved["PREVIEW_ADMIN_PASSWORD"]
+    assert envs[0][2]["data"][0]["value"] == password and len(password) == 48
+    (record,) = p.records().values()
+    assert p.sign_in(record) == ("demo@example.com", password)
+
+
+def test_the_preview_comment_shows_a_declared_sign_in():
+    record = {
+        "application": "application",
+        "state": "queued",
+        "build_status": "finished",
+        "sha": "a" * 40,
+        "urls": ["https://preview.example.test"],
+    }
+    assert "Sign in" not in body_for("<!-- m -->", [record])
+    shown = body_for("<!-- m -->", [{**record, "sign_in": ("demo@example.com", "pw")}])
+    assert shown.endswith(
+        "[Open preview](https://preview.example.test) · Sign in as `demo@example.com` with `pw`"
+    )
+    # Nothing to sign in to until it is ready.
+    building = {
+        **record,
+        "build_status": "in_progress",
+        "sign_in": ("demo@example.com", "pw"),
+    }
+    assert "Sign in" not in body_for("<!-- m -->", [building])

@@ -289,6 +289,9 @@ class Previews:
             return  # An existing native preview is not ours to overwrite or remove.
         self.store.put(KIND, key, record)
         try:
+            login = await self.sync_variables(app, repo, provider, sha)
+            if login:
+                record["login"] = login
             await self.ensure_proxy()
             path = f"/applications/{app['uuid']}/previews"
             body = {
@@ -338,6 +341,60 @@ class Previews:
             record.update(state="error", error=str(exc)[:500])
         self.store.put(KIND, key, record)
 
+    async def sync_variables(self, app, repo, provider, sha):
+        """Give the application each generated value its Compose file at ``sha``
+        requires and it lacks, as when a pull request adds a password, so the
+        preview builds without setting previews up again. Returns the sign-in the
+        file declares, if any."""
+        from .coolify import write_private
+        from .setup import (
+            environment,
+            generate,
+            inspect_compose,
+            read_compose,
+            saved_setup,
+        )
+
+        found = saved_setup(self.d.directory(self.factory_id), app["uuid"])
+        if not found:
+            return None  # Not set up through Workplace: its variables are not ours.
+        state, saved = found
+        native = await self.api("GET", "/applications/" + app["uuid"]) or {}
+        location = (native.get("docker_compose_location") or "").lstrip("/")
+        w = self.i.instances[self.factory_id][0]
+        raw = await read_compose(w, provider, repo, sha, location) if location else None
+        try:
+            plan = inspect_compose(raw) if raw else None
+        except ValueError:
+            plan = None  # Coolify reports what it cannot build.
+        if not plan:
+            return None
+        values = saved.setdefault("variables", {})
+        missing = {n: generate(n) for n in plan["generated"] if n not in values}
+        if missing:
+            values.update(missing)
+            write_private(state, json.dumps(saved))
+            for preview in (False, True):
+                await self.api(
+                    "PATCH",
+                    f"/applications/{app['uuid']}/envs/bulk",
+                    environment(missing, preview),
+                )
+        return plan["login"]
+
+    def sign_in(self, record):
+        """``(email, password)`` for a preview whose Compose file declares a sign-in."""
+        from .setup import saved_setup
+
+        login = record.get("login")
+        found = login and saved_setup(
+            self.d.directory(self.factory_id), record["application"]
+        )
+        if not found:
+            return None
+        password = found[1].get("variables", {}).get(login["variable"])
+        return (login["email"], password) if password else None
+
     async def remove(self, key, record):
         # Remove routing before teardown so a closed preview is immediately inaccessible.
         record = {**record, "state": "closing", "hosts": [], "urls": []}
@@ -365,9 +422,7 @@ class Previews:
 
                     await publish(self)
                 self.d.preview_errors.pop(self.factory_id, None)
-            except (
-                Exception
-            ) as exc:  # noqa: BLE001 - one outage must not stop reconciliation
+            except Exception as exc:  # noqa: BLE001 - one outage must not stop reconciliation
                 self.d.preview_errors[self.factory_id] = str(exc)[:500]
                 log.warning(
                     "Factory %s preview reconciliation failed: %s", self.factory_id, exc

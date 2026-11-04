@@ -29,6 +29,7 @@ def setup(tmp_path, provider):
     p = SimpleNamespace(
         factory_id="factory",
         store=store,
+        sign_in=lambda record: None,
         records=lambda: {"a": record},
         i=SimpleNamespace(instances={"factory": (w, None)}),
     )
