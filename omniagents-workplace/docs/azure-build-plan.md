@@ -28,8 +28,9 @@ Workstreams are numbered for reference; build them in this order:
 2. **Audit log and deployment policy** (2). The foundation for every later
    setting.
 3. **Classification, allowed services and forced review** (3).
-4. **Governance** (9): the governance reviewer, decision records, material
-   changes, system cards, scheduled reviews and the evidence export. Early,
+4. **Governance** (9): the governance owner, decision records, sponsor and
+   intended use, material changes, system cards, scheduled reviews, the
+   quarterly report and the evidence export. Early,
    because it is the case for delegated authority and wraps the settings of 3.
 5. **Egress control** (4).
 6. **Human approvals for named tools** (5).
@@ -135,11 +136,11 @@ Build, in omniagents-workplace:
 
 - **Factory settings.** `classification` (Published, Controlled, Confidential),
   `purpose` and `owner`. Required under the strict policy; a factory without a
-  classification does not start. Every change is audited, and once workstream 9
-  lands, classification changes are governance requests.
+  classification does not start. Every change is audited; once workstream 9
+  lands, lowering a classification is a governance owner's decision.
 - **Allowed services.** An installation-level list of model endpoints,
   integrations and MCP servers. Once workstream 9 lands, adding or removing one
-  is a governance request. Enforcement:
+  is a governance owner's decision. Enforcement:
   - models: under the strict policy every factory's `models.json` may name only
     allowed endpoints; the Factory model page refuses others and the runtime
     refuses to start with one;
@@ -325,30 +326,36 @@ approvals.
 
 Build, in omniagents-workplace unless noted:
 
-- **Governance reviewer role.** An installation-level role, granted by
-  installation administrators and audited. Separation of duties is enforced:
-  a reviewer cannot decide a request they proposed. Under the strict policy,
-  Workplace warns until at least one reviewer is not an installation
-  administrator.
-- **Governance requests.** A request type wrapping the settings it governs:
-  allowed services, a factory's classification, its risk level, and material
-  setting changes. The setting changes only when a reviewer approves. Each
-  request stores the change, proposer, reason, decider, decision, reasoning,
-  links and times, permanently. A Governance page lists open and decided
-  requests; new requests post to the Teams channel.
+- **Governance owner role.** An installation-level role (on Azure, the AVP for
+  Data and AI), granted by installation administrators and audited.
+- **Decision records.** A record type wrapping the settings it governs: allowed
+  services, lowering a factory's classification or risk level (or choosing a
+  lower one at creation), and material setting changes. A decision by the
+  governance owner takes effect at once; one proposed by anyone else waits for
+  the governance owner. Each record stores the change, proposer, decider,
+  reasoning, links and times, permanently. Raising a classification or risk
+  level is not gated: factory administrators do it immediately, and it is
+  recorded. A Governance page lists pending and recorded decisions; pending
+  ones post to the Teams channel.
+- **Explicit labels at creation.** Creating a factory requires choosing its
+  classification and risk level, with no defaults.
+- **Sponsor and intended use.** Factory settings for the sponsor (the clinical
+  or business leader it is built for) and its intended use: purpose, data
+  touched, who is affected, what the AI does and does not decide.
 - **Material changes in the repository.** Workplace inspects each pull request
   on a factory's repository; one touching its models, the security or MCP
   sections of `project.yml`, or the approval-required tools gets a required
-  `governance` check, pending until a governance reviewer approves it on the
+  `governance` check, pending until the governance owner approves it on the
   Governance page. Works in the stand-in GitHub (required checks exist) and on
   real GitHub and Azure DevOps as a status check. Settings changes and PRs that
   are material are marked in the change history.
-- **Risk level.** The `heightened_risk` setting and its reasoning, as a
-  governance request. The heightened-risk review features themselves stay
-  deferred (workstream 8).
+- **Risk level.** The `heightened_risk` setting and its reasoning, raised
+  immediately and lowered only by the governance owner. The heightened-risk
+  review features themselves stay deferred (workstream 8).
 - **System cards and inventory export.** A system card per factory on the
   Factory tab and an inventory export of the deployment, generated from
   settings, decision records and the factory's configuration: purpose, owner,
+  sponsor, intended use,
   classification and its decision, risk level and its reasoning, models,
   integrations, MCP servers, egress allowlist, retention, approval-required
   tools, last material change.
@@ -358,23 +365,29 @@ Build, in omniagents-workplace unless noted:
   material changes). Each completion records who, when and the result; overdue
   reviews are flagged on the Governance page and posted to Teams. The restore
   drill script (workstream 6) and kill-switch drill record their results here.
+- **Quarterly report.** Generated each quarter for Health Affairs leadership,
+  in plain language: governance decisions and their reasoning (lowered
+  classifications and risk levels called out), material changes, new and
+  retired factories with sponsors and intended uses, kill-switch events and
+  drills, incident alerts, and scheduled reviews done and overdue.
 - **Evidence export.** For a date range: inventory and system cards, decision
-  records, change history (PRs with reviewers and governance checks, releases
+  records, quarterly reports, change history (PRs with reviewers and governance checks, releases
   with approvals, settings changes), kill-switch events and drills, named-tool
   approvals, backup and restore results, access reviews, scheduled reviews,
   incident alerts and the audit log. A readable report plus JSON records,
-  metadata only (never conversation content or files). Available to governance
-  reviewers and installation administrators; every export is audited.
+  metadata only (never conversation content or files). Available to the
+  governance owner and installation administrators; every export is audited.
 
-Tests: a reviewer cannot approve their own request; a setting does not change
+Tests: raising a classification takes effect at once and lowering one waits for
+the governance owner; a proposal by someone else does not change the setting
 before approval; a material PR cannot merge until the governance check passes;
 the export for a range contains each record type and no conversation content.
 
 ## 10. Later: Microsoft Teams and Azure DevOps (L each)
 
 The Azure deployment starts on Workplace's stand-ins. Once it runs, replace them
-with the institution's real services, each added to the allowed services by a
-governance request:
+with the institution's real services, each added to the allowed services by the
+governance owner:
 
 - **Microsoft Teams**: a Workplace integration for chat and events, as Slack has
   today (incoming messages and mentions become events; the factory posts as its
