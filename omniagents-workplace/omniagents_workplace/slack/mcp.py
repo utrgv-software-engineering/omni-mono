@@ -273,7 +273,11 @@ class SlackMCP:
             app_id=app.id,
         )
         if args.get("draft_id"):
-            self.ws.drafts.pop(str(args["draft_id"]), None)
+            # Through the workspace, so the store forgets it too.
+            try:
+                self.ws.delete_draft(user.id, str(args["draft_id"]))
+            except SlackError:
+                pass
         return _ok(
             {
                 "message_link": message_link(self.base_url(), message),

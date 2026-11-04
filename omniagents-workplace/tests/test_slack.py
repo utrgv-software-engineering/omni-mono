@@ -193,6 +193,44 @@ async def test_mcp_messages_read_back_in_slacks_formats(workplace_server):
 
 
 @pytest.mark.asyncio
+async def test_sending_a_draft_removes_it_for_good(workplace_server):
+    workplace, base_url = workplace_server
+    _, drafted, blocked = await _mcp(
+        base_url,
+        [
+            (
+                "slack_send_message_draft",
+                {"channel_id": ENG, "message": "Draft PR: #12"},
+            ),
+            (
+                "slack_send_message_draft",
+                {"channel_id": ENG, "message": "Draft PR: #13"},
+            ),
+        ],
+    )
+    assert "channel_link" in _json(drafted)
+    assert "attached_draft_exists" in blocked.content[0].text
+    (draft,) = workplace.slack.drafts.values()
+    _, sent, again = await _mcp(
+        base_url,
+        [
+            (
+                "slack_send_message",
+                {"channel_id": ENG, "message": "PR #12 is up.", "draft_id": draft.id},
+            ),
+            (
+                "slack_send_message_draft",
+                {"channel_id": ENG, "message": "Draft PR: #13"},
+            ),
+        ],
+    )
+    assert "message_link" in _json(sent)
+    assert "channel_link" in _json(again)
+    # The sent draft is gone from the store too (checked as the fixture closes).
+    assert [d.text for d in workplace.slack.drafts.values()] == ["Draft PR: #13"]
+
+
+@pytest.mark.asyncio
 async def test_mcp_search_profile_members_and_conversations(workplace_server):
     _, base_url = workplace_server
     _, search, concise, people, profile, members, created, dm, nothing = await _mcp(
