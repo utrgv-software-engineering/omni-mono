@@ -45,7 +45,10 @@ Workstreams are numbered for reference; build them in this order:
 The 80/20 deployment adopts each workstream as it lands, under the same
 `strict` policy, so it dogfoods everything except the Azure-only parts.
 
-## 1. Kill switch (M)
+## 1. Kill switch (M) — done
+
+Built 2026-11-04; see [Kill switch](kill-switch.md). The design below is what
+shipped.
 
 Exists: installation administrators can stop one factory
 (`POST /workplace/api/factories/{id}/stop`, `Installation.stop`), which

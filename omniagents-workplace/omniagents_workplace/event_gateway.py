@@ -245,8 +245,17 @@ class EventGateway:
                 "SELECT * FROM factory_events WHERE delivered IS NULL AND next_attempt<=? ORDER BY id LIMIT 20",
                 (time.time(),),
             ).fetchall()
+        stop = self.w.kill_switch.state()
         for row in rows:
             error = None
+            if stop:
+                # A stopped factory skips what arrives; resuming never replays it.
+                with self.w.store.transaction():
+                    self.w.store._db.execute(
+                        "UPDATE factory_events SET delivered=?,error=? WHERE id=?",
+                        (time.time(), "Skipped: the factory is stopped", row[0]),
+                    )
+                continue
             try:
                 if not self.enabled():
                     raise ValueError("Gateway disabled; delivery retained")

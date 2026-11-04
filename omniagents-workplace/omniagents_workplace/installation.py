@@ -18,6 +18,9 @@ from .factory_process import FactoryProcess
 from .server import Workplace, create_app
 from .store import Store
 
+#: The installation's stop of every factory (the kill switch's "stop all").
+STOP_KEY = "installation.stop"
+
 
 class FactoryAccounts:
     """Resolve shared sign-ins to this factory's local identity and role."""
@@ -387,6 +390,13 @@ class Installation:
                             }
                         )
                 w.installation_factory_id = factory_id
+                w.kill_switch.installation_state = lambda: self.store.meta(STOP_KEY)
+                w.kill_switch.installation_admin = self.installation_admin
+
+                async def stop_changed(stopped, factory_id=factory_id):
+                    await self.apply_stop(factory_id, stopped)
+
+                w.kill_switch.on_change = stop_changed
                 loop = asyncio.get_running_loop()
 
                 def preview_changed(*_args):
@@ -472,9 +482,66 @@ class Installation:
                 w.close()
                 raise
 
+    def installation_admin(self, account):
+        identity = self.accounts.by_username(account.username)
+        return bool(identity and identity.admin and not identity.disabled)
+
+    def stopped(self, factory_id):
+        """The kill switch's stop in force for a factory, or ``None``."""
+        if factory_id in self.instances:
+            return self.instances[factory_id][0].kill_switch.state()
+        return self.store.meta(STOP_KEY)
+
+    async def apply_stop(self, factory_id, stopped):
+        """Shut down a stopped factory's runtime; start a resumed one that
+        was meant to run. The runtime has already ended its AI work."""
+        process = self.processes.get(factory_id)
+        if stopped:
+            if process and process.status()["running"]:
+                await process.stop()
+        elif self.records[factory_id].get("autostart") and not (
+            process and process.status()["running"]
+        ):
+            await self.start(factory_id)
+
+    async def stop_all(self, identity, reason):
+        import time
+
+        from .security import audit
+
+        self.store.set_meta(
+            STOP_KEY,
+            {
+                "stopped_by": identity.username,
+                "stopped_at": time.time(),
+                "reason": reason,
+                "scope": "installation",
+                "by_installation_admin": True,
+            },
+        )
+        audit("installation.stopped", account_id=identity.id, reason=reason)
+        await asyncio.gather(
+            *(w.kill_switch.changed() for w, _ in list(self.instances.values()))
+        )
+
+    async def resume_all(self, identity, reason):
+        from .security import audit
+
+        if not self.store.meta(STOP_KEY):
+            raise ValueError("Factories are not stopped")
+        self.store.set_meta(STOP_KEY, None)
+        audit("installation.resumed", account_id=identity.id, reason=reason)
+        await asyncio.gather(
+            *(w.kill_switch.changed() for w, _ in list(self.instances.values()))
+        )
+
     async def start(self, factory_id):
         from urllib.parse import urlsplit
 
+        if self.stopped(factory_id):
+            from .kill_switch import describe
+
+            raise ValueError(describe(self.stopped(factory_id)))
         w, _ = await self.mount(factory_id)
         port = urlsplit(self.internal_url).port or 80
         await self.processes[factory_id].start(
@@ -504,6 +571,7 @@ class Installation:
                 if process
                 else {"running": False, "error": self.errors.get(record["id"])}
             ),
+            "stopped": self.stopped(record["id"]),
         }
 
     @staticmethod
@@ -544,7 +612,9 @@ class Installation:
                 for factory_id in self.records:
                     try:
                         await self.mount(factory_id)
-                        if self.records[factory_id].get("autostart"):
+                        if self.records[factory_id].get(
+                            "autostart"
+                        ) and not self.stopped(factory_id):
                             await self.start(factory_id)
                     except Exception as exc:
                         self.errors[factory_id] = str(exc)

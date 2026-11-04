@@ -9,7 +9,7 @@ import httpx
 import yaml
 
 from .config import write_env
-from .factory_process import FactoryProcess
+from .factory_process import STOP_GRACE, FactoryProcess
 
 
 class DockerFactoryProcess(FactoryProcess):
@@ -204,5 +204,7 @@ class DockerFactoryProcess(FactoryProcess):
                 self.monitor.cancel()
                 await asyncio.gather(self.monitor, return_exceptions=True)
                 self.monitor = None
-            await self.docker("stop", "--time", "45", self.name, check=False)
+            # The grace lets the runtime suspend its sandbox VMs; stopping the
+            # container ends anything left in it.
+            await self.docker("stop", "--time", str(STOP_GRACE), self.name, check=False)
             self.running = self.ready = False

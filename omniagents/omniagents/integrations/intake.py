@@ -161,6 +161,13 @@ class EventIntake:
             task.cancel()
         return len(running)
 
+    def cancel_all(self) -> int:
+        """Cancel every event still being processed or run (the kill switch)."""
+        tasks = list(self._tasks)
+        for task in tasks:
+            task.cancel()
+        return len(tasks)
+
     async def drain(self) -> None:
         """Wait for every event accepted so far to finish (tests, shutdown)."""
         while self._tasks:
@@ -173,10 +180,16 @@ class EventIntake:
             task.add_done_callback(self._tasks.discard)
 
     async def _process(self, event_id: int, event: IncomingEvent) -> None:
+        from omniagents.core.runtime.factory_stop import current, message
+
         if self.release_gate:
             # Events are acknowledged only after durable storage. A replacement
             # runtime resumes these received events with its new configuration.
             await self.release_gate.wait()
+        if current() is not None:
+            # A stopped factory skips what it receives; resuming never replays it.
+            self.store.set_status(event_id, "skipped", message())
+            return
         try:
             source = self.automation_sources.get(event.provider)
             matched = (

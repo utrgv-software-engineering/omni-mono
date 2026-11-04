@@ -15,6 +15,41 @@ def free_port():
         return sock.getsockname()[1]
 
 
+#: How long a stopping runtime has to suspend its sandbox VMs (flush their
+#: disks) before it is killed.
+STOP_GRACE = 60
+
+
+def kill_vms(directory: Path) -> int:
+    """Kill QEMU processes still running for this factory's VMs; how many.
+
+    A runtime killed before it suspended its sandboxes can leave their VMs
+    running. Their command lines name the factory's VM directory."""
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return 0
+    marker = str(directory)
+    killed = 0
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            argv = (entry / "cmdline").read_bytes().split(b"\0")
+        except OSError:
+            continue
+        if (
+            argv
+            and b"qemu" in Path(os.fsdecode(argv[0])).name.encode()
+            and any(marker in os.fsdecode(arg) for arg in argv)
+        ):
+            try:
+                os.kill(int(entry.name), 9)
+                killed += 1
+            except OSError:
+                pass
+    return killed
+
+
 def base_environment():
     # No ambient service/model credentials or runtime homes cross factories.
     allowed = {
@@ -217,10 +252,11 @@ class FactoryProcess:
             if self.process and self.process.returncode is None:
                 self.process.terminate()
                 try:
-                    await asyncio.wait_for(self.process.wait(), 45)
+                    await asyncio.wait_for(self.process.wait(), STOP_GRACE)
                 except asyncio.TimeoutError:
                     self.process.kill()
                     await self.process.wait()
+                    kill_vms(self.directory)
             if self.log:
                 self.log.close()
                 self.log = None

@@ -31,6 +31,7 @@ __all__ = ["EventStore"]
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS automation_routes (name TEXT PRIMARY KEY, configuration TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS automation_switches (name TEXT PRIMARY KEY, enabled INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS factory_stop (id INTEGER PRIMARY KEY CHECK (id = 1), state TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     provider TEXT NOT NULL,
@@ -181,6 +182,23 @@ class EventStore:
                 "INSERT OR REPLACE INTO automation_routes VALUES (?, ?)",
                 (name, json.dumps(configuration)),
             )
+            self._db.commit()
+
+    def stop_state(self) -> Optional[Dict[str, Any]]:
+        """The kill switch's stop in force, kept across restarts (``None``: running)."""
+        with self._lock:
+            row = self._db.execute("SELECT state FROM factory_stop").fetchone()
+        return json.loads(row["state"]) if row else None
+
+    def set_stop_state(self, state: Optional[Dict[str, Any]]) -> None:
+        with self._lock:
+            if state:
+                self._db.execute(
+                    "INSERT OR REPLACE INTO factory_stop VALUES (1, ?)",
+                    (json.dumps(state),),
+                )
+            else:
+                self._db.execute("DELETE FROM factory_stop")
             self._db.commit()
 
     def turned_off(self) -> set:

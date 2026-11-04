@@ -14,6 +14,7 @@ const { app, config, unmounted, hosts } = vi.hoisted(() => ({
 }));
 vi.mock("./ChatViewer", () => ({ ChatViewer: ({ value, onClose }: { value: {kind:string;title:string}; onClose:()=>void }) => <section data-viewer={value.kind}>{value.title}<button onClick={onClose}>Close viewer</button></section> }));
 vi.mock("./Desktop", () => ({ useDesktopAvailable: () => false, Desktop: () => <div>Desktop</div> }));
+vi.mock("./FactoryStop", () => ({ FactoryStopBanner: () => null }));
 vi.mock("@omniagents/chat-ui/components/omni-avatar/AgentAvatar", () => ({
   AgentAvatar: ({ seed, mood }: { seed: string; mood?: string }) => <span data-avatar={seed} data-mood={mood ?? "idle"} />,
 }));

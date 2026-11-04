@@ -1,4 +1,5 @@
 import type { Presentation } from "@omniagents/chat-ui/lib/presentation";
+import { FactoryStopBanner } from "./FactoryStop";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@omniagents/ui/resizable";
 import { Monitor } from "lucide-react";
 import { AgentReadiness } from "./AgentReadiness";
@@ -563,6 +564,7 @@ export function PersonalApp({ account, navigate }: { account: Person; navigate?:
       <ResizablePanelGroup orientation="horizontal">
       <ResizablePanel id="chat" minSize={split ? "320px" : "0px"}>
       <div className="relative flex min-h-0 min-w-0 h-full flex-col">
+        <FactoryStopBanner className="absolute inset-x-3 top-12 z-30" />
         {loaded && (
           // Over the conversation, which fades beneath it (PublishedChat); the
           // middle column keeps the agent's avatar clear of the name and actions.

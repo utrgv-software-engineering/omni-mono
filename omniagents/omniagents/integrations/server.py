@@ -307,6 +307,7 @@ def mount_integrations(
                     getattr(service, "_release_gate", None)
                     and service._release_gate.paused
                 ),
+                "stopped": factory_stop.current(),
             }
         )
 
@@ -472,10 +473,12 @@ def mount_integrations(
         gate.owner = Path(pending_release).read_text().strip()
         gate.until = float("inf")  # Candidate cannot accept work before verification.
     service._release_gate = intake.release_gate = gate
+    from omniagents.core.runtime import factory_stop
 
-    async def resume_conversations():
-        if gate.paused:
-            return
+    factory_stop.set_state(store.stop_state())
+
+    async def queued_conversations():
+        """Every (agent, conversation, pending item ids) with queued work."""
         from omniagents.core.conversation.model import ThreadFilter
         from omniagents.core.conversation.store import get_conversation_store
         from omniagents.core.project.runtime import build_spec_from_project
@@ -494,25 +497,35 @@ def mount_integrations(
                     ThreadFilter(user_id=owner), limit=100, after=after
                 )
                 for thread in threads:
-                    queued = conversations.mutate_queue(
+                    pending = conversations.mutate_queue(
                         thread.thread_id,
                         lambda state, receipt: (
-                            any(
-                                entry.get("item", {}).get("state") == "pending"
+                            [
+                                entry["item"]["id"]
                                 for entry in state.get("items", [])
-                            ),
+                                if entry.get("item", {}).get("state") == "pending"
+                            ],
                             None,
                         ),
                     )
-                    if queued:
-                        runtime = await runtimes.app(agent)
-                        await ConversationRunner(
-                            runtime.state.agent_service, principal, agent
-                        ).resume(thread.thread_id)
+                    if pending:
+                        yield agent, thread.thread_id, pending
                 if len(threads) < 100:
                     break
                 last = threads[-1]
                 after = (last.updated_at, last.thread_id)
+
+    async def resume_conversations():
+        if gate.paused or factory_stop.current() is not None:
+            return
+        async for agent, thread_id, _pending in queued_conversations():
+            runtime = await runtimes.app(agent)
+            await ConversationRunner(
+                runtime.state.agent_service, principal, agent
+            ).resume(thread_id)
+
+    async def stop_factory(state: dict) -> dict:
+        return await stop_all_work(state, store, intake, runtimes, queued_conversations)
 
     app.router.on_startup.append(resume_conversations)
     app.router.on_startup.append(intake.resume_received)
@@ -540,6 +553,39 @@ def mount_integrations(
 
     app.add_api_route(
         "/integrations/release-lease", release_lease, methods=["POST", "DELETE"]
+    )
+
+    async def stop_control(request: Request):
+        """``POST`` stops the factory (``{stopped_by, stopped_at, reason}``),
+        ``DELETE`` resumes it, ``GET`` says which; whoever runs the factory
+        holds the control token."""
+        import hmac
+
+        expected = os.environ.get("OMNIAGENTS_AGENT_HOST_CONTROL_TOKEN", "")
+        supplied = request.headers.get("authorization", "")
+        if not expected or not hmac.compare_digest(supplied, "Bearer " + expected):
+            return Response(status_code=403)
+        if request.method == "GET":
+            return JSONResponse({"stopped": factory_stop.current()})
+        if request.method == "DELETE":
+            store.set_stop_state(None)
+            factory_stop.set_state(None)
+            logger.warning("integrations: factory resumed")
+            return JSONResponse({"stopped": None})
+        body = await request.json()
+        if not isinstance(body, dict):
+            return JSONResponse(
+                {"detail": "Give the stop as an object"}, status_code=422
+            )
+        state = {
+            key: body[key]
+            for key in ("stopped_by", "stopped_at", "reason", "scope")
+            if body.get(key) is not None
+        }
+        return JSONResponse(await stop_factory(state))
+
+    app.add_api_route(
+        "/integrations/stop", stop_control, methods=["GET", "POST", "DELETE"]
     )
     # The factory's version, from whoever runs it (the supervisor: the commit it promoted).
     intake.version = os.environ.get("FACTORY_VERSION") or None
@@ -1246,6 +1292,52 @@ def _attach_factory_workspace(app, project, resources, environments, principal):
 
     app.router.on_startup.insert(0, start_workspace)
     app.router.on_shutdown.append(stop_workspace)
+
+
+async def stop_all_work(state, store, intake, runtimes, queued_conversations) -> dict:
+    """The kill switch: end all AI work now, and start none until resumed.
+
+    Admission, model and tool calls refuse from the moment the state is set;
+    then every run, queued message and event in progress is cancelled and
+    every sandbox command ended. Queued work is removed, not deferred, so
+    resuming replays nothing."""
+    from omniagents.core.runtime import factory_stop
+
+    store.set_stop_state(state)
+    factory_stop.set_state(state)
+    events = intake.cancel_all()
+    runs = 0
+    for agent_service in runtimes.services():
+        for run_id in list(agent_service.active_run_ids()):
+            try:
+                runs += bool(await agent_service.stop_run(run_id))
+            except Exception:  # noqa: BLE001 - keep stopping the rest
+                logger.exception("factory stop: run %s did not stop", run_id)
+    queued = 0
+    async for agent, thread_id, pending in queued_conversations():
+        runtime = await runtimes.app(agent)
+        for item_id in pending:
+            result = await runtime.state.agent_service.cancel_queued_message(
+                thread_id, item_id
+            )
+            queued += bool(result.get("ok"))
+    sandboxes = await factory_stop.terminate_sandbox_commands()
+    logger.warning(
+        "integrations: factory stopped (%s): %d run(s), %d queued message(s), "
+        "%d event(s) cancelled; commands ended in %d sandbox(es)",
+        state.get("reason") or "no reason given",
+        runs,
+        queued,
+        events,
+        sandboxes,
+    )
+    return {
+        "stopped": state,
+        "runs": runs,
+        "queued": queued,
+        "events": events,
+        "sandboxes": sandboxes,
+    }
 
 
 def run_failure(end: Optional[dict]) -> Optional[str]:

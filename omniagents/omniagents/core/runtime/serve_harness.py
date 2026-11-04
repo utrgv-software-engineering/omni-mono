@@ -942,6 +942,9 @@ async def bring_up_session(
                 "Could not persist sandbox identity; container retained for recovery"
             )
 
+    from omniagents.core.runtime.factory_stop import track
+
+    track(session)
     return BroughtUpSession(
         session=session,
         started_services=started_services,
@@ -1104,6 +1107,9 @@ async def teardown_session(
     """
     if session is None:
         return
+    from omniagents.core.runtime.factory_stop import untrack
+
+    untrack(session)
     if detach and not destroy:
         from omniagents.core.sandbox.lifecycle_session import resolve_backend_session
 

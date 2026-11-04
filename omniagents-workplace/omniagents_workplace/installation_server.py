@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, StrictInt
 
+from .kill_switch import Reason as StopReason
 from .accounts import (
     SESSION_COOKIE,
     Account,
@@ -416,6 +417,34 @@ def create_installation_app(installation, *, static_dir=None):
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         return i.view(record, identity)
+
+    @app.get("/workplace/api/installation/stop")
+    def installation_stop_state(request: Request):
+        from .installation import STOP_KEY
+        from .kill_switch import describe
+
+        me(request)
+        state = i.store.meta(STOP_KEY)
+        return {"stopped": state, "message": describe(state)}
+
+    @app.post("/workplace/api/installation/stop")
+    async def stop_all(body: StopReason, request: Request):
+        from .kill_switch import reason_of
+
+        identity = admin(request)
+        await i.stop_all(identity, reason_of(body))
+        return installation_stop_state(request)
+
+    @app.post("/workplace/api/installation/resume")
+    async def resume_all(body: StopReason, request: Request):
+        from .kill_switch import reason_of
+
+        identity = admin(request)
+        try:
+            await i.resume_all(identity, reason_of(body))
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return installation_stop_state(request)
 
     @app.post("/workplace/api/factories/{factory_id}/{action}")
     async def control(

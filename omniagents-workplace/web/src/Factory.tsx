@@ -3,6 +3,7 @@ import { FactorySecrets } from "./FactorySecrets";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@omniagents/ui/dialog";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem } from "@omniagents/ui/dropdown-menu";
 import { factoryUrl } from "./factory-scope";
+import { FactoryStopControl } from "./FactoryStop";
 // The factory, as its engineers watch it: what it is doing now, what its pull
 // requests took (cost, human touches, time to ship) and where its spend goes.
 // Costs come from the factory's own prices (pricing.yml); on a ChatGPT
@@ -695,7 +696,8 @@ export function FactoryApp({ navigate, onConfigure, onModel, onSchedules }: { na
           <NativeSelectOption value="7">Last 7 days</NativeSelectOption>
           <NativeSelectOption value="30">Last 30 days</NativeSelectOption>
         </NativeSelect>
-        {onConfigure && <DropdownMenu><DropdownMenuTrigger asChild><Button className="ml-auto" variant="outline">Factory settings</Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuGroup>
+        {onConfigure && <div className="ml-auto"><FactoryStopControl /></div>}
+        {onConfigure && <DropdownMenu><DropdownMenuTrigger asChild><Button variant="outline">Factory settings</Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuGroup>
           {onModel && <DropdownMenuItem onSelect={onModel}>Model</DropdownMenuItem>}
           {onModel && <DropdownMenuItem onSelect={() => setRoutingOpen(true)}>Automations</DropdownMenuItem>}
           {onSchedules && <DropdownMenuItem onSelect={onSchedules}>Schedules</DropdownMenuItem>}

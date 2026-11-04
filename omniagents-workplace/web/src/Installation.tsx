@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@omniagents/ui/button";
 import { Input } from "@omniagents/ui/input";
 import { type Person } from "./api";
+import { StopDialog } from "./FactoryStop";
 
 type Factory = {
   id: string;
@@ -9,6 +10,7 @@ type Factory = {
   project: string | null;
   role: string | null;
   runtime: { running: boolean; ready?: boolean; error?: string | null };
+  stopped?: { stopped_by?: string; reason?: string; scope?: string } | null;
 };
 type Member = { identity_id: string; role: string };
 async function request<T>(
@@ -42,7 +44,12 @@ export function InstallationApp({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [invite, setInvite] = useState("");
+  const [allStopped, setAllStopped] = useState<{ stopped: unknown; message: string } | null>(null);
+  const [stopping, setStopping] = useState(false);
   async function load() {
+    setAllStopped(
+      await request<{ stopped: unknown; message: string }>("/installation/stop"),
+    );
     const result = await request<{
       factories: Factory[];
       template_available?: boolean;
@@ -89,6 +96,14 @@ export function InstallationApp({
           {account.admin && (
             <Button onClick={() => setCreating(!creating)}>New factory</Button>
           )}
+          {account.admin && (
+            <Button
+              variant={allStopped?.stopped ? "default" : "destructive"}
+              onClick={() => setStopping(true)}
+            >
+              {allStopped?.stopped ? "Resume all factories" : "Stop all factories"}
+            </Button>
+          )}
           <Button variant="ghost" onClick={onSignOut}>
             Sign out
           </Button>
@@ -99,6 +114,25 @@ export function InstallationApp({
           {error}
         </p>
       )}
+      {!!allStopped?.stopped && (
+        <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
+          {allStopped.message}
+        </p>
+      )}
+      <StopDialog
+        open={stopping}
+        onOpenChange={setStopping}
+        resuming={!!allStopped?.stopped}
+        scope="installation"
+        onSubmit={async (reason) => {
+          await request(
+            allStopped?.stopped ? "/installation/resume" : "/installation/stop",
+            "POST",
+            { reason },
+          );
+          await load();
+        }}
+      />
       {creating && (
         <form
           className="space-y-4 rounded-lg border p-4"
@@ -135,11 +169,13 @@ export function InstallationApp({
             <div>
               <h2 className="font-medium">{factory.name}</h2>
               <p className="text-sm text-muted-foreground">
-                {factory.runtime.running
-                  ? factory.runtime.ready
-                    ? "Running"
-                    : "Starting"
-                  : "Stopped"}
+                {factory.stopped
+                  ? `Stopped by the kill switch${factory.stopped.stopped_by ? ` (${factory.stopped.stopped_by})` : ""}${factory.stopped.reason ? `: ${factory.stopped.reason}` : ""}`
+                  : factory.runtime.running
+                    ? factory.runtime.ready
+                      ? "Running"
+                      : "Starting"
+                    : "Stopped"}
               </p>
               {factory.runtime.error && (
                 <p className="text-sm text-destructive">

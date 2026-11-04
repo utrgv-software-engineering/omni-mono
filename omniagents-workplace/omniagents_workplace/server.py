@@ -245,6 +245,9 @@ class Workplace:
         from .event_gateway import EventGateway
 
         self.event_gateway = EventGateway(self)
+        from .kill_switch import KillSwitch
+
+        self.kill_switch = KillSwitch(self)
         from .shared.state import Shared
 
         self.shared = Shared(self)
@@ -1081,15 +1084,19 @@ def create_app(
         repository_refresh = asyncio.create_task(
             workplace.repository_settings.maintain()
         )
+        kill_switch = asyncio.create_task(workplace.kill_switch.maintain())
         async with workplace.mcp.run(), workplace.github_mcp.run(), workplace.linear_mcp.run(), workplace.canvas_mcp.run(), workplace.memory_mcp.run(), extension_apps.run():
             try:
                 yield
             finally:
                 scheduler.cancel()
                 repository_refresh.cancel()
+                kill_switch.cancel()
                 with workplace.repository_settings.lock:
                     workplace.repository_settings.device.close()
-                await asyncio.gather(repository_refresh, return_exceptions=True)
+                await asyncio.gather(
+                    repository_refresh, kill_switch, return_exceptions=True
+                )
                 await workplace.shared.close()
                 await workplace.event_gateway.close()
                 await workplace.memory_hooks.close()
@@ -1113,6 +1120,7 @@ def create_app(
     app.include_router(repository_router(workplace))
     app.include_router(workplace.factory_secrets.router())
     app.include_router(workplace.event_gateway.router())
+    app.include_router(workplace.kill_switch.router())
     app.add_middleware(RepositoryProviderBoundary, workplace=workplace)
     app.add_middleware(RequestLimits)
     app.add_middleware(
@@ -2652,6 +2660,7 @@ def create_app(
 
     @app.post("/workplace/api/personal/chats/{chat_id}/messages")
     async def personal_send(body: PersonalMessage, request: Request):
+        workplace.kill_switch.check()
         connection = await personal_connection(request)
         if not body.text.strip():
             raise HTTPException(422, "Write a message first.")

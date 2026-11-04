@@ -1684,6 +1684,25 @@ export interface FactoryReport {
   by?: Record<"source" | "agent" | "model" | "person", Record<string, Slice>>;
 }
 
+export interface FactoryStopState {
+  stopped_by?: string;
+  stopped_at?: number;
+  reason?: string;
+  scope?: "factory" | "installation" | "unknown";
+}
+
+export interface StopView {
+  stopped: FactoryStopState | null;
+  message: string;
+  own: FactoryStopState | null;
+}
+
+export const factoryStop = {
+  get: () => call<StopView>("/factory/stop"),
+  stop: (reason: string) => post<StopView>("/factory/stop", { reason }),
+  resume: (reason: string) => post<StopView>("/factory/resume", { reason }),
+};
+
 export const factoryReport = {
   get: (days: number) => call<FactoryReport>(`/factory/report?days=${days}`),
 };
