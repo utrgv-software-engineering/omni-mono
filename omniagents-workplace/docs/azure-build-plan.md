@@ -32,6 +32,11 @@ Sizes are relative: S is days, M is about a week, L is several weeks.
 8. **Transparency and oversight features.**
 9. **Pilot**: an example factory with no sensitive data, registered in the AI
    Inventory, before any real work.
+10. **Later: Microsoft Teams and Azure DevOps.** The Azure deployment starts on
+    stand-ins; these replace them once the deployment is running.
+
+The 80/20 deployment adopts each workstream as it lands, under the same
+`strict` policy, so it dogfoods everything except the Azure-only parts.
 
 ## 1. Kill switch (M)
 
@@ -97,9 +102,22 @@ Build:
   conversation content and does not become a store of sensitive data. Add the
   approving person's identity to approval events.
 - **Deployment policy.** One place in Workplace that holds what the profile
-  requires, set in `workplace.yml` (`policy: strict` for Azure): classification
-  required, review forced, approved list enforced. Every rule in workstreams 3–6
-  reads it there, never from scattered flags.
+  requires, set in `workplace.yml` (`policy: strict`, on Azure and 80/20):
+  classification required, review forced, approved list enforced. Every rule in
+  workstreams 3–6 reads it there, never from scattered flags.
+- **Sign-in and sessions under the strict policy** (UTS 165):
+  - Workplace's own password sign-in is off; people sign in through Entra (or,
+    on 80/20, the existing sign-in until Easy Auth is there), and machines use
+    tokens;
+  - sessions end after 30 minutes without activity and 12 hours in total;
+  - with Easy Auth, Workplace checks the identity headers on every request and
+    ends its session when they are missing or name someone else, so removing a
+    person in Entra takes effect immediately.
+- **Access review export.** Every factory's members and roles, with the date of
+  each grant, for the annual access review.
+- **Teams notifications.** Workplace sends no email. Add an installation
+  setting for a Microsoft Teams incoming webhook; approval requests (workstream
+  5) and alerts (workstream 8) post to it.
 
 ## 3. Classification, approved list and forced review (M)
 
@@ -110,10 +128,13 @@ Exists: per-factory settings in each factory's store; `factory.definition.requir
 Build, in omniagents-workplace:
 
 - **Factory settings.** `classification` (Published, Controlled, Confidential),
-  `heightened_risk`, `purpose` and `owner`. Required under the strict policy;
-  a factory without a classification does not start. Every change is audited.
+  `purpose` and `owner`. Required under the strict policy; a factory without a
+  classification does not start. Classifying a factory Confidential requires
+  the reference of its documented approval (UTS 165.1.5.4.6). Every change is
+  audited.
 - **Approved list.** An installation-level list of model endpoints, integrations
-  and MCP servers, each with its assessment reference. Enforcement:
+  and MCP servers, each with its assessment reference and, for cloud services,
+  its TX-RAMP certification. Enforcement:
   - models: under the strict policy every factory's `models.json` may name only
     approved endpoints; the Factory model page refuses others and the runtime
     refuses to start with one;
@@ -145,22 +166,29 @@ Build, in omniagents-workplace:
 Exists: QuickSand network modes `none`, `mounts_only` and `full`; Docker sandbox
 network modes. Nothing filters destinations.
 
-Build:
+Build one filtering proxy on the VM as the only route out for everything
+factories run. Azure Firewall is not used.
 
-- **Deployment allowlist** (omni-factory, *Azure profile*): Azure Firewall rules
-  in the infrastructure code, denying outbound by default and allowing model
-  endpoints, package registries and approved integrations.
-- **Per-factory allowlist for Confidential factories**:
-  - an allowlisting forward proxy on the VM, one configuration per factory,
-    whose denials are logged and audited;
-  - QuickSand: a network mode where the guest reaches only that proxy. QEMU's
+- **The proxy** (omni-factory deploy): an allowlisting forward proxy for HTTP
+  and HTTPS (by host name, through `CONNECT`), in its own container, with one
+  allowlist for the deployment and a narrower one per Confidential factory. Each
+  factory's traffic reaches it with that factory's credentials, so the proxy
+  knows which list applies. Denials are logged and audited.
+- **Forcing traffic through it**:
+  - factory runtimes, CI jobs and preview containers run on internal Docker
+    networks with no route out except the proxy;
+  - the VM's firewall (nftables, in Docker's `DOCKER-USER` chain) drops any
+    container traffic to the internet that does not come from the proxy, so a
+    misconfigured container cannot bypass it;
+  - QuickSand: a network mode where the guest reaches only the proxy. QEMU's
     user networking supports this (`restrict=on` with a `guestfwd` to the
     proxy); add it to quick-sandbox, or set it from omniagents'
-    `core/sandbox/quicksand.py` if the package lets it pass QEMU options;
-  - the factory runtime's container: a Docker network whose only route out is
-    the proxy;
-  - Workplace: the allowlist as a factory setting, audited, with widening it a
-    material change.
+    `core/sandbox/quicksand.py` if the package lets it pass QEMU options.
+- **Outer limit** (omni-factory infrastructure, *Azure profile*): NSG rules allow
+  the VM out only on HTTPS, and Azure services (Key Vault, Blob Storage, Log
+  Analytics, the model endpoints) through private endpoints.
+- **Workplace**: the deployment and per-factory allowlists as settings, audited,
+  with widening one a material change.
 
 ## 5. Human approvals for named tools (L)
 
@@ -180,8 +208,8 @@ Build:
   reviewed PR.
 - **Workplace approval inbox.** A factory-wide list of pending human approvals
   from every conversation and automation run, visible to the factory's
-  approvers (its administrators by default). Approvers are notified in Slack or
-  by email. A decision goes through the existing `tool_approval_response` and
+  approvers (its administrators by default). Approvers are notified in the
+  installation's Teams channel (workstream 2), and on 80/20 in Slack. A decision goes through the existing `tool_approval_response` and
   `mcp_approval_response` calls and is audited with the approver. A pending
   approval expires after seven days, rejecting the call.
 - **Durable waiting.** A pending approval is an in-memory wait in the runtime
@@ -235,18 +263,25 @@ Build:
 - **App Service proxy** (omni-factory `deploy/azure/`): a reverse-proxy
   container for App Service with WebSockets, streaming and forwarded headers.
 - **Infrastructure code** (omni-factory, Bicep): VNet and subnets, NSGs, the VM
-  (a nested-virtualization SKU) and its managed disk, App Service with VNet
-  integration, Key Vault, Blob Storage with a private endpoint and the lifecycle
-  rule, Azure Firewall, Log Analytics with six-year retention and alert rules,
-  and App Service's health-check alert.
+  (Standard_D8s_v5, 8 vCPU and 32 GB, with nested virtualization) and its
+  512 GB Premium SSD, App Service with VNet integration, Key Vault, Blob Storage
+  with a private endpoint and the lifecycle rule, Log Analytics with six-year
+  retention and alert rules, App Service's health-check alert, and Azure Update
+  Manager (critical and high updates within 14 days, the rest within 30).
+- **TLS on the private hop**: App Service reaches the VM over HTTPS too, with a
+  certificate the VM's ingress serves, so data is encrypted inside the private
+  network as well (UTS 165.1.5.4.2).
+- **Image scanning** (omni-mono and omni-factory CI): scan every container image
+  the deployment runs and fail the build on critical vulnerabilities.
 - **Azure Compose overlay** (omni-factory): `deploy/azure.compose.yml`, the same
   stack with no public ports, `policy: strict`, keys from Key Vault and backups
   to Blob Storage.
 - **Runbook**: out-of-band stops (disable the model deployment's keys, stop the
   VM), restore, and who holds which access.
 
-Setup only: Entra user assignment limited to the AI-training group, factory
-membership from Entra groups, Conditional Access MFA, Azure Update Manager.
+Setup only: Entra user assignment to one Workplace-users group (AI training is
+tracked outside Workplace), factory membership from Entra groups, Conditional
+Access MFA.
 
 ## 8. Transparency and oversight (M)
 
@@ -270,16 +305,30 @@ Build, in omniagents-workplace unless noted:
   generated-by metadata to Shared documents.
 - **Factory tab metrics.** Add error rate across runs, tool-failure rate and
   runtime uptime (record runtime up and down transitions).
-- **Heightened-risk review.** For heightened-risk factories, sample
-  conversations at the owner's rate into a review list on the Factory tab, and
-  remind owners when the six-monthly reassessment is due.
+- **Heightened-risk review: deferred.** The first factory is not
+  heightened-risk. When one is, add the setting, sampling of 5% of its
+  conversations (adjustable by its owner) into a review list on the Factory
+  tab, and reminders when the six-monthly reassessment is due.
 - **Adversarial evaluations** (omni-factory): scenarios for prompt injection
   through fetched content, data sent to a destination not on the allowlist, and
   data crossing between factories; required on every material change.
 - **Incident alerts.** Kill-switch use, blocked egress from Confidential
   factories, repeated sign-in failures and policy-rejected changes are alert
-  events, sent to configured Information Security Office contacts by email or
-  Teams webhook.
+  events, posted to the installation's Teams channel (workstream 2).
+
+## 10. Later: Microsoft Teams and Azure DevOps (L each)
+
+The Azure deployment starts on Workplace's stand-ins. Once it runs, replace them
+with the institution's real services, each through the approved list:
+
+- **Microsoft Teams**: a Workplace integration for chat and events, as Slack has
+  today (incoming messages and mentions become events; the factory posts as its
+  own app identity, named as AI). It also replaces the incoming webhook for
+  notifications.
+- **Azure DevOps**: repositories, pull requests, work items and pipelines, as
+  GitHub and Linear have today; branch protection requires a person's approving
+  review, and the factory's identity cannot bypass it. omni-desktop's
+  `azure-repos.ts` is a starting point for the API.
 
 ## Verified
 

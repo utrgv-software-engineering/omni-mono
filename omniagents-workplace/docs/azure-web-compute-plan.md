@@ -45,12 +45,22 @@ Why not split web and compute or use serverless containers:
 | Front door | localhost | Traefik, public | App Service + Easy Auth, VM private |
 | State | SQLite, local files | SQLite, VM disk | SQLite, VM managed disk |
 | Backups | None required | Disk snapshots | Workplace backup to Blob Storage, tested restores |
-| Integrations | Stand-ins | Stand-ins or real | Stand-ins or real, allowlisted |
+| Integrations | Stand-ins | Stand-ins or real | Stand-ins now; real Teams and Azure DevOps later |
+| Policy | Open | `strict`, except Azure-only parts | `strict` |
 | Models | Student's own provider | Any configured provider | Approved list (BAA-covered) |
-| Egress | Open | Open | Denied by default, allowlisted |
+| Egress | Open | Open | Through the filtering proxy only |
 
 Local installations must remain supported with SQLite, stand-ins and local
 execution. Nothing Azure-specific becomes a requirement of the product.
+
+The 80/20 deployment runs the same `strict` policy as Azure (classification,
+approved list, forced review, kill switch, audit), leaving out only what needs
+Azure: Easy Auth, Key Vault, Blob Storage and the private network. Otherwise the
+compliance code paths would never be dogfooded.
+
+The Azure deployment starts with Workplace's stand-ins for chat, code and
+issues. It moves later to the institution's real **Microsoft Teams** and
+**Azure DevOps**, which need new Workplace integrations.
 
 Follow the useful parts of twelve-factor: configuration from the environment,
 backing services addressed by URL (so SQLite → PostgreSQL or local files → Blob
@@ -65,12 +75,21 @@ snapshotted and restored on a schedule.
 | Component | Responsibility |
 | --- | --- |
 | App Service | Public HTTPS hostnames, Easy Auth (Microsoft Entra), reverse proxy to the VM over VNet integration, WebSocket forwarding |
-| Private VM | Workplace, factory runtimes, QuickSand sandboxes, Actions, Coolify and previews; the same Compose stack as 80/20 |
-| Managed disk | All durable state: Workplace and factory databases, Shared, workspaces, sandbox disks, caches |
+| Private VM | Workplace, factory runtimes, QuickSand sandboxes, Actions, Coolify and previews; the same Compose stack as 80/20. **Standard_D8s_v5** (8 vCPU, 32 GB), which supports nested virtualization |
+| Managed disk | All durable state: Workplace and factory databases, Shared, workspaces, sandbox disks, caches. **512 GB Premium SSD** |
 | Blob Storage | Workplace's backups of the data in [Backups](#backups), with a 30-day lifecycle rule |
 | Key Vault | Workplace's encryption keys, kept apart from data backups |
-| Azure Firewall or NSG rules | Inbound only from the App Service subnet; outbound allowlist |
+| NSG rules | Inbound only from the App Service subnet; outbound limited to HTTPS |
+| Filtering proxy (on the VM) | The only route out for factories, sandboxes, CI and previews; per-factory allowlists |
 | Log Analytics | Entra sign-in logs, platform logs and Workplace audit events, outside the VM's write access; the health-check alert |
+
+**Sizing.** The first users are one main factory used by three full-time staff,
+plus about five more people. The 80/20 server runs several factories on 8 vCPU
+and 16 GB, and its sandbox VM was killed for memory at 8 GB; the Azure VM
+starts with the same CPU and twice the memory, so each person's sandbox VM,
+CI and previews fit together. Resizing a VM within the family takes minutes
+and keeps its disk, so grow it when the Factory tab's metrics or the VM's
+memory show it is needed rather than up front.
 
 ### Front door
 
@@ -188,9 +207,15 @@ VM **every quarter** and record the result.
    through the approved list; enforce this as a deployment policy that Workplace
    refuses to violate, not as a convention.
 2. **Egress.** An agent that reads sensitive data and can reach arbitrary hosts
-   is an exfiltration path through prompt injection. Deny outbound traffic by
-   default at the VM's subnet and allowlist model endpoints, package registries
-   and the integrations factories need; Confidential factories narrow it further.
+   is an exfiltration path through prompt injection. Everything a factory runs
+   (its runtime, sandboxes, CI jobs and previews) reaches the internet only
+   through a filtering proxy on the VM, enforced by the VM's own firewall and
+   internal Docker networks; the proxy allows model endpoints, package
+   registries and the integrations factories need, and Confidential factories
+   narrow it further. NSG rules only add an outer limit (HTTPS out). Azure
+   Firewall is not used: it costs hundreds of dollars a month, cannot tell one
+   factory's traffic from another's on a shared VM, and the proxy is needed
+   for per-factory allowlists anyway.
 3. **Side channels.** Preview apps, Actions logs, CI artifacts and any real
    GitHub or Slack integration can carry data out of the VM. Integrations used by
    Confidential factories must be on the approved list and covered by a BAA, or
@@ -357,10 +382,13 @@ Two mechanisms enforce it, both configured per factory:
    contained-sandbox auto-approval never cover them. The list lives in the
    factory's repository, so changing it is a reviewed PR and a material change.
 
-A factory marked **heightened-risk** also samples conversations for quality
-review at a rate its owner sets, and reminds its owners when its six-monthly
-reassessment is due. Together with the Factory tab metrics, the audit log and
-the kill switch, this is its human oversight plan.
+The first factory is **not heightened-risk**: it prepares work, and people make
+the decisions. The heightened-risk setting and its review features are built
+when a factory first needs them: it would sample conversations for quality
+review (5% by default, adjustable by its owner) and remind its owners when its
+six-monthly reassessment is due. Until then, the Factory tab metrics, the audit
+log, the approval-required tools and the kill switch are the human oversight
+plan.
 
 ### Operational metrics
 
@@ -380,20 +408,73 @@ deployment and on every material change.
 
 ### Incidents
 
-Alert the Information Security Office's contacts on kill-switch use, blocked
-outbound connections from Confidential factories, repeated sign-in failures and
-self-improvement changes rejected for policy reasons. Forward audit logs to the
-Information Security Office's security monitoring if it runs one.
+Alert on kill-switch use, blocked outbound connections from Confidential
+factories, repeated sign-in failures and self-improvement changes rejected for
+policy reasons. Workplace does not send email; alerts, like approval requests,
+go to a **Microsoft Teams channel through an incoming webhook**, configured once
+for the installation. There is no institutional log-forwarding system, so audit
+logs stay in Log Analytics, where the alert rules also run.
 
 ### Setup without code
 
-- **Access requires training.** Workplace's Entra app requires user assignment,
-  limited to a group of people who have completed the annual AI training. A
-  lapsed training removes access.
+- **Who can sign in.** Workplace's Entra app requires user assignment, to one
+  group of Workplace users that administrators maintain. Annual AI training is
+  tracked outside Workplace; administrators add people once they have completed
+  it.
 - **Membership follows offboarding.** Factory membership maps to Entra groups,
   so people who leave lose access through normal offboarding.
 - **MFA** is enforced by Entra Conditional Access.
 - **Patching.** Azure Update Manager patches the VM on a schedule.
+
+## UT System security standards
+
+UTS 165's public standards add these requirements; UTRGV's internal
+"Implementation Steps and Procedures for AI Technologies" is not public and is
+not reflected here.
+
+| Standard | Requirement | How it is met |
+| --- | --- | --- |
+| 165.1.5.4.6 | Confidential data in AI systems only with heightened security and documented approval | Classifying a factory Confidential records the approval's reference; the Confidential rules in [Sensitive data](#sensitive-data) |
+| 165.2.1.6.3 | MFA for systems with Confidential or Controlled data | Entra Conditional Access. Under the strict policy Workplace's own password sign-in is off; only Entra sign-in and machine tokens work |
+| 165.2.1.2.3, 165.1.6.2.5 | Session lock, risk-based; screens lock after 15 minutes idle | Workplace sessions end after **30 minutes** without activity and **12 hours** in total, under the strict policy. Device screen locks are the institution's device policy |
+| 165.2.1.2.2 | Disable accounts immediately | Workplace checks the Easy Auth identity on every request and ends its own session when it is missing or different, so removing someone in Entra takes effect at once |
+| 165.2.1.7.1 | Lock accounts after repeated failed sign-ins | Entra, since password sign-in is off |
+| 165.2.1.1.2 | Review access at least every 12 months | Workplace exports every factory's members and roles for the annual review |
+| 165.2.3.6.4–5, 165.2.3.9.1 | Track, approve, test and log changes | Reviewed PRs, CI evaluations, release approval and audited settings ([Change management](#change-management)) |
+| 165.2.3.3.5–6 | Install security updates within a defined period | Azure Update Manager: critical and high updates within **14 days**, the rest within **30** |
+| 165.2.5.6.1 | Scan for vulnerabilities | Container images are scanned in CI and fail on critical findings; Update Manager assesses the VM |
+| 165.1.5.4.2 | Protect data in transit by classification | TLS to App Service, and TLS again from App Service to the VM, inside the private network |
+| 165.1.2.3.3 | Cloud vendors certified under TX-RAMP | An approved-list entry for a cloud service records its TX-RAMP certification |
+| 165.2.4.4 | Back up and restore critical systems | [Backups](#backups) and the quarterly restore |
+| 165.2.5.1 | Keep audit records for an institution-defined period | Six years in Log Analytics |
+
+## Decisions to present
+
+Every choice this plan makes without the institution, for review by the
+Information Security Office, the privacy office and AI governance:
+
+1. Factories are not systems of record; extracted data is recovered from its source.
+2. Factory data classification uses UTRGV's classes and is required per factory.
+3. Conversations, worker journals and traces in Confidential factories are kept
+   for the life of the factory.
+4. Backups are daily, kept 30 days with no longer-term copies; deleted data is
+   gone everywhere within 30 days. Confidential factories' uploads and
+   workspaces are not backed up. Restores are tested quarterly.
+5. Encryption at rest uses Azure's platform-managed keys; Workplace's own keys
+   live in Key Vault, apart from backups.
+6. Audit records are kept six years and contain no conversation content.
+7. Models, integrations and MCP servers come from an approved list; models are
+   BAA-covered and cloud services TX-RAMP certified.
+8. The first factory is not heightened-risk: it prepares work and people decide;
+   decisions in systems of record are protected by scoped credentials and,
+   where needed, tools that always require a person's approval.
+9. Self-improvement changes are reviewed PRs the factory cannot merge.
+10. The kill switch: one factory or all, by administrators, with reasons;
+    out-of-band through the model keys and the VM.
+11. All outbound traffic goes through a filtering proxy.
+12. Sessions end after 30 minutes idle or 12 hours; MFA and sign-in through Entra
+    only; security updates within 14 or 30 days.
+13. AI training is tracked outside Workplace; Workplace access is an Entra group.
 
 ## Investigations before implementation
 
@@ -405,12 +486,10 @@ Verify these against current Azure capabilities rather than assume them:
   and desktop sessions through the proxy.
 - Wildcard custom domains and certificates for preview hostnames, and whether
   Easy Auth cookies and callbacks work across them without sharing Workplace's
-  origin. Settle this before committing to a hostname design.
-- Entra Private Access (formerly Application Proxy) as an alternative front door,
-  compared on WebSockets, wildcard hostnames and cost.
-- A VM SKU that exposes nested virtualization (KVM) for accelerated QuickSand.
-- Egress controls: Azure Firewall versus NSG service tags, and the allowlist each
-  factory needs.
+  origin. App Service is the front door either way; a problem here changes the
+  preview hostname design, not the architecture.
+- That QuickSand gets KVM on Standard_D8s_v5 (nested virtualization).
+- The allowlist each factory needs.
 - Blob Storage access from the private VM (private endpoint) and lifecycle
   deletion for backups.
 
@@ -428,7 +507,7 @@ Verify these against current Azure capabilities rather than assume them:
 6. Add the kill switch for one factory and for all factories, and write the
    out-of-band runbook.
 7. Add the UTRGV policy work: audited settings and material changes, system
-   cards, AI attribution, approval-required tools and heightened-risk review,
+   cards, AI attribution, approval-required tools,
    Factory tab metrics, adversarial tests and incident alerts. Configure the
    Entra setup.
 8. Prove the deployment with an isolated example factory and no sensitive data,
@@ -443,8 +522,11 @@ Verify these against current Azure capabilities rather than assume them:
 - Previews require Microsoft sign-in and factory access; nothing bypasses them.
 - Forged identity headers from any path other than the App Service proxy are
   refused.
-- Agents can reach only allowlisted destinations; model calls go only to
-  BAA-covered endpoints.
+- Everything factories run reaches the internet only through the filtering
+  proxy, and only allowlisted destinations; model calls go only to BAA-covered
+  endpoints.
+- Sign-in is through Entra with MFA only; sessions end after 30 minutes idle or
+  12 hours; removing someone in Entra ends their Workplace session at once.
 - Every factory has a data classification. Confidential factories back up
   conversations but not Shared uploads or workspaces, and their
   self-improvement output stays within the factory.
