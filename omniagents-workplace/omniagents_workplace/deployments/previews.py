@@ -23,6 +23,27 @@ KIND = "deployment.preview"
 # {"factory", "since": epoch, "include": [numbers]}, keyed by application uuid.
 # Those opened since then, and the open ones chosen then; none means every one.
 SCOPE = "deployment.preview.scope"
+# The managed Traefik proxy, trusting the X-Forwarded-* headers the Workplace
+# gateway sends on its http entrypoint. Otherwise Traefik replaces them with
+# its own, and an app behind TLS at the gateway believes it is served over
+# http: Rails then rejects every browser form post (Origin is https). Only
+# the Workplace, and what can already reach the apps directly, reaches that
+# entrypoint. Coolify keeps the flag when it regenerates the configuration.
+PROXY = r"""
+$s=App\Models\Server::findOrFail(0);
+if ($s->proxyType()==='NONE') { $s->proxy->type='TRAEFIK'; $s->save(); }
+if ($s->proxyType()!=='TRAEFIK') { throw new Exception('Workplace previews require the managed Traefik proxy'); }
+$flag='--entrypoints.http.forwardedHeaders.insecure=true';
+$c=App\Actions\Proxy\GetProxyConfiguration::run($s);
+if (!str_contains($c, $flag)) {
+    $c=preg_replace("/^(\s*)- '--entrypoints\.http\.address=:80'$/m", "$0\n$1- '$flag'", $c, 1, $n);
+    if ($n!==1) { throw new Exception('Unexpected Traefik proxy configuration'); }
+    App\Actions\Proxy\SaveProxyConfiguration::run($s, $c);
+    App\Actions\Proxy\StartProxy::run($s, async:false, force:true);
+} elseif (App\Actions\Proxy\CheckProxy::run($s)) {
+    App\Actions\Proxy\StartProxy::run($s, async:false);
+}
+"""
 
 
 def opened_at(pr):
@@ -133,10 +154,7 @@ class Previews:
             "php",
             "artisan",
             "tinker",
-            "--execute="
-            + "$s=App\\Models\\Server::findOrFail(0); if ($s->proxyType()==='NONE') { $s->proxy->type='TRAEFIK'; $s->save(); } "
-            "if ($s->proxyType()!=='TRAEFIK') { throw new Exception('Workplace previews require the managed Traefik proxy'); } "
-            "if (App\\Actions\\Proxy\\CheckProxy::run($s)) { App\\Actions\\Proxy\\StartProxy::run($s,async:false); }",
+            "--execute=" + PROXY,
         )
 
     def records(self):
