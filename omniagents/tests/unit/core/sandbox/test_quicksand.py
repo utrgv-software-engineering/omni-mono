@@ -608,3 +608,38 @@ async def test_shutdown_acknowledges_an_already_requested_backup(tmp_path):
         "ok": True,
     }
     assert not (directory / "backup.request").exists()
+
+
+@pytest.mark.asyncio
+async def test_a_dead_vm_starts_again_without_its_old_environment_file(tmp_path):
+    session = QuicksandSession(
+        (await QuicksandClient(state_dir=tmp_path).create()).state
+    )
+    session.on_restart = AsyncMock()
+    session._exec_checked_nonzero = AsyncMock()
+    await session._prepare_backend_workspace()
+    await session._after_start()
+    session.on_restart.assert_not_awaited()  # Its creator prepares the first start.
+    session.runtime_environment_file = "/tmp/.omni-factory-environment"
+
+    # The VM died (out of memory) and the SDK starts this session again.
+    session.vm = None
+    await session._prepare_backend_workspace()
+    assert session.runtime_environment_file is None
+    assert ". /tmp/" not in await session._command(["true"])
+    assert session.resumed  # Provisioning does not run twice on one disk.
+    await session._after_start()
+    session.on_restart.assert_awaited_once()
+    await session._cancel_saver()
+
+
+@pytest.mark.asyncio
+async def test_a_dead_vm_stops_without_flushing(tmp_path):
+    session = QuicksandSession(
+        (await QuicksandClient(state_dir=tmp_path).create()).state
+    )
+    session.vm = SimpleNamespace(is_running=False, stop=AsyncMock())
+    session._flush_disk = AsyncMock()
+    await session.suspend_durable()
+    session._flush_disk.assert_not_awaited()
+    assert session.vm is None

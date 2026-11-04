@@ -244,11 +244,21 @@ class RunEnvironments:
                 profile = dataclasses.replace(profile, raw=raw)
 
             async def prepare_persistent(session):
+                from omniagents.core.sandbox.lifecycle_session import (
+                    resolve_backend_session,
+                )
+
                 from .personal_workspace import refresh_environment
 
-                await refresh_environment(
-                    session, self.github, run_as=_run_as_exec_user(profile.raw)
-                )
+                async def refresh():
+                    await refresh_environment(
+                        session, self.github, run_as=_run_as_exec_user(profile.raw)
+                    )
+
+                await refresh()
+                inner = resolve_backend_session(session)
+                if hasattr(inner, "on_restart"):
+                    inner.on_restart = refresh
 
             sources = self.github.sources(persistent=state_path is not None)
             brought = await bring_up_session(

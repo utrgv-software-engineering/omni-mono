@@ -195,6 +195,10 @@ class QuicksandSession(BaseSandboxSession):
         self.recover_last_save = recover_last_save
         self.vm = None
         self.runtime_environment_file = None
+        # Run after a later start of this session, when the VM died and the
+        # SDK starts it again: what its creator prepared once must be redone.
+        self.on_restart = None
+        self._started = False
         self._lock = None
         self._save_lock = asyncio.Lock()
         self._guest_ready = asyncio.Event()
@@ -299,6 +303,9 @@ class QuicksandSession(BaseSandboxSession):
             raise
 
     async def _prepare_backend_workspace(self):
+        # A booted VM has an empty /tmp: not the environment file of a VM
+        # this session ran before.
+        self.runtime_environment_file = None
         if not self.resumed:
             for index, command in enumerate(self.state.options.setup, 1):
                 logger.info(
@@ -354,6 +361,11 @@ class QuicksandSession(BaseSandboxSession):
                     raise
 
         self._save_task = asyncio.create_task(requested_backups())
+        if self._started and self.on_restart is not None:
+            await self.on_restart()
+        self._started = True
+        # Its disk is provisioned now; starting it again only resumes it.
+        self.resumed = True
 
     def _write_working_state(self):
         working = Path(self.state.directory) / "working"
@@ -466,7 +478,9 @@ class QuicksandSession(BaseSandboxSession):
     async def suspend_durable(self):
         await self._cancel_saver()
         await self.pty_terminate_all()
-        await self._flush_disk()
+        if self.vm is not None and self.vm.is_running:
+            # A VM that died (out of memory, say) has nothing left to flush.
+            await self._flush_disk()
         await self._stop_vm()
 
     async def _cancel_saver(self):
