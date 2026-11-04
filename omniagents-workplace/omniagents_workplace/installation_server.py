@@ -14,6 +14,9 @@ from pydantic import BaseModel, ConfigDict, StrictInt
 
 from .kill_switch import Reason as StopReason
 from .governance import Services as AllowedServices
+from .governance import Decision as GovernanceDecision
+from .governance import Owners as GovernanceOwners
+from .governance import ReviewDone
 from .accounts import (
     SESSION_COOKIE,
     Account,
@@ -570,8 +573,172 @@ def create_installation_app(installation, *, static_dir=None):
 
     @app.put("/workplace/api/installation/allowed-services")
     def save_allowed_services(body: AllowedServices, request: Request):
+        from .installation import SERVICES_KEY
+
         identity = admin(request)
-        return {"services": i.set_allowed_services(identity, body.services)}
+        record = i.set_allowed_services(identity, body.services, body.reason)
+        return {
+            "services": i.store.meta(SERVICES_KEY) or [],
+            "pending": record if record["status"] == "pending" else None,
+        }
+
+    @app.get("/workplace/api/installation/governance")
+    def installation_governance(request: Request):
+        from .installation import OWNERS_KEY
+
+        identity = me(request)
+        factories = []
+        for record in i.records.values():
+            if record["id"] in i.instances and (
+                identity.admin or i.membership(record["id"], identity.id)
+            ):
+                g = i.instances[record["id"]][0].governance
+                factories.append(
+                    {
+                        "id": record["id"],
+                        "name": record["name"],
+                        "profile": g.profile(),
+                        "decisions": g.decisions.all(),
+                    }
+                )
+        return {
+            "owner": i.is_governance_owner(identity),
+            "owners": i.store.meta(OWNERS_KEY) or [],
+            "gated": i.policy.strict,
+            "decisions": i.decisions.all(),
+            "factories": factories,
+        }
+
+    @app.post("/workplace/api/installation/governance/decisions/{decision_id}")
+    def installation_decide(
+        decision_id: str, body: GovernanceDecision, request: Request
+    ):
+        identity = me(request)
+        if not i.is_governance_owner(identity):
+            raise HTTPException(403, "Only the governance owner decides")
+        if i.decisions.get(decision_id):
+            return i.decisions.decide(
+                decision_id, identity.username, body.approve, body.reasoning
+            )
+        for w, _ in i.instances.values():
+            if w.governance.decisions.get(decision_id):
+                return w.governance.decisions.decide(
+                    decision_id, identity.username, body.approve, body.reasoning
+                )
+        raise HTTPException(404, "No such decision")
+
+    @app.get("/workplace/api/installation/inventory")
+    def inventory(request: Request):
+        from .governance_reports import card_markdown
+
+        me(request)
+        cards = i.cards()
+        return {"cards": cards, "markdown": "\n".join(card_markdown(c) for c in cards)}
+
+    @app.get("/workplace/api/installation/reviews")
+    def reviews(request: Request):
+        me(request)
+        return {
+            "calendar": i.reviews.calendar(i.governance_factories()),
+            "completed": i.reviews.completions(),
+        }
+
+    @app.post("/workplace/api/installation/reviews")
+    def complete_review(body: ReviewDone, request: Request):
+        from .governance_reports import REVIEWS
+
+        identity = me(request)
+        performer = {r[0]: r[3] for r in REVIEWS}.get(body.kind)
+        if performer is None:
+            raise HTTPException(422, "Unknown review")
+        allowed = (
+            identity.admin
+            if performer == "administrator"
+            else i.is_governance_owner(identity)
+        )
+        if not allowed:
+            raise HTTPException(403, f"The {performer} records this review")
+        return i.reviews.complete(
+            body.kind, identity.username, body.result, body.factory
+        )
+
+    def _may_report(identity):
+        if not (identity.admin or i.is_governance_owner(identity)):
+            raise HTTPException(
+                403, "Reports are for administrators and the governance owner"
+            )
+
+    @app.get("/workplace/api/installation/quarterly-report")
+    def quarterly(quarter: str, request: Request):
+        from .governance_reports import quarterly_report
+
+        identity = me(request)
+        _may_report(identity)
+        try:
+            text = quarterly_report(
+                i.store.meta("installation.name") or "Workplace",
+                quarter,
+                i.governance_sources(),
+                i.cards(),
+                i.reviews.calendar(i.governance_factories()),
+                i.reviews.completions(),
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        i.audit_log.record(
+            "governance.report_generated", actor=identity.username, quarter=quarter
+        )
+        return Response(text, media_type="text/markdown")
+
+    @app.get("/workplace/api/installation/evidence")
+    def evidence(request: Request, since: float = 0, until: float = 0):
+        import time as _time
+
+        from .governance_reports import (
+            evidence_export,
+            quarter_bounds,
+            quarterly_report,
+        )
+
+        identity = me(request)
+        _may_report(identity)
+        until = until or _time.time()
+        quarters = {}
+        year = _time.gmtime(since or until).tm_year
+        for y in range(year, _time.gmtime(until).tm_year + 1):
+            for q in range(1, 5):
+                name = f"{y}Q{q}"
+                start, end = quarter_bounds(name)
+                if start < until and end > since:
+                    quarters[name] = quarterly_report(
+                        i.store.meta("installation.name") or "Workplace",
+                        name,
+                        i.governance_sources(),
+                        i.cards(),
+                        i.reviews.calendar(i.governance_factories()),
+                        i.reviews.completions(),
+                    )
+        i.audit_log.record(
+            "evidence.exported", actor=identity.username, since=since, until=until
+        )
+        return evidence_export(
+            i.governance_sources(),
+            i.cards(),
+            i.reviews.calendar(i.governance_factories()),
+            i.reviews.completions(),
+            since,
+            until,
+            quarters,
+        )
+
+    @app.put("/workplace/api/installation/governance-owners")
+    def governance_owners(body: GovernanceOwners, request: Request):
+        identity = admin(request)
+        try:
+            i.set_governance_owners(identity, body.account_ids)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {"owners": body.account_ids}
 
     @app.get("/workplace/api/installation/access-review")
     def access_review(request: Request):

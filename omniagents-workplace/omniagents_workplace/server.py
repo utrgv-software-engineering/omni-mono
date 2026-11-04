@@ -2133,6 +2133,9 @@ def create_app(
         from .factory_models import ModelsError
 
         models, _ = _factory(request)
+        workplace.governance.require_model_owner(
+            me(request), f"Added the {body.kind} model {body.model.get('id', '')}"
+        )
         from .factory_models import normalize_compatible_base_url
 
         workplace.governance.require_model(
@@ -2162,6 +2165,9 @@ def create_app(
         from .factory_models import ModelsError
 
         models, _ = _factory(request)
+        workplace.governance.require_model_owner(
+            me(request), f"Removed the model provider {name}"
+        )
         try:
             models.remove_provider(name)
         except ModelsError as exc:
@@ -2173,6 +2179,9 @@ def create_app(
         from .factory_models import FactoryRpcError, ModelsError
 
         models, rpc = _factory(request)
+        workplace.governance.require_model_owner(
+            me(request), f"Made {body.model} the default model"
+        )
         try:
             models.set_default(body.model)
         except ModelsError as exc:
@@ -2191,6 +2200,9 @@ def create_app(
 
         _, rpc = _factory(request)
         workplace.governance.require_model("openai-oauth", None)
+        workplace.governance.require_model_owner(
+            me(request), "Signed the factory in to ChatGPT"
+        )
         if rpc is None:
             raise HTTPException(
                 status_code=422, detail="workplace.yml's factory: has no url"

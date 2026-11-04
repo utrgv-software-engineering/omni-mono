@@ -27,16 +27,50 @@ from pydantic import BaseModel, Field
 from .accounts import admin, me
 
 PROFILE_KEY = "factory.profile"
+#: A standalone Workplace's governance owners (an installation names its own).
+OWNERS_KEY = "governance.owners"
 SERVICES_KEY = "allowed_services"
 CLASSES = ("published", "controlled", "confidential")
 RESTRICTED = {"controlled", "confidential"}
 KINDS = ("model", "integration", "mcp")
 
 
+#: Classifications from least to most controlled.
+RANK = {name: rank for rank, name in enumerate(CLASSES)}
+LABELS = ("classification", "heightened_risk")
+DESCRIPTIONS = ("purpose", "owner", "sponsor", "data", "affected", "decides")
+
+
 class Profile(BaseModel):
     classification: str
+    #: Whether the factory may materially affect people's rights,
+    #: opportunities, safety or access to services (UTRGV's heightened risk).
+    heightened_risk: Optional[bool] = None
     purpose: str = Field(default="", max_length=2000)
     owner: str = Field(default="", max_length=200)
+    #: The clinical or business leader the factory is built for.
+    sponsor: str = Field(default="", max_length=200)
+    #: Intended use: the data it touches, who is affected, and what the AI
+    #: does and does not decide.
+    data: str = Field(default="", max_length=2000)
+    affected: str = Field(default="", max_length=2000)
+    decides: str = Field(default="", max_length=2000)
+    #: Why, for a change the governance owner decides (lowering).
+    reason: str = Field(default="", max_length=2000)
+
+
+def lowers(before: dict, after: dict) -> bool:
+    """Whether a label change removes controls: a lower classification, risk
+    taken away, or anything below the most controlled chosen at first."""
+    old, new = before.get("classification"), after.get("classification")
+    if new != old and (old is None and new != "confidential"):
+        return True
+    if old is not None and RANK[new] < RANK[old]:
+        return True
+    old_risk, new_risk = before.get("heightened_risk"), after.get("heightened_risk")
+    if new_risk is False and old_risk is not False:
+        return True
+    return False
 
 
 class Service(BaseModel):
@@ -53,6 +87,22 @@ class Service(BaseModel):
 
 class Services(BaseModel):
     services: List[Service]
+    reason: str = Field(default="", max_length=2000)
+
+
+class Decision(BaseModel):
+    approve: bool
+    reasoning: str = Field(default="", max_length=2000)
+
+
+class Owners(BaseModel):
+    account_ids: List[str]
+
+
+class ReviewDone(BaseModel):
+    kind: str
+    result: str = Field(min_length=1, max_length=2000)
+    factory: Optional[str] = None
 
 
 def validate_services(services: List[Service]) -> List[dict]:
@@ -98,9 +148,33 @@ def runtime_entries(services: List[dict]) -> dict:
 
 class Governance:
     def __init__(self, workplace: Any) -> None:
+        from .decisions import Decisions
+
         self.w = workplace
         #: An installation's allowed services, for all of its factories.
         self.installation_services: Optional[Callable[[], List[dict]]] = None
+        #: Whether an account is the governance owner (an installation sets it).
+        self.is_owner: Callable[[Any], bool] = lambda account: (
+            account.id in (self.w.store.meta(OWNERS_KEY) or [])
+        )
+        self.decisions = Decisions(workplace.store, workplace.audit_log)
+        #: The factory's project directory, when an installation knows it.
+        self.project: Optional[Path] = None
+        self.decisions.appliers["labels"] = self._apply_labels
+        self.decisions.appliers["allowed_services"] = self._apply_services
+
+    def project_dir(self) -> Optional[Path]:
+        """The factory's project (an installation's record, else beside workplace.yml)."""
+        if self.project is not None:
+            return self.project
+        return self.w.factory_config.root if self.w.factory_config else None
+
+    def gated(self) -> bool:
+        """Whether decisions wait for the governance owner (the strict policy)."""
+        return self.w.policy.strict
+
+    def factory_id(self) -> Optional[str]:
+        return getattr(self.w, "installation_factory_id", None)
 
     # -- classification ------------------------------------------------------
 
@@ -117,31 +191,84 @@ class Governance:
         """Every definition change is a reviewed pull request."""
         return self.w.policy.strict and self.restricted()
 
+    def heightened_risk(self) -> Optional[bool]:
+        return self.profile().get("heightened_risk")
+
     def startable(self) -> Optional[str]:
         """Why the factory may not start, or ``None``."""
-        if self.w.policy.strict and not self.classification():
-            return "Classify the factory's data before starting it"
+        if self.w.policy.strict and (
+            not self.classification() or self.heightened_risk() is None
+        ):
+            return "Classify the factory's data and risk before starting it"
         return None
 
+    def _apply_labels(self, labels: dict) -> None:
+        profile = {**self.profile(), **{k: labels[k] for k in LABELS if k in labels}}
+        self.w.store.set_meta(PROFILE_KEY, profile)
+
     def set_profile(self, account: Any, body: Profile) -> dict:
+        """Descriptions change at once; so does raising a label. Lowering one is
+        the governance owner's decision: anyone else's waits for them."""
+        from .decisions import decide_or_propose
+
         if body.classification not in CLASSES:
             raise HTTPException(
                 422, "Classify as published, controlled or confidential"
             )
         before = self.profile()
-        after = {
+        descriptions = {k: getattr(body, k).strip() for k in DESCRIPTIONS}
+        if any(before.get(k, "") != v for k, v in descriptions.items()):
+            self.w.store.set_meta(PROFILE_KEY, {**before, **descriptions})
+            self.w.audit_log.record(
+                "factory.profile_changed",
+                actor=account.username,
+                before={k: before.get(k, "") for k in DESCRIPTIONS},
+                after=descriptions,
+            )
+        labels = {
             "classification": body.classification,
-            "purpose": body.purpose.strip(),
-            "owner": body.owner.strip(),
+            "heightened_risk": (
+                body.heightened_risk
+                if body.heightened_risk is not None
+                else before.get("heightened_risk")
+            ),
         }
-        self.w.store.set_meta(PROFILE_KEY, after)
-        self.w.audit_log.record(
-            "factory.profile_changed",
-            actor=account.username,
-            before=before,
-            after=after,
-        )
-        return self.view()
+        old = {k: before.get(k) for k in LABELS}
+        pending = None
+        if labels != old:
+            change = {"before": old, **labels}
+            summary = (
+                f"Classification {old['classification'] or 'unset'} → "
+                f"{labels['classification']}; heightened risk "
+                f"{old['heightened_risk']} → {labels['heightened_risk']}"
+            )
+            if lowers(old, labels):
+                record = decide_or_propose(
+                    self.decisions,
+                    gated=self.gated(),
+                    owner=self.is_owner(account),
+                    account=account,
+                    kind="labels",
+                    summary=summary,
+                    change=change,
+                    reason=body.reason,
+                    apply=lambda: self._apply_labels(labels),
+                    factory=self.factory_id(),
+                )
+                pending = record if record["status"] == "pending" else None
+            else:
+                # Raising only adds controls: never gated, always recorded.
+                self._apply_labels(labels)
+                self.decisions.record(
+                    kind="labels",
+                    summary=summary,
+                    change=change,
+                    proposer=account.username,
+                    reason=body.reason,
+                    decider=account.username,
+                    factory=self.factory_id(),
+                )
+        return {**self.view(), "pending": pending}
 
     # -- allowed services ----------------------------------------------------
 
@@ -150,21 +277,53 @@ class Governance:
             return self.installation_services()
         return self.w.store.meta(SERVICES_KEY) or []
 
-    def set_services(self, account: Any, services: List[Service]) -> List[dict]:
+    def _apply_services(self, change: dict) -> None:
+        self.w.store.set_meta(SERVICES_KEY, change["after"])
+        self.w.audit_log.record(
+            "allowed_services.changed", before=change["before"], after=change["after"]
+        )
+
+    def set_services(
+        self, account: Any, services: List[Service], reason: str = ""
+    ) -> dict:
+        from .decisions import decide_or_propose
+
         if self.installation_services is not None:
             raise HTTPException(
                 409, "The installation keeps this factory's allowed services"
             )
-        before = self.services()
-        after = validate_services(services)
-        self.w.store.set_meta(SERVICES_KEY, after)
-        self.w.audit_log.record(
-            "allowed_services.changed",
-            actor=account.username,
-            before=before,
-            after=after,
+        change = {"before": self.services(), "after": validate_services(services)}
+        record = decide_or_propose(
+            self.decisions,
+            gated=self.gated(),
+            owner=self.is_owner(account),
+            account=account,
+            kind="allowed_services",
+            summary=f"Allowed services: {len(change['after'])} service(s)",
+            change=change,
+            reason=reason,
+            apply=lambda: self._apply_services(change),
         )
-        return after
+        return {
+            "services": self.services(),
+            "pending": record if record["status"] == "pending" else None,
+        }
+
+    def require_model_owner(self, account: Any, summary: str) -> None:
+        """The factory's models are the governance owner's to change (strict)."""
+        if self.gated() and not self.is_owner(account):
+            raise HTTPException(
+                403, "Only the governance owner changes the factory's models"
+            )
+        self.decisions.record(
+            kind="model",
+            summary=summary,
+            change={},
+            proposer=account.username,
+            decider=account.username,
+            status="decided" if self.gated() else "applied",
+            factory=self.factory_id(),
+        )
 
     def environ(self) -> dict:
         """The allowed-services environment for the runtime (strict policy)."""
@@ -209,6 +368,7 @@ class Governance:
             "strict": self.w.policy.strict,
             "review_forced": self.review_forced(),
             "startable": self.startable() is None,
+            "pending": [d for d in self.decisions.pending() if d["kind"] == "labels"],
         }
 
     def router(self) -> APIRouter:
@@ -233,7 +393,50 @@ class Governance:
 
         @router.put("/workplace/api/allowed-services")
         def save_services(body: Services, request: Request):
-            return {"services": self.set_services(admin(request), body.services)}
+            return self.set_services(admin(request), body.services, body.reason)
+
+        @router.get("/workplace/api/factory/system-card")
+        def system_card(request: Request):
+            from .governance_reports import card_markdown, system_card as card_of
+
+            me(request)
+            card = card_of(
+                self.w, self.w.slack.name or "The factory", self.project_dir()
+            )
+            return {"card": card, "markdown": card_markdown(card)}
+
+        @router.get("/workplace/api/governance")
+        def governance(request: Request):
+            account = me(request)
+            return {
+                "decisions": self.decisions.all(),
+                "owner": self.is_owner(account),
+                "gated": self.gated(),
+            }
+
+        @router.post("/workplace/api/governance/decisions/{decision_id}")
+        def decide(decision_id: str, body: Decision, request: Request):
+            account = me(request)
+            if not self.is_owner(account):
+                raise HTTPException(403, "Only the governance owner decides")
+            return self.decisions.decide(
+                decision_id, account.username, body.approve, body.reasoning
+            )
+
+        @router.put("/workplace/api/governance/owners")
+        def owners(body: Owners, request: Request):
+            account = admin(request)
+            if getattr(self.w, "installation_factory_id", None):
+                raise HTTPException(409, "The installation names the governance owner")
+            before = self.w.store.meta(OWNERS_KEY) or []
+            self.w.store.set_meta(OWNERS_KEY, body.account_ids)
+            self.w.audit_log.record(
+                "governance.owners_changed",
+                actor=account.username,
+                before=before,
+                after=body.account_ids,
+            )
+            return {"owners": body.account_ids}
 
         return router
 
@@ -265,6 +468,60 @@ def personal_data_findings(diff: str) -> List[str]:
     )
 
 
+GOVERNANCE_CHECK = "governance"
+#: What makes a change to the factory's repository material: its model catalog;
+#: these sections of project.yml; these settings of an agent.
+PROJECT_SECTIONS = ("security", "integrations", "approvals", "mcp_servers", "paths")
+AGENT_SETTINGS = (
+    "model",
+    "model_name",
+    "mcp_servers",
+    "security",
+    "skip_approvals",
+    "use_safe_agent",
+    "human_approval_tools",
+)
+
+
+def material_changes(bare: Any, base: str, head: str) -> List[str]:
+    """What in a change is material: file and section names, or ``[]``."""
+    import re
+
+    import yaml
+
+    def load(rev: str, path: str) -> dict:
+        found = bare.blob(rev, path)
+        if not found:
+            return {}
+        try:
+            value = yaml.safe_load(found[1]) or {}
+        except yaml.YAMLError:
+            return {"<unparsable>": True}
+        return value if isinstance(value, dict) else {}
+
+    diff = bare.diff(base, head)
+    paths = set(re.findall(r"^\+\+\+ b/(.+)$", diff, re.M))
+    paths |= set(re.findall(r"^--- a/(.+)$", diff, re.M))
+    out = []
+    for path in sorted(paths):
+        name = path.rsplit("/", 1)[-1]
+        if name == "models.yml":
+            out.append(path)
+        elif path == "project.yml":
+            before, after = load(base, path), load(head, path)
+            out += [
+                f"project.yml: {k}"
+                for k in PROJECT_SECTIONS
+                if before.get(k) != after.get(k)
+            ]
+        elif name == "agent.yml":
+            before, after = load(base, path), load(head, path)
+            out += [
+                f"{path}: {k}" for k in AGENT_SETTINGS if before.get(k) != after.get(k)
+            ]
+    return out
+
+
 def install_repository_rules(
     workplace: Any, factory_repositories: Callable[[], set]
 ) -> None:
@@ -283,6 +540,39 @@ def install_repository_rules(
         )
 
     cache: dict = {}
+
+    def governance(repo: Any, issue: Any) -> dict:
+        """A material change needs the governance owner's approval (strict)."""
+        if not workplace.governance.gated() or not is_factory_repository(repo):
+            return {}
+        head, base = github.head_sha(repo, issue), github.base_sha(repo, issue)
+        changed = material_changes(repo.bare, base, head)
+        if not changed:
+            return {}
+        decisions = workplace.governance.decisions
+        key = f"pull_request:{repo.full_name}#{issue.number}@{head}"
+        record = decisions.by_key(key)
+        if record is None:
+            record = decisions.record(
+                kind="pull_request",
+                summary=f"{repo.full_name}#{issue.number} {issue.title}: "
+                + ", ".join(changed),
+                change={
+                    "repository": repo.full_name,
+                    "number": issue.number,
+                    "head": head,
+                    "material": changed,
+                },
+                proposer=issue.user,
+                status="pending",
+                factory=workplace.governance.factory_id(),
+                key=key,
+            )
+        return {
+            GOVERNANCE_CHECK: {"pending": "pending", "decided": "success"}.get(
+                record["status"], "failure"
+            )
+        }
 
     def personal_data(repo: Any, issue: Any) -> dict:
         if workplace.governance.classification() != "confidential":
@@ -306,3 +596,4 @@ def install_repository_rules(
     github.person_review = is_factory_repository
     github.person = is_person
     github.extra_checks.append(personal_data)
+    github.extra_checks.append(governance)

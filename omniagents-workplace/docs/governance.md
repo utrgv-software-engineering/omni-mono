@@ -61,3 +61,46 @@ requests on:
 
 Both apply to Workplace's stand-in GitHub. On real GitHub, set branch protection
 to require a review and keep the factory's account out of the bypass list.
+
+## Governance owner and decisions
+
+Health Affairs governs its own AI risk. Installation administrators name the
+**governance owner** (Factories page → Governance). The governance owner decides
+technical governance directly, with a written reasoning, and Workplace records
+every decision: what changed, who proposed it and why, who decided, their
+reasoning, and when. Records are never edited once decided.
+
+| Change | Under the strict policy |
+| --- | --- |
+| Raising a classification, or marking a factory heightened-risk | Immediate, by a factory administrator; recorded |
+| Lowering either, or choosing anything below Confidential and heightened-risk at first | The governance owner's decision; anyone else's proposal waits for them |
+| Allowed services | The governance owner's decision |
+| A factory's models (the Factory model page) | The governance owner only |
+| A pull request on the factory's repository that changes its models, the `security`, `integrations`, `approvals`, `mcp_servers` or `paths` sections of `project.yml`, or an agent's model, MCP or approval settings | Merges only once the governance owner approves it: a required `governance` check |
+
+Under the open policy nothing waits, but decisions are still recorded. Every
+factory needs an explicit classification and risk level before it starts under
+the strict policy; neither has a default.
+
+Each factory also records its **sponsor**, the clinical or business leader it is
+built for, and its **intended use**: the data it touches, who is affected, and
+what the AI does and does not decide.
+
+## Showing the work
+
+- **System card** (Factory settings → Governance): generated from the factory's
+  settings, decisions and configuration; copy it into the AI Inventory.
+- **AI Inventory export** (Factories page): every factory's card.
+- **Scheduled reviews**: restore and kill-switch drills every quarter
+  (administrators); the access review and each factory's risk review every year,
+  the inventory update every 24 months, and heightened-risk reassessments every
+  six months (governance owner). Overdue reviews are flagged and posted to the
+  Teams channel once a day.
+- **Quarterly report**: plain language, for Health Affairs leadership: decisions
+  and their reasoning (lowered classifications called out), material changes,
+  factories with their sponsors, kill-switch use, alerts, and reviews done and
+  overdue.
+- **Evidence export**: one JSON for a date range with the inventory, decisions,
+  quarterly reports, change history, kill-switch events, reviews and the audit
+  log. Metadata only, never conversation content or files. Generating a report
+  or export is itself audited.

@@ -22,6 +22,8 @@ from .store import Store
 STOP_KEY = "installation.stop"
 #: The models, integrations and MCP servers every factory may use.
 SERVICES_KEY = "installation.allowed_services"
+#: Who governs AI risk for every factory (identity ids).
+OWNERS_KEY = "installation.governance_owners"
 
 
 class FactoryAccounts:
@@ -94,6 +96,13 @@ class Installation:
         #: What the deployment requires (``WORKPLACE_POLICY``); every factory's too.
         self.policy = Policy()
         self.audit_log = AuditLog(self.store)
+        from .decisions import Decisions
+
+        self.decisions = Decisions(self.store, self.audit_log)
+        self.decisions.appliers["allowed_services"] = self._apply_services
+        from .governance_reports import Reviews
+
+        self.reviews = Reviews(self.store, self.audit_log)
         from .notifications import Notifier
 
         self.notifier = Notifier()
@@ -429,6 +438,8 @@ class Installation:
                 w.governance.installation_services = lambda: (
                     self.store.meta(SERVICES_KEY) or []
                 )
+                w.governance.is_owner = self.is_governance_owner
+                w.governance.project = Path(record["project"])
                 w.kill_switch.installation_admin = self.installation_admin
 
                 async def stop_changed(stopped, factory_id=factory_id):
@@ -567,19 +578,96 @@ class Installation:
             *(w.kill_switch.changed() for w, _ in list(self.instances.values()))
         )
 
-    def set_allowed_services(self, identity, services):
-        from .governance import validate_services
+    def governance_factories(self):
+        return [
+            {
+                "id": record["id"],
+                "name": record["name"],
+                "heightened_risk": self.instances[record["id"]][
+                    0
+                ].governance.heightened_risk(),
+            }
+            for record in self.records.values()
+            if record["id"] in self.instances
+        ]
 
-        before = self.store.meta(SERVICES_KEY) or []
-        after = validate_services(services)
-        self.store.set_meta(SERVICES_KEY, after)
+    def cards(self):
+        from .governance_reports import system_card
+
+        return [
+            system_card(
+                self.instances[record["id"]][0], record["name"], Path(record["project"])
+            )
+            for record in self.records.values()
+            if record["id"] in self.instances
+        ]
+
+    def governance_sources(self):
+        sources = [
+            {
+                "name": "installation",
+                "decisions": self.decisions,
+                "audit_log": self.audit_log,
+            }
+        ]
+        for record in self.records.values():
+            if record["id"] in self.instances:
+                w = self.instances[record["id"]][0]
+                sources.append(
+                    {
+                        "name": record["name"],
+                        "decisions": w.governance.decisions,
+                        "audit_log": w.audit_log,
+                    }
+                )
+        return sources
+
+    def is_governance_owner(self, account):
+        identity = self.accounts.by_username(account.username)
+        return bool(
+            identity
+            and not identity.disabled
+            and identity.id in (self.store.meta(OWNERS_KEY) or [])
+        )
+
+    def set_governance_owners(self, identity, account_ids):
+        unknown = [a for a in account_ids if a not in self.accounts.accounts]
+        if unknown:
+            raise ValueError("Unknown account")
+        before = self.store.meta(OWNERS_KEY) or []
+        self.store.set_meta(OWNERS_KEY, list(account_ids))
         self.audit_log.record(
-            "allowed_services.changed",
+            "governance.owners_changed",
             actor=identity.username,
             before=before,
-            after=after,
+            after=list(account_ids),
         )
-        return after
+
+    def _apply_services(self, change):
+        self.store.set_meta(SERVICES_KEY, change["after"])
+        self.audit_log.record(
+            "allowed_services.changed", before=change["before"], after=change["after"]
+        )
+
+    def set_allowed_services(self, identity, services, reason=""):
+        from .decisions import decide_or_propose
+        from .governance import validate_services
+
+        change = {
+            "before": self.store.meta(SERVICES_KEY) or [],
+            "after": validate_services(services),
+        }
+        return decide_or_propose(
+            self.decisions,
+            gated=self.policy.strict,
+            owner=self.is_governance_owner(identity),
+            account=identity,
+            kind="allowed_services",
+            summary=f"Allowed services: {len(change['after'])} service(s)",
+            change=change,
+            reason=reason,
+            apply=lambda: self._apply_services(change),
+        )
 
     async def resume_all(self, identity, reason):
         if not self.store.meta(STOP_KEY):
@@ -686,6 +774,17 @@ class Installation:
                 for factory_id, record in self.records.items():
                     if (record.get("deployment") or {}).get("enabled"):
                         await self.deployments.start(factory_id)
+                from .governance_reports import notify_overdue
+
+                reminders = asyncio.create_task(
+                    notify_overdue(
+                        lambda: self.reviews.calendar(self.governance_factories()),
+                        self.notifier,
+                        self.store,
+                        "installation.reviews_reminded",
+                    )
+                )
+                stack.callback(reminders.cancel)
                 try:
                     yield
                 finally:

@@ -4,7 +4,7 @@ import { Button } from "@omniagents/ui/button";
 import { Input } from "@omniagents/ui/input";
 import { NativeSelect, NativeSelectOption } from "@omniagents/ui/native-select";
 import { toast } from "sonner";
-import { factoryProfile, type AllowedService } from "./api";
+import { factoryProfile, governance, type AllowedService, type GovernanceDecision } from "./api";
 
 const CLASSES: Record<string, string> = {
   published: "Published: public information",
@@ -12,40 +12,94 @@ const CLASSES: Record<string, string> = {
   confidential: "Confidential: PHI, student records and other personal data",
 };
 
-/** Classification, purpose and owner (factory administrators). */
+type ProfileFields = {
+  classification: string;
+  heightened_risk: string;
+  purpose: string;
+  owner: string;
+  sponsor: string;
+  data: string;
+  affected: string;
+  decides: string;
+  reason: string;
+};
+
+const emptyProfile: ProfileFields = {
+  classification: "",
+  heightened_risk: "",
+  purpose: "",
+  owner: "",
+  sponsor: "",
+  data: "",
+  affected: "",
+  decides: "",
+  reason: "",
+};
+
+/** Classification and risk, purpose, owner, sponsor and intended use. Raising a
+ * label takes effect at once; lowering one is the governance owner's decision. */
 export function FactoryProfileForm({ onSaved }: { onSaved?: () => void }) {
-  const [classification, setClassification] = useState("");
-  const [purpose, setPurpose] = useState("");
-  const [owner, setOwner] = useState("");
+  const [fields, setFields] = useState<ProfileFields>(emptyProfile);
   const [forced, setForced] = useState(false);
+  const [pending, setPending] = useState<string | null>(null);
+  const set = (change: Partial<ProfileFields>) => setFields((f) => ({ ...f, ...change }));
   useEffect(() => {
     void factoryProfile.get().then((view) => {
-      setClassification(view.profile.classification ?? "");
-      setPurpose(view.profile.purpose ?? "");
-      setOwner(view.profile.owner ?? "");
+      const p = view.profile;
+      setFields({
+        ...emptyProfile,
+        classification: p.classification ?? "",
+        heightened_risk: p.heightened_risk == null ? "" : p.heightened_risk ? "yes" : "no",
+        purpose: p.purpose ?? "",
+        owner: p.owner ?? "",
+        sponsor: p.sponsor ?? "",
+        data: p.data ?? "",
+        affected: p.affected ?? "",
+        decides: p.decides ?? "",
+      });
       setForced(view.review_forced);
+      setPending(view.pending[0]?.summary ?? null);
     });
   }, []);
+  const text = (key: keyof ProfileFields, label: string, max = 2000) => (
+    <label className="block space-y-1">
+      <span className="text-sm font-medium">{label}</span>
+      <Input value={fields[key]} onChange={(e) => set({ [key]: e.target.value })} maxLength={max} />
+    </label>
+  );
   return (
     <form
       className="space-y-4"
       onSubmit={(event) => {
         event.preventDefault();
         factoryProfile
-          .save({ classification, purpose, owner })
+          .save({
+            ...fields,
+            heightened_risk: fields.heightened_risk === "" ? null : fields.heightened_risk === "yes",
+          })
           .then((view) => {
             setForced(view.review_forced);
-            toast.success("Saved");
-            onSaved?.();
+            if (view.pending) {
+              setPending(view.pending.summary);
+              toast.success("Saved. The lower classification waits for the governance owner.");
+            } else {
+              toast.success("Saved");
+              onSaved?.();
+            }
           })
           .catch((e: unknown) => toast.error((e as Error).message));
       }}
     >
+      {pending && (
+        <p role="status" className="rounded-md border p-2 text-sm">
+          Waiting for the governance owner: {pending}
+        </p>
+      )}
       <label className="block space-y-1">
         <span className="text-sm font-medium">Data classification</span>
         <NativeSelect
-          value={classification}
-          onChange={(e) => setClassification(e.target.value)}
+          value={fields.classification}
+          onChange={(e) => set({ classification: e.target.value })}
           required
           aria-label="Data classification"
         >
@@ -62,22 +116,105 @@ export function FactoryProfileForm({ onSaved }: { onSaved?: () => void }) {
         </span>
       </label>
       <label className="block space-y-1">
-        <span className="text-sm font-medium">Purpose</span>
-        <Input value={purpose} onChange={(e) => setPurpose(e.target.value)} maxLength={2000} />
+        <span className="text-sm font-medium">Heightened risk</span>
+        <NativeSelect
+          value={fields.heightened_risk}
+          onChange={(e) => set({ heightened_risk: e.target.value })}
+          required
+          aria-label="Heightened risk"
+        >
+          <NativeSelectOption value="">Choose…</NativeSelectOption>
+          <NativeSelectOption value="yes">Yes: it may materially affect people&apos;s rights, opportunities, safety or access to services</NativeSelectOption>
+          <NativeSelectOption value="no">No: it prepares work, and people decide</NativeSelectOption>
+        </NativeSelect>
       </label>
-      <label className="block space-y-1">
-        <span className="text-sm font-medium">Owner</span>
-        <Input value={owner} onChange={(e) => setOwner(e.target.value)} maxLength={200} />
-      </label>
+      {text("purpose", "Purpose")}
+      {text("owner", "Owner", 200)}
+      {text("sponsor", "Sponsor: the clinical or business leader it is built for", 200)}
+      {text("data", "Data it touches")}
+      {text("affected", "Who is affected")}
+      {text("decides", "What the AI does and does not decide")}
+      {text("reason", "Reason (needed to lower the classification or risk)")}
       {forced && (
         <p className="text-sm text-muted-foreground">
           Every change to this factory&apos;s definition arrives by a reviewed pull request.
         </p>
       )}
-      <Button type="submit" disabled={!classification}>
+      <Button type="submit" disabled={!fields.classification || !fields.heightened_risk}>
         Save
       </Button>
     </form>
+  );
+}
+
+function DecisionList({
+  decisions,
+  owner,
+  decide,
+}: {
+  decisions: GovernanceDecision[];
+  owner: boolean;
+  decide: (id: string, approve: boolean, reasoning: string) => Promise<unknown>;
+}) {
+  if (!decisions.length) return <p className="text-sm text-muted-foreground">No decisions yet.</p>;
+  return (
+    <ul className="divide-y rounded-md border text-sm">
+      {[...decisions].reverse().map((d) => (
+        <li key={d.id} className="flex flex-wrap items-center gap-2 p-2">
+          <span className="flex-1">
+            <span className="font-medium">{d.summary}</span>
+            <span className="block text-xs text-muted-foreground">
+              {d.status === "pending"
+                ? `Proposed by ${d.proposed_by ?? "—"}${d.reason ? `: ${d.reason}` : ""}`
+                : `${d.status === "declined" ? "Declined" : "Decided"} by ${d.decided_by ?? "—"}${d.reasoning ? `: ${d.reasoning}` : ""}`}
+            </span>
+          </span>
+          {d.status === "pending" && owner && (
+            <>
+              <Button size="sm" onClick={() => {
+                const reasoning = window.prompt("Your reasoning") ?? "";
+                void decide(d.id, true, reasoning).catch((e: unknown) => toast.error((e as Error).message));
+              }}>Approve</Button>
+              <Button size="sm" variant="outline" onClick={() => {
+                const reasoning = window.prompt("Why decline?") ?? "";
+                void decide(d.id, false, reasoning).catch((e: unknown) => toast.error((e as Error).message));
+              }}>Decline</Button>
+            </>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** A factory's decisions and its system card (Factory settings → Governance). */
+export function FactoryGovernance() {
+  const [view, setView] = useState<{ decisions: GovernanceDecision[]; owner: boolean } | null>(null);
+  const [card, setCard] = useState("");
+  const load = () => {
+    void governance.get().then(setView);
+    void governance.card().then((r) => setCard(r.markdown));
+  };
+  useEffect(load, []);
+  if (!view) return null;
+  return (
+    <div className="space-y-4">
+      <section className="space-y-2">
+        <h3 className="font-medium">Decisions</h3>
+        <DecisionList
+          decisions={view.decisions}
+          owner={view.owner}
+          decide={(id, approve, reasoning) => governance.decide(id, approve, reasoning).then(load)}
+        />
+      </section>
+      <section className="space-y-2">
+        <h3 className="font-medium">System card</h3>
+        <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md border p-2 text-xs">{card}</pre>
+        <Button variant="outline" size="sm" onClick={() => void navigator.clipboard.writeText(card).then(() => toast.success("Copied"))}>
+          Copy for the AI Inventory
+        </Button>
+      </section>
+    </div>
   );
 }
 

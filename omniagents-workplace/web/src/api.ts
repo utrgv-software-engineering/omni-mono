@@ -1703,18 +1703,53 @@ export const factoryStop = {
   resume: (reason: string) => post<StopView>("/factory/resume", { reason }),
 };
 
+export interface GovernanceDecision {
+  id: string;
+  kind: string;
+  summary: string;
+  status: "pending" | "decided" | "declined" | "applied";
+  proposed_by: string | null;
+  proposed_at: number;
+  reason: string;
+  decided_by: string | null;
+  decided_at: number | null;
+  reasoning: string;
+}
+
+export interface FactoryProfile {
+  classification?: string;
+  heightened_risk?: boolean | null;
+  purpose?: string;
+  owner?: string;
+  sponsor?: string;
+  data?: string;
+  affected?: string;
+  decides?: string;
+}
+
 export interface FactoryProfileView {
-  profile: { classification?: string; purpose?: string; owner?: string };
+  profile: FactoryProfile;
   classes: string[];
   strict: boolean;
   review_forced: boolean;
   startable: boolean;
+  pending: GovernanceDecision[];
 }
 
 export const factoryProfile = {
   get: () => call<FactoryProfileView>("/factory/profile"),
-  save: (profile: { classification: string; purpose: string; owner: string }) =>
-    call<FactoryProfileView>("/factory/profile", { method: "PUT", body: JSON.stringify(profile) }),
+  save: (profile: Omit<FactoryProfile, "heightened_risk"> & { heightened_risk: boolean | null; reason: string }) =>
+    call<Omit<FactoryProfileView, "pending"> & { pending: GovernanceDecision | null }>(
+      "/factory/profile",
+      { method: "PUT", body: JSON.stringify(profile) },
+    ),
+};
+
+export const governance = {
+  get: () => call<{ decisions: GovernanceDecision[]; owner: boolean; gated: boolean }>("/governance"),
+  decide: (id: string, approve: boolean, reasoning: string) =>
+    post<GovernanceDecision>(`/governance/decisions/${id}`, { approve, reasoning }),
+  card: () => call<{ card: unknown; markdown: string }>("/factory/system-card"),
 };
 
 export interface AllowedService {

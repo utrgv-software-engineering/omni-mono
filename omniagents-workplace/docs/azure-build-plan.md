@@ -339,7 +339,14 @@ Build, in omniagents-workplace unless noted:
   factories, repeated sign-in failures and policy-rejected changes are alert
   events, posted to the installation's Teams channel (workstream 2).
 
-## 9. Governance (L)
+## 9. Governance (L) — done
+
+Built 2026-11-04; see [Classification and allowed services](governance.md).
+Where it differs from the design below: material changes made on the Factory
+model page are refused for anyone but the governance owner, rather than queued;
+scheduled reviews, the quarterly report and the evidence export are the
+installation's (a standalone Workplace has decisions and system cards, but no
+calendar or reports).
 
 Health Affairs makes governance decisions in Workplace and Workplace keeps the
 evidence ([Governance](azure-web-compute-plan.md#governance)). Exists: factory

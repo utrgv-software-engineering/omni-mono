@@ -30,6 +30,204 @@ async function request<T>(
   return value;
 }
 
+type Decision = {
+  id: string;
+  summary: string;
+  status: string;
+  proposed_by: string | null;
+  reason: string;
+  decided_by: string | null;
+  reasoning: string;
+};
+type Review = {
+  kind: string;
+  title: string;
+  factory: string | null;
+  performed_by: string;
+  due_at: number;
+  overdue: boolean;
+  last: { at: number; by: string; result: string } | null;
+};
+
+function download(name: string, text: string, type: string) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Health Affairs' governance: its owner, decisions, reviews and reports. */
+function GovernancePanel({ admin, people }: { admin: boolean; people: Person[] }) {
+  const [view, setView] = useState<{
+    owner: boolean;
+    owners: string[];
+    gated: boolean;
+    decisions: Decision[];
+    factories: { id: string; name: string; decisions: Decision[] }[];
+  } | null>(null);
+  const [calendar, setCalendar] = useState<Review[]>([]);
+  const [error, setError] = useState("");
+  const now = new Date();
+  const [quarter, setQuarter] = useState(`${now.getUTCFullYear()}Q${Math.floor(now.getUTCMonth() / 3) + 1}`);
+  async function load() {
+    setView(await request("/installation/governance"));
+    setCalendar((await request<{ calendar: Review[] }>("/installation/reviews")).calendar);
+  }
+  useEffect(() => {
+    void load().catch((e) => setError(e.message));
+  }, []);
+  async function act(action: () => Promise<unknown>) {
+    setError("");
+    try {
+      await action();
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+  if (!view) return null;
+  const pending = [
+    ...view.decisions.filter((d) => d.status === "pending").map((d) => ({ ...d, where: "All factories" })),
+    ...view.factories.flatMap((f) =>
+      f.decisions.filter((d) => d.status === "pending").map((d) => ({ ...d, where: f.name })),
+    ),
+  ];
+  const decide = (d: Decision, approve: boolean) =>
+    void act(() =>
+      request(`/installation/governance/decisions/${d.id}`, "POST", {
+        approve,
+        reasoning: window.prompt(approve ? "Your reasoning" : "Why decline?") ?? "",
+      }),
+    );
+  return (
+    <section className="space-y-4 rounded-lg border p-4">
+      <h2 className="font-medium">Governance</h2>
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      <div className="space-y-1 text-sm">
+        <span className="font-medium">Governance owner: </span>
+        {admin ? (
+          <select
+            aria-label="Governance owner"
+            className="rounded border p-1"
+            multiple
+            value={view.owners}
+            onChange={(e) =>
+              void act(() =>
+                request("/installation/governance-owners", "PUT", {
+                  account_ids: [...e.target.selectedOptions].map((o) => o.value),
+                }),
+              )
+            }
+          >
+            {people.map((p) => (
+              <option key={p.id} value={p.id}>{p.name || p.username}</option>
+            ))}
+          </select>
+        ) : (
+          people.filter((p) => view.owners.includes(p.id)).map((p) => p.name || p.username).join(", ") || "—"
+        )}
+        {view.gated && !view.owners.length && (
+          <p className="text-destructive">Name a governance owner: under the strict policy, lowering a classification and changing allowed services wait for one.</p>
+        )}
+      </div>
+      <div className="space-y-2">
+        <h3 className="text-sm font-medium">Waiting for the governance owner</h3>
+        {pending.length ? (
+          <ul className="divide-y rounded-md border text-sm">
+            {pending.map((d) => (
+              <li key={d.id} className="flex flex-wrap items-center gap-2 p-2">
+                <span className="flex-1">
+                  {d.where}: {d.summary}
+                  <span className="block text-xs text-muted-foreground">
+                    Proposed by {d.proposed_by ?? "—"}{d.reason ? `: ${d.reason}` : ""}
+                  </span>
+                </span>
+                {view.owner && (
+                  <>
+                    <Button size="sm" onClick={() => decide(d, true)}>Approve</Button>
+                    <Button size="sm" variant="outline" onClick={() => decide(d, false)}>Decline</Button>
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-muted-foreground">Nothing is waiting.</p>
+        )}
+      </div>
+      <div className="space-y-2">
+        <h3 className="text-sm font-medium">Scheduled reviews</h3>
+        <ul className="divide-y rounded-md border text-sm">
+          {calendar.map((r) => (
+            <li key={r.kind + (r.factory ?? "")} className="flex flex-wrap items-center gap-2 p-2">
+              <span className="flex-1">
+                {r.title}
+                <span className={`block text-xs ${r.overdue ? "text-destructive" : "text-muted-foreground"}`}>
+                  {r.overdue ? "Due now" : `Next due ${new Date(r.due_at * 1000).toLocaleDateString()}`}
+                  {r.last ? ` · last ${new Date(r.last.at * 1000).toLocaleDateString()} by ${r.last.by}: ${r.last.result}` : " · never done"}
+                  {` · ${r.performed_by}`}
+                </span>
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  const result = window.prompt(`Record the ${r.title.toLowerCase()}: its result`);
+                  if (result)
+                    void act(() =>
+                      request("/installation/reviews", "POST", { kind: r.kind, factory: r.factory, result }),
+                    );
+                }}
+              >
+                Record
+              </Button>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          variant="outline"
+          onClick={() =>
+            void act(async () => {
+              const r = await request<{ markdown: string }>("/installation/inventory");
+              download("ai-inventory.md", r.markdown, "text/markdown");
+            })
+          }
+        >
+          Download the AI Inventory
+        </Button>
+        <input aria-label="Quarter" className="w-24 rounded border p-1 text-sm" value={quarter} onChange={(e) => setQuarter(e.target.value)} />
+        <Button
+          variant="outline"
+          onClick={() =>
+            void act(async () => {
+              const response = await fetch(`/workplace/api/installation/quarterly-report?quarter=${encodeURIComponent(quarter)}`);
+              if (!response.ok) throw new Error((await response.json()).detail || "Report failed");
+              download(`governance-${quarter}.md`, await response.text(), "text/markdown");
+            })
+          }
+        >
+          Quarterly report
+        </Button>
+        <Button
+          variant="outline"
+          onClick={() =>
+            void act(async () => {
+              const evidence = await request("/installation/evidence");
+              download("governance-evidence.json", JSON.stringify(evidence, null, 2), "application/json");
+            })
+          }
+        >
+          Evidence export
+        </Button>
+      </div>
+    </section>
+  );
+}
+
 export function InstallationApp({
   account,
   onSignOut,
@@ -127,6 +325,7 @@ export function InstallationApp({
           {allStopped.message}
         </p>
       )}
+      <GovernancePanel admin={!!account.admin} people={people} />
       {servicesOpen && (
         <section className="space-y-2 rounded-lg border p-4">
           <h2 className="font-medium">Allowed services</h2>
