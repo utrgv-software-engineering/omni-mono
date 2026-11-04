@@ -1,188 +1,178 @@
-# Proposed Azure web and compute architecture
+# Azure deployment plan
 
-Status: proposed; not implemented. Recorded 2026-11-02.
+Status: proposed; not implemented. Revised 2026-11-04 (supersedes the
+2026-11-02 web/compute split).
 
-This document preserves the agreed deployment direction for future implementation.
-It does not authorize a migration or change the existing deployment. The optional
-[Easy Auth adapter](azure-easy-auth.md) exists separately; it does not provide the
-web/worker split described here.
+This document records the agreed deployment direction. It does not authorize a
+migration, resource purchase or change to an existing deployment. The optional
+[Easy Auth adapter](azure-easy-auth.md) already exists and is part of this plan.
 
 ## Agreed direction
 
-Run Workplace's actual web application on Azure App Service, backed by Azure
-Database for PostgreSQL. Run execution on **one private Azure VM**, shared by
-factory runtimes, agent sandboxes, Actions jobs, and Coolify. The VM has no public
-IP or public inbound application ports.
+Workplace is one product deployed in three profiles. The 80/20 and Azure
+deployments run the **same stack on one large VM**: Workplace, factory runtimes,
+QuickSand sandboxes, Actions and Coolify. They differ in their front door,
+providers and data-protection controls, not in architecture.
 
-App Service is not merely a proxy to a complete Workplace installation on the
-VM. It owns the web API, authentication, authorization, incoming events, and user
-experience. The compute deployment owns execution. Do not substitute a thin
-App Service proxy for this separation simply because it needs fewer code changes.
+On Azure, the VM is private: no public IP and no inbound ports from the
+internet. **Azure App Service is the authenticated front door.** It terminates
+TLS, requires Microsoft sign-in through Easy Auth, and forwards requests over
+VNet integration to Workplace on the VM. Workplace keeps its own account and
+factory permissions.
 
-QuickSand guests consume the compute VM's resources; they are not separate Azure
-VM resources or separately billed instances. Agent processes stay outside their
-tool VMs. Preserve persistent agent workspaces and disposable CI environments.
+Why not split web and compute or use serverless containers:
 
-Local installations must remain supported with SQLite and local execution. Azure
-services must be optional deployment backends, not requirements for the template.
+- **Cost and operations.** Per-sandbox serverless containers cost more and need
+  start/stop management; one VM is simpler and cheaper for this workload.
+- **The split is not what keeps the VM private.** A private VM behind App Service
+  and Easy Auth already provides that, without moving the web tier.
+- **PHI lives on the VM either way.** Agent workspaces, sandbox disks, staged
+  Shared files and previews are all compute-side, so moving the application
+  database elsewhere does not shrink what must be protected.
+- **Dogfooding.** With an identical stack, every problem the 80/20 businesses hit
+  is one the Azure deployment would have hit. A separate architecture for Azure
+  would leave its code paths untested by daily use.
+- **Cost of the split itself.** PostgreSQL alongside SQLite, distributed job
+  leases, object-storage staging and cross-boundary routing are a large refactor
+  that buys horizontal scale and web uptime during VM maintenance. Neither is
+  needed now. See [Deferred: web/compute split](#deferred-webcompute-split).
 
-## Service responsibilities
+## Deployment profiles
+
+| | Local (students) | 80/20 | Azure (PHI) |
+| --- | --- | --- | --- |
+| Install | omni-desktop installer | Compose on one VM | Same Compose stack on one VM |
+| Front door | localhost | Traefik, public | App Service + Easy Auth, VM private |
+| State | SQLite, local files | SQLite, VM disk | SQLite, VM managed disk |
+| Backups | None required | Disk snapshots | Azure Backup, tested restores |
+| Integrations | Stand-ins | Stand-ins or real | Stand-ins or real, allowlisted |
+| Models | Student's own provider | Any configured provider | Providers covered by a BAA |
+| Egress | Open | Open | Denied by default, allowlisted |
+
+Local installations must remain supported with SQLite, stand-ins and local
+execution. Nothing Azure-specific becomes a requirement of the product.
+
+Follow the useful parts of twelve-factor: configuration from the environment,
+backing services addressed by URL (so SQLite → PostgreSQL or local files → Blob
+Storage remain configuration changes if ever needed), logs to stdout, explicit
+dependencies, and parity between profiles. Do not adopt process ephemerality:
+the workload is persistent by design. The VM is long-lived but **rebuildable**:
+provisioned from infrastructure-as-code, with state on a managed disk that is
+snapshotted and restored on a schedule.
+
+## Azure topology
 
 | Component | Responsibility |
 | --- | --- |
-| App Service | Workplace UI/API, Easy Auth, account and factory permissions, conversations, settings, incoming events, job submission, browser updates |
-| Azure PostgreSQL | Durable application state, accounts, memberships, factory configuration, conversations, metadata, jobs, leases, results and event records |
-| One private compute VM | Factory agent processes, persistent QuickSand sandboxes, disposable Actions execution, Coolify and preview applications |
-| Azure Blob Storage (proposed) | Shared files, recordings, artifact content and backup objects |
-| VM persistent disk | Active sandbox disks, working checkouts, runner images and execution caches |
+| App Service | Public HTTPS hostnames, Easy Auth (Microsoft Entra), reverse proxy to the VM over VNet integration, WebSocket forwarding |
+| Private VM | Workplace, factory runtimes, QuickSand sandboxes, Actions, Coolify and previews; the same Compose stack as 80/20 |
+| Managed disk | All durable state: Workplace and factory databases, Shared, workspaces, sandbox disks, caches |
+| Azure Backup | Scheduled, encrypted disk snapshots with defined retention |
+| Azure Firewall or NSG rules | Inbound only from the App Service subnet; outbound allowlist |
+| Log Analytics | Entra sign-in logs, platform logs and Workplace audit events, outside the VM's write access |
 
-Blob Storage and a PostgreSQL-backed job queue are proposed implementation choices,
-not existing integrations. Prefer starting with PostgreSQL-backed jobs rather than
-adding a separate message broker unless a concrete requirement justifies one.
+### Front door
 
-## Execution and events
+- App Service runs only a reverse proxy. It holds no application state, so
+  restarting or redeploying it does not affect running work.
+- The VM accepts application traffic **only from the App Service integration
+  subnet**. Workplace trusts Easy Auth identity headers only on that path. Neither
+  sandboxes nor preview containers may reach Workplace with forged identity
+  headers; block direct listener access from them.
+- Workplace currently reads Easy Auth headers as if it ran on App Service itself.
+  Adapt the adapter to accept them from the trusted proxy, and refuse them from
+  any other source.
+- Machine-authenticated routes (agent APIs, webhooks, guest share links) still
+  pass through App Service with anonymous requests allowed, as described in the
+  [Easy Auth adapter](azure-easy-auth.md); Workplace keeps enforcing their own
+  authentication.
+- Previews always require Microsoft sign-in **and** factory access. They stay on
+  an origin separate from Workplace, and preview code must not see Workplace
+  cookies or trusted identity headers. Refuse unknown or expired preview
+  hostnames before forwarding.
 
-Example chat flow:
+## Protected health information
 
-1. App Service authenticates and authorizes the user, saves the message, and
-   records a durable request for the appropriate factory/conversation.
-2. A compute worker claims the request and delivers it to the appropriate agent.
-3. The agent runs outside its tool sandbox and invokes tools inside that sandbox.
-4. The worker records public messages, activity, results and execution status.
-5. The web service streams updates to authorized browser clients. Reconnecting
-   clients resume from durable event positions rather than losing updates.
+Microsoft and the model providers in use have BAAs in place. PHI enters through
+uploaded Shared files, data agents read, and services agents access. These
+controls matter more than where the application tier runs:
 
-Workers initiate their control connection over private networking; no public
-worker listener is required. Define whether workers access PostgreSQL directly
-or use an authenticated internal web API during implementation. Keep job and
-identity authorization explicit in either case.
+1. **Model calls.** Prompts carry PHI. The Azure profile uses only model
+   endpoints covered by a BAA; enforce this as a deployment policy that
+   Workplace refuses to violate, not as a convention.
+2. **Egress.** An agent that reads PHI and can reach arbitrary hosts is an
+   exfiltration path through prompt injection. Deny outbound traffic by default
+   at the VM's subnet and allowlist model endpoints, package registries and the
+   integrations each factory needs.
+3. **Traces and logs.** omniagents traces and worker journals hold full
+   transcripts, which makes them PHI. Keep them on the encrypted disk, cover them
+   with backups and retention, and restrict who can open Studio.
+4. **Side channels.** Preview apps, Actions logs, CI artifacts and any real
+   GitHub or Slack integration can carry PHI out of the VM. Integrations must be
+   covered by a BAA or kept to non-PHI content.
+5. **Stand-ins.** Stand-ins are allowed. They are Workplace's own services and
+   keep their data on the VM, inside the protected boundary, under the same
+   encryption, backup and factory permissions as everything else.
+6. **Encryption and backups.** Managed disks are encrypted at rest; decide whether
+   customer-managed keys are required. Backups are encrypted, retained for a
+   defined period, and restored on a schedule to prove they work.
+7. **Audit.** Entra sign-in logs and Workplace audit events go to a store that
+   factory agents and sandboxes cannot modify.
+8. **Isolation.** Credentials, files and execution resources stay isolated
+   between factories on the shared VM. Resource limits keep CI from starving chat
+   and agents.
 
-Preserve the existing event gateway's delivery semantics and the distinction
-between internal agent activity and explicitly published conversation messages.
-Do not automatically publish agent final responses. Existing comments on shared
-artifacts/canvases must not begin triggering agent runs as a side effect of this
-refactor.
+## Investigations before implementation
 
-## Required code work
+Verify these against current Azure capabilities rather than assume them:
 
-### 1. Durable state and PostgreSQL
-
-- Inventory persistence across Workplace, the installation host, factory runtimes,
-  and supporting services; this is not just a change to one SQLite connection.
-- Introduce a supported PostgreSQL storage backend and versioned migrations while
-  retaining SQLite for local use.
-- Remove assumptions that one process owns the authoritative state in memory.
-  Define transaction boundaries, concurrent updates, cache invalidation, session
-  revocation and factory isolation across web and worker processes.
-- Move credentials through the existing encrypted-secret mechanisms; do not
-  expose database or provider credentials to ordinary workflow/tool guests.
-- Provide an explicit, validated data migration path when a real deployment is
-  ready to move; do not automatically migrate existing installations.
-
-### 2. Web/compute boundary
-
-- Introduce separate web and worker entry points/configurations.
-- Extract direct process, sandbox, Actions and managed-deployment lifecycle work
-  from web handlers into compute-side operations.
-- Define operations for execution, cancellation, status, logs, file exchange,
-  sandbox lifecycle, desktop sessions and deployment management.
-- Preserve factory-specific credentials, memberships, execution ownership and
-  isolation on the shared compute host.
-- Keep the local deployment convenient through an in-process/local adapter or
-  equivalent local orchestration using the same operation contract.
-
-### 3. Durable jobs and live updates
-
-- Implement atomic claiming, leases, heartbeats, cancellation and bounded retries.
-- Define ordering for a conversation and resource ownership for persistent agents
-  and sandboxes; multiple workers must not drive the same resource concurrently.
-- Design for at-least-once delivery: use idempotency keys and reconciliation for
-  external side effects. An expired lease is not proof that an operation stopped.
-- Persist results/events before acknowledging completion. Use durable cursors for
-  browser reconnects; notification mechanisms alone are not durable delivery.
-- Apply resource limits and concurrency budgets so CI cannot starve chat, agents
-  or other factories. Queue work when the single VM is at capacity.
-
-### 4. Files and storage
-
-- Add shared object-storage support for uploads, recordings, Shared, artifacts and
-  other content consumed across web and compute deployments.
-- Keep application-level file identity separate from a machine-local path. Define
-  staging/synchronization into sandboxes and publication of outputs back to storage.
-- Preserve per-factory access checks and guest-share token rules. Avoid publicly
-  accessible object containers as a shortcut.
-- Retain active VM disks on persistent VM storage; object storage is for transfer
-  and backups, not a filesystem for live VM disks or SQLite databases.
-- Define backup/restore coverage and consistency for PostgreSQL, content and
-  persistent execution state.
-
-### 5. Microsoft authentication and private browser services
-
-Workplace uses Easy Auth at App Service and retains its own account/factory
-permissions. Preview applications **always require Microsoft sign-in**. Microsoft
-sign-in alone does not grant access to every factory's previews.
-
-- Route browser desktop and preview traffic through an authenticated public web
-  endpoint to the private VM; only these VM-hosted services need this routing.
-- Support streaming, WebSocket upgrades, uploads and application assets.
-- Register preview ownership and lifecycle durably. Refuse unknown, expired or
-  unauthorized preview hostnames before forwarding traffic.
-- Use wildcard DNS/TLS for preview names where supported. DNS supplies names; it
-  does not provide authentication or access to a private VM.
-- Keep previews on a separate origin boundary from Workplace. Prevent preview
-  code from accessing Workplace cookies or trusted identity headers; review
-  sibling-preview isolation and cookie scopes as well.
-- Ensure no direct route to Coolify or preview containers bypasses authorization.
-- Preserve intentionally guest-accessible artifact links and independently
-  authenticated machine/webhook routes. The mandatory Microsoft-login policy
-  here applies to previews, not a blanket removal of existing guest sharing.
-
-## Azure-specific investigations before implementation
-
-Verify these against current Azure capabilities rather than assume support:
-
-- App Service private connectivity to the VM and PostgreSQL, subnet layout,
-  firewall rules and private DNS.
-- Wildcard custom domains, certificates, Easy Auth cookies and login/logout
-  callbacks across preview hosts. Establish a working authentication flow before
-  committing to a hostname design.
-- WebSocket/streaming timeouts and reconnect behavior for chat and desktop access.
-- A compute VM SKU/security configuration that exposes the virtualization features
-  required for accelerated QuickSand, including actual KVM availability. Software
-  emulation is a separate performance choice, not an assumed substitute.
-- Blob Storage integration, PostgreSQL compatibility, connection limits, migrations
-  and secret delivery for both deployments.
-- Safe web and worker updates: drain/reconcile active work and avoid two owners of
-  the same sandbox. Do not assume deployment slots or scaling are safe merely
-  because state moved to PostgreSQL.
+- App Service VNet integration to a private VM: subnet layout, private DNS, and
+  the inbound rule that admits only the integration subnet.
+- WebSocket support, idle timeouts and streaming behavior for chat, live updates
+  and desktop sessions through the proxy.
+- Wildcard custom domains and certificates for preview hostnames, and whether
+  Easy Auth cookies and callbacks work across them without sharing Workplace's
+  origin. Settle this before committing to a hostname design.
+- Entra Private Access (formerly Application Proxy) as an alternative front door,
+  compared on WebSockets, wildcard hostnames and cost.
+- A VM SKU that exposes nested virtualization (KVM) for accelerated QuickSand.
+- Egress controls: Azure Firewall versus NSG service tags, and the allowlist each
+  factory needs.
+- Azure Backup consistency for running SQLite databases and sandbox disks.
 
 ## Suggested implementation sequence
 
-1. Inventory current state/process/file coupling and define storage and worker
-   contracts. Resolve Azure networking and preview-auth feasibility questions.
-2. Implement PostgreSQL persistence and concurrency correctness alongside SQLite.
-3. Implement worker entry points, durable jobs, recovery and live-event delivery.
-4. Implement shared file storage and sandbox transfer semantics.
-5. Implement authenticated desktop/preview routing and Microsoft login integration.
-6. Add reproducible Azure deployment configuration and an operations runbook.
-7. Prove the architecture on an isolated example factory before proposing migration
-   of existing applications or production state.
+1. Resolve the investigations above, especially proxy WebSockets and preview
+   authentication.
+2. Write the VM's infrastructure-as-code and reuse the 80/20 Compose stack
+   unchanged.
+3. Adapt the Easy Auth adapter to trust headers only from the App Service proxy.
+4. Add the Azure profile's policies: allowed model endpoints, egress allowlist,
+   audit export.
+5. Configure backups and exercise a full restore to a fresh VM.
+6. Prove the deployment with an isolated example factory and no PHI before
+   onboarding real work.
 
 ## Acceptance criteria
 
-- The UI and API genuinely execute on App Service; compute stays on one private VM.
-- Chat, automations, persistent agent sandboxes, Actions, Shared, Library, desktop
-  control and previews work across the deployment boundary.
-- Web restarts do not terminate compute jobs or lose accepted events. Worker
-  failures lead to explicit recovery/reconciliation rather than silent job loss
-  or uncontrolled duplicate external effects.
-- Preview pages, assets and WebSockets require Microsoft authentication and
-  appropriate factory access; there is no public backend bypass.
-- Credentials, files and execution resources remain isolated between factories.
-- Resource contention cannot make an unrestricted number of builds consume the VM.
-- PostgreSQL/object/disk backup and restore procedures are exercised.
-- Existing local SQLite deployments continue to work without Azure dependencies.
+- The VM has no public IP; all browser and webhook traffic arrives through App
+  Service.
+- Chat, automations, persistent sandboxes, Actions, Shared, Library, desktop
+  control and previews work through the front door, including WebSockets.
+- Previews require Microsoft sign-in and factory access; nothing bypasses them.
+- Forged identity headers from any path other than the App Service proxy are
+  refused.
+- Agents can reach only allowlisted destinations; model calls go only to
+  BAA-covered endpoints.
+- A full restore from backup to a fresh VM has been performed.
+- The 80/20 deployment runs the same stack, and local installations still work
+  with SQLite and stand-ins and no Azure dependencies.
 
-No cutover, resource purchase, implementation, commit or push is implied by saving
-this plan. Scope and deployment approval should be revisited when implementation
-is requested.
+## Deferred: web/compute split
+
+Running Workplace's web tier on App Service with Azure PostgreSQL, a durable job
+queue, Blob Storage and separate compute workers remains possible later. Revisit
+it only for a concrete need, such as more than one compute VM or a requirement
+that the web interface stay available while the VM is down. Keeping
+configuration, backing services and file identity behind URLs and interfaces
+keeps that path open without building it now.
