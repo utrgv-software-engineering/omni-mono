@@ -121,11 +121,6 @@ class KillSwitch:
             "factory.stopped", actor=account.username, reason=reason
         )
         await self.changed()
-        await self.w.notifier.send(
-            "Factory stopped",
-            describe(state),
-            [("Factory", self.name()), ("By", account.username), ("Reason", reason)],
-        )
         return self.view()
 
     async def resume(self, account: Any, reason: str) -> dict:
@@ -206,15 +201,34 @@ class KillSwitch:
                 await client.aclose()
 
     async def maintain(self, interval: float = 5) -> None:
+        """Keep the runtime in line, and count whether it answered (uptime)."""
+        samples = {"up": 0, "down": 0}
         async with httpx.AsyncClient(timeout=15, trust_env=False) as client:
             while True:
+                answered = None
                 try:
-                    await self.sync(client)
+                    if self.endpoint()[0]:
+                        await self.sync(client)
+                        answered = True
                 except (httpx.HTTPError, ValueError):
-                    pass  # the runtime is down or starting; try again
+                    answered = False  # the runtime is down or starting; try again
                 except Exception:  # noqa: BLE001 - never let the loop die
                     logger.exception("kill switch: runtime sync failed")
+                if answered is not None and not self.state():
+                    # A stopped factory's runtime is down on purpose: not counted.
+                    samples["up" if answered else "down"] += 1
+                if sum(samples.values()) >= 12:
+                    self.record_availability(samples)
+                    samples = {"up": 0, "down": 0}
                 await asyncio.sleep(interval)
+
+    def record_availability(self, samples: dict) -> None:
+        key = "runtime.availability." + time.strftime("%Y-%m-%d", time.gmtime())
+        counts = self.w.store.meta(key) or {}
+        self.w.store.set_meta(
+            key,
+            {k: counts.get(k, 0) + samples.get(k, 0) for k in ("up", "down")},
+        )
 
     # -- API -----------------------------------------------------------------
 

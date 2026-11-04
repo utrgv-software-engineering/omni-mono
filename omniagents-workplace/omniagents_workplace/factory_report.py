@@ -336,6 +336,20 @@ def _by_version(runs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     ]
 
 
+def uptime(w: "Workplace", since: float) -> Optional[float]:
+    """The share of Workplace's checks in which the runtime answered, since ``since``."""
+    import time as _time
+
+    up = down = 0
+    day = since or (_time.time() - 30 * 86400)
+    while day <= _time.time() + 86400:
+        key = "runtime.availability." + _time.strftime("%Y-%m-%d", _time.gmtime(day))
+        counts = w.store.meta(key) or {}
+        up, down = up + counts.get("up", 0), down + counts.get("down", 0)
+        day += 86400
+    return up / (up + down) if up + down else None
+
+
 def factory_report(
     w: "Workplace",
     runs: List[Dict[str, Any]],
@@ -368,6 +382,8 @@ def factory_report(
                 "usage": run.get("usage") or [],
                 "cost": run.get("cost"),
                 "pull_requests": run.get("pull_requests") or [],
+                "tool_calls": run.get("tool_calls") or 0,
+                "tool_failures": run.get("tool_failures") or 0,
             }
         )
         for row in run.get("usage") or []:
@@ -443,6 +459,17 @@ def factory_report(
         ),
     }
     summary["reverted"] = sum(1 for p in merged if p["reverted"])
+    finished = [r for r in out_runs if r["status"] in ("completed", "failed")]
+    summary["error_rate"] = (
+        sum(1 for r in finished if r["status"] == "failed") / len(finished)
+        if finished
+        else None
+    )
+    calls = sum(r["tool_calls"] for r in out_runs)
+    summary["tool_failure_rate"] = (
+        sum(r["tool_failures"] for r in out_runs) / calls if calls else None
+    )
+    summary["uptime"] = uptime(w, since)
     return {
         "summary": summary,
         "runs": out_runs,

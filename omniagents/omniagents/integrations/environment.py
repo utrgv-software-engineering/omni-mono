@@ -55,6 +55,8 @@ class GitHubConfig:
     #: The token itself, for a caller holding one (an evaluation's scenario);
     #: otherwise ``token_env``'s value.
     token: Optional[str] = None
+    #: The factory's GitHub account: who its commits are by.
+    account: Optional[str] = None
 
     def resolved_token(self) -> Optional[str]:
         return self.token or os.environ.get(self.token_env) or None
@@ -81,6 +83,21 @@ class GitHubConfig:
             }
             for repository in self.repositories
         ]
+
+    def identity_environment(self) -> Dict[str, str]:
+        """Commits made in sandboxes are the factory's, and say it is AI:
+        ``FACTORY_AI_NAME`` (whoever runs the factory sets it), else the
+        account's name with "(AI)"."""
+        if not self.account:
+            return {}
+        name = os.environ.get("FACTORY_AI_NAME") or f"{self.account} (AI)"
+        email = f"{self.account}@users.noreply.github.com"
+        return {
+            "GIT_AUTHOR_NAME": name,
+            "GIT_AUTHOR_EMAIL": email,
+            "GIT_COMMITTER_NAME": name,
+            "GIT_COMMITTER_EMAIL": email,
+        }
 
     def git_environment(self) -> Dict[str, str]:
         """Git configuration, as environment, that sends github.com to ``git_url``
@@ -121,6 +138,7 @@ def parse_github(entries: Any) -> Optional[GitHubConfig]:
             repositories=tuple(str(r) for r in repositories),
             git_url=entry.get("git_url") or None,
             token_env=str(entry.get("token_env") or "GH_TOKEN"),
+            account=str(entry.get("account") or "") or None,
         )
     return None
 
@@ -204,7 +222,10 @@ class RunEnvironments:
                 raise ValueError(
                     "The persistent factory workspace requires a Docker or QuickSand profile"
                 )
-            git_environment = self.github.git_environment()
+            git_environment = {
+                **self.github.git_environment(),
+                **self.github.identity_environment(),
+            }
             library_root = (
                 self.library_root
                 if self.library_root is not None

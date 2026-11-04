@@ -47,12 +47,12 @@ def test_policy_is_open_by_default_and_strict_on_request(tmp_path):
 def test_audit_events_are_kept_and_never_changed(tmp_path):
     store = Store(tmp_path / "audit.db")
     log = AuditLog(store, factory="f1")
-    log.record("factory.stopped", actor="eric", reason="drill", ignored=None)
+    log.record("factory.profile_changed", actor="eric", reason="drill", ignored=None)
     with store.transaction():
         log.record("factory.resumed", actor="eric", reason="fixed")
     events = log.events()
     assert [(e["event"], e["actor"], e["factory"], e["reason"]) for e in events] == [
-        ("factory.stopped", "eric", "f1", "drill"),
+        ("factory.profile_changed", "eric", "f1", "drill"),
         ("factory.resumed", "eric", "f1", "fixed"),
     ]
     assert "ignored" not in events[0]
@@ -181,28 +181,37 @@ def test_access_review_lists_everyone_by_factory_and_is_audited(
     assert client.get("/workplace/api/installation/access-review").status_code == 403
 
 
-def test_kill_switch_is_audited_and_announced(installation, monkeypatch):  # noqa: F811
+def test_kill_switch_and_other_incidents_are_alerts(
+    installation, monkeypatch
+):  # noqa: F811
     i, client, owner, other, a, b = installation
     sent = []
 
-    async def send(title, text, facts=(), client=None):
+    def send_soon(title, text, facts=()):
         sent.append((title, dict(facts)))
-        return True
 
-    monkeypatch.setattr(i.notifier, "send", send)
+    monkeypatch.setattr(i.notifier, "send_soon", send_soon)
     client.post(prefix(a) + "/workplace/api/factory/stop", json={"reason": "drill"})
     client.post("/workplace/api/installation/stop", json={"reason": "incident"})
     w, _ = i.instances[a["id"]]
-    assert [(e["event"], e["actor"], e["factory"]) for e in w.audit_log.events()][
-        -1
-    ] == (
-        "factory.stopped",
-        "owner",
-        a["id"],
+    stopped = w.audit_log.events(event="factory.stopped")[0]
+    assert (stopped["actor"], stopped["factory"]) == ("owner", a["id"])
+    assert (
+        w.audit_log.events(event="alert.kill_switch")[0]["cause"] == "factory.stopped"
     )
     assert i.audit_log.events(event="installation.stopped")[0]["reason"] == "incident"
     assert [title for title, _ in sent] == ["Factory stopped", "All factories stopped"]
-    assert sent[0][1]["Reason"] == "drill"
+    assert sent[0][1]["reason"] == "drill" and sent[0][1]["By"] == "owner"
+    # Repeated failed sign-ins are an incident too.
+    from omniagents_workplace.accounts import AccountError
+
+    for _ in range(12):
+        try:
+            i.accounts.sign_in("owner", "not the password at all")
+        except AccountError:
+            pass
+    assert i.audit_log.events(event="alert.sign_in_failures")
+    assert "Repeated failed sign-ins" in [title for title, _ in sent]
 
 
 @pytest.mark.asyncio

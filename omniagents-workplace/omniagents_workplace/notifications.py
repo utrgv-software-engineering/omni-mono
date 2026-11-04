@@ -62,6 +62,18 @@ class Notifier:
             ],
         }
 
+    def send_soon(self, title: str, text: str, facts=()) -> None:
+        """Send without waiting: from async code or not."""
+        import asyncio
+        import threading
+
+        try:
+            asyncio.get_running_loop().create_task(self.send(title, text, facts))
+        except RuntimeError:
+            threading.Thread(
+                target=lambda: asyncio.run(self.send(title, text, facts)), daemon=True
+            ).start()
+
     async def send(
         self,
         title: str,

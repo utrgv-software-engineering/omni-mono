@@ -164,13 +164,20 @@ class AppRegistry:
             or self.by_username(username) is not None
         ):
             raise AccountError(f"{username} is taken")
+        # People must never mistake an agent for a person: its accounts say AI.
+        shown = name if "(AI)" in name else f"{name} (AI)"
         with self._lock:
             if slack_user_id is not None:
                 slack_user = w.slack.user(slack_user_id)
             elif any(u.name == username for u in w.slack.users.values()):
                 raise AccountError(f"{username} is taken")
             else:
-                slack_user = w.slack.add_user(username, name, "", title=description)
+                slack_user = w.slack.add_user(
+                    username,
+                    shown,
+                    "",
+                    title=("AI agent: " + description) if description else "AI agent",
+                )
             slack_app = w.slack.add_app(
                 SlackApp(
                     id=w.slack._new_id("A"),
@@ -182,7 +189,7 @@ class AppRegistry:
                     socket_mode=True,
                 )
             )
-            github = w.github.add_user(username, name=name, slack=slack_user.id)
+            github = w.github.add_user(username, name=shown, slack=slack_user.id)
             w.github.set_token(github, github_token())
             linear = w.linear.find_user(username)
             if linear is not None and not linear.is_app:

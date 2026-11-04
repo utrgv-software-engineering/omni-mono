@@ -35,11 +35,30 @@ BEGIN SELECT RAISE(ABORT, 'audit events are append-only'); END;
 """
 
 
+#: Events that are also incidents: an ``alert.<kind>`` event and a notification.
+ALERTS = {
+    "auth.account_limited": ("sign_in_failures", "Repeated failed sign-ins"),
+    "auth.source_limited": ("sign_in_failures", "Repeated failed sign-ins"),
+    "factory.personal_data_found": (
+        "personal_data",
+        "Personal data in a change to a factory",
+    ),
+    "factory.stopped": ("kill_switch", "Factory stopped"),
+    "installation.stopped": ("kill_switch", "All factories stopped"),
+    "egress.denied_confidential": (
+        "egress",
+        "Blocked connection from a Confidential factory",
+    ),
+}
+
+
 class AuditLog:
     def __init__(self, store: Any, factory: Optional[str] = None) -> None:
         self.store = store
         #: The factory these events belong to (an installation's factories).
         self.factory = factory
+        #: Where incidents are announced (``notifications.Notifier``).
+        self.notifier: Any = None
         with store._lock:
             store._db.executescript(_SCHEMA)
 
@@ -60,6 +79,14 @@ class AuditLog:
                 "INSERT INTO audit_events (at, event, actor, factory, data) VALUES (?, ?, ?, ?, ?)",
                 (time.time(), event, actor, factory, json.dumps(data, sort_keys=True)),
             )
+        if event in ALERTS:
+            kind, title = ALERTS[event]
+            self.record(f"alert.{kind}", actor=actor, factory=factory, cause=event)
+            if self.notifier is not None:
+                facts = [(k, str(v)) for k, v in sorted(data.items())][:8]
+                if actor:
+                    facts.insert(0, ("By", actor))
+                self.notifier.send_soon(title, f"{title} ({event}).", facts)
 
     def events(
         self,

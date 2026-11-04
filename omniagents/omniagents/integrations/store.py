@@ -32,6 +32,11 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS automation_routes (name TEXT PRIMARY KEY, configuration TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS automation_switches (name TEXT PRIMARY KEY, enabled INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS factory_stop (id INTEGER PRIMARY KEY CHECK (id = 1), state TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS run_tools (
+    dispatch_id INTEGER PRIMARY KEY,
+    calls INTEGER NOT NULL,
+    failures INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS approvals (
     call_id TEXT PRIMARY KEY,
     agent TEXT NOT NULL,
@@ -168,6 +173,27 @@ def conversation_title(provider, thread_key, payload, automation):
         if text:
             return text[:60]
     return automation.replace("-", " ").replace("_", " ").capitalize()
+
+
+#: How the agents SDK reports a tool that raised, in place of its result.
+TOOL_ERROR = "An error occurred while running the tool"
+
+
+def tool_outcomes(history: Any) -> tuple[int, int]:
+    """How many tool calls a turn's history has, and how many failed."""
+    calls = failures = 0
+    for item in history if isinstance(history, list) else []:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "function_call_output" or item.get("role") == "tool":
+            calls += 1
+            output = item.get("output", item.get("content"))
+            text = (
+                output if isinstance(output, str) else json.dumps(output, default=str)
+            )
+            if TOOL_ERROR in text or text.lstrip().startswith("Error"):
+                failures += 1
+    return calls, failures
 
 
 class EventStore:
@@ -423,10 +449,15 @@ class EventStore:
             return dispatch_id
 
     def record_turn(self, dispatch_id, history, started_at, finished_at):
+        calls, failures = tool_outcomes(history)
         with self._lock:
             self._db.execute(
                 "INSERT OR REPLACE INTO run_turns VALUES (?, ?, ?, ?)",
                 (dispatch_id, json.dumps(history), started_at, finished_at),
+            )
+            self._db.execute(
+                "INSERT OR REPLACE INTO run_tools VALUES (?, ?, ?)",
+                (dispatch_id, calls, failures),
             )
             self._db.commit()
 
@@ -656,9 +687,11 @@ class EventStore:
             rows = self._db.execute(
                 "SELECT d.id, d.automation, d.agent, d.session_id, d.status, d.error, d.started_at,"
                 " d.finished_at, e.provider, e.event, e.delivery_id, e.thread_key, e.received_at, e.payload,"
-                " o.output, x.version FROM dispatches d"
+                " o.output, x.version, t.calls AS tool_calls, t.failures AS tool_failures"
+                " FROM dispatches d"
                 " JOIN events e ON e.id = d.event_id LEFT JOIN run_outputs o ON o.dispatch_id = d.id"
                 " LEFT JOIN run_details x ON x.dispatch_id = d.id"
+                " LEFT JOIN run_tools t ON t.dispatch_id = d.id"
                 " WHERE d.started_at >= ? ORDER BY d.id",
                 (since,),
             ).fetchall()

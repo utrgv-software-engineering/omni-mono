@@ -30,6 +30,7 @@ async def refresh_environment(session, github, *, run_as=None):
         "GITHUB_TOKEN": token,
         "GITHUB_MCP_TOKEN": token,
         **github.git_environment(),
+        **github.identity_environment(),
     }
     if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", github.token_env):
         values[github.token_env] = token

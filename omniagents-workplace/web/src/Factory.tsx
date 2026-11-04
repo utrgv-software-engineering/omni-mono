@@ -56,6 +56,9 @@ const when = (epoch: number) => new Date(epoch * 1000).toLocaleString();
 
 const API_EQUIVALENT = "API-equivalent cost";
 
+const percent = (value: number | null | undefined) =>
+  value == null ? "–" : `${(value * 100).toFixed(value < 0.1 ? 1 : 0)}%`;
+
 function Figure({
   label,
   value,
@@ -775,6 +778,21 @@ export function FactoryApp({ navigate, onConfigure, onModel, onSchedules }: { na
           <Figure
             label="Runs"
             value={`${s.runs}${s.running ? ` (${s.running} running)` : ""}`}
+          />
+          <Figure
+            label="Error rate"
+            value={percent(s.error_rate)}
+            hint="Runs that failed, of the runs that finished"
+          />
+          <Figure
+            label="Tool failures"
+            value={percent(s.tool_failure_rate)}
+            hint="Tool calls that failed, of all the runs' tool calls"
+          />
+          <Figure
+            label="Uptime"
+            value={percent(s.uptime)}
+            hint="How often the runtime answered Workplace's checks (a stopped factory is not counted)"
           />
         </div>
       )}

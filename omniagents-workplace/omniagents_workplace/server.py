@@ -235,6 +235,7 @@ class Workplace:
 
         #: Approval requests and alerts, to a Teams channel when one is set.
         self.notifier = Notifier(self.environ)
+        self.audit_log.notifier = self.notifier
         session_seconds = int(
             self.environ.get(
                 "WORKPLACE_SESSION_SECONDS",
@@ -256,6 +257,8 @@ class Workplace:
             ),
             idle_seconds=limits.get("idle_seconds"),
         )
+        # One audit log for the workplace: account events alert like the rest.
+        self.accounts.audit_log = self.audit_log
         self.apps = AppRegistry(self, self.store)
         from .event_gateway import EventGateway
 

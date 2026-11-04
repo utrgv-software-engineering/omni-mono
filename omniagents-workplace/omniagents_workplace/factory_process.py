@@ -119,6 +119,8 @@ class FactoryProcess:
             OMNIAGENTS_SANDBOX_PROFILE=str(profile),
             PYTHONUNBUFFERED="1",
         )
+        # Its commits say they are AI's (omniagents' sandbox git identity).
+        env["FACTORY_AI_NAME"] = app.name if "(AI)" in app.name else f"{app.name} (AI)"
         # Under the strict policy: the runtime's audit, set where the project
         # cannot override it.
         env.update(workplace.governance.runtime_environment(self.directory))

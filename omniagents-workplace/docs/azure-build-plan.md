@@ -335,7 +335,14 @@ Setup only: Entra user assignment to one Workplace-users group (AI training is
 tracked outside Workplace), factory membership from Entra groups, Conditional
 Access MFA.
 
-## 8. Transparency and oversight (M)
+## 8. Transparency and oversight (M) — done
+
+Built 2026-11-04; see [Transparency and oversight](oversight.md). Where it
+differs from the design below: commits are attributed by the factory's AI-named
+git identity, without an `AI-Generated-By` trailer, which would mean replacing
+repositories' own git hooks; Shared documents have no separate generated-by
+field (their author is already the agent); heightened-risk review stays deferred
+until a factory is heightened-risk.
 
 Build, in omniagents-workplace unless noted:
 

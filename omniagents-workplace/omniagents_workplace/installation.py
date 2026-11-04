@@ -123,6 +123,7 @@ class Installation:
         from .notifications import Notifier
 
         self.notifier = Notifier()
+        self.audit_log.notifier = self.notifier
         self.accounts = self.new_accounts()
         self.records = dict(self.store.docs("factory"))
         self.members = dict(self.store.docs("membership"))
@@ -198,11 +199,14 @@ class Installation:
             source.close()
 
     def new_accounts(self):
-        return Accounts(
+        accounts = Accounts(
             self.store,
             min_password=15 if self.environment in {"production", "staging"} else 8,
             **self.policy.session_limits(),
         )
+        if getattr(self, "audit_log", None) is not None:
+            accounts.audit_log = self.audit_log
+        return accounts
 
     @staticmethod
     def product_config_name(project):
@@ -450,6 +454,8 @@ class Installation:
                 w.installation_factory_id = factory_id
                 w.policy = self.policy
                 w.notifier = self.notifier
+                w.audit_log.notifier = self.notifier
+                w.accounts.local.audit_log = w.audit_log
                 w.audit_log.factory = factory_id
                 w.kill_switch.installation_state = lambda: self.store.meta(STOP_KEY)
                 w.governance.installation_services = lambda: (
@@ -591,11 +597,7 @@ class Installation:
         self.audit_log.record(
             "installation.stopped", actor=identity.username, reason=reason
         )
-        await self.notifier.send(
-            "All factories stopped",
-            f"Every factory was stopped by {identity.username}: {reason}",
-            [("By", identity.username), ("Reason", reason)],
-        )
+
         await asyncio.gather(
             *(w.kill_switch.changed() for w, _ in list(self.instances.values()))
         )
@@ -681,6 +683,11 @@ class Installation:
                     w = found[0]
                     w.egress.record_denial(denial)
                     if w.governance.classification() == "confidential":
+                        # An alert: recorded, and announced in Teams.
+                        w.audit_log.record(
+                            "egress.denied_confidential",
+                            destination=f"{denial.get('host')}:{denial.get('port')}",
+                        )
                         alerts.append((self.records[denial["factory"]]["name"], denial))
             offset = lines.tell()
         return offset, alerts
@@ -854,23 +861,12 @@ class Installation:
                     offset = self.store.meta("installation.egress_denials_offset") or 0
                     while True:
                         try:
-                            offset, alerts = self.record_denials(offset)
+                            # Confidential factories' denials are alerts
+                            # (audit.ALERTS), announced as they are recorded.
+                            offset, _alerts = self.record_denials(offset)
                             self.store.set_meta(
                                 "installation.egress_denials_offset", offset
                             )
-                            for name, denial in alerts:
-                                await self.notifier.send(
-                                    "Blocked connection from a Confidential factory",
-                                    f"{name} tried to reach {denial['host']}:{denial['port']}, "
-                                    "which is not on its allowlist.",
-                                    [
-                                        ("Factory", name),
-                                        (
-                                            "Destination",
-                                            f"{denial['host']}:{denial['port']}",
-                                        ),
-                                    ],
-                                )
                         except Exception:  # noqa: BLE001 - keep watching
                             pass
                         await asyncio.sleep(10)

@@ -1668,6 +1668,9 @@ export interface FactoryReport {
     human_touches_per_merged_pr: number | null;
     median_time_to_ship: number | null;
     reverted: number;
+    error_rate?: number | null;
+    tool_failure_rate?: number | null;
+    uptime?: number | null;
   };
   bucket?: "day" | "week";
   over_time?: Period[];
