@@ -26,7 +26,7 @@ Why not split web and compute or use serverless containers:
   start/stop management; one VM is simpler and cheaper for this workload.
 - **The split is not what keeps the VM private.** A private VM behind App Service
   and Easy Auth already provides that, without moving the web tier.
-- **PHI lives on the VM either way.** Agent workspaces, sandbox disks, staged
+- **Sensitive data lives on the VM either way.** Agent workspaces, sandbox disks, staged
   Shared files and previews are all compute-side, so moving the application
   database elsewhere does not shrink what must be protected.
 - **Dogfooding.** With an identical stack, every problem the 80/20 businesses hit
@@ -39,14 +39,14 @@ Why not split web and compute or use serverless containers:
 
 ## Deployment profiles
 
-| | Local (students) | 80/20 | Azure (PHI) |
+| | Local (students) | 80/20 | Azure (sensitive data) |
 | --- | --- | --- | --- |
 | Install | omni-desktop installer | Compose on one VM | Same Compose stack on one VM |
 | Front door | localhost | Traefik, public | App Service + Easy Auth, VM private |
 | State | SQLite, local files | SQLite, VM disk | SQLite, VM managed disk |
 | Backups | None required | Disk snapshots | Azure Backup, tested restores |
 | Integrations | Stand-ins | Stand-ins or real | Stand-ins or real, allowlisted |
-| Models | Student's own provider | Any configured provider | Providers covered by a BAA |
+| Models | Student's own provider | Any configured provider | Approved list (BAA-covered) |
 | Egress | Open | Open | Denied by default, allowlisted |
 
 Local installations must remain supported with SQLite, stand-ins and local
@@ -92,47 +92,65 @@ snapshotted and restored on a schedule.
   cookies or trusted identity headers. Refuse unknown or expired preview
   hostnames before forwarding.
 
-## Protected health information
+## Sensitive data
 
 Microsoft and the model providers in use have BAAs in place. Confirm the
-decisions in this section with the institution's privacy and security office
-and record them in the HIPAA risk analysis.
+decisions in this section with the institution's privacy and security office,
+and record them in the HIPAA risk analysis and UTRGV's AI risk and impact
+assessments.
 
 ### The factory is not a system of record
 
-Factories read and process PHI; they never own it. Uploads to Shared are
-extractions from systems of record, and the data agents read and the services
-they access belong to those systems. Durable results go back to the system of
-record, not only into the factory. This is what keeps backups small: a lost
-working copy is recovered by extracting it again from its source.
+Factories read and process sensitive data; they never own it. Uploads to Shared
+are extractions from systems of record, and the data agents read and the
+services they access belong to those systems. Durable results go back to the
+system of record, not only into the factory. This is what keeps backups small:
+a lost working copy is recovered by extracting it again from its source.
 
-### Factories that handle PHI
+### Data classification
 
-Each factory is marked as **handling PHI** or not. The Azure profile requires
-the setting to be chosen for every factory; there is no default. Only some
-factories touch PHI, depending on their use case, and the setting applies the
+Each factory has a **data classification**, using UTRGV's classes: Published,
+Controlled or Confidential. The Azure profile requires one for every factory;
+there is no default. PHI is Confidential, and so is other personal data under
+UTRGV's definition (student records, identification numbers, biometrics and the
+rest covered by the Texas Data Privacy and Security Act). Only some factories
+touch such data, depending on their use case, and the classification applies the
 rules below only to those.
 
-| | Factory without PHI | Factory handling PHI |
-| --- | --- | --- |
-| Conversations, journals, traces | Kept, ordinary backups | Kept as a governed record (below) |
-| Shared uploads, agent workspaces | Ordinary backups | Not backed up: working copies |
-| Self-improvement output | May be shared beyond the factory | Stays within the factory |
-| Sandbox egress | Deployment allowlist | The factory's own, narrower allowlist |
+| | Published | Controlled | Confidential |
+| --- | --- | --- | --- |
+| Models | [Approved list](#approved-list) only | Approved list only | Approved list only |
+| Integrations, MCP servers | Any configured | Approved list only | Approved list only |
+| Changes to the factory definition | As configured | Always reviewed in a PR | Always reviewed in a PR |
+| Conversations, journals, traces | Kept, ordinary backups | Kept, ordinary backups | Kept as a governed record (below) |
+| Shared uploads, agent workspaces | Ordinary backups | Ordinary backups | Not backed up: working copies |
+| Self-improvement output | May be shared beyond the factory | May be shared beyond the factory | Stays within the factory |
+| Sandbox egress | Deployment allowlist | Deployment allowlist | The factory's own, narrower allowlist |
 
-Changing a factory from handling PHI to not handling it does not reclassify
-data it already holds.
+Lowering a factory's classification does not reclassify data it already holds,
+and is a [material change](#change-management).
+
+### Approved list
+
+UTRGV allows Controlled and Confidential data only with AI tools that IT and the
+Information Security Office have assessed. Installation administrators keep an
+**approved list** of model endpoints, integrations and MCP servers, recording
+each one's assessment. Every factory reaches models only through the list,
+since any conversation may carry pasted data; Workplace refuses to connect a
+Controlled or Confidential factory to an integration or MCP server not on it. On Azure, every model endpoint on the list is
+covered by a BAA.
 
 ### Conversations are a governed record
 
 Conversations stay long-lived: users return to them and self-improvement learns
-from them. Not every conversation contains PHI, but in a factory handling PHI
-treat its conversations, worker journals and traces as PHI. That means:
+from them. Not every conversation contains sensitive data, but in a Confidential
+factory treat its conversations, worker journals and traces as Confidential.
+That means:
 
 1. **Who can read them.** Only the factory's members, as Workplace enforces
    already; sign-ins and access are audited.
 2. **Where copies are.** The live disk and its backups in the Azure tenant,
-   encrypted. No exports, CI logs, laptops or non-PHI factories.
+   encrypted. No exports, CI logs, laptops or other factories.
 3. **How long they are kept.** For the life of the factory. Conversations,
    worker journals and traces share one rule, so self-improvement and users
    always see the same history. Nothing expires on a timer; a member deletes a
@@ -142,18 +160,18 @@ treat its conversations, worker journals and traces as PHI. That means:
    after **30 days**. That bound is what disposal means here: deleted data is
    gone everywhere within 30 days.
 5. **What learns from them.** Self-improvement output (skills, notes,
-   factory-live changes) stays within the factory, and must not copy patient
+   factory-live changes) stays within the factory, and must not copy personal
    details into skills, prompts or configuration.
 
 ### Backups
 
-| Data | PHI? | Backup |
+| Data | Sensitive? | Backup |
 | --- | --- | --- |
 | Workplace database: accounts, memberships, settings | No | Yes |
 | Factory configuration, factory-live, skills, stand-in repositories | No (code, not data) | Yes |
-| Encryption keys | No; they unlock PHI | Separately, in Key Vault, never with data backups |
-| Conversations, journals, traces | In factories handling PHI | Yes, encrypted, 30-day backup history |
-| Shared uploads, agent workspaces | In factories handling PHI | Only in factories without PHI |
+| Encryption keys | No; they unlock it | Separately, in Key Vault, never with data backups |
+| Conversations, journals, traces | In Confidential factories | Yes, encrypted, 30-day backup history |
+| Shared uploads, agent workspaces | In Confidential factories | Only in Published and Controlled factories |
 | Previews, images, caches, source checkouts | Never (previews use seed data only) | No: rebuildable |
 
 Backups go to Azure Backup in the same tenant, under the same access controls
@@ -163,16 +181,17 @@ VM **every quarter** and record the result.
 
 ### Other controls
 
-1. **Model calls.** Prompts carry PHI. The Azure profile uses only model
-   endpoints covered by a BAA; enforce this as a deployment policy that
-   Workplace refuses to violate, not as a convention.
-2. **Egress.** An agent that reads PHI and can reach arbitrary hosts is an
-   exfiltration path through prompt injection. Deny outbound traffic by default
-   at the VM's subnet and allowlist model endpoints, package registries and the
-   integrations factories need; factories handling PHI narrow it further.
+1. **Model calls.** Prompts carry sensitive data. Factories reach models only
+   through the approved list; enforce this as a deployment policy that Workplace
+   refuses to violate, not as a convention.
+2. **Egress.** An agent that reads sensitive data and can reach arbitrary hosts
+   is an exfiltration path through prompt injection. Deny outbound traffic by
+   default at the VM's subnet and allowlist model endpoints, package registries
+   and the integrations factories need; Confidential factories narrow it further.
 3. **Side channels.** Preview apps, Actions logs, CI artifacts and any real
-   GitHub or Slack integration can carry PHI out of the VM. Integrations used by
-   factories handling PHI must be covered by a BAA or kept to non-PHI content.
+   GitHub or Slack integration can carry data out of the VM. Integrations used by
+   Confidential factories must be on the approved list and covered by a BAA, or
+   kept to non-sensitive content.
 4. **Stand-ins.** Stand-ins are allowed. They are Workplace's own services and
    keep their data on the VM, inside the protected boundary, under the same
    encryption, backup and factory permissions as everything else.
@@ -184,7 +203,7 @@ VM **every quarter** and record the result.
    factory agents and sandboxes cannot modify, and are kept for **six years**,
    matching HIPAA's retention period for compliance documentation. Audit events
    record who did what, not conversation content, so they are not themselves a
-   PHI store.
+   store of sensitive data.
 7. **Isolation.** Credentials, files and execution resources stay isolated
    between factories on the shared VM. Resource limits keep CI from starving chat
    and agents.
@@ -257,6 +276,95 @@ access:
 Drill the kill switch every quarter, alongside the restore test: stop one
 factory, stop all, resume, and confirm nothing replayed.
 
+## UTRGV AI policy
+
+UTRGV's [AI policy](https://www.utrgv.edu/ai/policy/index.htm) applies to the
+Azure deployment. Most of it is process: risk and impact assessments, approval
+by the AI Governance Committee and the AI Risk Officer, vendor contracts and
+annual training. The parts below are product and setup work; the kill switch
+and the approved list above cover its stop/override and approved-tools rules.
+UTS 165 and UTRGV's "Implementation Steps and Procedures for AI Technologies"
+have not been reviewed here; the Information Security Office may add to this.
+
+### Change management
+
+The policy requires a new risk assessment after material changes, and UTS 165
+requires change management. Self-improvement already satisfies most of this:
+it opens a PR that a reviewer merges, changes that need a release (agent
+settings, dependencies) also need operator approval, and git history records
+who proposed and approved each change. Three additions:
+
+1. **Review is always on for Controlled and Confidential factories.** Saving a
+   definition file in the UI commits directly to main unless
+   `factory.definition.require_review` is on, and it is off by default. The Azure
+   profile forces it on for those factories, so every change arrives by PR.
+2. **The factory cannot merge its own changes.** Branch protection requires an
+   approving review, and the factory's own credentials can neither approve nor
+   merge its pull requests.
+3. **Settings outside the repository are audited.** Data classification,
+   integrations, egress allowlists, the approved list and the kill switch are
+   Workplace settings, not files. Every change to them goes in the audit log.
+   A **material change** is any change of model, a new integration or MCP
+   server, a widened allowlist, a lowered classification, or a change to risk
+   level; Workplace marks it and flags the factory for reassessment.
+
+### Inventory and system cards
+
+Every AI system must be registered in the Information Security Office's AI
+Inventory before pilot or deployment, and public-facing systems need a system
+card. Workplace generates a **system card** per factory from data it already
+holds: purpose and owner, data classification, risk level, models, integrations
+and MCP servers, egress allowlist, retention, and the date of the last material
+change. Registering a factory, or updating its registration after a material
+change, is copying the card.
+
+### Never present AI as human
+
+Anything an agent posts outside Workplace (Slack, email, GitHub, Linear, Shared
+documents) carries an AI attribution naming the factory and agent. Commits and
+generated files carry provenance metadata, such as commit trailers and document
+metadata, which covers labeling synthetic content.
+
+### Heightened-risk factories
+
+Systems that may materially affect rights, opportunities, safety or access to
+services are heightened-risk. Most factories, such as software and operations
+work, are not. A factory marked heightened-risk:
+
+- requires human approval for every action that leaves the factory;
+- samples conversations for quality review, at a rate its owner sets;
+- reminds its owners when its six-monthly reassessment is due.
+
+### Operational metrics
+
+Export per-factory metrics to Azure Monitor: turn latency, error and tool-failure
+rates, uptime and cost. These are the policy's operational metrics; rollback
+uses factory releases.
+
+### Adversarial tests
+
+Add a red-team evaluation suite to the existing evaluations, covering prompt
+injection through fetched content, sensitive data reaching a destination that
+is not allowlisted, and data crossing between factories. Run it before
+deployment and on every material change.
+
+### Incidents
+
+Alert the Information Security Office's contacts on kill-switch use, blocked
+outbound connections from Confidential factories, repeated sign-in failures and
+self-improvement changes rejected for policy reasons. Forward audit logs to the
+Information Security Office's security monitoring if it runs one.
+
+### Setup without code
+
+- **Access requires training.** Workplace's Entra app requires user assignment,
+  limited to a group of people who have completed the annual AI training. A
+  lapsed training removes access.
+- **Membership follows offboarding.** Factory membership maps to Entra groups,
+  so people who leave lose access through normal offboarding.
+- **MFA** is enforced by Entra Conditional Access.
+- **Patching.** Azure Update Manager patches the VM on a schedule.
+
 ## Investigations before implementation
 
 Verify these against current Azure capabilities rather than assume them:
@@ -274,7 +382,7 @@ Verify these against current Azure capabilities rather than assume them:
 - Egress controls: Azure Firewall versus NSG service tags, and the allowlist each
   factory needs.
 - Azure Backup consistency for running SQLite databases, and how to exclude
-  Shared and workspaces of factories handling PHI from it.
+  Shared and workspaces of Confidential factories from it.
 
 ## Suggested implementation sequence
 
@@ -283,14 +391,17 @@ Verify these against current Azure capabilities rather than assume them:
 2. Write the VM's infrastructure-as-code and reuse the 80/20 Compose stack
    unchanged.
 3. Adapt the Easy Auth adapter to trust headers only from the App Service proxy.
-4. Add the factory PHI setting and the Azure profile's policies: allowed model
-   endpoints, egress allowlists, self-improvement containment, audit export.
+4. Add data classification, the approved list and the Azure profile's policies:
+   egress allowlists, forced review, self-improvement containment, audit export.
 5. Configure backups by the table above, keys in Key Vault, and exercise a full
    restore to a fresh VM.
 6. Add the kill switch for one factory and for all factories, and write the
    out-of-band runbook.
-7. Prove the deployment with an isolated example factory and no PHI before
-   onboarding real work.
+7. Add the UTRGV policy work: audited settings and material changes, system
+   cards, AI attribution, heightened-risk factories, metrics, adversarial tests
+   and incident alerts. Configure the Entra setup.
+8. Prove the deployment with an isolated example factory and no sensitive data,
+   and register it in the AI Inventory, before onboarding real work.
 
 ## Acceptance criteria
 
@@ -303,9 +414,15 @@ Verify these against current Azure capabilities rather than assume them:
   refused.
 - Agents can reach only allowlisted destinations; model calls go only to
   BAA-covered endpoints.
-- Every factory is marked as handling PHI or not. Factories handling PHI back up
+- Every factory has a data classification. Confidential factories back up
   conversations but not Shared uploads or workspaces, and their
   self-improvement output stays within the factory.
+- Controlled and Confidential factories use only the approved list, and every
+  change to their definition arrives by a reviewed PR the factory cannot merge.
+- Every settings change is audited, and material changes flag the factory for
+  reassessment.
+- Each factory's system card is generated from its configuration.
+- Everything agents post outside Workplace is attributed to AI.
 - Encryption keys are not stored with data backups.
 - A full restore from backup to a fresh VM has been performed.
 - One factory and all factories can be stopped from the UI. A stop takes effect
