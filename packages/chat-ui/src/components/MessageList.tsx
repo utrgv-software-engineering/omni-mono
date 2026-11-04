@@ -6,6 +6,7 @@ import { AppRenderer } from '@mcp-ui/client';
 import type { CallToolResult, ReadResourceResult } from '@modelcontextprotocol/sdk/types.js';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { ActivityChain } from '@omniagents/chat-ui/components/ActivityChain';
+import { EarlierHistory } from '@omniagents/chat-ui/components/EarlierHistory';
 import {
   Artifact,
   ArtifactAction,
@@ -122,8 +123,13 @@ export function MessageList({
   onStageContext,
   onOpenReview,
   onOpenWorker,
+  earlierHistory = 'none',
+  onLoadEarlier,
 }: {
   items: MessageItem[];
+  /** Whether older history than ``items`` exists, and is loading. */
+  earlierHistory?: 'none' | 'more' | 'loading';
+  onLoadEarlier?: () => Promise<void>;
   onOpenWorker?: (worker: WorkerReport) => void;
   greeting?: string;
   statusText?: string;
@@ -250,6 +256,9 @@ export function MessageList({
   return (
     <ChatContainerRoot className="flex-1">
       <ChatContainerContent data-testid="chat-transcript" className="container-chat px-3 py-3 space-y-3 md:space-y-4">
+        {earlierHistory !== 'none' && onLoadEarlier ? (
+          <EarlierHistory state={earlierHistory} onLoad={onLoadEarlier} itemCount={items.length} />
+        ) : null}
         {(() => {
           const pendingApprovalIds: string[] = [];
           for (const it of displayItems) {

@@ -26,7 +26,7 @@ it("renders only the independent public feed, preserves literal prefixes, and op
     await act(async()=>root.render(<PublishedChat sessionId="factory-personal" active onPresent={present}/>));
     expect(node.textContent).toContain("[worker message] intentionally published");
     expect(node.textContent).not.toContain("INTERNAL FINAL");
-    expect(fetcher.mock.calls[0][0]).toContain("/feed?after=0");
+    expect(fetcher.mock.calls[0][0]).toContain("/feed?latest=true");
     await act(async()=>node.querySelector("button")!.click());
     expect(present).toHaveBeenCalledWith(expect.objectContaining({kind:"activity",id:"factory-personal"}));
     expect(session.send).not.toHaveBeenCalled();
@@ -45,4 +45,37 @@ it("gives each person's message its sender and leaves the agent's unattributed",
   ]);
   expect(items[0].sender).toEqual({ name: "Priya Shah" });
   expect(items[1].sender).toBeUndefined();
+});
+
+it("opens on the newest messages and reads earlier ones before them", async () => {
+  const message = (seq: number) => ({seq, id: `m${seq}`, role: "assistant", author: "agent", text: `message ${seq}`, created_at: seq});
+  const urls: string[] = [];
+  const fetcher = vi.fn(async (url: string) => {
+    urls.push(url);
+    const body = url.includes("latest=true")
+      ? {messages: [message(3), message(4)], cursor: 4, earlier: 3}
+      : url.includes("before=3")
+        ? {messages: [message(1), message(2)], cursor: 2, earlier: null}
+        : {messages: [], cursor: 4, has_more: false};
+    return {ok: true, json: async () => body};
+  });
+  vi.stubGlobal("fetch", fetcher);
+  let loadEarlier: (() => Promise<void>) | undefined;
+  let earlierHistory = "";
+  const list = await import("@omniagents/chat-ui/components/MessageList");
+  vi.spyOn(list, "MessageList").mockImplementation(((props: any) => {
+    loadEarlier = props.onLoadEarlier;
+    earlierHistory = props.earlierHistory;
+    return <div>{props.items.map((m: any) => <p key={m.message_id}>{m.content}</p>)}</div>;
+  }) as any);
+  const node = document.createElement("div"); document.body.append(node); const root = createRoot(node);
+  try {
+    await act(async () => root.render(<PublishedChat sessionId="factory-personal" active onPresent={vi.fn()} />));
+    expect([...node.querySelectorAll("p")].map(p => p.textContent)).toEqual(["message 3", "message 4"]);
+    expect(earlierHistory).toBe("more");
+    await act(async () => { await loadEarlier!(); });
+    expect([...node.querySelectorAll("p")].map(p => p.textContent)).toEqual(["message 1", "message 2", "message 3", "message 4"]);
+    expect(earlierHistory).toBe("none");
+    expect(urls.filter(url => !url.includes("latest") && !url.includes("before")).every(url => url.includes("after=4"))).toBe(true);
+  } finally { await act(async () => root.unmount()); node.remove(); }
 });

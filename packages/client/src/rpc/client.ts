@@ -1171,9 +1171,15 @@ export class RPCClient {
     return this.call('start_run', params);
   }
 
-  async getSessionSnapshot(sessionId: string): Promise<any> {
+  /** The conversation's atomic snapshot. With ``limit``, only its newest
+   * items; ``snapshot.earlier_cursor`` then pages back through ``list_items``. */
+  async getSessionSnapshot(sessionId: string, options: { limit?: number } = {}): Promise<any> {
     this.replay.beginSnapshot(sessionId);
-    const result = await this.call('queue_status', { session_id: sessionId, include_snapshot: true });
+    const result = await this.call('queue_status', {
+      session_id: sessionId,
+      include_snapshot: true,
+      ...(options.limit !== undefined ? { snapshot_limit: options.limit } : {}),
+    });
     return decodeSessionSnapshot(result, sessionId);
   }
 

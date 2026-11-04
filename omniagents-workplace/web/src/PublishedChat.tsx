@@ -100,7 +100,11 @@ export function PublishedChat({
   const [messages, setMessages] = useState<PublishedMessage[]>([]);
   const [feedError, setFeedError] = useState("");
   const [runtimeError, setRuntimeError] = useState("");
-  const cursor = useRef(0);
+  // The newest seq read; ``null`` until the chat's newest page is in.
+  const cursor = useRef<number | null>(null);
+  // Where earlier messages continue (``null``: the chat's first is shown).
+  const earlier = useRef<number | null>(null);
+  const [earlierHistory, setEarlierHistory] = useState<"none" | "more" | "loading">("none");
   const refreshRef = useRef<() => Promise<void>>(async () => {});
   const presentRef = useRef(onPresent);
   presentRef.current = onPresent;
@@ -123,11 +127,23 @@ export function PublishedChat({
       if (loading || stopped) return;
       loading = true;
       try {
-        let more = true;
+        const feed = `/workplace/api/personal/chats/${encodeURIComponent(sessionId)}/feed`;
+        const opening = cursor.current === null;
+        if (opening) {
+          // Open on the newest messages; older ones load on scrolling up.
+          const response = await factoryFetch(`${feed}?latest=true`);
+          if (!response.ok) throw new Error("Unable to refresh messages");
+          const page = await response.json();
+          if (stopped) return;
+          setMessages(page.messages);
+          cursor.current = page.cursor;
+          earlier.current = page.earlier;
+          setEarlierHistory(page.earlier ? "more" : "none");
+        }
+        // Then on from the newest read, each refresh.
+        let more = cursor.current !== null && !opening;
         while (more && !stopped) {
-          const response = await factoryFetch(
-            `/workplace/api/personal/chats/${encodeURIComponent(sessionId)}/feed?after=${cursor.current}`,
-          );
+          const response = await factoryFetch(`${feed}?after=${cursor.current}`);
           if (!response.ok) throw new Error("Unable to refresh messages");
           const page = await response.json();
           if (stopped) return;
@@ -197,6 +213,28 @@ export function PublishedChat({
     lastAttention.current = key;
   }, [runtime.pendingApprovals, active, activity]);
 
+  const loadEarlier = useCallback(async () => {
+    const before = earlier.current;
+    if (!before) return;
+    setEarlierHistory("loading");
+    try {
+      const response = await factoryFetch(
+        `/workplace/api/personal/chats/${encodeURIComponent(sessionId)}/feed?before=${before}`,
+      );
+      if (!response.ok) throw new Error("Unable to load earlier messages");
+      const page = await response.json();
+      if (earlier.current !== before) return; // Another chat, or already read.
+      setMessages((previous) => {
+        const shown = new Set(previous.map((message) => message.seq));
+        return [...page.messages.filter((message: PublishedMessage) => !shown.has(message.seq)), ...previous];
+      });
+      earlier.current = page.earlier;
+    } catch (e) {
+      setFeedError(e instanceof Error ? e.message : "Unable to load earlier messages");
+    } finally {
+      setEarlierHistory(earlier.current ? "more" : "none");
+    }
+  }, [sessionId]);
   const items = useMemo(() => publicMessageItems(messages), [messages]);
   const palette = useMemo(() => (agentId ? agentPalette(agentId) : undefined), [agentId]);
   const send = async (text: string, files?: File[], inputId?: string) => {
@@ -224,7 +262,12 @@ export function PublishedChat({
         {/* Messages pass under the header and avatar: hidden under the header
             row, fading back in by the foot of the avatar's name. */}
         <div className="flex min-h-0 flex-1 flex-col [mask-image:linear-gradient(to_bottom,transparent_48px,black_112px)] [&_[data-testid=chat-transcript]]:pt-[104px]">
-          <MessageList items={items} thinking={false} />
+          <MessageList
+            items={items}
+            thinking={false}
+            earlierHistory={earlierHistory}
+            onLoadEarlier={loadEarlier}
+          />
         </div>
       </div>
       {(feedError || runtimeError || runtime.phase === "initError") && (

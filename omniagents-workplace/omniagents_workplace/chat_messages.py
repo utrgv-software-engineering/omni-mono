@@ -40,28 +40,53 @@ class ChatMessages:
             )
             return cursor.lastrowid
 
+    _COLUMNS = "seq,message_id,role,author,text,content,created_at"
+
+    @staticmethod
+    def _message(r):
+        return dict(
+            seq=r[0],
+            id=r[1],
+            role=r[2],
+            author=r[3],
+            text=r[4],
+            content=json.loads(r[5]),
+            created_at=r[6],
+        )
+
     def page(self, chat, after=0, limit=100):
         with self.store.transaction():
             rows = self.store._db.execute(
-                "SELECT seq,message_id,role,author,text,content,created_at FROM chat_messages WHERE chat=? AND seq>? ORDER BY seq LIMIT ?",
+                f"SELECT {self._COLUMNS} FROM chat_messages WHERE chat=? AND seq>? ORDER BY seq LIMIT ?",
                 (chat, after, limit + 1),
             ).fetchall()
-        messages = [
-            dict(
-                seq=r[0],
-                id=r[1],
-                role=r[2],
-                author=r[3],
-                text=r[4],
-                content=json.loads(r[5]),
-                created_at=r[6],
-            )
-            for r in rows[:limit]
-        ]
+        messages = [self._message(r) for r in rows[:limit]]
         return {
             "messages": messages,
             "cursor": messages[-1]["seq"] if messages else after,
             "has_more": len(rows) > limit,
+        }
+
+    def earlier(self, chat, before=None, limit=100):
+        """The newest ``limit`` messages, or those just before seq ``before``:
+        in order, with ``cursor`` to read on after them and ``earlier`` to
+        read back from (``None`` once the chat's first message is there)."""
+        with self.store.transaction():
+            if before is None:
+                rows = self.store._db.execute(
+                    f"SELECT {self._COLUMNS} FROM chat_messages WHERE chat=? ORDER BY seq DESC LIMIT ?",
+                    (chat, limit + 1),
+                ).fetchall()
+            else:
+                rows = self.store._db.execute(
+                    f"SELECT {self._COLUMNS} FROM chat_messages WHERE chat=? AND seq<? ORDER BY seq DESC LIMIT ?",
+                    (chat, before, limit + 1),
+                ).fetchall()
+        messages = [self._message(r) for r in rows[:limit]][::-1]
+        return {
+            "messages": messages,
+            "cursor": messages[-1]["seq"] if messages else 0,
+            "earlier": messages[0]["seq"] if len(rows) > limit else None,
         }
 
     def sent_at(self, chats):

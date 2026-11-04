@@ -45,6 +45,8 @@ export type SessionPanels = {
   dismissedWorkerIds: Set<string>;
   dismissedJobIds: Set<string>;
   dismissedTaskIds: Set<string>;
+  /** Older history than the transcript holds: none, more to load, or loading. */
+  earlierHistory: 'none' | 'more' | 'loading';
 };
 
 /** Session-owned panel state. Every write is a plain set; a read applies
@@ -74,6 +76,7 @@ export class SessionPanelStore {
     dismissedWorkerIds: new Set(),
     dismissedJobIds: new Set(),
     dismissedTaskIds: new Set(),
+    earlierHistory: 'none',
   });
   set = <K extends keyof SessionPanels>(
     key: K,

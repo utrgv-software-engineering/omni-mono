@@ -16,7 +16,12 @@ _FIELDS = {
     "get_agent_info": set(),
     "resume_session": {"session_id", "stream_id", "after_seq"},
     "ack_events": {"session_id", "stream_id", "seq"},
-    "queue_status": {"session_id", "include_snapshot", "submission_id"},
+    "queue_status": {
+        "session_id",
+        "include_snapshot",
+        "submission_id",
+        "snapshot_limit",
+    },
     "list_queue": {"session_id"},
     "cancel_queued_message": {"session_id", "item_id"},
     "get_session_history": {"session_id"},

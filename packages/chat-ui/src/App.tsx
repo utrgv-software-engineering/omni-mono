@@ -207,6 +207,14 @@ function SessionView({
   const machine = useChatSession(client, sessionIdProp);
   const session = machine.controller;
   const [modelMutating] = useSessionField(session, 'modelMutating');
+  const [earlierHistory] = useSessionField(session, 'earlierHistory');
+  const loadEarlier = useCallback(
+    () =>
+      session.loadEarlier().catch((cause: unknown) => {
+        host.notifyError('Earlier messages unavailable', cause instanceof Error ? cause.message : undefined);
+      }),
+    [session, host]
+  );
   // Stable refs so the run_started/run_end subscriptions (set up once) always
   // call the latest callbacks without re-subscribing.
   const onRunEndRef = useRef(onRunEnd);
@@ -1343,6 +1351,8 @@ function SessionView({
                     </Dialog>
                     <MessageList
                       items={mergedItems}
+                      earlierHistory={earlierHistory}
+                      onLoadEarlier={loadEarlier}
                       onOpenWorker={readOnly ? undefined : (worker: WorkerReport) => {
                         const entry = subagents.find(w => (w.worker_id ?? w.subagent_id) === worker.id);
                         const id = worker.session_id || entry?.session_id;

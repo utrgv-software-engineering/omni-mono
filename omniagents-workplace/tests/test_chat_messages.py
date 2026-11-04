@@ -153,3 +153,19 @@ def test_automation_chat_is_registered_on_explicit_publication(personal, monkeyp
         ][0]["text"]
         == "Report ready"
     )
+
+
+def test_a_chat_reads_back_from_its_newest_messages(tmp_path):
+    messages = ChatMessages(Store(tmp_path / "workplace.db"))
+    for n in range(1, 6):
+        messages.publish("chat", f"m{n}", "assistant", "agent", f"message {n}")
+    messages.publish("other", "m1", "assistant", "agent", "elsewhere")
+    newest = messages.earlier("chat", limit=2)
+    assert [m["text"] for m in newest["messages"]] == ["message 4", "message 5"]
+    assert newest["cursor"] == newest["messages"][-1]["seq"]
+    page = messages.earlier("chat", newest["earlier"], limit=2)
+    assert [m["text"] for m in page["messages"]] == ["message 2", "message 3"]
+    first = messages.earlier("chat", page["earlier"], limit=2)
+    assert [m["text"] for m in first["messages"]] == ["message 1"]
+    assert first["earlier"] is None
+    assert messages.page("chat", newest["cursor"])["messages"] == []

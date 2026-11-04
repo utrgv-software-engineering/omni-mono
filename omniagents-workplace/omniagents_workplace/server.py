@@ -2578,14 +2578,26 @@ def create_app(
         return await personal_result(connection.snapshot())
 
     @app.get("/workplace/api/personal/chats/{chat_id}/feed")
-    async def personal_feed(chat_id: str, request: Request, after: int = 0):
+    async def personal_feed(
+        chat_id: str,
+        request: Request,
+        after: int = 0,
+        before: int | None = None,
+        latest: bool = False,
+    ):
+        """Messages after ``after``; or, with ``latest``, the newest page, and
+        with ``before``, the page before that seq (both say where to go on)."""
         # Reading public messages never requires a live agent or starts work.
         admin(request)
         if not personal.exists(chat_id):
             raise HTTPException(404, "Chat not found")
-        if after < 0:
+        if after < 0 or (before is not None and before < 1):
             raise HTTPException(422, "Invalid cursor")
-        page = personal.messages.page(chat_id, after)
+        page = (
+            personal.messages.earlier(chat_id, before)
+            if latest or before is not None
+            else personal.messages.page(chat_id, after)
+        )
         names = _names()
         for message in page["messages"]:
             if message["role"] == "user":
