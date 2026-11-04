@@ -120,3 +120,7 @@ came from it:
   being removed there, ends the Workplace session at once.
 - The network adds the rest: the VM accepts HTTPS only from App Service's
   integration subnet.
+- Previews never see any of it: the deployment gateway forwards neither the
+  identity headers nor the proxy's secret, and none of the sign-in cookies
+  (Workplace's or App Service's `AppServiceAuthSession`), so preview code cannot
+  act as the person or as the front door.

@@ -437,6 +437,19 @@ export function InstallationApp({
                   >
                     {factory.runtime.running ? "Stop" : "Start"}
                   </Button>
+                  <Button
+                    variant="ghost"
+                    disabled={busy}
+                    onClick={() => {
+                      const confirm = window.prompt(
+                        `Deleting ${factory.name} removes its conversations, files and settings now; its backups expire on their own schedule. Type its name to delete it.`,
+                      );
+                      if (confirm)
+                        void act(() => request(`/factories/${factory.id}`, "DELETE", { confirm }));
+                    }}
+                  >
+                    Delete
+                  </Button>
                 </>
               )}
               {factory.role && (

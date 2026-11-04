@@ -27,3 +27,10 @@ backup`) is a sandbox disk: don't run it for Confidential factories.
 Deleting a conversation removes its history, its conversation records and
 replay journal, its tool outputs, its worker journal, the sessions of the
 workers it started, and its traces.
+
+Deleting a factory (Factories page → Delete, typing its name; installation
+administrators) stops its runtime and previews and removes their containers,
+its conversations, files, settings and memberships, at once; it is audited as
+`factory.deleted`. Its backups expire on their own schedule (30 days on Azure).
+An adopted factory, whose data a deployment owns, is retired by that deployment
+instead.

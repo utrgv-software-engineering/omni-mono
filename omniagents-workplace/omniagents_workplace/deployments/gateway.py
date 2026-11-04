@@ -34,6 +34,34 @@ HOP = {
 }
 
 
+def forwardable_header(name: str) -> bool:
+    """Whether a request header may reach a deployment or preview. Never the
+    front door's identity headers or its secret: preview code must not be able
+    to act as the person, or as the front door, toward Workplace."""
+    name = name.lower()
+    return (
+        name not in HOP
+        and not name.startswith("x-forwarded-")
+        and not name.startswith("x-ms-")
+        and name != "x-workplace-proxy-token"
+    )
+
+
+def forwardable_cookie(name: str) -> bool:
+    """Whether a cookie may reach a deployment or preview: never Workplace's,
+    the gateway's own, or App Service's sign-in session."""
+    from ..accounts import SESSION_COOKIE
+    from ..easy_auth import STATE_COOKIE
+
+    return name not in {
+        COOKIE,
+        STATE,
+        SESSION_COOKIE,
+        STATE_COOKIE,
+        "workplace_session",
+    } and not name.startswith(("AppServiceAuthSession", "Nonce"))
+
+
 class DeploymentGateway:
     def __init__(self, app, installation):
         self.app, self.installation = app, installation
@@ -223,15 +251,9 @@ class DeploymentGateway:
             if path.startswith("/app/")
             else 2 if path.startswith("/terminal/ws") else 0
         )
-        headers = {
-            k: v
-            for k, v in request.headers.items()
-            if k.lower() not in HOP and not k.lower().startswith("x-forwarded-")
-        }
+        headers = {k: v for k, v in request.headers.items() if forwardable_header(k)}
         headers["cookie"] = "; ".join(
-            f"{k}={v}"
-            for k, v in request.cookies.items()
-            if k not in {COOKIE, STATE, "workplace_session"}
+            f"{k}={v}" for k, v in request.cookies.items() if forwardable_cookie(k)
         )
         public = urlsplit(str(request.url)) if preview else urlsplit(d.url(factory_id))
         headers.update(
@@ -336,7 +358,7 @@ class DeploymentGateway:
                     "Cookie": "; ".join(
                         f"{k}={v}"
                         for k, v in ws.cookies.items()
-                        if k not in {COOKIE, STATE, "workplace_session"}
+                        if forwardable_cookie(k)
                     )
                 },
             }

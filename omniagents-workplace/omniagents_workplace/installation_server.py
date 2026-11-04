@@ -46,6 +46,11 @@ class FactoryCreate(BaseModel):
     project: str = ""
 
 
+class DeleteFactory(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    confirm: str
+
+
 class MemberChange(BaseModel):
     model_config = ConfigDict(extra="forbid")
     account_id: str
@@ -456,6 +461,20 @@ def create_installation_app(installation, *, static_dir=None):
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
         return installation_stop_state(request)
+
+    @app.delete("/workplace/api/factories/{factory_id}")
+    async def delete_factory(factory_id: str, body: DeleteFactory, request: Request):
+        identity = admin(request)
+        record = i.record(factory_id)
+        if not record:
+            raise HTTPException(404, "No such factory")
+        if body.confirm != record["name"]:
+            raise HTTPException(422, "Type the factory's name to delete it")
+        try:
+            await i.delete(factory_id, identity)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return {"deleted": factory_id}
 
     @app.post("/workplace/api/factories/{factory_id}/{action}")
     async def control(

@@ -483,3 +483,37 @@ Checked in the code on 2026-11-04; the workstreams above reflect the results.
 | Does deleting a conversation remove its journals and traces? | Partly: worker sessions and traces are left behind (workstream 6). |
 | Does every integration post as an identifiable app? | Partly: Slack and GitHub use dedicated accounts not named as AI; commits have no set identity (workstream 8). |
 | Can the kill switch suspend QuickSand VMs? | Yes, through graceful shutdown; a fast kill would cut off the disk flush (workstream 1). |
+
+## Review against the plan (2026-11-04)
+
+Every section and acceptance criterion of the
+[deployment plan](azure-web-compute-plan.md) was checked against the code. Gaps
+found and closed in this review:
+
+- **Factory deletion** did not exist, though disposal relies on it: installation
+  administrators can now delete a factory (by name), which removes it and what it
+  holds at once, audited.
+- **Previews could see sign-in secrets**: the deployment gateway now forwards
+  neither Easy Auth's identity headers, the front door's secret, nor App
+  Service's session cookie.
+- **Traces were not backed up** on 80/20's schedule; on Azure they now are, with
+  the conversations they belong to.
+- **Audit events' route to Log Analytics** now uses Docker's syslog driver,
+  which the Azure Monitor agent collects.
+- **Entra sign-in logs** to Log Analytics are a tenant setting, now in the
+  setup steps.
+- **The Workplace and factory images** are now scanned too, not only the proxy's.
+
+What only a real deployment can show (the plan's investigations, and the
+acceptance criteria that need Azure):
+
+- App Service VNet integration, WebSockets and timeouts through the proxy;
+- wildcard preview hostnames with Easy Auth (not set up);
+- KVM on Standard_D8s_v5, and the egress allowlist each factory needs;
+- a full restore to a fresh VM (`restore-drill.sh`), and the kill switch drill;
+- that disabling the model deployment's keys halts every agent.
+
+Interpretations to confirm: "sign-ins and access are audited" is met by
+sign-in, membership and settings events, not by a record of every conversation
+read; and Workplace has no conversation export, so "no exports" holds by
+absence.

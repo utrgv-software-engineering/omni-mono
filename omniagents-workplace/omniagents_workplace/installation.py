@@ -128,6 +128,8 @@ class Installation:
         self.records = dict(self.store.docs("factory"))
         self.members = dict(self.store.docs("membership"))
         self.instances = {}
+        #: Each mounted factory app's lifespan (``stopped``, ``task``).
+        self.lifespans = {}
         self.processes = {}
         self.errors = {}
         self.setup_token = secrets.token_urlsafe(32)
@@ -550,7 +552,10 @@ class Installation:
                     )
                 app = create_app(w, static_dir=getattr(self, "static_dir", None))
                 if self.stack is not None:
-                    await self.stack.enter_async_context(self.child_lifespan(app))
+                    handle = self.lifespans.setdefault(factory_id, {})
+                    await self.stack.enter_async_context(
+                        self.child_lifespan(app, handle)
+                    )
                 self.instances[factory_id] = (w, app)
                 self.processes[factory_id] = process
                 self.errors.pop(factory_id, None)
@@ -558,6 +563,59 @@ class Installation:
             except BaseException:
                 w.close()
                 raise
+
+    async def delete(self, factory_id, identity):
+        """Delete a factory and everything it holds, now: its runtime, previews,
+        conversations, files and settings. Its backups expire on their own
+        schedule (30 days on Azure). Audited on the installation."""
+        record = self.records.get(factory_id)
+        if record is None:
+            raise ValueError("No such factory")
+        if record.get("adopted") or record.get("workplace_dir"):
+            raise ValueError(
+                "An adopted factory's data belongs to the deployment that runs it; retire it there"
+            )
+        if (record.get("deployment") or {}).get("enabled"):
+            await self.deployments.stop(factory_id)
+        process = self.processes.pop(factory_id, None)
+        if process is not None:
+            await process.stop()
+        if self.docker_image:
+            for name in ("omni-factory-" + factory_id, "omni-deploy-" + factory_id):
+                proc = await asyncio.create_subprocess_exec(
+                    "docker",
+                    "rm",
+                    "--force",
+                    "--volumes",
+                    name,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await proc.wait()
+        handle = self.lifespans.pop(factory_id, None)
+        if handle and handle.get("task"):
+            handle["stopped"].set()
+            await asyncio.gather(handle["task"], return_exceptions=True)
+        found = self.instances.pop(factory_id, None)
+        if found is not None:
+            found[0].close()
+        with self.lock:
+            for key in [
+                k for k, m in self.members.items() if m["factory_id"] == factory_id
+            ]:
+                self.members.pop(key)
+                self.store.delete("membership", key)
+            self.records.pop(factory_id)
+            self.store.delete("factory", factory_id)
+        shutil.rmtree(self.directory / "factories" / factory_id, ignore_errors=True)
+        self.errors.pop(factory_id, None)
+        self.audit_log.record(
+            "factory.deleted",
+            actor=identity.username,
+            factory=factory_id,
+            name=record["name"],
+        )
+        self.write_egress()
 
     def installation_admin(self, account):
         identity = self.accounts.by_username(account.username)
@@ -799,7 +857,7 @@ class Installation:
 
     @staticmethod
     @contextlib.asynccontextmanager
-    async def child_lifespan(app):
+    async def child_lifespan(app, handle=None):
         # MCP's AnyIO cancel scopes must enter and exit in the same task, even
         # when a factory is created by an HTTP request after host startup.
         ready = asyncio.get_running_loop().create_future()
@@ -816,6 +874,9 @@ class Installation:
                 raise
 
         task = asyncio.create_task(run())
+        if handle is not None:
+            # Ending one factory's app before the installation's (deleting it).
+            handle.update(stopped=stopped, task=task)
         try:
             await ready
             yield
