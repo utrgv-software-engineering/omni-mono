@@ -1770,6 +1770,15 @@ export const allowedServices = {
     }),
 };
 
+export const factoryEgress = {
+  get: () =>
+    call<{ enabled: boolean; deployment: string[]; own: string[] | null; effective: string[] | null }>(
+      "/factory/egress",
+    ),
+  save: (allow: string[] | null, reason: string) =>
+    call<{ pending: unknown }>("/factory/egress", { method: "PUT", body: JSON.stringify({ allow, reason }) }),
+};
+
 export const factoryReport = {
   get: (days: number) => call<FactoryReport>(`/factory/report?days=${days}`),
 };

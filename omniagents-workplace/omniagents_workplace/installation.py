@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import json
 import os
 import re
 import secrets
@@ -24,6 +25,8 @@ STOP_KEY = "installation.stop"
 SERVICES_KEY = "installation.allowed_services"
 #: Who governs AI risk for every factory (identity ids).
 OWNERS_KEY = "installation.governance_owners"
+#: Where every factory may connect, through the egress proxy.
+EGRESS_KEY = "installation.egress"
 
 
 class FactoryAccounts:
@@ -103,6 +106,20 @@ class Installation:
         from .governance_reports import Reviews
 
         self.reviews = Reviews(self.store, self.audit_log)
+        self.egress_proxy = os.environ.get("WORKPLACE_EGRESS_PROXY", "").strip() or None
+        self.egress_config = (
+            Path(os.environ["WORKPLACE_EGRESS_CONFIG"])
+            if os.environ.get("WORKPLACE_EGRESS_CONFIG")
+            else None
+        )
+        self.egress_denials = (
+            Path(os.environ["WORKPLACE_EGRESS_DENIALS"])
+            if os.environ.get("WORKPLACE_EGRESS_DENIALS")
+            else None
+        )
+        self.decisions.appliers["egress"] = lambda change: self.save_egress(
+            change["after"]
+        )
         from .notifications import Notifier
 
         self.notifier = Notifier()
@@ -440,6 +457,11 @@ class Installation:
                 )
                 w.governance.is_owner = self.is_governance_owner
                 w.governance.project = Path(record["project"])
+                w.egress.proxy = self.egress_proxy
+                w.egress.installation_deployment = lambda: (
+                    self.store.meta(EGRESS_KEY) or []
+                )
+                w.egress.on_change = self.write_egress
                 w.kill_switch.installation_admin = self.installation_admin
 
                 async def stop_changed(stopped, factory_id=factory_id):
@@ -500,7 +522,7 @@ class Installation:
                     from .github.quicksand_space import QuicksandSettings
 
                     profile = process.prepare_profile(
-                        urlsplit(self.internal_url).port or 80
+                        urlsplit(self.internal_url).port or 80, egress=w.egress
                     )
                     cfg = w.factory_config.load()["factory"]
                     runtime_env = process.environment(
@@ -621,6 +643,47 @@ class Installation:
                     }
                 )
         return sources
+
+    def write_egress(self):
+        """The proxy's configuration: the deployment's list, and every factory's
+        credentials and own list."""
+        if self.egress_config is None:
+            return
+        from .egress import write_proxy_config
+
+        write_proxy_config(
+            self.egress_config,
+            self.store.meta(EGRESS_KEY) or [],
+            {
+                factory_id: w.egress.proxy_entry()
+                for factory_id, (w, _) in self.instances.items()
+            },
+        )
+
+    def save_egress(self, entries):
+        self.store.set_meta(EGRESS_KEY, entries)
+        self.write_egress()
+
+    def record_denials(self, offset):
+        """Audit the proxy's new denials (an alert for Confidential factories)."""
+        if self.egress_denials is None or not self.egress_denials.exists():
+            return offset, []
+        alerts = []
+        with self.egress_denials.open() as lines:
+            lines.seek(offset)
+            for line in lines:
+                try:
+                    denial = json.loads(line)
+                except ValueError:
+                    continue
+                found = self.instances.get(denial.get("factory") or "")
+                if found:
+                    w = found[0]
+                    w.egress.record_denial(denial)
+                    if w.governance.classification() == "confidential":
+                        alerts.append((self.records[denial["factory"]]["name"], denial))
+            offset = lines.tell()
+        return offset, alerts
 
     def is_governance_owner(self, account):
         identity = self.accounts.by_username(account.username)
@@ -785,6 +848,35 @@ class Installation:
                     )
                 )
                 stack.callback(reminders.cancel)
+                self.write_egress()
+
+                async def watch_denials():
+                    offset = self.store.meta("installation.egress_denials_offset") or 0
+                    while True:
+                        try:
+                            offset, alerts = self.record_denials(offset)
+                            self.store.set_meta(
+                                "installation.egress_denials_offset", offset
+                            )
+                            for name, denial in alerts:
+                                await self.notifier.send(
+                                    "Blocked connection from a Confidential factory",
+                                    f"{name} tried to reach {denial['host']}:{denial['port']}, "
+                                    "which is not on its allowlist.",
+                                    [
+                                        ("Factory", name),
+                                        (
+                                            "Destination",
+                                            f"{denial['host']}:{denial['port']}",
+                                        ),
+                                    ],
+                                )
+                        except Exception:  # noqa: BLE001 - keep watching
+                            pass
+                        await asyncio.sleep(10)
+
+                denials = asyncio.create_task(watch_denials())
+                stack.callback(denials.cancel)
                 try:
                     yield
                 finally:

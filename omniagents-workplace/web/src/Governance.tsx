@@ -297,3 +297,54 @@ export function AllowedServicesEditor({
     </form>
   );
 }
+
+/** An egress allowlist, one host per line (host, *.domain, or either with :port). */
+export function AllowlistEditor({
+  load,
+  save,
+  help,
+  allowClear = false,
+}: {
+  load: () => Promise<string[] | null>;
+  save: (entries: string[] | null, reason: string) => Promise<{ pending: unknown }>;
+  help: string;
+  allowClear?: boolean;
+}) {
+  const [text, setText] = useState("");
+  const [reason, setReason] = useState("");
+  useEffect(() => {
+    void load().then((entries) => setText((entries ?? []).join("\n")));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- loaded once, when opened
+  const submit = (entries: string[] | null) =>
+    save(entries, reason)
+      .then((r) =>
+        toast.success(r.pending ? "Saved. Widening it waits for the governance owner." : "Saved"),
+      )
+      .catch((e: unknown) => toast.error((e as Error).message));
+  return (
+    <form
+      className="space-y-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit(text.split("\n").map((l) => l.trim()).filter(Boolean));
+      }}
+    >
+      <p className="text-sm text-muted-foreground">{help}</p>
+      <textarea
+        aria-label="Allowlist"
+        className="h-40 w-full rounded-md border p-2 font-mono text-sm"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+      />
+      <Input placeholder="Reason (needed to widen it)" value={reason} onChange={(e) => setReason(e.target.value)} />
+      <div className="flex gap-2">
+        <Button type="submit">Save</Button>
+        {allowClear && (
+          <Button type="button" variant="outline" onClick={() => void submit(null)}>
+            Use the deployment&apos;s list
+          </Button>
+        )}
+      </div>
+    </form>
+  );
+}

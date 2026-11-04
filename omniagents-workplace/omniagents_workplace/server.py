@@ -266,6 +266,18 @@ class Workplace:
         from .governance import Governance
 
         self.governance = Governance(self)
+        from .egress import Egress
+
+        self.egress = Egress(self)
+
+        def apply_egress(change):
+            self.store.set_meta("factory.egress", change["after"])
+            self.audit_log.record(
+                "egress.factory_changed", before=change["before"], after=change["after"]
+            )
+            self.egress.changed()
+
+        self.governance.decisions.appliers["egress"] = apply_egress
         from .shared.state import Shared
 
         self.shared = Shared(self)
@@ -1156,6 +1168,7 @@ def create_app(
     app.include_router(workplace.event_gateway.router())
     app.include_router(workplace.kill_switch.router())
     app.include_router(workplace.governance.router())
+    app.include_router(workplace.egress.router())
     app.add_middleware(RepositoryProviderBoundary, workplace=workplace)
     app.add_middleware(RequestLimits)
     from .easy_auth import EasyAuth

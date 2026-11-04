@@ -462,7 +462,32 @@ def main(argv=None) -> None:
         help="The workplace's data directory",
     )
     env.add_argument("--app", help="The app's username (default: the only one)")
+    egress = sub.add_parser(
+        "egress-proxy",
+        help="Run the egress proxy: the only way out for what factories run",
+    )
+    egress.add_argument(
+        "--config",
+        type=Path,
+        required=True,
+        help="The JSON configuration Workplace writes",
+    )
+    egress.add_argument(
+        "--denials", type=Path, help="Where denials are appended (JSONL) for Workplace"
+    )
+    egress.add_argument("--host", default="0.0.0.0")
+    egress.add_argument("--port", type=int, default=3128)
     args = parser.parse_args(argv)
+
+    if args.command == "egress-proxy":
+        import asyncio
+        import logging
+
+        from .egress_proxy import EgressProxy
+
+        logging.basicConfig(level=logging.INFO, format="%(message)s")
+        asyncio.run(EgressProxy(args.config, args.denials).serve(args.host, args.port))
+        return
 
     if args.command == "manage":
         import uvicorn

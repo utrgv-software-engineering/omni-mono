@@ -17,6 +17,7 @@ from .governance import Services as AllowedServices
 from .governance import Decision as GovernanceDecision
 from .governance import Owners as GovernanceOwners
 from .governance import ReviewDone
+from .egress import Allowlist as EgressList
 from .accounts import (
     SESSION_COOKIE,
     Account,
@@ -626,6 +627,35 @@ def create_installation_app(installation, *, static_dir=None):
                     decision_id, identity.username, body.approve, body.reasoning
                 )
         raise HTTPException(404, "No such decision")
+
+    @app.get("/workplace/api/installation/egress")
+    def installation_egress(request: Request):
+        from .installation import EGRESS_KEY
+
+        me(request)
+        return {
+            "enabled": bool(i.egress_proxy),
+            "deployment": i.store.meta(EGRESS_KEY) or [],
+        }
+
+    @app.put("/workplace/api/installation/egress")
+    def save_installation_egress(body: EgressList, request: Request):
+        from .egress import set_deployment
+        from .installation import EGRESS_KEY
+
+        identity = admin(request)
+        pending = set_deployment(
+            account=identity,
+            entries=body.allow or [],
+            reason=body.reason,
+            current=i.store.meta(EGRESS_KEY) or [],
+            save=i.save_egress,
+            decisions=i.decisions,
+            gated=i.policy.strict,
+            owner=i.is_governance_owner(identity),
+            audit_log=i.audit_log,
+        )
+        return {"deployment": i.store.meta(EGRESS_KEY) or [], "pending": pending}
 
     @app.get("/workplace/api/installation/inventory")
     def inventory(request: Request):

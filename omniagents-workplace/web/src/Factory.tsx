@@ -4,8 +4,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem } from "@omniagents/ui/dropdown-menu";
 import { factoryUrl } from "./factory-scope";
 import { FactoryStopControl } from "./FactoryStop";
-import { AllowedServicesEditor, FactoryGovernance, FactoryProfileForm } from "./Governance";
-import { allowedServices } from "./api";
+import { AllowedServicesEditor, AllowlistEditor, FactoryGovernance, FactoryProfileForm } from "./Governance";
+import { allowedServices, factoryEgress } from "./api";
 // The factory, as its engineers watch it: what it is doing now, what its pull
 // requests took (cost, human touches, time to ship) and where its spend goes.
 // Costs come from the factory's own prices (pricing.yml); on a ChatGPT
@@ -661,6 +661,7 @@ export function FactoryApp({ navigate, onConfigure, onModel, onSchedules }: { na
   const [secretsOpen, setSecretsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [governanceOpen, setGovernanceOpen] = useState(false);
+  const [egressOpen, setEgressOpen] = useState(false);
   const [servicesOpen, setServicesOpen] = useState(false);
   const [servicesManaged, setServicesManaged] = useState(true);
   const loadServices = useCallback(
@@ -719,10 +720,12 @@ export function FactoryApp({ navigate, onConfigure, onModel, onSchedules }: { na
           <DropdownMenuItem onSelect={() => setProfileOpen(true)}>Data classification</DropdownMenuItem>
           <DropdownMenuItem onSelect={() => setServicesOpen(true)}>Allowed services</DropdownMenuItem>
           <DropdownMenuItem onSelect={() => setGovernanceOpen(true)}>Governance</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setEgressOpen(true)}>Egress allowlist</DropdownMenuItem>
           {onModel && <DropdownMenuItem onSelect={() => setSecretsOpen(true)}>Secrets</DropdownMenuItem>}
         </DropdownMenuGroup></DropdownMenuContent></DropdownMenu>}
         <Dialog open={routingOpen} onOpenChange={setRoutingOpen}><DialogContent><DialogHeader><DialogTitle>Automations</DialogTitle><DialogDescription>Choose the agent and conversation for each workflow. Changes apply to future events.</DialogDescription></DialogHeader>{routingOpen && <AutomationRoutes />}</DialogContent></Dialog>
         <Dialog open={profileOpen} onOpenChange={setProfileOpen}><DialogContent><DialogHeader><DialogTitle>Data classification</DialogTitle><DialogDescription>What data this factory touches, what it is for, and who owns it.</DialogDescription></DialogHeader>{profileOpen && <FactoryProfileForm onSaved={() => setProfileOpen(false)} />}</DialogContent></Dialog>
+        <Dialog open={egressOpen} onOpenChange={setEgressOpen}><DialogContent><DialogHeader><DialogTitle>Egress allowlist</DialogTitle><DialogDescription>Where this factory&apos;s runtime and sandboxes may connect, through the deployment&apos;s egress proxy.</DialogDescription></DialogHeader>{egressOpen && <AllowlistEditor allowClear help="A Confidential factory's own list, within the deployment's. Other factories use the deployment's list." load={() => factoryEgress.get().then((r) => r.own ?? r.deployment)} save={factoryEgress.save} />}</DialogContent></Dialog>
         <Dialog open={governanceOpen} onOpenChange={setGovernanceOpen}><DialogContent className="sm:max-w-3xl"><DialogHeader><DialogTitle>Governance</DialogTitle><DialogDescription>Every governance decision about this factory, and its system card.</DialogDescription></DialogHeader>{governanceOpen && <FactoryGovernance />}</DialogContent></Dialog>
         <Dialog open={servicesOpen} onOpenChange={setServicesOpen}><DialogContent className="sm:max-w-3xl"><DialogHeader><DialogTitle>Allowed services</DialogTitle><DialogDescription>{servicesManaged ? "Kept by the installation's administrators, for all of its factories." : "The models, integrations and MCP servers this Workplace allows."}</DialogDescription></DialogHeader>{servicesOpen && <AllowedServicesEditor load={loadServices} save={(s) => allowedServices.save(s).then((r) => r.services)} readOnly={servicesManaged} />}</DialogContent></Dialog>
         <Dialog open={secretsOpen} onOpenChange={setSecretsOpen}><DialogContent><DialogHeader><DialogTitle>Factory secrets</DialogTitle><DialogDescription>Credentials available to this factory.</DialogDescription></DialogHeader>{secretsOpen && <FactorySecrets />}</DialogContent></Dialog>

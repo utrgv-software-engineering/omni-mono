@@ -122,9 +122,17 @@ class FactoryProcess:
         # Under the strict policy: the runtime's audit, set where the project
         # cannot override it.
         env.update(workplace.governance.runtime_environment(self.directory))
+        from urllib.parse import urlsplit
+
+        # What factories run reaches the internet only through the egress proxy.
+        env.update(
+            workplace.egress.runtime_environment(
+                [h for h in {urlsplit(workplace.internal_url).hostname} if h]
+            )
+        )
         return env
 
-    def prepare_profile(self, host_port, runner_image=None):
+    def prepare_profile(self, host_port, runner_image=None, egress=None):
         # The source configuration belongs to this factory, never another one.
         source = self.project / "sandbox_profile_quicksand.yml"
         if not source.is_file():
@@ -146,6 +154,8 @@ class FactoryProcess:
         if runner_image:
             options["image"] = str(Path(runner_image).resolve())
             options["setup"] = []
+        if egress is not None:
+            profile = egress.sandbox_profile(profile)
         target = self.directory / "sandbox.yml"
         target.write_text(yaml.safe_dump(profile))
         return target
@@ -164,7 +174,7 @@ class FactoryProcess:
                 raise ValueError(
                     "Install omniagents[sandbox-quicksand] beside Workplace to start agents"
                 )
-            profile = self.prepare_profile(host_port)
+            profile = self.prepare_profile(host_port, egress=workplace.egress)
             port = free_port()
             config = workplace.factory_config.raw()
             config["factory"]["url"] = f"http://127.0.0.1:{port}"

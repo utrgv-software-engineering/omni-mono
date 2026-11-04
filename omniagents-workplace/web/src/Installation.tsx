@@ -3,7 +3,7 @@ import { Button } from "@omniagents/ui/button";
 import { Input } from "@omniagents/ui/input";
 import { type Person } from "./api";
 import { StopDialog } from "./FactoryStop";
-import { AllowedServicesEditor } from "./Governance";
+import { AllowedServicesEditor, AllowlistEditor } from "./Governance";
 import type { AllowedService } from "./api";
 
 type Factory = {
@@ -328,6 +328,12 @@ export function InstallationApp({
       <GovernancePanel admin={!!account.admin} people={people} />
       {servicesOpen && (
         <section className="space-y-2 rounded-lg border p-4">
+          <h2 className="font-medium">Egress allowlist</h2>
+          <AllowlistEditor
+            help="Where every factory may connect through the egress proxy: model endpoints, package registries, integrations."
+            load={() => request<{ deployment: string[] }>("/installation/egress").then((r) => r.deployment)}
+            save={(allow, reason) => request("/installation/egress", "PUT", { allow, reason })}
+          />
           <h2 className="font-medium">Allowed services</h2>
           <AllowedServicesEditor
             load={() =>

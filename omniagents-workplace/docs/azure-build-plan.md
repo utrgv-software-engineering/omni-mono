@@ -190,7 +190,15 @@ Build, in omniagents-workplace:
   a required check on improvement PRs that scans the diff with omniagents'
   content scanner (Presidio or regex) for personal data.
 
-## 4. Egress control (L)
+## 4. Egress control (L) — done (Workplace and runtime)
+
+Built 2026-11-04; see [Egress](egress.md). Where it differs from the design
+below: the proxy is Workplace's own (`omniagents-workplace egress-proxy`), so its
+allowlists, per-factory credentials and denial audit share Workplace's state;
+QuickSand already had the needed mode (`mounts_only` is QEMU `restrict=on`
+with guest-to-host forwards), so only `host_services` gained `host:port`
+targets. The proxy container, internal networks, `DOCKER-USER` rules and NSG
+rules are deployment configuration, built with workstream 7.
 
 Exists: QuickSand network modes `none`, `mounts_only` and `full`; Docker sandbox
 network modes. Nothing filters destinations.

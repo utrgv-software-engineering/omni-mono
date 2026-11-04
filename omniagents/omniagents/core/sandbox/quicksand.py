@@ -57,7 +57,9 @@ class QuicksandOptions(BaseSandboxClientOptions):
     exposed_ports: tuple[int, ...] = ()
     # Explicit host ports avoid an allocation race between discovery and QEMU.
     port_forwards: dict[int, int] = Field(default_factory=dict)  # guest -> host
-    host_services: dict[int, int] = Field(default_factory=dict)  # guest -> host
+    #: guest port -> host port, or "host:port" (a service on another host,
+    #: such as the deployment's egress proxy)
+    host_services: dict[int, int | str] = Field(default_factory=dict)
     network_mode: Literal["none", "mounts_only", "full"] = "mounts_only"
     mounts: list[QuicksandMount] = Field(default_factory=list)
     setup: list[str] = Field(default_factory=list)
@@ -256,7 +258,7 @@ class QuicksandSession(BaseSandboxSession):
                 for guest, host in options.port_forwards.items()
             ]
             forwards += [
-                Forward(Guest(guest), Host(host))
+                Forward(Guest(guest), Host(host))  # a port, or "host:port"
                 for guest, host in options.host_services.items()
             ]
             mode = {
