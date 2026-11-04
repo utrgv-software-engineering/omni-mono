@@ -2740,9 +2740,10 @@ def create_app(
         """Messages after ``after``; or, with ``latest``, the newest page, and
         with ``before``, the page before that seq (both say where to go on)."""
         # Reading public messages never requires a live agent or starts work.
-        admin(request)
+        account = admin(request)
         if not personal.exists(chat_id):
             raise HTTPException(404, "Chat not found")
+        workplace.governance.record_access(account, "conversation", chat_id)
         if after < 0 or (before is not None and before < 1):
             raise HTTPException(422, "Invalid cursor")
         page = (
@@ -2858,6 +2859,9 @@ def create_app(
             await websocket.close(code=1008)
             return
         account = workplace.accounts.signed_in(cookie)
+        workplace.governance.record_access(
+            account, "conversation", websocket.path_params["chat_id"]
+        )
         url, token = _factory_endpoint()
         try:
             connection = await personal.for_account(
@@ -2958,6 +2962,8 @@ def create_app(
         if not url or not re.fullmatch(r"[a-z][a-z0-9_]*", key):
             await websocket.close(code=1008)
             return
+        # The run viewer reads agents' sessions: who opened which agent's.
+        workplace.governance.record_access(account, "transcripts", key)
         await websocket.accept()
         await relay(
             websocket,

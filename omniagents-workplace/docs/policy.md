@@ -33,6 +33,16 @@ tokens, or conversation content. They include sign-ins and failures, password
 and account changes, invitations, personal tokens, membership changes (before
 and after), kill-switch use, and access-review exports.
 
+## Who read what
+
+In a Confidential factory, reads of sensitive data are audit events too:
+`access.conversation` (a chat's messages or its live connection),
+`access.transcripts` (an agent's sessions in the Factory tab's run viewer),
+`access.file` and `access.folder` (Shared downloads). Each person's reads of
+each item are recorded at most once an hour, so the log answers who looked at
+what, and when, without recording every page load. Like every audit event, they
+name what was read, never its content.
+
 ## Access review
 
 UTS 165 asks for access to be reviewed every 12 months. Installation

@@ -160,8 +160,9 @@ def shared_router(w):
 
     @router.get("/content")
     def content(request: Request, path: str, preview: bool = False):
-        me(request)
+        account = me(request)
         path = clean(path)
+        w.governance.record_access(account, "file", path)
         mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
         try:
             stream = open_file(shared.root, path)
@@ -247,8 +248,9 @@ def shared_router(w):
 
     @router.get("/download-folder")
     def archive(request: Request, path: str = ""):
-        me(request)
+        account = me(request)
         path = clean(path, root=True)
+        w.governance.record_access(account, "folder", path or "/")
         with directory(shared.root, path):
             pass
         output = tempfile.TemporaryFile(dir=shared.staging)

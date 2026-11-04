@@ -160,6 +160,7 @@ class Governance:
         self.decisions = Decisions(workplace.store, workplace.audit_log)
         #: The factory's project directory, when an installation knows it.
         self.project: Optional[Path] = None
+        self._accessed: dict = {}
         self.decisions.appliers["labels"] = self._apply_labels
         self.decisions.appliers["allowed_services"] = self._apply_services
 
@@ -168,6 +169,25 @@ class Governance:
         if self.project is not None:
             return self.project
         return self.w.factory_config.root if self.w.factory_config else None
+
+    #: How often one person's reads of one thing are recorded again.
+    ACCESS_INTERVAL = 3600
+
+    def record_access(self, account: Any, kind: str, target: str) -> None:
+        """In a Confidential factory, who read what (a conversation, a run's
+        transcript, a Shared file), once an hour per person and item: what an
+        audit of access to sensitive data asks (HIPAA §164.312(b))."""
+        import time
+
+        if self.classification() != "confidential" or account is None:
+            return
+        key = (account.username, kind, target)
+        now = time.time()
+        last = self._accessed.get(key)
+        if last is not None and now - last < self.ACCESS_INTERVAL:
+            return
+        self._accessed[key] = now
+        self.w.audit_log.record("access." + kind, actor=account.username, target=target)
 
     def gated(self) -> bool:
         """Whether decisions wait for the governance owner (the strict policy)."""

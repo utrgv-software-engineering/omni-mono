@@ -513,7 +513,7 @@ acceptance criteria that need Azure):
 - a full restore to a fresh VM (`restore-drill.sh`), and the kill switch drill;
 - that disabling the model deployment's keys halts every agent.
 
-Interpretations to confirm: "sign-ins and access are audited" is met by
-sign-in, membership and settings events, not by a record of every conversation
-read; and Workplace has no conversation export, so "no exports" holds by
-absence.
+"Sign-ins and access are audited" now includes reads: in Confidential
+factories, who opened which conversation, run transcripts and Shared files
+(at most once an hour per person and item). Workplace has no conversation
+export, so "no exports" holds by absence.
