@@ -133,12 +133,14 @@ treat its conversations, worker journals and traces as PHI. That means:
    already; sign-ins and access are audited.
 2. **Where copies are.** The live disk and its backups in the Azure tenant,
    encrypted. No exports, CI logs, laptops or non-PHI factories.
-3. **How long they are kept.** A written retention period for conversations,
-   for example for the life of the factory.
+3. **How long they are kept.** For the life of the factory. Conversations,
+   worker journals and traces share one rule, so self-improvement and users
+   always see the same history. Nothing expires on a timer; a member deletes a
+   conversation, or an administrator deletes the factory.
 4. **How they are destroyed.** Deleting a conversation or factory removes it
-   from the live system at once; it then survives only in backups, until they
-   expire. The backup history (for example, 30 days) bounds disposal, not the
-   conversations' own retention.
+   from the live system at once; it then survives only in backups, which expire
+   after **30 days**. That bound is what disposal means here: deleted data is
+   gone everywhere within 30 days.
 5. **What learns from them.** Self-improvement output (skills, notes,
    factory-live changes) stays within the factory, and must not copy patient
    details into skills, prompts or configuration.
@@ -150,12 +152,14 @@ treat its conversations, worker journals and traces as PHI. That means:
 | Workplace database: accounts, memberships, settings | No | Yes |
 | Factory configuration, factory-live, skills, stand-in repositories | No (code, not data) | Yes |
 | Encryption keys | No; they unlock PHI | Separately, in Key Vault, never with data backups |
-| Conversations, journals, traces | In factories handling PHI | Yes, encrypted, with a short backup history |
+| Conversations, journals, traces | In factories handling PHI | Yes, encrypted, 30-day backup history |
 | Shared uploads, agent workspaces | In factories handling PHI | Only in factories without PHI |
 | Previews, images, caches, source checkouts | Never (previews use seed data only) | No: rebuildable |
 
 Backups go to Azure Backup in the same tenant, under the same access controls
-as the VM, and expire automatically. Restore to a fresh VM on a schedule.
+as the VM. They run **daily and are kept for 30 days**, with no longer-term
+copies, so deleted data is fully disposed of within 30 days. Restore to a fresh
+VM **every quarter** and record the result.
 
 ### Other controls
 
@@ -172,10 +176,15 @@ as the VM, and expire automatically. Restore to a fresh VM on a schedule.
 4. **Stand-ins.** Stand-ins are allowed. They are Workplace's own services and
    keep their data on the VM, inside the protected boundary, under the same
    encryption, backup and factory permissions as everything else.
-5. **Encryption.** Managed disks are encrypted at rest; decide whether
-   customer-managed keys are required.
+5. **Encryption.** Managed disks, backups and Key Vault use Azure's
+   platform-managed encryption at rest. HIPAA does not require customer-managed
+   keys; they add key rotation and a way to lock yourself out of your own data.
+   Adopt them only if institutional policy requires it.
 6. **Audit.** Entra sign-in logs and Workplace audit events go to a store that
-   factory agents and sandboxes cannot modify.
+   factory agents and sandboxes cannot modify, and are kept for **six years**,
+   matching HIPAA's retention period for compliance documentation. Audit events
+   record who did what, not conversation content, so they are not themselves a
+   PHI store.
 7. **Isolation.** Credentials, files and execution resources stay isolated
    between factories on the shared VM. Resource limits keep CI from starving chat
    and agents.
