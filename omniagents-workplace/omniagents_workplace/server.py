@@ -225,21 +225,36 @@ class Workplace:
             LinearPersistence(self.linear, self.store),
             CanvasPersistence(self.canvas, self.store),
         ]
+        from .audit import AuditLog
+        from .policy import Policy
+
+        #: What the deployment requires (``WORKPLACE_POLICY``).
+        self.policy = Policy(self.environ)
+        self.audit_log = AuditLog(self.store)
+        from .notifications import Notifier
+
+        #: Approval requests and alerts, to a Teams channel when one is set.
+        self.notifier = Notifier(self.environ)
+        session_seconds = int(
+            self.environ.get(
+                "WORKPLACE_SESSION_SECONDS",
+                (
+                    12 * 3600
+                    if environment in ("production", "staging")
+                    else SESSION_SECONDS
+                ),
+            )
+        )
+        limits = self.policy.session_limits()
         self.accounts = Accounts(
             self.store,
             min_password=(
                 15 if environment in ("production", "staging") else MIN_PASSWORD
             ),
-            session_seconds=int(
-                self.environ.get(
-                    "WORKPLACE_SESSION_SECONDS",
-                    (
-                        12 * 3600
-                        if environment in ("production", "staging")
-                        else SESSION_SECONDS
-                    ),
-                )
+            session_seconds=min(
+                session_seconds, limits.get("session_seconds", session_seconds)
             ),
+            idle_seconds=limits.get("idle_seconds"),
         )
         self.apps = AppRegistry(self, self.store)
         from .event_gateway import EventGateway
@@ -248,6 +263,9 @@ class Workplace:
         from .kill_switch import KillSwitch
 
         self.kill_switch = KillSwitch(self)
+        from .governance import Governance
+
+        self.governance = Governance(self)
         from .shared.state import Shared
 
         self.shared = Shared(self)
@@ -645,7 +663,7 @@ class Workplace:
             )
         else:
             raise AccountError(f"No service {service}")
-        audit("token.created", account_id=account.id, service=service)
+        self.audit_log.record("token.created", account_id=account.id, service=service)
         return token
 
     def revoke_personal_token(self, account: Account, service: str) -> None:
@@ -666,7 +684,7 @@ class Workplace:
         else:
             raise AccountError(f"No service {service}")
 
-        audit("token.revoked", account_id=account.id, service=service)
+        self.audit_log.record("token.revoked", account_id=account.id, service=service)
 
     def _personal_slack_app(self, account: Account) -> Optional[SlackApp]:
         return next(
@@ -887,11 +905,20 @@ class SignedIn:
     clients without browser provenance headers may use their session cookie.
     """
 
-    def __init__(self, app, accounts: Accounts, base_url: str, additional_origins=()):
+    def __init__(
+        self,
+        app,
+        accounts: Accounts,
+        base_url: str,
+        additional_origins=(),
+        identity=None,
+    ):
         self.app = app
         self.accounts = accounts
         self.base_url = base_url
         self.additional_origins = additional_origins
+        #: Easy Auth: the Microsoft identity each request must still carry.
+        self.identity = identity
 
     async def __call__(self, scope, receive, send):
         path = scope.get("path", "")
@@ -956,9 +983,16 @@ class SignedIn:
                 await _answer(send, 415, {"detail": "Send JSON"})
                 return
             if not _OPEN_API.match(path):
-                account = self.accounts.signed_in(
-                    _cookie(headers.get("cookie", ""), SESSION_COOKIE)
-                )
+                token = _cookie(headers.get("cookie", ""), SESSION_COOKIE)
+                account = self.accounts.signed_in(token)
+                if (
+                    account is not None
+                    and self.identity is not None
+                    and not self.identity.matches(headers, account, self.accounts)
+                ):
+                    # Signed out of Microsoft, or removed there: the session ends now.
+                    self.accounts.sign_out(token)
+                    account = None
                 if account is None:
                     await _answer(send, 401, {"detail": "Sign in"})
                     return
@@ -1121,13 +1155,18 @@ def create_app(
     app.include_router(workplace.factory_secrets.router())
     app.include_router(workplace.event_gateway.router())
     app.include_router(workplace.kill_switch.router())
+    app.include_router(workplace.governance.router())
     app.add_middleware(RepositoryProviderBoundary, workplace=workplace)
     app.add_middleware(RequestLimits)
+    from .easy_auth import EasyAuth
+
+    azure_auth = EasyAuth(workplace.base_url)
     app.add_middleware(
         SignedIn,
         accounts=workplace.accounts,
         base_url=workplace.base_url,
         additional_origins=workplace.additional_origins,
+        identity=azure_auth if azure_auth.enabled else None,
     )
     # Added last, so it runs first: a sandbox never reaches the UI's API.
     app.add_middleware(
@@ -1254,10 +1293,8 @@ def create_app(
     def _invite_url(token: str) -> str:
         return f"{workplace.base_url.rstrip('/')}/invite/{token}"
 
-    from .easy_auth import EasyAuth
-
-    azure_auth = EasyAuth(workplace.base_url)
     azure_auth.install(app, workplace.accounts)
+    azure_auth.require(workplace.policy, workplace.accounts)
 
     # -- signing in --------------------------------------------------------------
 
@@ -1417,6 +1454,28 @@ def create_app(
         return {"ok": True}
 
     # -- people (admins) ----------------------------------------------------------
+
+    @app.get("/workplace/api/access-review")
+    def access_review(request: Request):
+        """Everyone with access, for the annual access review (UTS 165)."""
+        import time
+
+        account = admin(request)
+        people = [
+            {
+                "username": p.username,
+                "name": p.name,
+                "role": "admin" if p.admin else "member",
+                "disabled": p.disabled,
+            }
+            for p in workplace.accounts.people()
+        ]
+        workplace.audit_log.record("access_review.exported", actor=account.username)
+        return {
+            "generated_at": time.time(),
+            "generated_by": account.username,
+            "people": people,
+        }
 
     @app.get("/workplace/api/people")
     def people(request: Request):
@@ -2074,6 +2133,18 @@ def create_app(
         from .factory_models import ModelsError
 
         models, _ = _factory(request)
+        from .factory_models import normalize_compatible_base_url
+
+        workplace.governance.require_model(
+            {"openai": "openai", "anthropic": "litellm"}.get(
+                body.kind, "openai-compatible"
+            ),
+            (
+                normalize_compatible_base_url(body.base_url)
+                if body.kind not in ("openai", "anthropic") and body.base_url.strip()
+                else None
+            ),
+        )
         try:
             ref = models.add_provider(
                 body.kind,
@@ -2119,6 +2190,7 @@ def create_app(
         from .factory_models import CHATGPT_PROVIDER_ID, FactoryRpcError
 
         _, rpc = _factory(request)
+        workplace.governance.require_model("openai-oauth", None)
         if rpc is None:
             raise HTTPException(
                 status_code=422, detail="workplace.yml's factory: has no url"
@@ -2394,6 +2466,14 @@ def create_app(
 
     definition = FactoryDefinition(workplace, _factory_repository, _factory_endpoint)
     workplace.github.subscribe(definition.on_github)
+    from .governance import install_repository_rules
+
+    def factory_repositories() -> set:
+        names = {definition.known_name()}
+        names.add(workplace.repository_settings.settings().get("factory_repository"))
+        return {n for n in names if n}
+
+    install_repository_rules(workplace, factory_repositories)
     app.include_router(definition_router(definition))
 
     async def personal_connection(request: Request):

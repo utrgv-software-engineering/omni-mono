@@ -26,7 +26,6 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from .accounts import admin, me
-from .security import audit
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +78,12 @@ class KillSwitch:
         #: and starts the runtime it manages).
         self.on_change: Optional[Callable[[bool], Awaitable[None]]] = None
 
+    def name(self) -> str:
+        try:
+            return self.w.slack.name or "The factory"
+        except AttributeError:
+            return "The factory"
+
     # -- state ---------------------------------------------------------------
 
     def own(self) -> Optional[dict]:
@@ -112,13 +117,15 @@ class KillSwitch:
             "by_installation_admin": self.installation_admin(account),
         }
         self.w.store.set_meta(KEY, state)
-        audit(
-            "factory.stopped",
-            account_id=account.id,
-            factory=getattr(self.w, "installation_factory_id", None),
-            reason=reason,
+        self.w.audit_log.record(
+            "factory.stopped", actor=account.username, reason=reason
         )
         await self.changed()
+        await self.w.notifier.send(
+            "Factory stopped",
+            describe(state),
+            [("Factory", self.name()), ("By", account.username), ("Reason", reason)],
+        )
         return self.view()
 
     async def resume(self, account: Any, reason: str) -> dict:
@@ -131,13 +138,15 @@ class KillSwitch:
                 "An installation administrator stopped this factory; one must resume it",
             )
         self.w.store.set_meta(KEY, None)
-        audit(
-            "factory.resumed",
-            account_id=account.id,
-            factory=getattr(self.w, "installation_factory_id", None),
-            reason=reason,
+        self.w.audit_log.record(
+            "factory.resumed", actor=account.username, reason=reason
         )
         await self.changed()
+        await self.w.notifier.send(
+            "Factory resumed",
+            f"{self.name()} was resumed by {account.username}.",
+            [("Factory", self.name()), ("By", account.username), ("Reason", reason)],
+        )
         return self.view()
 
     async def changed(self) -> None:

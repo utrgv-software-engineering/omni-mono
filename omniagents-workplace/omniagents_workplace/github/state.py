@@ -319,6 +319,13 @@ class GitHubState:
         self.next_id = 1001
         self._listeners: List[Listener] = []
         self._lock = threading.RLock()
+        #: Repositories whose approvals must come from a person
+        #: (``person_review(repo)``), and who is one (``person(login)``).
+        self.person_review: Optional[Callable[[Repo], bool]] = None
+        self.person: Optional[Callable[[str], bool]] = None
+        #: Checks a protected branch also requires, beyond its workflow jobs:
+        #: each returns ``{name: state}`` for a pull request it applies to.
+        self.extra_checks: List[Callable[[Repo, Issue], Dict[str, str]]] = []
 
     # -- ids, events ------------------------------------------------------
 
@@ -1229,11 +1236,21 @@ class GitHubState:
             if issue.pull.base in repo.protected
             else None
         )
-        if not required:
+        extra: Dict[str, str] = {}
+        if issue.pull.base in repo.protected:
+            for check in self.extra_checks:
+                extra.update(check(repo, issue))
+        if not required and not extra:
             return []
-        states = self.check_states(repo, self.head_sha(repo, issue))
+        states = {
+            **self.check_states(repo, self.head_sha(repo, issue)),
+            **extra,
+        }
         unmet = []
-        for name in required:
+        for name in [
+            *(required or []),
+            *(n for n in extra if n not in (required or [])),
+        ]:
             state = states.get(name)
             if state == "success":
                 continue
@@ -1260,7 +1277,7 @@ class GitHubState:
         ):
             return "dirty"
         if issue.pull.base in repo.protected and (
-            not self._approved(issue) or self.unmet_checks(repo, issue)
+            not self._approved(issue, repo) or self.unmet_checks(repo, issue)
         ):
             return "blocked"
         runs = self.runs_for(repo, self.head_sha(repo, issue))
@@ -1268,10 +1285,15 @@ class GitHubState:
             return "unstable"
         return "clean"
 
-    def _approved(self, issue: Issue) -> bool:
+    def _approved(self, issue: Issue, repo: Optional[Repo] = None) -> bool:
         assert issue.pull
+        people_only = bool(
+            repo is not None and self.person_review and self.person_review(repo)
+        )
         latest: Dict[str, str] = {}
         for review in issue.pull.reviews:
+            if people_only and not (self.person and self.person(review.user)):
+                continue  # an agent's approval does not count here
             if review.state in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
                 latest[review.user] = review.state
         return (
@@ -1303,7 +1325,7 @@ class GitHubState:
             raise GitHubError(405, "Pull Request is still a draft")
         if (
             issue.pull.base in repo.protected
-            and not self._approved(issue)
+            and not self._approved(issue, repo)
             and not bypass_protection
         ):
             raise GitHubError(

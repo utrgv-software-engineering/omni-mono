@@ -3,6 +3,8 @@ import { Button } from "@omniagents/ui/button";
 import { Input } from "@omniagents/ui/input";
 import { type Person } from "./api";
 import { StopDialog } from "./FactoryStop";
+import { AllowedServicesEditor } from "./Governance";
+import type { AllowedService } from "./api";
 
 type Factory = {
   id: string;
@@ -46,6 +48,7 @@ export function InstallationApp({
   const [invite, setInvite] = useState("");
   const [allStopped, setAllStopped] = useState<{ stopped: unknown; message: string } | null>(null);
   const [stopping, setStopping] = useState(false);
+  const [servicesOpen, setServicesOpen] = useState(false);
   async function load() {
     setAllStopped(
       await request<{ stopped: unknown; message: string }>("/installation/stop"),
@@ -97,6 +100,11 @@ export function InstallationApp({
             <Button onClick={() => setCreating(!creating)}>New factory</Button>
           )}
           {account.admin && (
+            <Button variant="outline" onClick={() => setServicesOpen(!servicesOpen)}>
+              Allowed services
+            </Button>
+          )}
+          {account.admin && (
             <Button
               variant={allStopped?.stopped ? "default" : "destructive"}
               onClick={() => setStopping(true)}
@@ -118,6 +126,23 @@ export function InstallationApp({
         <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
           {allStopped.message}
         </p>
+      )}
+      {servicesOpen && (
+        <section className="space-y-2 rounded-lg border p-4">
+          <h2 className="font-medium">Allowed services</h2>
+          <AllowedServicesEditor
+            load={() =>
+              request<{ services: AllowedService[] }>("/installation/allowed-services").then(
+                (r) => r.services,
+              )
+            }
+            save={(services) =>
+              request<{ services: AllowedService[] }>("/installation/allowed-services", "PUT", {
+                services,
+              }).then((r) => r.services)
+            }
+          />
+        </section>
       )}
       <StopDialog
         open={stopping}

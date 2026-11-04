@@ -119,6 +119,9 @@ class FactoryProcess:
             OMNIAGENTS_SANDBOX_PROFILE=str(profile),
             PYTHONUNBUFFERED="1",
         )
+        # Under the strict policy: the runtime's audit, set where the project
+        # cannot override it.
+        env.update(workplace.governance.runtime_environment(self.directory))
         return env
 
     def prepare_profile(self, host_port, runner_image=None):

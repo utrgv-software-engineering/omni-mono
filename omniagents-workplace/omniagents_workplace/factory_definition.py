@@ -221,7 +221,10 @@ class FactoryDefinition:
     # -- the parts ------------------------------------------------------------
 
     def require_review(self) -> bool:
-        return bool(self.w.store.meta(REVIEW_KEY, False))
+        # Controlled and Confidential factories under the strict policy: always.
+        return self.w.governance.review_forced() or bool(
+            self.w.store.meta(REVIEW_KEY, False)
+        )
 
     def known_name(self) -> Optional[str]:
         """The factory's repository, as far as is known without asking it."""
@@ -825,12 +828,28 @@ def definition_router(definition: FactoryDefinition) -> APIRouter:
     @router.get("/settings")
     def settings(request: Request):
         admin(request)
-        return {"require_review": definition.require_review()}
+        return {
+            "require_review": definition.require_review(),
+            "forced": definition.w.governance.review_forced(),
+        }
 
     @router.put("/settings")
     def save_settings(body: SettingsBody, request: Request):
-        admin(request)
+        account = admin(request)
+        if definition.w.governance.review_forced() and not body.require_review:
+            raise HTTPException(
+                409,
+                "Every change to a Controlled or Confidential factory is reviewed",
+            )
+        before = bool(definition.w.store.meta(REVIEW_KEY, False))
         definition.w.store.set_meta(REVIEW_KEY, body.require_review)
-        return {"require_review": body.require_review}
+        if before != body.require_review:
+            definition.w.audit_log.record(
+                "factory.review_changed",
+                actor=account.username,
+                before=before,
+                after=body.require_review,
+            )
+        return {"require_review": definition.require_review()}
 
     return router

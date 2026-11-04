@@ -2216,11 +2216,13 @@ def load_agent_spec_from_yaml(
     if project_defaults and isinstance(project_defaults.get("security"), dict):
         sec = project_defaults["security"]
         if sec.get("mcp_require_allowlist"):
-            allowed = set(sec.get("mcp_allowed_servers") or [])
+            from omniagents.core.allowed_services import mcp_server_allowed
+
+            allowed = list(sec.get("mcp_allowed_servers") or [])
             if allowed:
                 filtered = []
                 for srv in mcp_servers:
-                    if srv.name in allowed:
+                    if mcp_server_allowed(srv, allowed):
                         filtered.append(srv)
                     else:
                         logger.warning(

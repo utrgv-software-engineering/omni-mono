@@ -1023,6 +1023,11 @@ class ModelConfigStore:
             else:
                 result["api_key"] = os.getenv("OPENAI_API_KEY")
 
+        from omniagents.core.allowed_services import require_model
+
+        # Every model a run resolves comes through here: the deployment's
+        # allowed services hold for all of them.
+        require_model(result)
         return result
 
     def resolve_voice_settings_for_realtime(

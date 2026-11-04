@@ -787,12 +787,13 @@ class McpServerManager:
     def user_mcp_allowed(self) -> bool:
         return bool(self._layered_value("allow_user_mcp_servers", False))
 
-    def _allowlist(self) -> Optional[set[str]]:
-        """The active allowlist, or ``None`` when not required."""
+    def _allowlist(self) -> Optional[list[str]]:
+        """The active allowlist (names, or ``name=<identity>``), or ``None``
+        when not required."""
         if not bool(self._layered_value("security.mcp_require_allowlist", False)):
             return None
         allowed = self._layered_value("security.mcp_allowed_servers", []) or []
-        return {str(name) for name in allowed}
+        return [str(name) for name in allowed]
 
     # -- provenance ------------------------------------------------------
 
@@ -853,10 +854,12 @@ class McpServerManager:
         """The configs sessions should run: merge minus gates/kill switch."""
         allowlist = self._allowlist()
         configs: List[MCPServerConfig] = []
+        from omniagents.core.allowed_services import mcp_server_allowed
+
         for name, (cfg, _source) in self._merged_configs().items():
             if name in self._disabled:
                 continue
-            if allowlist is not None and name not in allowlist:
+            if allowlist is not None and not mcp_server_allowed(cfg, allowlist):
                 continue
             configs.append(cfg)
         return configs
@@ -1030,8 +1033,12 @@ class McpServerManager:
         if server_name in self._disabled:
             return False, "kill_switch"
         allowlist = self._allowlist()
-        if allowlist is not None and server_name not in allowlist:
-            return False, "allowlist_blocked"
+        if allowlist is not None:
+            from omniagents.core.allowed_services import mcp_server_allowed
+
+            found = self._find_config(server_name)
+            if found is None or not mcp_server_allowed(found, allowlist):
+                return False, "allowlist_blocked"
         source = self.source_of(server_name)
         if source in (SOURCE_USER, SOURCE_PROJECT_LOCAL):
             if not self.user_mcp_allowed():

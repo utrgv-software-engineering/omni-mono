@@ -4,6 +4,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem } from "@omniagents/ui/dropdown-menu";
 import { factoryUrl } from "./factory-scope";
 import { FactoryStopControl } from "./FactoryStop";
+import { AllowedServicesEditor, FactoryProfileForm } from "./Governance";
+import { allowedServices } from "./api";
 // The factory, as its engineers watch it: what it is doing now, what its pull
 // requests took (cost, human touches, time to ship) and where its spend goes.
 // Costs come from the factory's own prices (pricing.yml); on a ChatGPT
@@ -657,6 +659,17 @@ function Benchmarks({
 
 export function FactoryApp({ navigate, onConfigure, onModel, onSchedules }: { navigate: (p: string) => void; onConfigure?: () => void; onModel?: () => void; onSchedules?: () => void }) {
   const [secretsOpen, setSecretsOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [servicesOpen, setServicesOpen] = useState(false);
+  const [servicesManaged, setServicesManaged] = useState(true);
+  const loadServices = useCallback(
+    () =>
+      allowedServices.get().then((r) => {
+        setServicesManaged(r.managed_by_installation);
+        return r.services;
+      }),
+    [],
+  );
   const [days, setDays] = useState(7);
   const [report, setReport] = useState<FactoryReport | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -702,9 +715,13 @@ export function FactoryApp({ navigate, onConfigure, onModel, onSchedules }: { na
           {onModel && <DropdownMenuItem onSelect={() => setRoutingOpen(true)}>Automations</DropdownMenuItem>}
           {onSchedules && <DropdownMenuItem onSelect={onSchedules}>Schedules</DropdownMenuItem>}
           <DropdownMenuItem onSelect={onConfigure}>Factory changes</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setProfileOpen(true)}>Data classification</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setServicesOpen(true)}>Allowed services</DropdownMenuItem>
           {onModel && <DropdownMenuItem onSelect={() => setSecretsOpen(true)}>Secrets</DropdownMenuItem>}
         </DropdownMenuGroup></DropdownMenuContent></DropdownMenu>}
         <Dialog open={routingOpen} onOpenChange={setRoutingOpen}><DialogContent><DialogHeader><DialogTitle>Automations</DialogTitle><DialogDescription>Choose the agent and conversation for each workflow. Changes apply to future events.</DialogDescription></DialogHeader>{routingOpen && <AutomationRoutes />}</DialogContent></Dialog>
+        <Dialog open={profileOpen} onOpenChange={setProfileOpen}><DialogContent><DialogHeader><DialogTitle>Data classification</DialogTitle><DialogDescription>What data this factory touches, what it is for, and who owns it.</DialogDescription></DialogHeader>{profileOpen && <FactoryProfileForm onSaved={() => setProfileOpen(false)} />}</DialogContent></Dialog>
+        <Dialog open={servicesOpen} onOpenChange={setServicesOpen}><DialogContent className="sm:max-w-3xl"><DialogHeader><DialogTitle>Allowed services</DialogTitle><DialogDescription>{servicesManaged ? "Kept by the installation's administrators, for all of its factories." : "The models, integrations and MCP servers this Workplace allows."}</DialogDescription></DialogHeader>{servicesOpen && <AllowedServicesEditor load={loadServices} save={(s) => allowedServices.save(s).then((r) => r.services)} readOnly={servicesManaged} />}</DialogContent></Dialog>
         <Dialog open={secretsOpen} onOpenChange={setSecretsOpen}><DialogContent><DialogHeader><DialogTitle>Factory secrets</DialogTitle><DialogDescription>Credentials available to this factory.</DialogDescription></DialogHeader>{secretsOpen && <FactorySecrets />}</DialogContent></Dialog>
       </div>
       {error && <p className="text-sm text-destructive">{error}</p>}

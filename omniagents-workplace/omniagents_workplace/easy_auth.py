@@ -73,8 +73,12 @@ class EasyAuth:
         }
 
     def account_id(self, request):
+        return self.account_id_from(request.headers)
+
+    def account_id_from(self, headers):
+        """The Workplace account a request's Microsoft identity maps to."""
         try:
-            raw = request.headers.get("x-ms-client-principal", "")
+            raw = headers.get("x-ms-client-principal", "")
             if len(raw) > 65536:
                 raise ValueError()
             principal = json.loads(base64.b64decode(raw, validate=True))
@@ -96,6 +100,20 @@ class EasyAuth:
             raise HTTPException(
                 403, "This Microsoft identity is not linked to a Workplace account"
             ) from None
+
+    def matches(self, headers, account, accounts) -> bool:
+        """Whether a request still carries the Microsoft identity of the
+        session's account (an installation's factories: its identity)."""
+        try:
+            mapped = self.account_id_from(headers)
+        except HTTPException:
+            return False
+        return accounts.username_of(mapped) == account.username
+
+    def require(self, policy, accounts):
+        """Under the strict policy, Microsoft sign-in is the only sign-in."""
+        if self.enabled and policy.strict:
+            getattr(accounts, "local", accounts).passwords = False
 
     def install(self, app, accounts):
         # Mounted factories use installation identities, never local SSO accounts.

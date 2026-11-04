@@ -20,6 +20,8 @@ from .store import Store
 
 #: The installation's stop of every factory (the kill switch's "stop all").
 STOP_KEY = "installation.stop"
+#: The models, integrations and MCP servers every factory may use.
+SERVICES_KEY = "installation.allowed_services"
 
 
 class FactoryAccounts:
@@ -48,6 +50,10 @@ class FactoryAccounts:
     def sign_out(self, token):
         self.installation.accounts.sign_out(token)
 
+    def username_of(self, account_id):
+        # Easy Auth maps Microsoft identities to installation accounts.
+        return self.installation.accounts.username_of(account_id)
+
 
 class Installation:
     def __init__(
@@ -65,7 +71,7 @@ class Installation:
         workflow_image=None,
         template=None,
         sandbox_port=None,
-        deployment_backend=None
+        deployment_backend=None,
     ):
         self.directory = Path(directory).expanduser().resolve()
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -82,10 +88,16 @@ class Installation:
         if docker_image and not (docker_network and docker_host_data):
             raise ValueError("Docker hosting requires its network and host data path")
         self.store = Store(self.directory / "installation.db")
-        self.accounts = Accounts(
-            self.store,
-            min_password=15 if environment in {"production", "staging"} else 8,
-        )
+        from .audit import AuditLog
+        from .policy import Policy
+
+        #: What the deployment requires (``WORKPLACE_POLICY``); every factory's too.
+        self.policy = Policy()
+        self.audit_log = AuditLog(self.store)
+        from .notifications import Notifier
+
+        self.notifier = Notifier()
+        self.accounts = self.new_accounts()
         self.records = dict(self.store.docs("factory"))
         self.members = dict(self.store.docs("membership"))
         self.instances = {}
@@ -154,13 +166,17 @@ class Installation:
                         self.members[factory_id + ":" + key] = membership
                         self.store.put("membership", factory_id + ":" + key, membership)
                 self.store.set_meta("installation.legacy_factory", factory_id)
-            self.accounts = Accounts(
-                self.store,
-                min_password=15 if self.environment in {"production", "staging"} else 8,
-            )
+            self.accounts = self.new_accounts()
             return record
         finally:
             source.close()
+
+    def new_accounts(self):
+        return Accounts(
+            self.store,
+            min_password=15 if self.environment in {"production", "staging"} else 8,
+            **self.policy.session_limits(),
+        )
 
     @staticmethod
     def product_config_name(project):
@@ -276,11 +292,23 @@ class Installation:
             self.grant(factory_id, owner.id, "admin")
             return record
 
-    def grant(self, factory_id, identity_id, role):
+    def grant(self, factory_id, identity_id, role, actor=None):
         if factory_id not in self.records or identity_id not in self.accounts.accounts:
             raise ValueError("Unknown factory or account")
         if role not in {"admin", "member", None}:
             raise ValueError("Role must be admin or member")
+        previous_role = (self.members.get(factory_id + ":" + identity_id) or {}).get(
+            "role"
+        )
+        if previous_role != role:
+            self.audit_log.record(
+                "membership.changed",
+                actor=actor,
+                factory=factory_id,
+                account_id=identity_id,
+                before=previous_role,
+                after=role,
+            )
         with self.lock:
             key = factory_id + ":" + identity_id
             previous = self.members.get(key)
@@ -301,12 +329,16 @@ class Installation:
                     if account:
                         w.update_person(account, disabled=True)
             else:
+                import time
+
                 member = {
                     **(previous or {}),
                     "factory_id": factory_id,
                     "identity_id": identity_id,
                     "role": role,
                 }
+                if not previous or previous.get("role") != role:
+                    member["granted_at"] = time.time()
                 self.members[key] = member
                 self.store.put("membership", key, member)
                 if factory_id in self.instances:
@@ -390,7 +422,13 @@ class Installation:
                             }
                         )
                 w.installation_factory_id = factory_id
+                w.policy = self.policy
+                w.notifier = self.notifier
+                w.audit_log.factory = factory_id
                 w.kill_switch.installation_state = lambda: self.store.meta(STOP_KEY)
+                w.governance.installation_services = lambda: (
+                    self.store.meta(SERVICES_KEY) or []
+                )
                 w.kill_switch.installation_admin = self.installation_admin
 
                 async def stop_changed(stopped, factory_id=factory_id):
@@ -507,8 +545,6 @@ class Installation:
     async def stop_all(self, identity, reason):
         import time
 
-        from .security import audit
-
         self.store.set_meta(
             STOP_KEY,
             {
@@ -519,18 +555,44 @@ class Installation:
                 "by_installation_admin": True,
             },
         )
-        audit("installation.stopped", account_id=identity.id, reason=reason)
+        self.audit_log.record(
+            "installation.stopped", actor=identity.username, reason=reason
+        )
+        await self.notifier.send(
+            "All factories stopped",
+            f"Every factory was stopped by {identity.username}: {reason}",
+            [("By", identity.username), ("Reason", reason)],
+        )
         await asyncio.gather(
             *(w.kill_switch.changed() for w, _ in list(self.instances.values()))
         )
 
-    async def resume_all(self, identity, reason):
-        from .security import audit
+    def set_allowed_services(self, identity, services):
+        from .governance import validate_services
 
+        before = self.store.meta(SERVICES_KEY) or []
+        after = validate_services(services)
+        self.store.set_meta(SERVICES_KEY, after)
+        self.audit_log.record(
+            "allowed_services.changed",
+            actor=identity.username,
+            before=before,
+            after=after,
+        )
+        return after
+
+    async def resume_all(self, identity, reason):
         if not self.store.meta(STOP_KEY):
             raise ValueError("Factories are not stopped")
         self.store.set_meta(STOP_KEY, None)
-        audit("installation.resumed", account_id=identity.id, reason=reason)
+        self.audit_log.record(
+            "installation.resumed", actor=identity.username, reason=reason
+        )
+        await self.notifier.send(
+            "All factories resumed",
+            f"Factories were resumed by {identity.username}: {reason}",
+            [("By", identity.username), ("Reason", reason)],
+        )
         await asyncio.gather(
             *(w.kill_switch.changed() for w, _ in list(self.instances.values()))
         )
@@ -543,6 +605,9 @@ class Installation:
 
             raise ValueError(describe(self.stopped(factory_id)))
         w, _ = await self.mount(factory_id)
+        refused = w.governance.startable()
+        if refused:
+            raise ValueError(refused)
         port = urlsplit(self.internal_url).port or 80
         await self.processes[factory_id].start(
             w, self.records[factory_id], port, self.runner_image

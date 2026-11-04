@@ -1703,6 +1703,38 @@ export const factoryStop = {
   resume: (reason: string) => post<StopView>("/factory/resume", { reason }),
 };
 
+export interface FactoryProfileView {
+  profile: { classification?: string; purpose?: string; owner?: string };
+  classes: string[];
+  strict: boolean;
+  review_forced: boolean;
+  startable: boolean;
+}
+
+export const factoryProfile = {
+  get: () => call<FactoryProfileView>("/factory/profile"),
+  save: (profile: { classification: string; purpose: string; owner: string }) =>
+    call<FactoryProfileView>("/factory/profile", { method: "PUT", body: JSON.stringify(profile) }),
+};
+
+export interface AllowedService {
+  kind: "model" | "integration" | "mcp";
+  name: string;
+  provider: string;
+  endpoint: string;
+  note: string;
+}
+
+export const allowedServices = {
+  get: () =>
+    call<{ services: AllowedService[]; managed_by_installation: boolean }>("/allowed-services"),
+  save: (services: AllowedService[]) =>
+    call<{ services: AllowedService[] }>("/allowed-services", {
+      method: "PUT",
+      body: JSON.stringify({ services }),
+    }),
+};
+
 export const factoryReport = {
   get: (days: number) => call<FactoryReport>(`/factory/report?days=${days}`),
 };

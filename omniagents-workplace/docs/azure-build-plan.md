@@ -92,7 +92,15 @@ while stopped are skipped and not replayed; stop survives Workplace and runtime
 restarts; resume rules by role; a turn halts at its next model call when only
 the marker is present.
 
-## 2. Audit log and deployment policy (M)
+## 2. Audit log and deployment policy (M) — done
+
+Built 2026-11-04; see [Deployment policy, audit log and notifications](policy.md).
+Where it differs from the design below: the policy is `WORKPLACE_POLICY`, set by
+the deployment for the installation and every factory, rather than a
+`workplace.yml` key a factory could change; the Teams webhook is
+`WORKPLACE_TEAMS_WEBHOOK_URL`; and the approving person's identity on approval
+events lands with the approval inbox (workstream 5), which is where a person
+other than the chat's owner first decides.
 
 Exists: Workplace's `security.audit()` writes JSON log lines for sign-ins,
 invites and tokens, and keeps nothing. omniagents has a structured,
@@ -129,7 +137,19 @@ Build:
   setting for a Microsoft Teams incoming webhook; approval requests (workstream
   5) and alerts (workstream 8) post to it.
 
-## 3. Classification, allowed services and forced review (M)
+## 3. Classification, allowed services and forced review (M) — done
+
+Built 2026-11-04; see [Classification and allowed services](governance.md).
+Where it differs from the design below: models and integrations are enforced
+from runtime environment variables Workplace sets
+(`OMNIAGENTS_ALLOWED_MODEL_ENDPOINTS`, `OMNIAGENTS_ALLOWED_INTEGRATIONS`), and MCP
+servers through the managed overlay; MCP entries pin an address as
+`name=<URL prefix or command:executable>`. The `personal-data` check scans added
+lines with omniagents' regex patterns for SSNs, MRNs, API keys and bearer tokens
+(not names or emails, which definitions legitimately contain). Self-improvement
+already targets only the linked factory repository, so no other publishing path
+needed refusing. The person-approval rule and the `personal-data` check apply to
+the stand-in GitHub; on real GitHub they are branch-protection setup.
 
 Exists: per-factory settings in each factory's store; `factory.definition.require_review`
 (off by default); omniagents' `security.mcp_require_allowlist` and

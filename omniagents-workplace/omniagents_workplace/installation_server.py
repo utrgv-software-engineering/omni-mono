@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, StrictInt
 
 from .kill_switch import Reason as StopReason
+from .governance import Services as AllowedServices
 from .accounts import (
     SESSION_COOKIE,
     Account,
@@ -292,7 +293,15 @@ def create_installation_app(installation, *, static_dir=None):
     i = installation
     i.static_dir = static_dir
     app = FastAPI(title="OmniAgents factories", lifespan=i.lifespan)
-    app.add_middleware(SignedIn, accounts=i.accounts, base_url=i.base_url)
+    from .easy_auth import EasyAuth
+
+    azure_auth = EasyAuth(i.base_url)
+    app.add_middleware(
+        SignedIn,
+        accounts=i.accounts,
+        base_url=i.base_url,
+        identity=azure_auth if azure_auth.enabled else None,
+    )
     app.add_middleware(RequestLimits)
 
     @app.exception_handler(AccountError)
@@ -310,10 +319,8 @@ def create_installation_app(installation, *, static_dir=None):
             path="/",
         )
 
-    from .easy_auth import EasyAuth
-
-    azure_auth = EasyAuth(i.base_url)
     azure_auth.install(app, i.accounts)
+    azure_auth.require(i.policy, i.accounts)
 
     @app.get("/healthz")
     def health():
@@ -554,11 +561,61 @@ def create_installation_app(installation, *, static_dir=None):
             "members": [m for m in i.members.values() if m["factory_id"] == factory_id]
         }
 
+    @app.get("/workplace/api/installation/allowed-services")
+    def allowed_services(request: Request):
+        from .installation import SERVICES_KEY
+
+        me(request)
+        return {"services": i.store.meta(SERVICES_KEY) or []}
+
+    @app.put("/workplace/api/installation/allowed-services")
+    def save_allowed_services(body: AllowedServices, request: Request):
+        identity = admin(request)
+        return {"services": i.set_allowed_services(identity, body.services)}
+
+    @app.get("/workplace/api/installation/access-review")
+    def access_review(request: Request):
+        """Everyone with access, by factory, for the annual access review (UTS 165)."""
+        import time
+
+        identity = admin(request)
+        people = i.accounts.accounts
+        review = {
+            "generated_at": time.time(),
+            "generated_by": identity.username,
+            "installation_admins": [
+                {"username": p.username, "name": p.name, "disabled": p.disabled}
+                for p in people.values()
+                if p.admin
+            ],
+            "factories": [
+                {
+                    "id": record["id"],
+                    "name": record["name"],
+                    "members": [
+                        {
+                            "username": people[m["identity_id"]].username,
+                            "name": people[m["identity_id"]].name,
+                            "role": m["role"],
+                            "granted_at": m.get("granted_at"),
+                            "disabled": people[m["identity_id"]].disabled,
+                        }
+                        for m in i.members.values()
+                        if m["factory_id"] == record["id"]
+                        and m["identity_id"] in people
+                    ],
+                }
+                for record in i.records.values()
+            ],
+        }
+        i.audit_log.record("access_review.exported", actor=identity.username)
+        return review
+
     @app.put("/workplace/api/factories/{factory_id}/members")
     def membership(factory_id: str, body: MemberChange, request: Request):
-        admin(request)
+        identity = admin(request)
         try:
-            i.grant(factory_id, body.account_id, body.role)
+            i.grant(factory_id, body.account_id, body.role, actor=identity.username)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         return {"ok": True}

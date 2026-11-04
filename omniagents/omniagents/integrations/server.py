@@ -89,11 +89,26 @@ def parse_integrations(entries: Any) -> List[Config]:
     """The event sources in a ``project.yml`` ``integrations:`` list."""
     from omniagents.core.config.loader import _substitute_env_vars
 
+    from omniagents.core.allowed_services import INTEGRATIONS_ENV, integration_allowed
+
+    def _resolved_or_raw(entry):
+        try:
+            return _substitute_env_vars(dict(entry))
+        except ValueError:  # a variable it needs is unset: its own check reports it
+            return dict(entry)
+
     configs: List[Config] = []
     for entry in entries or []:
         if not isinstance(entry, dict):
             continue
         kind = entry.get("type")
+        if os.environ.get(INTEGRATIONS_ENV) and not integration_allowed(
+            _resolved_or_raw(entry)
+        ):
+            logger.warning(
+                "integrations: %r is not one of the allowed services; it is off", kind
+            )
+            continue
         if kind == "github":
             from omniagents.core.project.github_settings import github_settings
 
