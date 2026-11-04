@@ -21,19 +21,25 @@ Sizes are relative: S is days, M is about a week, L is several weeks.
 
 ## Order
 
-1. **Kill switch.** Texas already requires it (1 TAC §219.11, in force since
-   March 18, 2026), and it is useful everywhere. Build it first.
-2. **Audit log and deployment policy.** The foundation for every later setting.
-3. **Classification, allowed services and forced review.**
-4. **Egress control.**
-5. **Human approvals for named tools.**
-6. **Backups.**
-7. **Azure front door and infrastructure.** Can run in parallel with 3 to 6.
-8. **Transparency and oversight features.**
-9. **Pilot**: an example factory with no sensitive data, registered in the AI
-   Inventory, before any real work.
-10. **Later: Microsoft Teams and Azure DevOps.** The Azure deployment starts on
-    stand-ins; these replace them once the deployment is running.
+Workstreams are numbered for reference; build them in this order:
+
+1. **Kill switch** (workstream 1). Texas already requires it (1 TAC §219.11, in
+   force since March 18, 2026), and it is useful everywhere. Build it first.
+2. **Audit log and deployment policy** (2). The foundation for every later
+   setting.
+3. **Classification, allowed services and forced review** (3).
+4. **Governance** (9): the governance reviewer, decision records, material
+   changes, system cards, scheduled reviews and the evidence export. Early,
+   because it is the case for delegated authority and wraps the settings of 3.
+5. **Egress control** (4).
+6. **Human approvals for named tools** (5).
+7. **Backups** (6).
+8. **Azure front door and infrastructure** (7). Can run in parallel with 3 to 7.
+9. **Transparency and oversight features** (8).
+10. **Pilot**: an example factory with no sensitive data, registered in the AI
+    Inventory with the inventory export, before any real work.
+11. **Later: Microsoft Teams and Azure DevOps** (10). The Azure deployment starts
+    on stand-ins; these replace them once the deployment is running.
 
 The 80/20 deployment adopts each workstream as it lands, under the same
 `strict` policy, so it dogfoods everything except the Azure-only parts.
@@ -129,10 +135,11 @@ Build, in omniagents-workplace:
 
 - **Factory settings.** `classification` (Published, Controlled, Confidential),
   `purpose` and `owner`. Required under the strict policy; a factory without a
-  classification does not start. Every change is audited.
+  classification does not start. Every change is audited, and once workstream 9
+  lands, classification changes are governance requests.
 - **Allowed services.** An installation-level list of model endpoints,
-  integrations and MCP servers that administrators keep, audited like any
-  setting. It is a technical control, not an approval workflow. Enforcement:
+  integrations and MCP servers. Once workstream 9 lands, adding or removing one
+  is a governance request. Enforcement:
   - models: under the strict policy every factory's `models.json` may name only
     allowed endpoints; the Factory model page refuses others and the runtime
     refuses to start with one;
@@ -308,10 +315,66 @@ Build, in omniagents-workplace unless noted:
   factories, repeated sign-in failures and policy-rejected changes are alert
   events, posted to the installation's Teams channel (workstream 2).
 
+## 9. Governance (L)
+
+Health Affairs makes governance decisions in Workplace and Workplace keeps the
+evidence ([Governance](azure-web-compute-plan.md#governance)). Exists: factory
+roles (`admin`, `member`), installation administrators, the audit store
+(workstream 2), PR reviews and required checks in the stand-in GitHub, release
+approvals.
+
+Build, in omniagents-workplace unless noted:
+
+- **Governance reviewer role.** An installation-level role, granted by
+  installation administrators and audited. Separation of duties is enforced:
+  a reviewer cannot decide a request they proposed. Under the strict policy,
+  Workplace warns until at least one reviewer is not an installation
+  administrator.
+- **Governance requests.** A request type wrapping the settings it governs:
+  allowed services, a factory's classification, its risk level, and material
+  setting changes. The setting changes only when a reviewer approves. Each
+  request stores the change, proposer, reason, decider, decision, reasoning,
+  links and times, permanently. A Governance page lists open and decided
+  requests; new requests post to the Teams channel.
+- **Material changes in the repository.** Workplace inspects each pull request
+  on a factory's repository; one touching its models, the security or MCP
+  sections of `project.yml`, or the approval-required tools gets a required
+  `governance` check, pending until a governance reviewer approves it on the
+  Governance page. Works in the stand-in GitHub (required checks exist) and on
+  real GitHub and Azure DevOps as a status check. Settings changes and PRs that
+  are material are marked in the change history.
+- **Risk level.** The `heightened_risk` setting and its reasoning, as a
+  governance request. The heightened-risk review features themselves stay
+  deferred (workstream 8).
+- **System cards and inventory export.** A system card per factory on the
+  Factory tab and an inventory export of the deployment, generated from
+  settings, decision records and the factory's configuration: purpose, owner,
+  classification and its decision, risk level and its reasoning, models,
+  integrations, MCP servers, egress allowlist, retention, approval-required
+  tools, last material change.
+- **Scheduled reviews.** A governance calendar: quarterly restore and
+  kill-switch drills, annual access review, annual risk review per factory
+  (and after material changes), inventory update every 24 months (and after
+  material changes). Each completion records who, when and the result; overdue
+  reviews are flagged on the Governance page and posted to Teams. The restore
+  drill script (workstream 6) and kill-switch drill record their results here.
+- **Evidence export.** For a date range: inventory and system cards, decision
+  records, change history (PRs with reviewers and governance checks, releases
+  with approvals, settings changes), kill-switch events and drills, named-tool
+  approvals, backup and restore results, access reviews, scheduled reviews,
+  incident alerts and the audit log. A readable report plus JSON records,
+  metadata only (never conversation content or files). Available to governance
+  reviewers and installation administrators; every export is audited.
+
+Tests: a reviewer cannot approve their own request; a setting does not change
+before approval; a material PR cannot merge until the governance check passes;
+the export for a range contains each record type and no conversation content.
+
 ## 10. Later: Microsoft Teams and Azure DevOps (L each)
 
 The Azure deployment starts on Workplace's stand-ins. Once it runs, replace them
-with the institution's real services, each added to the allowed services:
+with the institution's real services, each added to the allowed services by a
+governance request:
 
 - **Microsoft Teams**: a Workplace integration for chat and events, as Slack has
   today (incoming messages and mentions become events; the factory posts as its

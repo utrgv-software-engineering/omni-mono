@@ -111,13 +111,109 @@ memory show it is needed rather than up front.
   cookies or trusted identity headers. Refuse unknown or expired preview
   hostnames before forwarding.
 
+## Governance
+
+Health Affairs manages its own AI risk and governance, under authority it is
+seeking delegated from the institution. UTRGV's AI policy supports this:
+"Units remain responsible for the ethical and compliant use of AI within their
+operations," and the AI Governance Committee "does not replace existing
+governance structures." The principle throughout this plan:
+
+- **Health Affairs decides**, inside Workplace, through its own roles.
+- **Workplace records** every decision, with who made it and why.
+- **ISO and AI governance review or audit** the evidence when they ask. No step
+  in the system waits on anyone outside Health Affairs.
+
+Legal and technical requirements stay whoever governs: the Texas kill switch,
+HIPAA's safeguards and UTS 165's controls. Delegation changes who makes the
+decisions, not whether the controls exist; having them built and operating is
+part of the case for delegation.
+
+### Roles
+
+| Role | Held by | Does |
+| --- | --- | --- |
+| Installation administrator | The platform team | Runs the deployment: infrastructure, factories, people, the kill switch. Proposes governance decisions |
+| **Governance reviewer** | Designated by Health Affairs leadership, for example a designee of the Chief Medical Officer or Chief Physician Executive | Decides governance requests, signs off material changes, performs the scheduled reviews |
+| Factory administrator | Each factory's owners | Runs one factory; approves its named tools |
+| Member | Each factory's users | Works in the factory |
+
+**Separation of duties.** A governance request is decided by a governance
+reviewer who did not propose it, so the people who build and run the system
+never approve their own risk decisions. At least one governance reviewer sits
+outside the platform team. Stopping a factory never waits for a reviewer:
+anyone allowed to use the kill switch can stop, and only resuming follows the
+kill switch's rules.
+
+### Decision records
+
+Governance decisions are **requests** in Workplace. An installation
+administrator proposes one with a reason; a governance reviewer approves or
+declines it with their reasoning; the change takes effect only on approval.
+Each record keeps what changed, who proposed it, who decided, when, the
+reasoning, and links to supporting material. Requests cover:
+
+- adding or removing an [allowed service](#allowed-services);
+- a factory's data classification, and every change to it;
+- marking a factory heightened-risk or not;
+- material changes (below).
+
+### Material changes
+
+A **material change** is a change of model, a new integration or MCP server, a
+widened egress allowlist, a lowered classification, a change to risk level, or
+a change to the tools that require a person's approval. Made as a Workplace
+setting, it is a governance request. Made in the factory's repository (its
+models, `project.yml` security and MCP sections, or its approval-required
+tools), the pull request carries a required **governance** check that passes
+only when a governance reviewer approves it, in addition to the ordinary
+review. Every material change is marked in the change history.
+
+### System cards and the AI Inventory
+
+Workplace generates a **system card** for each factory and an **inventory
+export** for the whole deployment, from data it already holds: purpose and
+owner, data classification and its decision, risk level and its reasoning,
+models, integrations and MCP servers, egress allowlist, retention,
+approval-required tools, and the last material change. Registering the system
+in the institution's AI Inventory, and updating the registration after a
+material change and at least every 24 months (UTS 165), is submitting the
+export.
+
+### Scheduled reviews
+
+Workplace keeps the governance calendar and records each review's completion,
+who performed it and its result:
+
+| Review | Cadence | Performed by |
+| --- | --- | --- |
+| Restore drill and kill-switch drill | Quarterly | Installation administrators |
+| Access review (members and roles) | Annually | Governance reviewer |
+| Risk review of each factory | Annually, and after material changes | Governance reviewer |
+| Inventory update | Every 24 months, and after material changes | Governance reviewer |
+| Heightened-risk reassessment | Every six months, when a factory is heightened-risk | Governance reviewer |
+
+Overdue reviews show on the Governance page and post to the Teams channel.
+
+### Evidence export
+
+One export answers a review or audit request for a date range: the inventory
+and system cards; decision records; the change history (pull requests with
+their reviewers, releases with their approvals, settings changes, with material
+changes marked); kill-switch events and drills; approvals of named tools;
+backup and restore results; access reviews; scheduled reviews; incident alerts;
+and the audit log. It is a readable report plus the underlying records as JSON.
+It contains metadata only, never conversation content or files, so it can be
+handed over without becoming a store of sensitive data. Producing an export is
+itself audited.
+
 ## Sensitive data
 
 Microsoft and the model providers in use have BAAs in place, and the Azure
 infrastructure, models included, is already approved for clinical and
 operational use; that approval is the documented approval UTS 165.1.5.4.6 asks
-for. The controls in this section are ones the deployment's administrators run;
-none adds an approval step outside the team. Record them in the HIPAA risk
+for. The controls in this section are run by Health Affairs
+([Governance](#governance)); none adds an approval step outside it. Record them in the HIPAA risk
 analysis.
 
 ### The factory is not a system of record
@@ -130,7 +226,7 @@ a lost working copy is recovered by extracting it again from its source.
 
 ### Data classification
 
-Each factory has a **data classification**, using UTRGV's classes: Published,
+Each factory has a **data classification**, set by a governance request, using UTRGV's classes: Published,
 Controlled or Confidential. The Azure profile requires one for every factory;
 there is no default. PHI is Confidential, and so is other personal data under
 UTRGV's definition (student records, identification numbers, biometrics and the
@@ -155,12 +251,13 @@ Lowering a factory's classification does not reclassify data it already holds.
 A technical control, not an approval process: it keeps data inside the
 approved, BAA-covered boundary and stops a factory from connecting somewhere
 else, or giving an outside server the name of an allowed one. Installation
-administrators keep the deployment's list of **allowed services**: model
-endpoints, integrations and MCP servers. Every factory reaches models only
+administrators propose and governance reviewers decide the deployment's list
+of **allowed services**: model endpoints, integrations and MCP servers, each
+with its [decision record](#decision-records). Every factory reaches models only
 through the list, since any conversation may carry pasted data; on Azure those
 are the tenant's own Azure OpenAI deployments. Workplace refuses to connect a
 Controlled or Confidential factory to an integration or MCP server not on it.
-Adding a service is an administrator's decision, audited like any setting.
+Adding or removing a service is a governance request.
 
 ### Conversations are a governed record
 
@@ -319,12 +416,16 @@ Azure deployment. What it requires of this system:
   integrations and MCP servers within it need no separate approval.
 - **Technology Assessment before purchase**: done for Azure; nothing here is
   purchased.
-- **Registration in the AI Inventory before pilot or deployment**: register the
-  system once, before the pilot.
+- **Registration in the AI Inventory before pilot or deployment**: submit
+  Workplace's inventory export before the pilot, and again after material
+  changes.
 - **Risk and impact assessments, reassessment after material changes, and AI
   Governance Committee approval**: these sit under the policy's
   "Heightened-Risk" heading and apply only to heightened-risk systems. The
   first factory is not one (see [Consequential decisions](#consequential-decisions)).
+  Health Affairs still performs an annual risk review of every factory and
+  records it ([Scheduled reviews](#scheduled-reviews)), so the evidence exists
+  if the committee asks.
 
 The parts below are product and setup work. UTRGV's internal "Implementation
 Steps and Procedures for AI Technologies" is not public and is not reflected
@@ -336,7 +437,7 @@ UTS 165 requires changes to be tracked, approved, tested and logged.
 Self-improvement already satisfies most of this:
 it opens a PR that a reviewer merges, changes that need a release (agent
 settings, dependencies) also need operator approval, and git history records
-who proposed and approved each change. Three additions:
+who proposed and approved each change. Four additions:
 
 1. **Review is always on for Controlled and Confidential factories.** Saving a
    definition file in the UI commits directly to main unless
@@ -349,13 +450,7 @@ who proposed and approved each change. Three additions:
    integrations, egress allowlists, allowed services and the kill switch are
    Workplace settings, not files. Every change to them goes in the audit log,
    with who made it and when.
-
-### AI Inventory
-
-The system is registered once in the AI Inventory before the pilot, by hand.
-The policy asks for system cards only for public-facing systems, and Workplace
-is internal, so no card generator is built. UTS 165 asks for the system
-inventory to be updated at least every 24 months.
+4. **Material changes need a governance reviewer** ([Material changes](#material-changes)).
 
 ### Never present AI as human
 
@@ -391,12 +486,11 @@ Two mechanisms enforce it, both configured per factory:
    contained-sandbox auto-approval never cover them. The list lives in the
    factory's repository, so changing it is a reviewed PR.
 
-The first factory is **not heightened-risk**: it prepares work, and people make
-the decisions. The heightened-risk setting and its review features are built
+The first factory is **not heightened-risk**, a governance reviewer's decision
+recorded with its reasoning: it prepares work, and people make the decisions. The heightened-risk setting and its review features are built
 when a factory first needs them: it would sample conversations for quality
 review (5% by default, adjustable by its owner) and remind its owners when its
-six-monthly reassessment is due, and would flag material changes for that
-reassessment. Until then, the Factory tab metrics, the audit
+six-monthly reassessment is due. Until then, the Factory tab metrics, the audit
 log, the approval-required tools and the kill switch are the human oversight
 plan.
 
@@ -459,8 +553,12 @@ not reflected here.
 
 ## Decisions to present
 
-The controls this plan chooses, for the Information Security Office, the privacy
-office and AI governance to review:
+The governance model and the controls Health Affairs runs, for the Information
+Security Office, the privacy office and AI governance to review:
+
+0. Health Affairs governs its own AI risk: decisions are made by its governance
+   reviewers inside Workplace, recorded, and available as an evidence export
+   for review or audit at any time.
 
 1. Factories are not systems of record; extracted data is recovered from its source.
 2. Factory data classification uses UTRGV's classes and is required per factory.
@@ -485,6 +583,10 @@ office and AI governance to review:
 12. Sessions end after 30 minutes idle or 12 hours; MFA and sign-in through Entra
     only; security updates within 14 or 30 days.
 13. AI training is tracked outside Workplace; Workplace access is an Entra group.
+14. Allowed services, classification, risk level and material changes are
+    governance requests decided by a reviewer who did not propose them.
+15. Scheduled reviews (drills, access, risk, inventory) are tracked and
+    recorded in Workplace.
 
 ## Investigations before implementation
 
@@ -516,11 +618,15 @@ Verify these against current Azure capabilities rather than assume them:
    restore to a fresh VM.
 6. Add the kill switch for one factory and for all factories, and write the
    out-of-band runbook.
-7. Add the UTRGV policy work: audited settings, AI attribution,
+7. Add governance: the governance reviewer role, decision records, material
+   changes, system cards and the inventory export, scheduled reviews and the
+   evidence export.
+8. Add the UTRGV policy work: audited settings, AI attribution,
    approval-required tools, Factory tab metrics, adversarial tests and incident
    alerts. Configure the Entra setup.
-8. Prove the deployment with an isolated example factory and no sensitive data,
-   and register it in the AI Inventory, before onboarding real work.
+9. Prove the deployment with an isolated example factory and no sensitive data,
+   and register it in the AI Inventory with the inventory export, before
+   onboarding real work.
 
 ## Acceptance criteria
 
@@ -542,6 +648,12 @@ Verify these against current Azure capabilities rather than assume them:
 - Controlled and Confidential factories use only allowed services, and every
   change to their definition arrives by a reviewed PR the factory cannot merge.
 - Every settings change is audited.
+- Allowed services, classifications, risk levels and material changes take
+  effect only when a governance reviewer other than the proposer approves them,
+  in Workplace or, for repository changes, through the governance check.
+- One evidence export for a date range covers every record listed in
+  [Evidence export](#evidence-export), without conversation content.
+- Scheduled reviews are tracked, and overdue ones are flagged.
 - Everything agents post outside Workplace is attributed to AI.
 - A tool a factory names as needing approval waits for a person, whatever the
   session's approval settings, autopilot or reviewer.
