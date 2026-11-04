@@ -236,9 +236,10 @@ written reason and is recorded in the audit log.
 
 ### What stopped means
 
-- **Immediately:** in-flight turns, workers and automation runs are cancelled,
-  the factory runtime and the commands it runs in sandboxes are terminated, and
-  anything still running after 10 seconds is killed.
+- **Immediately:** within 10 seconds, in-flight turns, workers and automation
+  runs are cancelled and every command running in a sandbox is terminated.
+  The runtime then shuts down and its sandbox VMs are suspended with their disks
+  intact; anything still running after 60 seconds is killed.
 - **While stopped:** no model calls and no tool calls. Chat shows that the
   factory is stopped, by whom and why, and refuses new messages. Incoming events
   are recorded as skipped; scheduled automations are skipped.
@@ -457,8 +458,8 @@ Verify these against current Azure capabilities rather than assume them:
   session's approval settings, autopilot or reviewer.
 - Encryption keys are not stored with data backups.
 - A full restore from backup to a fresh VM has been performed.
-- One factory and all factories can be stopped from the UI. A stop takes effect
-  within 10 seconds, survives restarts and fails closed, and resuming replays
+- One factory and all factories can be stopped from the UI. A stop ends all AI
+  activity within 10 seconds, survives restarts and fails closed, and resuming replays
   nothing. Every stop and resume is audited with its reason.
 - Disabling the model deployment's keys halts every agent without Workplace.
 - The 80/20 deployment runs the same stack, and local installations still work

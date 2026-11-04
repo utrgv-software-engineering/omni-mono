@@ -48,11 +48,15 @@ Build, in omniagents-workplace:
   installation administrators any factory and all factories. A stop made by an
   installation administrator needs one to resume. Stop and resume require a
   reason.
-- **Stopping.** Cancel in-flight turns, workers and automation runs, stop the
-  runtime with a 10-second grace instead of 45, and suspend the factory's
-  QuickSand VMs so no sandbox command keeps running. This covers both the
-  in-process runtime (`factory_process.py`) and the Docker-hosted factory
-  (`docker_factory.py`) the 80/20 deployment uses.
+- **Stopping, in two steps.** First, within 10 seconds, all AI activity ends:
+  in-flight turns, workers and automation runs are cancelled and every sandbox
+  command is terminated (`pty_terminate_all`). Then the runtime shuts down
+  gracefully, which already suspends its QuickSand VMs (`suspend_durable`:
+  flush the disk, stop the VM; `resume` restarts it later). Only if that takes
+  more than 60 seconds is the runtime killed, and then Workplace kills any of
+  the factory's remaining QEMU processes. Killing earlier would cut off the disk
+  flush. This covers both the in-process runtime (`factory_process.py`) and the
+  Docker-hosted factory (`docker_factory.py`) the 80/20 deployment uses.
 - **Gates.** While stopped, Workplace refuses to start the runtime, refuses chat
   messages (with who stopped it and why), and skips automation dispatch. The
   event gateway records incoming events with a new `skipped` status instead of
@@ -67,7 +71,8 @@ Build, in omniagents-workplace:
   installation administrators, and a banner in the factory's chats.
 - **Audit.** Every stop and resume (workstream 2).
 
-Tests: stop during an active turn, a worker and an automation; events received
+Tests: stop during an active turn, a worker and an automation, with a sandbox
+command running; the VM resumes from its disk after resume; events received
 while stopped are skipped and not replayed; stop survives Workplace and runtime
 restarts; resume rules by role; a turn halts at its next model call when only
 the marker is present.
@@ -114,21 +119,26 @@ Build, in omniagents-workplace:
     refuses to start with one;
   - MCP servers: for Controlled and Confidential factories, Workplace sets
     omniagents' `mcp_require_allowlist` and `mcp_allowed_servers` from the list,
-    in a configuration layer the factory's project cannot override;
+    in the managed configuration layer (`OMNIAGENTS_PROJECT_OVERLAYS`), which
+    the factory's `project.yml` cannot override. The allowlist matches servers
+    by name only today, so a factory could give an unapproved server an
+    approved name: change it to match the name and the server's URL or
+    command;
   - integrations: Workplace refuses to connect an unapproved one.
 - **Forced review.** For Controlled and Confidential factories `require_review`
   is on and the setting is locked.
-- **The factory cannot merge its own changes.** The stand-in GitHub already
-  refuses self-approval. Verify that branch protection on the factory repository
-  requires an approving review, in the stand-in and on GitHub, and that the
-  factory's token cannot merge without one; fix whichever does not.
+- **The factory cannot merge its own changes.** In the stand-in GitHub, a
+  protected branch already needs an approving review, an author cannot approve
+  their own pull request, only a Workplace administrator can bypass protection,
+  and the factory's merge tool never bypasses it. One gap: any account but the
+  author counts as an approval, including another factory's. For a factory's
+  own repository, require the approval to come from a person who is a member of
+  the factory. On real GitHub, branch protection must be set the same way, with
+  the factory's account outside the bypass list (setup).
 - **Self-improvement containment.** For Confidential factories, refuse any path
   that publishes improvement output beyond the factory's own repository, and add
   a required check on improvement PRs that scans the diff with omniagents'
   content scanner (Presidio or regex) for personal data.
-
-Verify: that omniagents' layered configuration can hold a layer the project
-cannot override; build one if not.
 
 ## 4. Egress control (L)
 
@@ -174,9 +184,12 @@ Build:
   by email. A decision goes through the existing `tool_approval_response` and
   `mcp_approval_response` calls and is audited with the approver. A pending
   approval expires after seven days, rejecting the call.
-- **Durable waiting.** Verify that a run paused on an approval survives a
-  runtime restart; if not, persist the paused run state so approvals are not
-  lost.
+- **Durable waiting.** A pending approval is an in-memory wait in the runtime
+  (`request_tool_approval` awaits a future); a restart loses it and the run
+  waiting on it. Approvals can wait days, so persist the paused run: when a run
+  stops for a human approval, save its state (the SDK's `RunState.to_json`)
+  with the pending approval, and on restart restore it (`RunState.from_json`),
+  re-publish the approval and resume once it is decided.
 
 Tests: a named tool pauses under autopilot, Guardian and always-allow; an
 automation run's approval appears in the inbox and resumes on approval; expiry
@@ -199,8 +212,11 @@ Build:
 - **Blob Storage target** (*Azure profile*): upload each backup to a Blob
   container with a 30-day lifecycle rule; keep the local copy only until the
   upload succeeds.
-- **Deletion cascades.** Deleting a conversation removes its worker journals
-  and traces too; verify today's behavior and fix what is left behind.
+- **Deletion cascades.** Deleting a conversation already removes its history,
+  conversation records, replay journal, tool outputs and worker journal. It
+  leaves behind the sessions of the workers it started, which have their own
+  ids, and its traces, which are removed only by age. Delete both with the
+  conversation.
 - **Restore drill.** A scripted restore to a fresh VM (omni-factory), run
   quarterly; its result is recorded.
 
@@ -244,9 +260,13 @@ Build, in omniagents-workplace unless noted:
   factory's settings and configuration: purpose, owner, classification, risk,
   models, integrations, MCP servers, egress allowlist, retention, tools needing
   approval and the last material change.
-- **AI attribution.** Verify that every integration posts as the factory's own
-  app identity and that the identity's name and description say it is AI; add
-  an `AI-Generated-By: <factory>/<agent>` trailer to agent commits and
+- **AI attribution.** Linear posts as an app. Slack posts as a dedicated user
+  account the factory owns, marked "Sent using <app>" but not as a bot, and
+  GitHub uses a dedicated factory account. Name both accounts as AI (for
+  example "Acme Factory (AI)") and say so in their profiles; Workplace sets this
+  when it creates them. Commit authorship is not set anywhere today: set the
+  sandboxes' git identity to the factory's account and add an
+  `AI-Generated-By: <factory>/<agent>` trailer to agent commits. Add
   generated-by metadata to Shared documents.
 - **Factory tab metrics.** Add error rate across runs, tool-failure rate and
   runtime uptime (record runtime up and down transitions).
@@ -261,14 +281,15 @@ Build, in omniagents-workplace unless noted:
   events, sent to configured Information Security Office contacts by email or
   Teams webhook.
 
-## Verifications before building
+## Verified
 
-Facts this plan assumes that must be checked in code first:
+Checked in the code on 2026-11-04; the workstreams above reflect the results.
 
-- the layered configuration can lock a layer against the project (workstream 3);
-- branch protection requires an approving review and the factory cannot merge
-  alone (workstream 3);
-- a run paused on an approval survives a restart (workstream 5);
-- deleting a conversation removes its journals and traces (workstream 6);
-- every integration posts as an identifiable app identity (workstream 8);
-- QuickSand VMs can be suspended and resumed by the kill switch (workstream 1).
+| Question | Answer |
+| --- | --- |
+| Can a configuration layer be locked against the project? | Yes: omniagents' managed layer. Its MCP allowlist matches names only (workstream 3). |
+| Does branch protection stop the factory merging alone? | Yes in the stand-in; approval from another bot still counts (workstream 3). Real GitHub is setup. |
+| Does a run paused on an approval survive a restart? | No: it is an in-memory wait. The SDK can save and restore run state (workstream 5). |
+| Does deleting a conversation remove its journals and traces? | Partly: worker sessions and traces are left behind (workstream 6). |
+| Does every integration post as an identifiable app? | Partly: Slack and GitHub use dedicated accounts not named as AI; commits have no set identity (workstream 8). |
+| Can the kill switch suspend QuickSand VMs? | Yes, through graceful shutdown; a fast kill would cut off the disk flush (workstream 1). |
