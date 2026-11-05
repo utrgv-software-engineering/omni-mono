@@ -198,6 +198,9 @@ async def request(registry, identity, arguments, original):
         "cookie": original.headers.get("cookie", ""),
         "content-type": arguments.get("contentType", "application/json"),
     }
+    for name in ("x-ms-client-principal", "x-workplace-proxy-token"):
+        if name in original.headers:
+            headers[name] = original.headers[name]
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=scoped_app),
         base_url="http://workplace",

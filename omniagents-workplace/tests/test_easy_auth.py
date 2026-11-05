@@ -5,7 +5,7 @@ import json
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from omniagents_workplace.accounts import Account, Accounts, SESSION_COOKIE
@@ -23,6 +23,46 @@ from omniagents_workplace.store import Store
 TID = "11111111-1111-1111-1111-111111111111"
 OID = "22222222-2222-2222-2222-222222222222"
 BASE = "https://workplace.example"
+
+
+@pytest.mark.parametrize("identity", ["slack", "github", "linear"])
+def test_builtin_bridge_preserves_easy_auth_session(tmp_path, identity):
+    from types import SimpleNamespace
+    from omniagents_workplace.extensions import builtin
+
+    store = Store(tmp_path / "bridge.db")
+    accounts = Accounts(store)
+    account = Account("alice", "alice", "Alice", "alice@example.test", "", "", "")
+    accounts.add(account)
+    token = accounts.start_session(account)
+    marker = "test-proxy-marker"
+    auth = EasyAuth(BASE, config(WORKPLACE_AZURE_PROXY_TOKEN=marker))
+    app = FastAPI()
+    app.add_middleware(SignedIn, accounts=accounts, base_url=BASE, identity=auth)
+    registry = SimpleNamespace(get=lambda name: {"enabled": True})
+    path = f"/workplace/api/{identity}/bridge-test"
+
+    @app.get(path)
+    def target(request: Request):
+        return {"account": request.state.account.id}
+
+    @app.post("/workplace/api/extensions/bridge-test")
+    async def bridge(request: Request):
+        return await builtin.request(registry, identity, {"path": path}, request)
+
+    headers = {**principal(), "x-workplace-proxy-token": marker}
+    try:
+        with TestClient(app, base_url=BASE) as client:
+            client.cookies.set(SESSION_COOKIE, token)
+            assert client.get(path, headers=headers).status_code == 200
+            response = client.post("/workplace/api/extensions/bridge-test", json={}, headers=headers)
+            assert response.status_code == 200
+            assert response.json()["status"] == 200
+            assert accounts.signed_in(token) == account
+            assert client.get(path, headers=headers).status_code == 200
+            assert client.get(path).status_code == 401
+    finally:
+        store.close()
 
 
 def config(**overrides):
