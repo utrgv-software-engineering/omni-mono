@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@omniagents/ui/button";
 import { Input } from "@omniagents/ui/input";
+import { Checkbox } from "@omniagents/ui/checkbox";
 import { NativeSelect, NativeSelectOption } from "@omniagents/ui/native-select";
 import { toast } from "sonner";
 import { factoryApprovals, factoryProfile, governance, type AllowedService, type GovernanceDecision, type PendingApproval } from "./api";
@@ -304,47 +305,124 @@ export function AllowlistEditor({
   save,
   help,
   allowClear = false,
+  label = "Allowlist",
+  choices = [],
+  allowAdd = false,
+  readOnly = false,
 }: {
   load: () => Promise<string[] | null>;
   save: (entries: string[] | null, reason: string) => Promise<{ pending: unknown }>;
   help: string;
   allowClear?: boolean;
+  label?: string;
+  choices?: string[];
+  allowAdd?: boolean;
+  readOnly?: boolean;
 }) {
-  const [text, setText] = useState("");
+  const [entries, setEntries] = useState<string[]>([]);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [inherited, setInherited] = useState(false);
+  const [destination, setDestination] = useState("");
   const [reason, setReason] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [addError, setAddError] = useState<string | null>(null);
+  const refresh = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const saved = await load();
+      setEntries([...new Set([...choices, ...(saved ?? [])])].sort());
+      setSelected(saved ?? choices);
+      setInherited(allowClear && saved === null);
+    } catch (failure) {
+      setError((failure as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
   useEffect(() => {
-    void load().then((entries) => setText((entries ?? []).join("\n")));
+    void refresh();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps -- loaded once, when opened
-  const submit = (entries: string[] | null) =>
-    save(entries, reason)
-      .then((r) =>
-        toast.success(r.pending ? "Saved. Widening it waits for the governance owner." : "Saved"),
-      )
-      .catch((e: unknown) => toast.error((e as Error).message));
+  const add = () => {
+    const entry = destination.trim().toLowerCase();
+    const [host, port, extra] = entry.split(":");
+    const name = host.startsWith("*.") ? host.slice(2) : host;
+    if (!name || name.length > 253 || extra !== undefined ||
+      !name.split(".").every((part) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(part)) ||
+      (host.startsWith("*.") && !name.includes(".")) ||
+      (port !== undefined && (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535))) {
+      setAddError("Enter a hostname, optionally with :port, not a URL or path.");
+      return;
+    }
+    if (entries.includes(entry)) {
+      setAddError("That destination is already listed.");
+      return;
+    }
+    setEntries((current) => [...current, entry].sort());
+    setSelected((current) => [...current, entry]);
+    setDestination("");
+    setAddError(null);
+  };
+  const submit = async () => {
+    if (saving || loading || readOnly) return;
+    setSaving(true);
+    try {
+      const result = await save(inherited ? null : [...selected].sort(), reason);
+      toast.success(result.pending ? "Saved. Widening it waits for the governance owner." : "Saved");
+      await refresh();
+    } catch (failure) {
+      toast.error((failure as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  if (error) return <div role="alert" className="space-y-2"><p>{error}</p><Button variant="outline" onClick={() => void refresh()}>Retry</Button></div>;
   return (
     <form
-      className="space-y-2"
+      className="space-y-3"
+      aria-label={label}
       onSubmit={(event) => {
         event.preventDefault();
-        void submit(text.split("\n").map((l) => l.trim()).filter(Boolean));
+        void submit();
       }}
     >
       <p className="text-sm text-muted-foreground">{help}</p>
-      <textarea
-        aria-label="Allowlist"
-        className="h-40 w-full rounded-md border p-2 font-mono text-sm"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-      />
-      <Input placeholder="Reason (needed to widen it)" value={reason} onChange={(e) => setReason(e.target.value)} />
-      <div className="flex gap-2">
-        <Button type="submit">Save</Button>
-        {allowClear && (
-          <Button type="button" variant="outline" onClick={() => void submit(null)}>
-            Use the deployment&apos;s list
-          </Button>
-        )}
-      </div>
+      <fieldset disabled={loading || saving || readOnly} className="min-w-0 space-y-3">
+        {allowClear && <label className="flex items-start gap-2 text-sm"><Checkbox checked={inherited} onCheckedChange={(checked) => {
+          setInherited(checked === true);
+          if (checked === true) setSelected(choices);
+        }} /><span>Use all deployment destinations, including future additions</span></label>}
+        {loading ? <p role="status" className="text-sm">Loading destinations…</p> : <>
+          <div className="max-h-60 overflow-y-auto rounded-md border divide-y">
+            {entries.map((entry) => <label key={entry} className="flex items-start gap-3 p-3 text-sm">
+              <Checkbox checked={selected.includes(entry)} onCheckedChange={(checked) => {
+                setInherited(false);
+                setSelected((current) => checked === true ? [...current, entry] : current.filter((value) => value !== entry));
+              }} />
+              <span className="min-w-0 break-all font-mono">{entry}</span>
+            </label>)}
+            {!entries.length && <p className="p-3 text-sm text-muted-foreground">{allowAdd ? "No destinations yet. Add one below." : "No deployment destinations available."}</p>}
+          </div>
+          <p className="text-xs text-muted-foreground">{inherited ? "Following the deployment list automatically." : selected.length ? `${selected.length} selected. Changes apply when saved.` : "No destinations selected. Saving blocks all destinations through the proxy."}</p>
+        </>}
+        {allowAdd && !readOnly && <div className="space-y-2">
+          <label className="block space-y-1 text-sm"><span>New destination</span><Input
+            value={destination}
+            placeholder="api.example.com:443"
+            aria-invalid={!!addError}
+            onChange={(event) => { setDestination(event.target.value); setAddError(null); }}
+            onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); add(); } }}
+          /></label>
+          <Button type="button" variant="outline" disabled={!destination.trim()} onClick={add}>Add destination</Button>
+          {addError && <p role="alert" className="text-sm text-destructive">{addError}</p>}
+        </div>}
+        {!readOnly && <>
+          <label className="block space-y-1 text-sm"><span>Reason for change</span><Input placeholder="Why change access?" value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+          <Button type="submit">{saving ? "Saving…" : "Save changes"}</Button>
+        </>}
+      </fieldset>
     </form>
   );
 }

@@ -1777,11 +1777,13 @@ export const allowedServices = {
 
 export const factoryEgress = {
   get: () =>
-    call<{ enabled: boolean; deployment: string[]; own: string[] | null; effective: string[] | null }>(
+    call<{ enabled: boolean; deployment: string[]; own: string[] | null; effective: string[] | null; managed_by_installation: boolean }>(
       "/factory/egress",
     ),
   save: (allow: string[] | null, reason: string) =>
     call<{ pending: unknown }>("/factory/egress", { method: "PUT", body: JSON.stringify({ allow, reason }) }),
+  saveDeployment: (allow: string[] | null, reason: string) =>
+    call<{ pending: unknown }>("/deployment/egress", { method: "PUT", body: JSON.stringify({ allow, reason }) }),
 };
 
 export interface PendingApproval {

@@ -107,6 +107,9 @@ class Egress:
         #: An installation's deployment allowlist (and its config writer).
         self.installation_deployment: Optional[Callable[[], List[str]]] = None
         self.on_change: Optional[Callable[[], None]] = None
+        self.w.governance.decisions.appliers["deployment_egress"] = (
+            self.apply_deployment
+        )
 
     # -- state ---------------------------------------------------------------
 
@@ -233,6 +236,36 @@ class Egress:
             "pending": record if record["status"] == "pending" else None,
         }
 
+    def save_deployment(self, entries: List[str]) -> None:
+        if self.installation_deployment is not None:
+            raise HTTPException(409, "The installation manages the deployment allowlist")
+        self.w.store.set_meta(DEPLOYMENT_KEY, entries)
+        self.changed()
+
+    def apply_deployment(self, change: dict) -> None:
+        self.save_deployment(change["after"])
+        self.w.audit_log.record(
+            "egress.deployment_changed", before=change["before"], after=change["after"]
+        )
+
+    def set_deployment(self, account: Any, body: Allowlist) -> dict:
+        if self.installation_deployment is not None:
+            raise HTTPException(409, "The installation manages the deployment allowlist")
+        governance = self.w.governance
+        pending = set_deployment(
+            account=account,
+            entries=body.allow or [],
+            reason=body.reason,
+            current=self.deployment(),
+            save=self.save_deployment,
+            decisions=governance.decisions,
+            gated=governance.gated(),
+            owner=governance.is_owner(account),
+            audit_log=self.w.audit_log,
+            kind="deployment_egress",
+        )
+        return {**self.view(), "pending": pending}
+
     def view(self) -> dict:
         return {
             "enabled": bool(self.proxy),
@@ -259,6 +292,10 @@ class Egress:
         def save_egress(body: Allowlist, request: Request):
             return self.set_own(admin(request), body)
 
+        @router.put("/workplace/api/deployment/egress")
+        def save_deployment_egress(body: Allowlist, request: Request):
+            return self.set_deployment(admin(request), body)
+
         return router
 
 
@@ -273,6 +310,7 @@ def set_deployment(
     gated: bool,
     owner: bool,
     audit_log: Any,
+    kind: str = "egress",
 ) -> Optional[dict]:
     """Change a deployment allowlist: narrowing at once, widening decided."""
     from .decisions import decide_or_propose
@@ -298,7 +336,7 @@ def set_deployment(
         gated=gated,
         owner=owner,
         account=account,
-        kind="egress",
+        kind=kind,
         summary="Deployment egress widened: " + ", ".join(widened),
         change={"before": current, "after": after},
         reason=reason,

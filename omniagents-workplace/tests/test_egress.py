@@ -13,6 +13,89 @@ from omniagents_workplace.egress_proxy import EgressProxy, allowed
 from omniagents_workplace.installation import Installation
 from omniagents_workplace.installation_server import create_installation_app
 from test_installation import identity, prefix, project
+from omniagents_workplace.server import Workplace, create_app
+
+
+@pytest.fixture
+def standalone_egress(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORKPLACE_POLICY", "strict")
+    monkeypatch.setenv("WORKPLACE_EGRESS_PROXY", "http://egress:3128")
+    monkeypatch.setenv("WORKPLACE_EGRESS_CONFIG", str(tmp_path / "egress.json"))
+    workplace = Workplace(tmp_path / "workplace", base_url="http://testserver")
+    owner = identity(workplace, "owner", True)
+    workplace.store.set_meta("governance.owners", [owner.id])
+    try:
+        with TestClient(create_app(workplace, static_dir=tmp_path)) as client:
+            client.cookies.set(SESSION_COOKIE, workplace.accounts.start_session(owner))
+            yield workplace, client, owner, tmp_path
+    finally:
+        workplace.close()
+
+
+def test_standalone_deployment_save_and_validation(standalone_egress):
+    workplace, client, owner, tmp_path = standalone_egress
+    url = "/workplace/api/deployment/egress"
+    response = client.put(url, json={"allow": ["PYPI.ORG:443"], "reason": "Packages"})
+    assert response.status_code == 200
+    assert response.json()["pending"] is None
+    assert response.json()["deployment"] == ["pypi.org:443"]
+    assert response.json()["own"] is None
+    assert not response.json()["managed_by_installation"]
+    assert workplace.store.meta("egress.deployment") == ["pypi.org:443"]
+    assert json.loads((tmp_path / "egress.json").read_text())["deployment"] == ["pypi.org:443"]
+    assert workplace.audit_log.events(event="egress.deployment_changed")
+    invalid = client.put(url, json={"allow": ["https://example.com/path"]})
+    assert invalid.status_code == 422
+    assert workplace.egress.deployment() == ["pypi.org:443"]
+    assert client.get("/workplace/api/factory/egress").json()["deployment"] == ["pypi.org:443"]
+    assert client.put(url, json={"allow": []}).json()["deployment"] == []
+
+
+def test_standalone_deployment_requires_admin(standalone_egress):
+    workplace, client, owner, tmp_path = standalone_egress
+    member = identity(workplace, "member")
+    client.cookies.set(SESSION_COOKIE, workplace.accounts.start_session(member))
+    assert client.put("/workplace/api/deployment/egress", json={"allow": []}).status_code == 403
+    client.cookies.clear()
+    assert client.put("/workplace/api/deployment/egress", json={"allow": []}).status_code == 401
+    assert workplace.egress.deployment() == []
+
+
+@pytest.mark.parametrize("approve", [True, False])
+def test_standalone_deployment_approval_is_separate_from_factory(standalone_egress, approve):
+    workplace, client, owner, tmp_path = standalone_egress
+    administrator = identity(workplace, "administrator", True)
+    client.cookies.set(SESSION_COOKIE, workplace.accounts.start_session(administrator))
+    response = client.put(
+        "/workplace/api/deployment/egress",
+        json={"allow": ["example.com:443"], "reason": "Service access"},
+    )
+    assert response.status_code == 200
+    pending = response.json()["pending"]
+    assert pending["kind"] == "deployment_egress"
+    assert workplace.egress.deployment() == []
+    client.cookies.set(SESSION_COOKIE, workplace.accounts.start_session(owner))
+    decision = client.post(
+        "/workplace/api/governance/decisions/" + pending["id"],
+        json={"approve": approve, "reasoning": "Reviewed"},
+    )
+    assert decision.status_code == 200
+    assert workplace.egress.deployment() == (["example.com:443"] if approve else [])
+    assert workplace.egress.own() is None
+    if approve:
+        assert json.loads((tmp_path / "egress.json").read_text())["deployment"] == ["example.com:443"]
+
+
+def test_managed_factory_cannot_change_deployment(egress):
+    installation, client, record, tmp_path = egress
+    response = client.put(
+        prefix(record) + "/workplace/api/deployment/egress",
+        json={"allow": ["example.com:443"], "reason": "Not installation scoped"},
+    )
+    assert response.status_code == 409
+    workplace, _ = installation.instances[record["id"]]
+    assert workplace.egress.deployment() == []
+    assert workplace.store.meta("egress.deployment") is None
 
 
 def test_allowlist_entries():

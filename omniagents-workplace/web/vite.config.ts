@@ -1,10 +1,11 @@
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 
 const workplace = process.env.WORKPLACE_URL || 'http://localhost:7300'
 
 export default defineConfig({
+  test: { environmentMatchGlobs: [['src/EgressSettings.test.tsx', 'jsdom']] },
   plugins: [tailwindcss(), react()],
   build: { rollupOptions: { input: { main: 'index.html', extension: 'extension.html' } } },
   // streamdown (the chat UI's markdown) lazy-loads inner chunks; optimizing

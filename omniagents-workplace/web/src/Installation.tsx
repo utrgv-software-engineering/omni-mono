@@ -330,7 +330,9 @@ export function InstallationApp({
         <section className="space-y-2 rounded-lg border p-4">
           <h2 className="font-medium">Egress allowlist</h2>
           <AllowlistEditor
-            help="Where every factory may connect through the egress proxy: model endpoints, package registries, integrations."
+            allowAdd
+            label="Deployment allowlist"
+            help="Checked destinations are allowed through the proxy for this deployment. Uncheck to remove on Save, or add a new hostname below."
             load={() => request<{ deployment: string[] }>("/installation/egress").then((r) => r.deployment)}
             save={(allow, reason) => request("/installation/egress", "PUT", { allow, reason })}
           />

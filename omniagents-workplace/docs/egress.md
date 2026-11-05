@@ -32,6 +32,22 @@ them on).
 - **A factory's own** (Factory settings → Egress allowlist): a Confidential
   factory's narrower list, within the deployment's.
 
+In a standalone Workplace, **Factory settings → Egress allowlist** shows both
+lists. Administrators add hosts in **Deployment allowlist**; **Factory allowlist**
+is an optional restriction, not the place to enable a new destination. The proxy
+reloads saved changes without a restart. In an installation-managed factory, the
+deployment list is read-only here; edit it from the Factories page instead.
+These controls do not modify VM firewalls, private endpoints, or Azure routing.
+
+Both editors use checkboxes. At deployment level, **Add destination** adds a
+hostname to the draft; unchecking an entry removes it when **Save changes** is
+applied. At factory level, choose from deployment destinations without entering
+new hosts. Existing narrower restrictions remain visible so editing does not
+silently broaden them. **Use all deployment destinations, including future
+additions** inherits the deployment list; unchecking every destination instead
+saves an empty list. Factory restrictions apply only to Confidential factories.
+Widening still follows the existing governance approval policy.
+
 An entry is a host, `*.domain` for any subdomain, or either with `:port`;
 without a port, 80 and 443. Narrowing takes effect at once. Widening either list
 is a material change: under the strict policy, the governance owner's decision.
