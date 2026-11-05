@@ -65,19 +65,88 @@ def confidential_paths(data: Path) -> list[str]:
     return out
 
 
-def export_keys(data: Path, to: Path) -> list[str]:
-    """Copy every encryption key under ``data`` to ``to``, by relative path."""
+def export_keys(
+    data: Path, to: Path, *, include: dict[str, Path] | None = None
+) -> list[str]:
     data, to = Path(data), Path(to)
+    include = include or {}
+    _validate_includes(include, to)
+    if to.is_symlink() or (to.exists() and (not to.is_dir() or any(to.iterdir()))):
+        raise ValueError("Key escrow destination must be an empty directory")
+    roots = [(data, Path())] + [
+        (Path(path), Path("additional") / name)
+        for name, path in sorted(include.items())
+    ]
+    selected = []
+    for root, prefix in roots:
+        if not root.is_dir() or root.is_symlink():
+            raise ValueError("Key escrow sources must be real directories")
+        if to.resolve().is_relative_to(root.resolve()) or root.resolve().is_relative_to(
+            to.resolve()
+        ):
+            raise ValueError("Key escrow must be outside its source directories")
+        for key in sorted(root.rglob("*" + KEY_SUFFIX)):
+            if key.is_file() and not key.is_symlink():
+                relative = key.relative_to(root)
+                if not prefix.parts and relative.parts[0] == "additional":
+                    raise ValueError("The additional key escrow namespace is reserved")
+                selected.append((key, prefix / relative))
+    to.mkdir(parents=True, exist_ok=True, mode=0o700)
     copied = []
-    for key in sorted(data.rglob("*" + KEY_SUFFIX)):
-        if key.is_file() and not key.is_symlink():
-            relative = key.relative_to(data)
-            target = to / relative
-            target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            shutil.copy2(key, target)
-            target.chmod(0o600)
-            copied.append(str(relative))
+    for key, relative in selected:
+        target = to / relative
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        shutil.copy2(key, target)
+        target.chmod(0o600)
+        copied.append(str(relative))
     return copied
+
+
+def _validate_includes(include, destination):
+    for name, path in include.items():
+        if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]*", name):
+            raise ValueError("Backup include names must be simple directory names")
+        if not Path(path).is_dir() or destination.resolve().is_relative_to(
+            Path(path).resolve()
+        ):
+            raise ValueError(
+                "Backup include directories must exist and must not contain the backup destination"
+            )
+
+
+def _restore_escrow_files(keys, source, data, include):
+    keys = Path(keys)
+    if keys.is_symlink() or not keys.is_dir():
+        raise ValueError("Key escrow must be a real directory")
+    planned = []
+    for entry in sorted(keys.rglob("*")):
+        if entry.is_symlink():
+            raise ValueError("Key escrow must not contain symlinks")
+        if not entry.is_file() or entry.suffix != KEY_SUFFIX:
+            continue
+        relative = entry.relative_to(keys)
+        if relative.parts[0] == "additional":
+            if len(relative.parts) < 3 or relative.parts[1] not in include:
+                raise ValueError("Key escrow names an unknown additional directory")
+            include_name = relative.parts[1]
+            root = Path(include[include_name])
+            backed_root = source / "additional" / include_name
+            relative = Path(*relative.parts[2:])
+        else:
+            root = data
+            backed_root = source
+        for parent in (Path(), *relative.parents, relative):
+            if (root / parent).is_symlink() or (backed_root / parent).is_symlink():
+                raise ValueError("Key escrow restore paths must not traverse symlinks")
+        target = root / relative
+        if not target.resolve().is_relative_to(root.resolve()):
+            raise ValueError("Key escrow restore path escapes its destination")
+        if keys.resolve().is_relative_to(
+            root.resolve()
+        ) or root.resolve().is_relative_to(keys.resolve()):
+            raise ValueError("Key escrow must be outside restore destinations")
+        planned.append((entry, target))
+    return planned
 
 
 #: What a push or a gc has in progress: not part of a repository yet.
@@ -100,11 +169,24 @@ def _copy(src: str, dst: str) -> None:
         pass  # gone while we copied: a temporary file
 
 
-def _copy_repositories(git: Path, to: Path) -> None:
+def _copy_repositories(git: Path, to: Path, *, exclude=(), relative="") -> None:
+    def ignored(directory, names):
+        base = Path(directory).relative_to(git)
+        return set(_TRANSIENT(directory, names)) | {
+            name
+            for name in names
+            if any(
+                fnmatch.fnmatchcase((Path(relative) / base / name).as_posix(), pattern)
+                for pattern in exclude
+            )
+        }
+
     for repo in sorted(git.glob("*/*.git")):
         target = to / repo.relative_to(git)
         target.mkdir(parents=True, mode=0o700)
         for entry in sorted(repo.iterdir(), key=lambda e: e.name == "objects"):
+            if entry.name in ignored(repo, [entry.name]):
+                continue
             if entry.name == "objects":
                 continue
             if entry.is_dir():
@@ -112,7 +194,7 @@ def _copy_repositories(git: Path, to: Path) -> None:
                     entry,
                     target / entry.name,
                     symlinks=True,
-                    ignore=_TRANSIENT,
+                    ignore=ignored,
                     copy_function=_copy,
                 )
             else:
@@ -123,7 +205,7 @@ def _copy_repositories(git: Path, to: Path) -> None:
                 repo / "objects",
                 target / "objects",
                 symlinks=True,
-                ignore=_TRANSIENT,
+                ignore=ignored,
                 copy_function=_copy,
             )
 
@@ -154,7 +236,7 @@ def _copy_installation(source: Path, target: Path, *, exclude=(), relative=""):
         ):
             # Managed factories need the same refs-before-objects ordering as
             # the installation's legacy/root workplace during concurrent pushes.
-            _copy_repositories(entry, destination)
+            _copy_repositories(entry, destination, exclude=exclude, relative=child)
         elif entry.is_dir():
             _copy_installation(entry, destination, exclude=exclude, relative=child)
         elif entry.suffix in {".db", ".sqlite", ".sqlite3"} and _sqlite_file(entry):
@@ -217,13 +299,7 @@ def backup(
     data, to = Path(data), Path(to)
     left_out = confidential_paths(data) if confidential else []
     include = include or {}
-    for name, path in include.items():
-        if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]*", name):
-            raise ValueError("Backup include names must be simple directory names")
-        if not Path(path).is_dir() or to.resolve().is_relative_to(Path(path).resolve()):
-            raise ValueError(
-                "Backup include directories must exist and must not contain the backup destination"
-            )
+    _validate_includes(include, to)
     for pattern in exclude:
         if (
             "/" not in pattern
@@ -234,6 +310,9 @@ def backup(
             raise ValueError(
                 "Exclusions must start with an additional directory name, such as factory-home/quicksand"
             )
+    exclude = tuple(exclude) + (
+        () if keys else tuple(f"{name}/*{KEY_SUFFIX}" for name in include)
+    )
     source = data / "workplace.db"
     if not source.is_file():
         raise SystemExit(f"No workplace in {data}")
@@ -403,6 +482,11 @@ def restore(
             raise ValueError(
                 "Additional restore destinations must be empty directories with matching backup names"
             )
+    escrow_files = (
+        _restore_escrow_files(keys, source, data, include)
+        if keys is not None and mode == "production"
+        else []
+    )
     # Validate before modifying the destination. Production recovery preserves
     # integration identity; callers must stop the original installation first.
     # Validate in writable temporary storage, not in the immutable backup.
@@ -480,13 +564,10 @@ def restore(
         shutil.copytree(
             source / "additional" / name, destination, symlinks=True, dirs_exist_ok=True
         )
-    if keys is not None and mode == "production":
-        # Keys escrowed apart from the data backup (export_keys) go back in place.
-        for key in sorted(Path(keys).rglob("*" + KEY_SUFFIX)):
-            target = data / key.relative_to(keys)
-            target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            shutil.copy2(key, target)
-            target.chmod(0o600)
+    for key, target in escrow_files:
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        shutil.copy2(key, target)
+        target.chmod(0o600)
     return source
 
 

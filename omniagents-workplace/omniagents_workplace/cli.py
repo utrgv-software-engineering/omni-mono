@@ -396,6 +396,13 @@ def main(argv=None) -> None:
     keys.add_argument("action", choices=("export",))
     keys.add_argument("--data", type=Path, default=default_data_dir())
     keys.add_argument("--to", type=Path, required=True, help="An empty directory")
+    keys.add_argument(
+        "--include",
+        action="append",
+        default=[],
+        metavar="NAME=PATH",
+        help="Escrow keys from an additional directory using the same name as backup --include",
+    )
     restore = sub.add_parser(
         "restore",
         help="Replace a workplace's state with a backup's (stop the workplace first)",
@@ -654,7 +661,13 @@ def main(argv=None) -> None:
 
         if args.to.exists() and any(args.to.iterdir()):
             parser.error("--to must be an empty directory")
-        for key in export_keys(args.data, args.to):
+        included = {}
+        for entry in args.include:
+            name, separator, path = entry.partition("=")
+            if not separator or not path or name in included:
+                parser.error("Each --include needs a unique NAME=PATH")
+            included[name] = Path(path)
+        for key in export_keys(args.data, args.to, include=included):
             print(key)
         return
 
