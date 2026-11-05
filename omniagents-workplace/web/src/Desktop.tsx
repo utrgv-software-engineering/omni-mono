@@ -2,6 +2,7 @@ import { factoryFetch, factoryUrl } from "./factory-scope";
 import { useEffect, useRef, useState } from "react";
 import RFB from "@novnc/novnc";
 import { Button } from "@omniagents/ui/button";
+import { ticketUrl } from "./teams";
 
 export function useDesktopAvailable(enabled: boolean) {
   const [available, setAvailable] = useState(false);
@@ -42,7 +43,10 @@ export function Desktop() {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const url = new URL(factoryUrl("/workplace/api/desktop/ws"), window.location.href);
     url.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const rfb = new RFB(target.current, url.href);
+    let rfb: RFB | undefined;
+    void ticketUrl(url.href).then(destination => {
+    if (disposed || !target.current) return;
+    rfb = new RFB(target.current, destination);
     rfb.scaleViewport = true;
     rfb.resizeSession = false;
     rfb.addEventListener("connect", () => setConnected(true));
@@ -51,10 +55,13 @@ export function Desktop() {
       setConnected(false);
       timer = setTimeout(() => setAttempt((value) => value + 1), 3000);
     });
+    }).catch(() => {
+      if (!disposed) timer = setTimeout(() => setAttempt(value => value + 1), 3000);
+    });
     return () => {
       disposed = true;
       clearTimeout(timer);
-      rfb.disconnect();
+      rfb?.disconnect();
     };
   }, [attempt]);
   return (

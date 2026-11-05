@@ -25,6 +25,7 @@ import { Toaster } from "@omniagents/ui/sonner";
 
 import { auth, type Invite, type Person, type Session } from "./api";
 import App from "./App";
+import { inTeams, teamsSignOut } from "./teams";
 
 export default function Root() {
   const shared = /^\/share\/([a-f0-9]+)\/?$/.exec(factoryPath());
@@ -57,7 +58,8 @@ function SignedRoot() {
 
   const signOut = () => {
     void auth.signOut().then(() => {
-      if (session.azure_auth) window.location.assign(session.azure_auth.logout_url);
+      if (inTeams()) teamsSignOut();
+      else if (session.azure_auth) window.location.assign(session.azure_auth.logout_url);
       else load();
     });
   };

@@ -13,6 +13,7 @@ import { Input } from "@omniagents/ui/input";
 import { Switch } from "@omniagents/ui/switch";
 import { Checkbox } from "@omniagents/ui/checkbox";
 import { toast } from "sonner";
+import { inTeams } from "./teams";
 
 type Provider = "standin" | "github";
 type Settings = {
@@ -169,7 +170,8 @@ export function RepositoriesDialog({ open, onOpenChange, mode = "connection" }: 
         </details>}
         {settings.provider === "github" && <details>
           <summary className="cursor-pointer text-sm font-medium">Connect with a GitHub App instead</summary>
-          {settings.oauth_configured && <Button variant="outline" className="mt-4" disabled={busy || !!device} onClick={() => void act(async () => {
+          {inTeams() && <FieldDescription>GitHub App authorization requires a browser redirect. Use device sign-in above, or <a href="/repositories" target="_blank" rel="noreferrer" className="underline">open Workplace in your browser</a> to authorize the GitHub App.</FieldDescription>}
+          {settings.oauth_configured && !inTeams() && <Button variant="outline" className="mt-4" disabled={busy || !!device} onClick={() => void act(async () => {
             const v = await repositoryRequest<{url: string}>("/github/connect", "POST", {}); window.location.assign(v.url);
           })}>Authorize GitHub App</Button>}
           <FieldGroup className="mt-4">

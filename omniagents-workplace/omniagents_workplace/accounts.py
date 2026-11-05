@@ -299,18 +299,26 @@ class Accounts:
             self.store.delete("account.failures", key)
         return account
 
-    def start_session(self, account: Account) -> str:
+    def start_session(self, account: Account, *, expires_at: Optional[float] = None) -> str:
         token = secrets.token_urlsafe(32)
         now = time.time()
         with self._lock:
             if account.disabled:
                 raise AccountError("Account disabled", 403)
             entry = _Token(
-                _hash_token(token), account.id, now, now + self.session_seconds
+                _hash_token(token), account.id, now, min(expires_at or now + self.session_seconds, now + self.session_seconds)
             )
             self._sessions[entry.id] = entry
             self.store.put("account.session", entry.id, entry)
         return token
+
+    def refresh_session(self, token: str, expires_at: float) -> None:
+        with self._lock:
+            entry = self._sessions.get(_hash_token(token))
+            if entry is None or self.signed_in(token) is None:
+                raise AccountError("Session expired", 401)
+            entry.expires_at = min(expires_at, entry.created_at + self.session_seconds)
+            self.store.put("account.session", entry.id, entry)
 
     def signed_in(self, token: Optional[str]) -> Optional[Account]:
         if not token:

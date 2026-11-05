@@ -11,6 +11,7 @@ import { Checkbox } from "@omniagents/ui/checkbox";
 import { NativeSelect, NativeSelectOption } from "@omniagents/ui/native-select";
 import { factoryFetch, factoryUrl } from "./factory-scope";
 import type { Person } from "./api";
+import { useAsset } from "./extensions/Media";
 
 type Entry = { path: string; kind: "file" | "folder"; size: number; modified: number; revision: string };
 type Workflow = { agent?: string | null; conversation?: string; id?: string; name: string; folder: string; instruction: string; patterns: string[]; events: string[]; recursive: boolean; include_agent: boolean; enabled: boolean; revision?: number };
@@ -176,6 +177,7 @@ export function SharedApp({ account, onUse }: { account: Person; onUse: (referen
 
 function FilePreview({ entry }: { entry: Entry }) {
   const [text, setText] = useState("");
+  const asset = useAsset(fileUrl(entry, true));
   const ext = name(entry.path).split('.').pop()?.toLowerCase() || '';
   const image = ['png','jpg','jpeg','gif','webp','avif'].includes(ext);
   const textFile = ['txt','md','csv','json','yaml','yml','xml','html','css','js','ts','py','rb','log','svg','toml','sh'].includes(ext);
@@ -185,10 +187,10 @@ function FilePreview({ entry }: { entry: Entry }) {
     void fetch(fileUrl(entry, true), { signal: controller.signal }).then(r => { if (!r.ok) throw Error('Unable to preview'); return r.text(); }).then(setText).catch(e => { if (e.name !== 'AbortError') error(e); });
     return () => controller.abort();
   }, [entry.path, entry.revision, textFile, entry.size]);
-  if (image) return <img className="min-h-0 flex-1 object-contain" alt={name(entry.path)} src={fileUrl(entry, true)} />;
-  if (ext === 'pdf') return <iframe className="min-h-0 flex-1" title={name(entry.path)} src={fileUrl(entry, true)} />;
-  if (['mp4','webm'].includes(ext)) return <video controls className="min-h-0 flex-1" src={fileUrl(entry, true)} />;
-  if (['mp3','wav'].includes(ext)) return <audio controls src={fileUrl(entry, true)} />;
+  if (image) return <img className="min-h-0 flex-1 object-contain" alt={name(entry.path)} src={asset} />;
+  if (ext === 'pdf') return <iframe className="min-h-0 flex-1" title={name(entry.path)} src={asset} />;
+  if (['mp4','webm'].includes(ext)) return <video controls className="min-h-0 flex-1" src={asset} />;
+  if (['mp3','wav'].includes(ext)) return <audio controls src={asset} />;
   if (textFile && entry.size <= 2 * 1024 * 1024) return <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-md border p-4 text-sm">{text}</pre>;
   return <p className="flex-1 p-4 text-muted-foreground">Download this file to open it.</p>;
 }

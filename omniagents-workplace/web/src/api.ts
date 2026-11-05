@@ -1,4 +1,5 @@
 import { appTransport } from "./extensions/transport";
+import { inTeams, teamsSubscribe } from "./teams";
 import { factoryFetch, factoryUrl } from "./factory-scope";
 import type { Scope } from "./definition-api";
 // The workplace server's UI API (/workplace/api) and its live stream.
@@ -1292,6 +1293,7 @@ export type StreamEvent =
 /** Subscribe to the workplace's changes; reconnects on its own. */
 export function subscribe(onEvent: (event: StreamEvent) => void): () => void {
   if (appTransport()) return appTransport()!.subscribe(onEvent);
+  if (inTeams()) return teamsSubscribe(event => onEvent(event as StreamEvent));
   const source = new EventSource(factoryUrl("/workplace/api/stream"));
   source.addEventListener("ready", () => onEvent({ type: "ready" }));
   source.addEventListener("slack", (e) =>

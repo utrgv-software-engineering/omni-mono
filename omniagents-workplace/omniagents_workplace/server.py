@@ -1213,6 +1213,10 @@ def create_app(
     from .easy_auth import EasyAuth
 
     azure_auth = EasyAuth(workplace.base_url)
+    from .teams_auth import ANCESTORS, TeamsAuth, TeamsMiddleware
+
+    teams_auth = TeamsAuth(azure_auth, workplace.accounts)
+    teams_auth.install(app)
     app.add_middleware(
         SignedIn,
         accounts=workplace.accounts,
@@ -1220,6 +1224,7 @@ def create_app(
         additional_origins=workplace.additional_origins,
         identity=azure_auth if azure_auth.enabled else None,
     )
+    app.add_middleware(TeamsMiddleware, teams=teams_auth)
     # Added last, so it runs first: a sandbox never reaches the UI's API.
     app.add_middleware(
         SandboxBoundary, addresses=list(sandbox_addresses), ports=list(sandbox_ports)
@@ -1230,6 +1235,7 @@ def create_app(
         static_dir=static_dir,
         base_url=workplace.base_url,
         configured=workplace.environ.get("WORKPLACE_APP_ORIGIN", ""),
+        frame_ancestors=ANCESTORS if teams_auth.enabled else "",
     )
 
     @app.get("/up")

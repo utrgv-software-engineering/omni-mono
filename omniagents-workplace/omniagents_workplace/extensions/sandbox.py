@@ -121,8 +121,9 @@ window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/sandbox-proxy-
 
 
 class AppSandboxOrigin:
-    def __init__(self, app, *, base_url, configured="", static_dir=None):
+    def __init__(self, app, *, base_url, configured="", static_dir=None, frame_ancestors=""):
         self.app = app
+        self.frame_ancestors = frame_ancestors
         self.assets = (
             Path(static_dir)
             if static_dir
@@ -180,7 +181,7 @@ class AppSandboxOrigin:
                 query = parse_qs(scope.get("query_string", b"").decode())
                 csp = json.loads(query.get("csp", ["{}"])[0])
                 response_headers["Content-Security-Policy"] = csp_header(
-                    csp, self.parent
+                    csp, self.parent + (" " + self.frame_ancestors if self.frame_ancestors else "")
                 )
                 response = HTMLResponse(
                     PROXY.replace(

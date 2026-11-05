@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { fetchWsTicket, ticketPathFor, withConnectTicket } from './ws-ticket';
+import { fetchWsTicket, hasHostTicketProvider, setHostTicketProvider, ticketPathFor, withConnectTicket } from './ws-ticket';
 
 const mockFetch = (response: { ok: boolean; status?: number; body?: unknown }) => {
   const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => ({
@@ -14,6 +14,7 @@ const mockFetch = (response: { ok: boolean; status?: number; body?: unknown }) =
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  setHostTicketProvider(undefined);
 });
 
 describe('ticketPathFor', () => {
@@ -53,6 +54,13 @@ describe('fetchWsTicket', () => {
 });
 
 describe('withConnectTicket', () => {
+  it('uses the authenticated host ticket provider for cookie-free connections', async () => {
+    const provider = vi.fn(async (url: string) => url + '?workplace_ticket=short-lived');
+    setHostTicketProvider(provider);
+    expect(hasHostTicketProvider()).toBe(true);
+    expect(await withConnectTicket('wss://workplace.example/ws')).toBe('wss://workplace.example/ws?workplace_ticket=short-lived');
+    expect(provider).toHaveBeenCalledWith('wss://workplace.example/ws', undefined);
+  });
   it('returns the URL unchanged when no token is configured (unauthenticated server)', async () => {
     const fetchMock = mockFetch({ ok: true, body: { ticket: 'unused' } });
     expect(await withConnectTicket('ws://127.0.0.1:9000/ws')).toBe('ws://127.0.0.1:9000/ws');

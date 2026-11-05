@@ -36,7 +36,7 @@ import type { ExecutionTarget } from './execution';
 import { McpManagementClient } from './mcp-management';
 import { type ResumeResult, SessionReplayCoordinator } from './replay';
 import { decodeSessionSnapshot } from './session-snapshot';
-import { withConnectTicket, WsTicketError } from './ws-ticket';
+import { hasHostTicketProvider, withConnectTicket, WsTicketError } from './ws-ticket';
 
 type JSONRPCResponse = {
   jsonrpc: '2.0';
@@ -496,7 +496,7 @@ export class RPCClient {
     // ticket ever appears in the dial URL — never the token itself.
     // Tokenless (unauthenticated server) dials stay fully synchronous.
     let wsUrl = this.url;
-    if (this.token) {
+    if (this.token || hasHostTicketProvider()) {
       try {
         wsUrl = await withConnectTicket(this.url, this.token, signal);
         signal.throwIfAborted();

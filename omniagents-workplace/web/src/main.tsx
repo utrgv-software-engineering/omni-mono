@@ -5,6 +5,8 @@ import "@fontsource-variable/plus-jakarta-sans/wght-italic.css";
 import "./index.css";
 import { applyTheme } from "@omniagents/ui/themes";
 import Root from "./Auth.tsx";
+import { TeamsGate } from "./TeamsGate";
+import { teamsRequested } from "./teams";
 
 const dark = window.matchMedia("(prefers-color-scheme: dark)");
 const follow = () => applyTheme(dark.matches ? "omni" : "teams-light");
@@ -22,6 +24,6 @@ if (ios && viewport) viewport.content += ", maximum-scale=1";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <Root />
+    {teamsRequested() ? <TeamsGate><Root /></TeamsGate> : <Root />}
   </StrictMode>,
 );
