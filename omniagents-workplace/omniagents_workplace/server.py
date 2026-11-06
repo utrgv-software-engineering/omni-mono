@@ -272,6 +272,12 @@ class Workplace:
         from .egress import Egress
 
         self.egress = Egress(self)
+        self.notifier.proxy_url = lambda: self.egress.runtime_environment([]).get(
+            "HTTPS_PROXY"
+        )
+        from .teams_notifications import TeamsNotifications
+
+        self.teams_notifications = TeamsNotifications(self)
         from .approval_inbox import ApprovalInbox
 
         self.approvals = ApprovalInbox(self)
@@ -1192,6 +1198,7 @@ def create_app(
 
     app.include_router(repository_router(workplace))
     app.include_router(workplace.factory_secrets.router())
+    app.include_router(workplace.teams_notifications.router())
     app.include_router(workplace.event_gateway.router())
     app.include_router(workplace.kill_switch.router())
     app.include_router(workplace.governance.router())

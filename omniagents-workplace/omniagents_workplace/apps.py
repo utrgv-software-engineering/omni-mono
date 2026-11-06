@@ -475,6 +475,7 @@ class AppRegistry:
                 env["COOLIFY_MCP_URL"] = w.environ["COOLIFY_MCP_URL"]
                 env["COOLIFY_MCP_TOKEN"] = app.memory_token
             env["FACTORY_SETTINGS_TOKEN"] = app.memory_token
+            env["FACTORY_TEAMS_NOTIFY_URL"] = f"{base}/factory/notifications/teams"
             env["FACTORY_BOOTSTRAP_TOKEN"] = (
                 w.github.users[app.github_login].token or ""
             )
