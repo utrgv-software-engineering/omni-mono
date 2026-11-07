@@ -90,7 +90,7 @@ def test_a_chatgpt_sign_in_alone_becomes_the_default(tmp_path):
 
 
 def test_keys_are_checked_against_the_provider(monkeypatch):
-    def fake_get(url, headers=None, timeout=None):
+    def fake_get(url, headers=None, timeout=None, proxy=None):
         if "anthropic" in url:
             assert headers["x-api-key"] == "good" and headers["anthropic-version"]
             if headers["x-api-key"] != "good":
@@ -192,6 +192,28 @@ def test_the_model_page_signs_in_through_the_factorys_runtime(tmp_path, monkeypa
             workplace.accounts.start_session(workplace.accounts.by_username("bill")),
         )
         assert client.get("/workplace/api/session").json()["factory"]
+        proxy = "http://factory:test-proxy-token@egress:3128"
+        monkeypatch.setattr(
+            workplace.egress,
+            "runtime_environment",
+            lambda hosts: {"HTTPS_PROXY": proxy},
+        )
+
+        def probe_get(url, **kwargs):
+            assert kwargs.get("proxy") == proxy
+            assert url == "https://azure.example/openai/v1/models"
+            return httpx.Response(200, json={"data": [{"id": "deployment"}]})
+
+        monkeypatch.setattr(factory_models.httpx, "get", probe_get)
+        probe = client.post(
+            "/workplace/api/factory/model/validate",
+            json={
+                "kind": "openai-compatible",
+                "base_url": "https://azure.example/openai/v1",
+                "api_key": "test-key",
+            },
+        )
+        assert probe.json()["choices"][0]["id"] == "deployment"
         got = client.get("/workplace/api/factory/model").json()
         assert (
             got["chatgpt"]["state"] == "signed_out"
@@ -350,3 +372,22 @@ def test_discovered_default_survives_signing_in_again(tmp_path):
         models.set_default(
             "codex/gpt-6-astra", [{**catalog[0], "availability": {"available": False}}]
         )
+
+
+@pytest.mark.parametrize("proxied", [False, True])
+def test_probe_route_and_safe_network_errors(monkeypatch, proxied):
+    proxy = "http://factory:private-token@egress:3128" if proxied else None
+
+    def fake_get(url, **kwargs):
+        assert kwargs["proxy"] == proxy
+        assert url == "https://azure.example/openai/v1/models"
+        assert kwargs["headers"] == {"Authorization": "Bearer test-key"}
+        raise httpx.ConnectTimeout("private-token test-key")
+
+    monkeypatch.setattr(factory_models.httpx, "get", fake_get)
+    result = validate_provider(
+        "openai-compatible", "test-key", "https://azure.example/openai/v1", proxy=proxy
+    )
+    assert result["code"] == "network"
+    assert "private-token" not in json.dumps(result)
+    assert "test-key" not in json.dumps(result)

@@ -33,7 +33,7 @@ const fail = (e: unknown) => {
 const PROBE_COPY: Record<string, string> = {
   unauthorized: "The key was refused: check it and try again.",
   "not-found": "Nothing answered there: check the address.",
-  network: "Couldn't reach it: check the address and your connection.",
+  network: "Workplace couldn't reach the model listing. Check the address and the factory's allowed destinations.",
 };
 
 export function FactoryModelDialog({
@@ -323,13 +323,22 @@ function AddProvider({
     kinds[0] === "ollama" ? "http://localhost:11434" : "",
   );
   const [checking, setChecking] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const probeVersion = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [options, setOptions] = useState<ModelChoice[] | null>(null);
   const [picked, setPicked] = useState<string>("");
   const [makeDefault, setMakeDefault] = useState(true);
   const local = kind === "ollama" || kind === "openai-compatible";
+  const invalidate = () => {
+    probeVersion.current += 1;
+    setChecking(false);
+    setOptions(null);
+    setError(null);
+  };
 
   const check = async () => {
+    const version = ++probeVersion.current;
     setChecking(true);
     setError(null);
     setOptions(null);
@@ -339,6 +348,7 @@ function AddProvider({
         api_key: apiKey,
         base_url: baseUrl,
       });
+      if (version !== probeVersion.current) return;
       if (!result.ok) {
         setError(
           PROBE_COPY[result.code ?? ""] ?? result.detail ?? "It did not work",
@@ -347,18 +357,22 @@ function AddProvider({
       }
       const choices = result.choices ?? [];
       setOptions(choices);
-      setPicked((choices.find((c) => c.recommended) ?? choices[0])?.id ?? "");
+      setPicked((current) => current || (choices.find((c) => c.recommended) ?? choices[0])?.id || "");
     } catch (e) {
-      fail(e);
+      if (version === probeVersion.current) setError((e as Error).message);
     } finally {
-      setChecking(false);
+      if (version === probeVersion.current) setChecking(false);
     }
   };
 
-  const save = () => {
-    const model = options?.find((o) => o.id === picked);
+  const save = async () => {
+    const modelId = picked.trim();
+    const model = options?.find((o) => o.id === modelId) ?? (local && modelId ? {
+      id: modelId, label: modelId, blurb: "", maxInput: 0, maxOutput: 0, verified: false,
+    } : null);
     if (!model) return;
-    void factoryModel
+    setSaving(true);
+    await factoryModel
       .addProvider({
         kind,
         api_key: apiKey,
@@ -368,10 +382,11 @@ function AddProvider({
       })
       .then((state) => {
         toast.success(`Added ${model.label}`);
-        setOptions(null);
+        invalidate();
+        setPicked("");
         setApiKey("");
         onAdded(state);
-      }, fail);
+      }, fail).finally(() => setSaving(false));
   };
 
   return (
@@ -379,10 +394,12 @@ function AddProvider({
       <div className="flex gap-2">
         <NativeSelect
           value={kind}
+          disabled={saving}
           onChange={(e) => {
             const next = e.target.value as ProviderKind;
             setKind(next);
-            setOptions(null);
+            invalidate();
+            setPicked("");
             setBaseUrl(next === "ollama" ? "http://localhost:11434" : "");
           }}
         >
@@ -399,7 +416,12 @@ function AddProvider({
               kind === "ollama" ? "http://localhost:11434" : "https://host/v1"
             }
             value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
+            disabled={saving}
+            onChange={(e) => {
+              setBaseUrl(e.target.value);
+              invalidate();
+              setPicked("");
+            }}
           />
         )}
       </div>
@@ -414,9 +436,10 @@ function AddProvider({
             autoComplete="off"
             placeholder={kind === "anthropic" ? "sk-ant-…" : "sk-…"}
             value={apiKey}
+            disabled={saving}
             onChange={(e) => {
               setApiKey(e.target.value);
-              setOptions(null);
+              invalidate();
             }}
           />
         </div>
@@ -425,20 +448,35 @@ function AddProvider({
         variant="outline"
         onClick={() => void check()}
         disabled={
-          checking || (!local && !apiKey.trim()) || (local && !baseUrl.trim())
+          checking || saving || (!local && !apiKey.trim()) || (local && !baseUrl.trim())
         }
       >
         {checking ? "Checking…" : "Check"}
       </Button>
       {error && <p className="text-destructive">{error}</p>}
-      {options && (
+      {local && (
+        <label className="block space-y-1">
+          <span>Model or deployment name</span>
+          <Input
+            aria-label="Model or deployment name"
+            value={picked}
+            disabled={saving}
+            onChange={(event) => setPicked(event.target.value)}
+          />
+          <span className="block text-xs text-muted-foreground">
+            For Azure OpenAI, enter your deployment name. Check optionally lists models;
+            you can save without it. Saving does not verify connectivity or credentials.
+          </span>
+        </label>
+      )}
+      {(local || options) && (
         <div className="space-y-2">
-          {options.length === 0 && (
+          {options?.length === 0 && (
             <p className="text-muted-foreground">
               It answered, but lists no models.
             </p>
           )}
-          {options.map((o) => (
+          {options?.map((o) => (
             <label key={o.id} className="flex items-start gap-2">
               <input
                 type="radio"
@@ -470,8 +508,8 @@ function AddProvider({
             />
             Make it the factory's default
           </label>
-          <Button onClick={save} disabled={!picked}>
-            Save
+          <Button onClick={() => void save()} disabled={saving || !picked.trim() || (local && !baseUrl.trim())}>
+            {saving ? "Saving…" : "Save"}
           </Button>
         </div>
       )}

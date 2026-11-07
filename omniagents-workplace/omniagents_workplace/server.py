@@ -2190,7 +2190,12 @@ def create_app(
         from .factory_models import resolve_model_choices, validate_provider
 
         _factory(request)
-        result = validate_provider(body.kind, body.api_key, body.base_url)
+        result = validate_provider(
+            body.kind,
+            body.api_key,
+            body.base_url,
+            proxy=workplace.egress.runtime_environment([]).get("HTTPS_PROXY"),
+        )
         if result.get("ok"):
             result["choices"] = resolve_model_choices(
                 body.kind, result.get("models") or []

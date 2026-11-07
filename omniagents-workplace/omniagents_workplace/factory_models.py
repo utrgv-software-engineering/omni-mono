@@ -154,7 +154,7 @@ def normalize_compatible_base_url(url: str) -> str:
 
 
 def validate_provider(
-    kind: str, api_key: str = "", base_url: str = ""
+    kind: str, api_key: str = "", base_url: str = "", *, proxy: Optional[str] = None
 ) -> Dict[str, Any]:
     """A key (or a server) works: the provider's model listing, as the desktop checks it."""
     headers: Dict[str, str] = {}
@@ -182,9 +182,13 @@ def validate_provider(
     else:
         return {"ok": False, "code": "unknown", "detail": f"No provider kind {kind!r}"}
     try:
-        response = httpx.get(url, headers=headers, timeout=PROBE_TIMEOUT)
-    except httpx.HTTPError as exc:
-        return {"ok": False, "code": "network", "detail": str(exc)}
+        response = httpx.get(url, headers=headers, timeout=PROBE_TIMEOUT, proxy=proxy)
+    except httpx.HTTPError:
+        return {
+            "ok": False,
+            "code": "network",
+            "detail": "Could not reach the model listing through the configured network route.",
+        }
     if response.status_code in (401, 403):
         return {
             "ok": False,
