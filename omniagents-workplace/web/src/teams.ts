@@ -1,9 +1,10 @@
 import { createNestablePublicClientApplication, InteractionRequiredAuthError, type IPublicClientApplication, type AccountInfo } from "@azure/msal-browser";
-import { app, nestedAppAuth } from "@microsoft/teams-js";
+import type { app as TeamsApp } from "@microsoft/teams-js";
 import { setHostTicketProvider } from "@omniagents/client/rpc/ws-ticket";
 
 const prefix = "/workplace/auth/teams";
 let nativeFetch: typeof fetch;
+let app: typeof TeamsApp;
 let client: IPublicClientApplication;
 let account: AccountInfo | null = null;
 let scope = "";
@@ -104,8 +105,10 @@ export async function ticketUrl(value: string, signal?: AbortSignal): Promise<st
 export async function initializeTeams(interactive = false) {
   if (!initialized) {
     nativeFetch = window.fetch.bind(window);
+    const teams = await import("@microsoft/teams-js");
+    app = teams.app;
     await app.initialize();
-    if (!nestedAppAuth.isNAAChannelRecommended()) throw new Error("This Teams client does not support nested sign-in. Update Teams or open Workplace in your browser.");
+    if (!teams.nestedAppAuth.isNAAChannelRecommended()) throw new Error("This Teams client does not support nested sign-in. Update Teams or open Workplace in your browser.");
     const config = await checked(await nativeFetch(prefix + "/config", { credentials: "omit" }));
     scope = config.scope;
     tenantId = config.tenantId;
