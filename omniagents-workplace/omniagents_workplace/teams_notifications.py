@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 import secrets
 import time
 from urllib.parse import parse_qsl, unquote, urlsplit
@@ -48,6 +49,11 @@ def workplace_link(base, path):
         "code",
         "workplace_ticket",
     }
+    github_item = re.fullmatch(
+        r"/[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+/(?:pull|issues)/[1-9][0-9]*", parts.path
+    )
+    if parts.path.split("/")[1:2] in (["workplace"], ["auth"]):
+        github_item = None
     if (
         not path.startswith("/")
         or path.startswith("//")
@@ -58,7 +64,7 @@ def workplace_link(base, path):
         or "\\" in decoded
         or any(ord(char) < 32 or ord(char) == 127 for char in decoded)
         or any(part in (".", "..") for part in parts.path.split("/"))
-        or parts.path.split("/")[1] not in roots
+        or (parts.path.split("/")[1] not in roots and not github_item)
         or any(key.lower() in forbidden for key, _ in parse_qsl(parts.query))
     ):
         raise HTTPException(
@@ -97,13 +103,19 @@ class TeamsNotifications:
                 409,
                 "Teams automation notifications currently require standalone Workplace",
             )
+        return await self.deliver(app.id, app.username, body)
+
+    async def system(self, body):
+        return await self.deliver("workplace", None, body)
+
+    async def deliver(self, source, actor, body):
         url = workplace_link(self.w.base_url, body.path)
         notifier = self.w.notifier
         if not notifier.url:
             raise HTTPException(503, "Teams Workflow webhook is not configured")
         destination = hashlib.sha256(notifier.url.encode()).hexdigest()
         identity = hashlib.sha256(
-            json.dumps([app.id, destination, body.event_id]).encode()
+            json.dumps([source, destination, body.event_id]).encode()
         ).hexdigest()
         payload_hash = hashlib.sha256(
             json.dumps(body.model_dump(), sort_keys=True).encode()
@@ -139,7 +151,7 @@ class TeamsNotifications:
                 )
             self.w.audit_log.record(
                 "notification.teams",
-                actor=app.username,
+                actor=actor,
                 notification=identity,
                 status=status,
             )

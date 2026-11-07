@@ -432,6 +432,11 @@ export function ApprovalInbox() {
   const [approvals, setApprovals] = useState<PendingApproval[]>([]);
   const load = () => void factoryApprovals.list().then((r) => setApprovals(r.approvals), () => undefined);
   useEffect(() => {
+    if (approvals.length && window.location.hash === "#approvals") {
+      document.getElementById("approvals")?.scrollIntoView({ block: "start" });
+    }
+  }, [approvals.length]);
+  useEffect(() => {
     load();
     const timer = window.setInterval(load, 15000);
     return () => window.clearInterval(timer);
@@ -445,7 +450,7 @@ export function ApprovalInbox() {
       .catch((e: unknown) => toast.error((e as Error).message));
   };
   return (
-    <section className="space-y-2 rounded-md border border-amber-500/40 p-3" aria-label="Approvals">
+    <section id="approvals" className="space-y-2 rounded-md border border-amber-500/40 p-3" aria-label="Approvals">
       <h2 className="text-lg font-semibold">Waiting for your approval</h2>
       <ul className="divide-y text-sm">
         {approvals.map((a) => (

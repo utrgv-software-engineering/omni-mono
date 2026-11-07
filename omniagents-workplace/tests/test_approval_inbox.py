@@ -72,11 +72,13 @@ async def test_new_approvals_are_announced_once_without_their_arguments(
     w = inbox
     sent = []
 
-    async def send(title, text, facts=(), client=None):
+    async def send(title, text, facts=(), **kwargs):
         sent.append((title, text, dict(facts)))
-        return True
+        assert kwargs["url"].endswith("/factory#approvals")
+        return "accepted"
 
-    monkeypatch.setattr(w.notifier, "send", send)
+    w.notifier.url = "https://workflow.invalid"
+    monkeypatch.setattr(w.notifier, "deliver", send)
     transport = httpx.MockTransport(
         lambda r: httpx.Response(200, json={"approvals": [PENDING]})
     )
@@ -85,3 +87,23 @@ async def test_new_approvals_are_announced_once_without_their_arguments(
         assert await w.approvals.announce(client) == 0
     assert sent[0][0] == "Approval needed"
     assert "patient@example.test" not in json.dumps(sent)
+
+
+@pytest.mark.asyncio
+async def test_failed_approval_delivery_is_not_marked_announced(inbox, monkeypatch):
+    from unittest.mock import AsyncMock
+    from omniagents_workplace.approval_inbox import SEEN_KEY
+
+    inbox.notifier.url = "https://workflow.invalid"
+    delivery = AsyncMock(side_effect=["failed", "accepted"])
+    monkeypatch.setattr(inbox.notifier, "deliver", delivery)
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"approvals": [PENDING]})
+    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        await inbox.approvals.announce(client)
+        assert inbox.store.meta(SEEN_KEY) == []
+        await inbox.approvals.announce(client)
+        await inbox.approvals.announce(client)
+    assert inbox.store.meta(SEEN_KEY) == ["apr_1"]
+    assert delivery.await_count == 2

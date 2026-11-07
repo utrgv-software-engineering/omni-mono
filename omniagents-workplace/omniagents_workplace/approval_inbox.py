@@ -105,16 +105,23 @@ class ApprovalInbox:
             return 0
         seen = set(self.w.store.meta(SEEN_KEY) or [])
         fresh = [a for a in pending if a["call_id"] not in seen]
+        from .teams_notifications import TeamsNotification
+
         for approval in fresh:
-            await self.w.notifier.send(
-                "Approval needed",
-                f"{approval['agent']} wants to use {approval['tool']}. "
-                "Open the factory's approvals to decide.",
-                [("Agent", approval["agent"]), ("Tool", approval["tool"])],
+            if not self.w.notifier.url:
+                continue
+            result = await self.w.teams_notifications.system(
+                TeamsNotification(
+                    event_id=f"approval:{approval['call_id']}",
+                    title="Approval needed",
+                    text="A factory tool call needs approval. Open Workplace to review it.",
+                    path="/factory#approvals",
+                )
             )
-        if fresh:
-            current = {a["call_id"] for a in pending}
-            self.w.store.set_meta(SEEN_KEY, sorted((seen & current) | current))
+            if result["status"] == "accepted":
+                seen.add(approval["call_id"])
+        current = {a["call_id"] for a in pending}
+        self.w.store.set_meta(SEEN_KEY, sorted(seen & current))
         return len(fresh)
 
     async def maintain(self, interval: float = 15) -> None:

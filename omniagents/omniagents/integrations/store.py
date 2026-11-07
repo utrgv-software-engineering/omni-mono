@@ -30,6 +30,11 @@ __all__ = ["EventStore"]
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS automation_routes (name TEXT PRIMARY KEY, configuration TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS attention_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dispatch_id INTEGER NOT NULL UNIQUE,
+    created_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS automation_switches (name TEXT PRIMARY KEY, enabled INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS factory_stop (id INTEGER PRIMARY KEY CHECK (id = 1), state TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS run_tools (
@@ -483,7 +488,44 @@ class EventStore:
                 "UPDATE dispatches SET status = ?, error = ?, finished_at = ? WHERE id = ?",
                 (status, error, time.time(), dispatch_id),
             )
+            if status == "failed":
+                self._db.execute(
+                    "INSERT OR IGNORE INTO attention_events (dispatch_id, created_at) "
+                    "SELECT d.id, ? FROM dispatches d JOIN events e ON e.id = d.event_id "
+                    "WHERE d.id = ? AND e.provider IN ('schedule', 'shared', 'github', 'linear', 'slack') "
+                    "AND e.event != 'message_dm'",
+                    (time.time(), dispatch_id),
+                )
             self._db.commit()
+
+    def attention_events(self, after=None):
+        with self._lock:
+            latest = self._db.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM attention_events"
+            ).fetchone()[0]
+            rows = (
+                []
+                if after is None
+                else self._db.execute(
+                    "SELECT a.id, d.id AS run_id, d.agent, d.automation FROM attention_events a "
+                    "JOIN dispatches d ON d.id = a.dispatch_id WHERE a.id > ? ORDER BY a.id LIMIT 100",
+                    (after,),
+                ).fetchall()
+            )
+        return {
+            "events": [dict(row) for row in rows],
+            "cursor": rows[-1]["id"] if rows else (latest if after is None else after),
+        }
+
+    def active_dispatches(self):
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT d.id, d.agent, d.session_id FROM dispatches d "
+                "JOIN events e ON e.id = d.event_id WHERE d.status = 'running' "
+                "AND e.provider IN ('schedule', 'shared', 'github', 'linear', 'slack') "
+                "AND e.event != 'message_dm' ORDER BY d.id"
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def record_skills(self, dispatch_id: int, skills: Dict[str, Any]) -> None:
         """What a run's agent was offered and loaded (``{offered, loaded}``)."""

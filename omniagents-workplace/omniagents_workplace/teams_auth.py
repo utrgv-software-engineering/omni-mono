@@ -20,8 +20,12 @@ PREFIX = "/workplace/auth/teams"
 ANCESTORS = "https://teams.microsoft.com https://*.teams.microsoft.com https://*.cloud.microsoft"
 SESSION_HEADER = "x-workplace-session"
 SCOPE_CLAIM = "http://schemas.microsoft.com/identity/claims/scope"
-SOCKETS = re.compile(r"^/workplace/api/(?:desktop/ws|factory/runtime/agents/[a-z][a-z0-9_]*/ws|personal/chats/[^/]+/runtime/ws(?:/realtime)?)$")
-FILES = re.compile(r"^/(?:slack/files/[^/]+(?:/.*)?|linear/uploads/[^/]+|workplace/api/shared/(?:content|download-folder))$")
+SOCKETS = re.compile(
+    r"^/workplace/api/(?:desktop/ws|factory/(?:runs/[0-9]+/)?runtime/agents/[a-z][a-z0-9_]*/ws|personal/chats/[^/]+/runtime/ws(?:/realtime)?)$"
+)
+FILES = re.compile(
+    r"^/(?:slack/files/[^/]+(?:/.*)?|linear/uploads/[^/]+|workplace/api/shared/(?:content|download-folder))$"
+)
 
 
 class TicketRequest(BaseModel):
@@ -40,13 +44,19 @@ class TeamsAuth:
         if self.enabled:
             self.client_id = str(UUID(self.client_id))
             if not identity.enabled or not isinstance(accounts, Accounts):
-                raise ValueError("Teams requires Azure EasyAuth and standalone Workplace accounts")
+                raise ValueError(
+                    "Teams requires Azure EasyAuth and standalone Workplace accounts"
+                )
         self.scope = f"api://{self.client_id}/access_as_user"
 
     def principal(self, headers):
         account_id = self.identity.account_id_from(headers)
         try:
-            principal = json.loads(base64.b64decode(headers.get("x-ms-client-principal", ""), validate=True))
+            principal = json.loads(
+                base64.b64decode(
+                    headers.get("x-ms-client-principal", ""), validate=True
+                )
+            )
             values = {}
             for claim in principal["claims"]:
                 values.setdefault(claim["typ"], set()).add(claim["val"])
@@ -65,7 +75,10 @@ class TeamsAuth:
                 raise ValueError()
             return account, min(deadline, time.time() + 300)
         except (ValueError, KeyError, TypeError):
-            raise HTTPException(403, "A delegated Workplace access token from this Teams client is required") from None
+            raise HTTPException(
+                403,
+                "A delegated Workplace access token from this Teams client is required",
+            ) from None
 
     def session(self, headers):
         account, deadline = self.principal(headers)
@@ -80,7 +93,14 @@ class TeamsAuth:
 
         @app.get(PREFIX + "/config")
         def config():
-            return JSONResponse({"clientId": self.client_id, "tenantId": self.identity.tenant, "scope": self.scope}, headers={"Cache-Control": "no-store"})
+            return JSONResponse(
+                {
+                    "clientId": self.client_id,
+                    "tenantId": self.identity.tenant,
+                    "scope": self.scope,
+                },
+                headers={"Cache-Control": "no-store"},
+            )
 
         @app.post(PREFIX + "/session")
         def exchange(request: Request):
@@ -90,10 +110,15 @@ class TeamsAuth:
             token = request.headers.get(SESSION_HEADER, "")
             if self.accounts.signed_in(token) is not account:
                 token = self.accounts.start_session(account, expires_at=deadline)
-                self.accounts.audit_log.record("auth.teams_signed_in", account_id=account.id)
+                self.accounts.audit_log.record(
+                    "auth.teams_signed_in", account_id=account.id
+                )
             else:
                 self.accounts.refresh_session(token, deadline)
-            return JSONResponse({"session": token, "expiresAt": deadline}, headers={"Cache-Control": "no-store"})
+            return JSONResponse(
+                {"session": token, "expiresAt": deadline},
+                headers={"Cache-Control": "no-store"},
+            )
 
         @app.post(PREFIX + "/ticket")
         def ticket(body: TicketRequest, request: Request):
@@ -102,37 +127,70 @@ class TeamsAuth:
             token, account, deadline = self.session(request.headers)
             target = urlsplit(body.path)
             socket = bool(SOCKETS.fullmatch(target.path))
-            if target.scheme or target.netloc or target.fragment or "%" in target.path or "\\" in target.path or not (socket or FILES.fullmatch(target.path)):
+            if (
+                target.scheme
+                or target.netloc
+                or target.fragment
+                or "%" in target.path
+                or "\\" in target.path
+                or not (socket or FILES.fullmatch(target.path))
+            ):
                 raise HTTPException(400, "Unsupported ticket destination")
             query = parse_qsl(target.query, keep_blank_values=True)
             if any(key == "workplace_ticket" for key, _ in query):
                 raise HTTPException(400, "Invalid ticket destination")
             value = secrets.token_urlsafe(32)
-            saved = {name: request.headers[name] for name in ("x-ms-client-principal", "x-workplace-proxy-token") if name in request.headers}
+            saved = {
+                name: request.headers[name]
+                for name in ("x-ms-client-principal", "x-workplace-proxy-token")
+                if name in request.headers
+            }
             with self.lock:
-                self.tickets = {key: entry for key, entry in self.tickets.items() if entry["expires"] > time.time()}
+                self.tickets = {
+                    key: entry
+                    for key, entry in self.tickets.items()
+                    if entry["expires"] > time.time()
+                }
                 if len(self.tickets) >= 4096:
                     raise HTTPException(429, "Too many active tickets")
                 self.tickets[hashlib.sha256(value.encode()).hexdigest()] = {
-                    "path": target.path, "query": query, "socket": socket, "token": token,
-                    "headers": saved, "expires": min(deadline, time.time() + 60), "account": account.id,
+                    "path": target.path,
+                    "query": query,
+                    "socket": socket,
+                    "token": token,
+                    "headers": saved,
+                    "expires": min(deadline, time.time() + 60),
+                    "account": account.id,
                 }
-            return JSONResponse({"ticket": value}, headers={"Cache-Control": "no-store"})
+            return JSONResponse(
+                {"ticket": value}, headers={"Cache-Control": "no-store"}
+            )
 
     def redeem(self, scope, headers):
-        query = parse_qsl(scope.get("query_string", b"").decode(), keep_blank_values=True)
+        query = parse_qsl(
+            scope.get("query_string", b"").decode(), keep_blank_values=True
+        )
         values = [value for key, value in query if key == "workplace_ticket"]
         if not values:
             return None
         if len(values) != 1:
             raise HTTPException(401, "Invalid ticket")
         key = hashlib.sha256(values[0].encode()).hexdigest()
-        remaining = [(name, value) for name, value in query if name != "workplace_ticket"]
+        remaining = [
+            (name, value) for name, value in query if name != "workplace_ticket"
+        ]
         with self.lock:
             entry = self.tickets.get(key)
-            if not entry or entry["expires"] <= time.time() or entry["path"] != scope["path"] or entry["query"] != remaining:
+            if (
+                not entry
+                or entry["expires"] <= time.time()
+                or entry["path"] != scope["path"]
+                or entry["query"] != remaining
+            ):
                 raise HTTPException(401, "Invalid or expired ticket")
-            if entry["socket"] != (scope["type"] == "websocket") or scope.get("method", "GET") not in ("GET", "HEAD"):
+            if entry["socket"] != (scope["type"] == "websocket") or scope.get(
+                "method", "GET"
+            ) not in ("GET", "HEAD"):
                 raise HTTPException(401, "Invalid ticket use")
             if entry["socket"]:
                 if headers.get("origin") != self.identity.origin:
@@ -153,7 +211,10 @@ class TeamsMiddleware:
         if not self.teams.enabled or scope["type"] not in ("http", "websocket"):
             return await self.app(scope, receive, send)
         scope = dict(scope)
-        headers = {key.decode().lower(): value.decode() for key, value in scope.get("headers", [])}
+        headers = {
+            key.decode().lower(): value.decode()
+            for key, value in scope.get("headers", [])
+        }
         try:
             entry = self.teams.redeem(scope, headers)
             token = None
@@ -163,14 +224,24 @@ class TeamsMiddleware:
             elif SESSION_HEADER in headers and not scope["path"].startswith(PREFIX):
                 token, _, _ = self.teams.session(headers)
             if token:
-                cookies = [item.strip() for item in headers.get("cookie", "").split(";") if item.strip() and item.strip().partition("=")[0] != SESSION_COOKIE]
+                cookies = [
+                    item.strip()
+                    for item in headers.get("cookie", "").split(";")
+                    if item.strip() and item.strip().partition("=")[0] != SESSION_COOKIE
+                ]
                 headers["cookie"] = "; ".join([*cookies, f"{SESSION_COOKIE}={token}"])
-                scope["headers"] = [(key.encode(), value.encode()) for key, value in headers.items()]
+                scope["headers"] = [
+                    (key.encode(), value.encode()) for key, value in headers.items()
+                ]
         except HTTPException as error:
             if scope["type"] == "websocket":
                 await send({"type": "websocket.close", "code": 1008})
             else:
-                await JSONResponse({"detail": error.detail}, status_code=error.status_code, headers={"Cache-Control": "no-store"})(scope, receive, send)
+                await JSONResponse(
+                    {"detail": error.detail},
+                    status_code=error.status_code,
+                    headers={"Cache-Control": "no-store"},
+                )(scope, receive, send)
             return
 
         async def framed(message):
@@ -184,13 +255,21 @@ class TeamsMiddleware:
                         has_csp = True
                         text = value.decode()
                         if "frame-ancestors" in text:
-                            text = re.sub(r"(frame-ancestors[^;]*)", r"\1 " + ANCESTORS, text)
+                            text = re.sub(
+                                r"(frame-ancestors[^;]*)", r"\1 " + ANCESTORS, text
+                            )
                         else:
                             text += "; frame-ancestors 'self' " + ANCESTORS
                         value = text.encode()
                     result.append((name, value))
                 if not has_csp:
-                    result.append((b"content-security-policy", ("frame-ancestors 'self' " + ANCESTORS).encode()))
+                    result.append(
+                        (
+                            b"content-security-policy",
+                            ("frame-ancestors 'self' " + ANCESTORS).encode(),
+                        )
+                    )
                 message = {**message, "headers": result}
             await send(message)
+
         await self.app(scope, receive, framed)

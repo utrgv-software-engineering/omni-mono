@@ -121,6 +121,7 @@ export type AppProps = {
    *  is embedded to READ another session (e.g. a subagent's transcript in
    *  the Agents sidecar detail page). */
   readOnly?: boolean;
+  allowQuestionResponses?: boolean;
   /** Refetch a read-only transcript when its external worker advances. */
   transcriptRevision?: string;
   /** Whether a retained conversation is currently visible in its host. */
@@ -189,6 +190,7 @@ function SessionView({
   workspaceDir,
   onOpenApp,
   readOnly,
+  allowQuestionResponses,
   transcriptRevision,
   onSelectConversation,
   resumeRequested,
@@ -1426,7 +1428,9 @@ function SessionView({
                   onDismissAll={() => setNotifications([])}
                 />
                 <RecapPanel recap={recap} onDismiss={() => setRecap(null)} />
-                <EscalationBanner escalation={escalation} />
+                <EscalationBanner key={escalation?.request_id} escalation={escalation} onRespond={readOnly && allowQuestionResponses && escalation
+                  ? text => client.clientResponse(escalation.request_id, true, { reply: text })
+                  : undefined} />
                 {elicitations.map((request) => (
                   <ElicitationCard
                     key={request.elicitationId}

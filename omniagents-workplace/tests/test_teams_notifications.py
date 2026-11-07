@@ -84,6 +84,20 @@ def test_card_link_deduplication_and_conflict(setup):
     assert BODY["text"] not in json.dumps(events)
 
 
+def test_review_links_use_actual_workplace_github_routes(setup):
+    _, client, _ = setup
+    assert (
+        client.post(URL, json={**BODY, "path": "/acme/api-service/pull/42"}).status_code
+        == 200
+    )
+    for path in [
+        "/workplace/api/pull/42",
+        "/auth/redirect/issues/1",
+        "/acme/../pull/1",
+    ]:
+        assert client.post(URL, json={**BODY, "path": path}).status_code == 422
+
+
 @pytest.mark.parametrize(
     "path",
     [

@@ -192,3 +192,73 @@ def test_a_signed_in_page_reads_an_agents_session(tmp_path, upstream):
         ]  # only the reading reached the factory, once
     finally:
         workplace.close()
+
+
+def test_question_run_route_checks_auth_and_intercepts_only_answers(
+    tmp_path, upstream, monkeypatch
+):
+    from unittest.mock import AsyncMock
+    import httpx
+
+    url, seen = upstream
+    workplace = _workplace(tmp_path, url)
+    workplace.approvals.endpoint = lambda: ("http://control.invalid", "private-control")
+    post = AsyncMock(
+        return_value=httpx.Response(
+            200,
+            json={"result": True},
+            request=httpx.Request("POST", "http://control.invalid"),
+        )
+    )
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    try:
+        client = TestClient(create_app(workplace, static_dir=tmp_path))
+        path = "/workplace/api/factory/runs/9/runtime/agents/foreman/ws"
+        origin = {"origin": workplace.base_url}
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect(path, headers=origin) as ws:
+                ws.receive_text()
+        account = workplace.accounts.by_username("bill")
+        client.cookies.set(SESSION_COOKIE, workplace.accounts.start_session(account))
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect(
+                path, headers={"origin": "https://evil.invalid"}
+            ) as ws:
+                ws.receive_text()
+        with client.websocket_connect(path, headers=origin) as ws:
+            ws.send_json(
+                {
+                    "id": 1,
+                    "method": "resume_session",
+                    "params": {"session_id": "run-session"},
+                }
+            )
+            assert ws.receive_json()["result"]["method"] == "resume_session"
+            ws.send_json(
+                {
+                    "id": 2,
+                    "method": "client_response",
+                    "params": {
+                        "request_id": "question",
+                        "ok": True,
+                        "result": {"reply": "answer"},
+                    },
+                }
+            )
+            assert ws.receive_json() == {"jsonrpc": "2.0", "id": 2, "result": True}
+            assert post.call_args.kwargs["json"]["actor"] == "bill"
+            assert post.call_args.kwargs["json"]["run_id"] == 9
+            assert (
+                post.call_args.kwargs["headers"]["Authorization"]
+                == "Bearer private-control"
+            )
+            ws.send_json({"id": 3, "method": "edit_item", "params": {}})
+            assert "error" in ws.receive_json()
+            account.admin = False
+            ws.send_json({"id": 4, "method": "client_response", "params": {}})
+            with pytest.raises(WebSocketDisconnect):
+                ws.receive_text()
+        assert post.await_count == 1
+        assert seen["paths"] == ["/agents/foreman/ws"]
+    finally:
+        workplace.close()

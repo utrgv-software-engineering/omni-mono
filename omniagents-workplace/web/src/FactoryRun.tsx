@@ -33,10 +33,10 @@ const host: ChatHost = {
 };
 
 /** A connection to an agent's runtime on the factory, through the workplace. */
-function AgentRuntime({ agent, children }: { agent: string; children: React.ReactNode }) {
+function AgentRuntime({ agent, runId, children }: { agent: string; runId: number; children: React.ReactNode }) {
   const connection = useMemo(
-    () => ({ baseUrl: factoryUrl(`${window.location.origin}/workplace/api/factory/runtime/agents/${agent}/`) }),
-    [agent],
+    () => ({ baseUrl: factoryUrl(`${window.location.origin}/workplace/api/factory/runs/${runId}/runtime/agents/${agent}/`) }),
+    [agent, runId],
   );
   return (
     <UiConfigProvider connection={connection}>
@@ -59,7 +59,8 @@ export function FactoryRun({
     factoryRun.get(runId).then(
       (r) => {
         setRun(r);
-        setSessionId((current) => current ?? r.sessions[0]?.session_id ?? null);
+        const requested = new URLSearchParams(window.location.search).get("session");
+        setSessionId((current) => current ?? r.sessions.find(s => s.session_id === requested)?.session_id ?? r.sessions[0]?.session_id ?? null);
       },
       (e: unknown) => setError((e as Error).message),
     );
@@ -128,8 +129,8 @@ export function FactoryRun({
               <ChatHostProvider host={host}>
                 <TooltipProvider delayDuration={300}>
                   {/* Child sessions live with the run's agent: its runtime reads them. */}
-                  <AgentRuntime agent={run.agent}>
-                    <App key={sessionId} sessionId={sessionId} readOnly />
+                  <AgentRuntime agent={run.agent} runId={runId}>
+                    <App key={sessionId} sessionId={sessionId} readOnly allowQuestionResponses />
                   </AgentRuntime>
                 </TooltipProvider>
               </ChatHostProvider>

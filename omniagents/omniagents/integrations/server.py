@@ -782,6 +782,9 @@ def mount_integrations(
 
     app.router.on_shutdown.append(shutdown_memory)
     intake.links = PullRequestLinks(store, history, children)
+    from .attention import FactoryAttention, mount_attention
+
+    mount_attention(app, FactoryAttention(store, runtimes, children), _controlled)
     # What every model call uses, recorded as it happens, whatever tracing does.
     from omniagents.core.tracing import (
         add_permanent_processor,

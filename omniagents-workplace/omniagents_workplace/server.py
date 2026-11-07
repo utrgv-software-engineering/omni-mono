@@ -1163,10 +1163,14 @@ def create_app(
         )
         kill_switch = asyncio.create_task(workplace.kill_switch.maintain())
         approvals = asyncio.create_task(workplace.approvals.maintain())
+        from .attention import AttentionNotifications
+
+        attention = asyncio.create_task(AttentionNotifications(workplace).maintain())
         async with workplace.mcp.run(), workplace.github_mcp.run(), workplace.linear_mcp.run(), workplace.canvas_mcp.run(), workplace.memory_mcp.run(), extension_apps.run():
             try:
                 yield
             finally:
+                attention.cancel()
                 scheduler.cancel()
                 repository_refresh.cancel()
                 kill_switch.cancel()
@@ -2954,8 +2958,10 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(exc))
 
     @app.websocket("/workplace/api/factory/runtime/agents/{key}/ws")
-    async def factory_runtime_ws(websocket: WebSocket, key: str):
+    @app.websocket("/workplace/api/factory/runs/{run_id}/runtime/agents/{key}/ws")
+    async def factory_runtime_ws(websocket: WebSocket, key: str, run_id: int = 0):
         from .factory_runtime import relay, trusted_origin
+        from .attention import QuestionResponsePolicy
 
         account = workplace.accounts.signed_in(
             _cookie(websocket.headers.get("cookie", ""), SESSION_COOKIE)
@@ -2987,9 +2993,11 @@ def create_app(
                 _cookie(websocket.headers.get("cookie", ""), SESSION_COOKIE)
             )
             is not None,
+            policy=QuestionResponsePolicy(workplace, account, key, run_id),
         )
 
     @app.get("/workplace/api/factory/runtime/agents/{key}/{path:path}")
+    @app.get("/workplace/api/factory/runs/{run_id}/runtime/agents/{key}/{path:path}")
     async def factory_runtime_get(key: str, path: str, request: Request):
         import httpx
 
