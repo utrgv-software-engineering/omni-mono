@@ -434,10 +434,32 @@ class Governance:
         @router.get("/workplace/api/governance")
         def governance(request: Request):
             account = me(request)
+            managed = bool(getattr(self.w, "installation_factory_id", None))
             return {
                 "decisions": self.decisions.all(),
                 "owner": self.is_owner(account),
                 "gated": self.gated(),
+                "managed_by_installation": managed,
+                "can_manage_owners": account.admin and not managed,
+                "owners": [
+                    person.id
+                    for person in self.w.accounts.people()
+                    if self.is_owner(person)
+                ],
+                "people": (
+                    [
+                        {
+                            "id": person.id,
+                            "name": person.name,
+                            "username": person.username,
+                            "admin": person.admin,
+                            "disabled": person.disabled,
+                        }
+                        for person in self.w.accounts.people()
+                    ]
+                    if account.admin
+                    else []
+                ),
             }
 
         @router.post("/workplace/api/governance/decisions/{decision_id}")

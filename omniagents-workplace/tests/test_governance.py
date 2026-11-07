@@ -466,3 +466,26 @@ def test_a_strict_factory_without_allowed_models_says_so_and_takes_no_work(stric
         json={"services": SERVICES, "reason": "Our Azure tenant"},
     )
     assert client.get(base).json()["blocked"] is None
+
+
+def test_standalone_owner_management_is_discoverable(tmp_path):
+    from omniagents_workplace.server import create_app
+
+    workplace = _workplace(tmp_path, "")
+    account = workplace.accounts.by_username("bill")
+    with TestClient(create_app(workplace, static_dir=tmp_path)) as client:
+        client.cookies.set(SESSION_COOKIE, workplace.accounts.start_session(account))
+        view = client.get("/workplace/api/governance").json()
+        assert view["can_manage_owners"] is True
+        assert view["managed_by_installation"] is False
+        assert view["owners"] == []
+        assert any(person["id"] == account.id for person in view["people"])
+        assert (
+            client.put(
+                "/workplace/api/governance/owners", json={"account_ids": [account.id]}
+            ).status_code
+            == 200
+        )
+        view = client.get("/workplace/api/governance").json()
+        assert view["owners"] == [account.id]
+        assert view["owner"] is True

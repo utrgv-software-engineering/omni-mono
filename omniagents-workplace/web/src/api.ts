@@ -1752,8 +1752,21 @@ export const factoryProfile = {
     ),
 };
 
+export interface GovernanceState {
+  decisions: GovernanceDecision[];
+  owner: boolean;
+  gated: boolean;
+  owners: string[];
+  can_manage_owners: boolean;
+  managed_by_installation: boolean;
+  people: Pick<Person, "id" | "name" | "username" | "admin" | "disabled">[];
+}
+
 export const governance = {
-  get: () => call<{ decisions: GovernanceDecision[]; owner: boolean; gated: boolean }>("/governance"),
+  get: () => call<GovernanceState>("/governance"),
+  saveOwners: (account_ids: string[]) => call<{ owners: string[] }>("/governance/owners", {
+    method: "PUT", body: JSON.stringify({ account_ids }),
+  }),
   decide: (id: string, approve: boolean, reasoning: string) =>
     post<GovernanceDecision>(`/governance/decisions/${id}`, { approve, reasoning }),
   card: () => call<{ card: unknown; markdown: string }>("/factory/system-card"),

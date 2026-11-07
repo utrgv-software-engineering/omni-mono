@@ -5,7 +5,8 @@ import { Input } from "@omniagents/ui/input";
 import { Checkbox } from "@omniagents/ui/checkbox";
 import { NativeSelect, NativeSelectOption } from "@omniagents/ui/native-select";
 import { toast } from "sonner";
-import { factoryApprovals, factoryProfile, governance, type AllowedService, type GovernanceDecision, type PendingApproval } from "./api";
+import { factoryApprovals, factoryProfile, governance, type GovernanceState, type AllowedService, type GovernanceDecision, type PendingApproval } from "./api";
+import { GovernanceOwners } from "./GovernanceOwners";
 
 const CLASSES: Record<string, string> = {
   published: "Published: public information",
@@ -190,16 +191,24 @@ function DecisionList({
 
 /** A factory's decisions and its system card (Factory settings → Governance). */
 export function FactoryGovernance() {
-  const [view, setView] = useState<{ decisions: GovernanceDecision[]; owner: boolean } | null>(null);
+  const [view, setView] = useState<GovernanceState | null>(null);
   const [card, setCard] = useState("");
-  const load = () => {
-    void governance.get().then(setView);
-    void governance.card().then((r) => setCard(r.markdown));
+  const [error, setError] = useState("");
+  const load = async () => {
+    setError("");
+    try {
+      const next = await governance.get();
+      setView(next);
+      const result = await governance.card();
+      setCard(result.markdown);
+    } catch (error) { setError((error as Error).message); }
   };
-  useEffect(load, []);
-  if (!view) return null;
+  useEffect(() => { void load(); }, []);
+  if (!view) return error ? <div role="alert"><p>{error}</p><Button onClick={() => void load()}>Retry</Button></div> : <p className="text-sm">Loading governance settings…</p>;
   return (
     <div className="space-y-4">
+      {error && <div role="alert"><p>{error}</p><Button onClick={() => void load()}>Retry</Button></div>}
+      <GovernanceOwners view={view} onSaved={load} />
       <section className="space-y-2">
         <h3 className="font-medium">Decisions</h3>
         <DecisionList

@@ -2,9 +2,9 @@ import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { FactoryModelDialog } from "./FactoryModel";
-import { factoryModel } from "./api";
+import { factoryModel, governance } from "./api";
 
-vi.mock("./api", () => ({ factoryModel: { get: vi.fn(), validate: vi.fn(), addProvider: vi.fn() } }));
+vi.mock("./api", () => ({ governance: { get: vi.fn(), saveOwners: vi.fn() }, factoryModel: { get: vi.fn(), validate: vi.fn(), addProvider: vi.fn() } }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@omniagents/ui/tabs", () => {
   const Wrapper = ({ children }: { children: ReactNode }) => <div>{children}</div>;
@@ -17,6 +17,7 @@ const state = { path: "models.json", default: null, voice_default: null, provide
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  vi.mocked(governance.get).mockResolvedValue({ decisions: [], owner: true, gated: true, owners: [], can_manage_owners: true, managed_by_installation: false, people: [] });
   vi.mocked(factoryModel.get).mockResolvedValue(state);
   vi.mocked(factoryModel.addProvider).mockResolvedValue({ ...state, ref: "local/my-deployment" });
   container = document.createElement("div");
@@ -93,4 +94,39 @@ it("saves a discovered choice with its metadata", async () => {
   await click("Check");
   await click("Save");
   expect(factoryModel.addProvider).toHaveBeenCalledWith(expect.objectContaining({ model: choice }));
+});
+
+it("blocks editing before a non-owner fills in model credentials", async () => {
+  vi.mocked(governance.get).mockResolvedValue({ decisions: [], owner: false, gated: true, owners: [], can_manage_owners: true, managed_by_installation: false, people: [] });
+  await act(async () => root.render(<FactoryModelDialog open={false} onOpenChange={() => {}} />));
+  await act(async () => root.render(<FactoryModelDialog open onOpenChange={() => {}} />));
+  expect(document.body.textContent).toContain("Only governance owners can change models");
+  expect(document.querySelector('input[aria-label="Address"]')?.matches(":disabled") ?? true).toBe(true);
+  expect(document.body.textContent).toContain("Save governance owners");
+});
+
+it("lets an administrator assign ownership and then edit models", async () => {
+  const view = { decisions: [], owner: false, gated: true, owners: [], can_manage_owners: true, managed_by_installation: false, people: [{ id: "bill", name: "Bill", username: "bill", admin: true, disabled: false }] };
+  vi.mocked(governance.get).mockResolvedValue(view);
+  await act(async () => root.render(<FactoryModelDialog open={false} onOpenChange={() => {}} />));
+  await act(async () => root.render(<FactoryModelDialog open onOpenChange={() => {}} />));
+  await act(async () => (document.querySelector('input[type="checkbox"]') as HTMLInputElement).click());
+  vi.mocked(governance.saveOwners).mockResolvedValue({ owners: ["bill"] });
+  vi.mocked(governance.get).mockResolvedValue({ ...view, owners: ["bill"], owner: true });
+  const save = [...document.querySelectorAll("button")].find((button) => button.textContent === "Save governance owners")!;
+  await act(async () => save.click());
+  expect(governance.saveOwners).toHaveBeenCalledWith(["bill"]);
+  expect(document.body.textContent).not.toContain("Only governance owners can change models");
+  expect(document.querySelector('input[aria-label="Address"]')?.matches(":disabled")).toBe(false);
+});
+
+it("fails closed and offers retry when permissions cannot load", async () => {
+  vi.mocked(governance.get).mockRejectedValue(new Error("Permission lookup failed"));
+  await act(async () => root.render(<FactoryModelDialog open={false} onOpenChange={() => {}} />));
+  await act(async () => root.render(<FactoryModelDialog open onOpenChange={() => {}} />));
+  expect(document.body.textContent).toContain("Permission lookup failed");
+  expect(document.querySelector('input[aria-label="Address"]')).toBeNull();
+  vi.mocked(governance.get).mockResolvedValue({ decisions: [], owner: true, gated: true, owners: [], can_manage_owners: true, managed_by_installation: false, people: [] });
+  await act(async () => [...document.querySelectorAll("button")].find((button) => button.textContent === "Retry")!.click());
+  expect(document.querySelector('input[aria-label="Address"]')).not.toBeNull();
 });

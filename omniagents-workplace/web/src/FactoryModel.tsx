@@ -21,10 +21,13 @@ import { toast } from "sonner";
 
 import {
   factoryModel,
+  governance,
+  type GovernanceState,
   type FactoryModelState,
   type ModelChoice,
   type ProviderKind,
 } from "./api";
+import { GovernanceOwners } from "./GovernanceOwners";
 
 const fail = (e: unknown) => {
   toast.error((e as Error).message);
@@ -44,9 +47,25 @@ export function FactoryModelDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const [state, setState] = useState<FactoryModelState | null>(null);
-  const load = useCallback(() => factoryModel.get().then(setState, fail), []);
+  const [permissions, setPermissions] = useState<GovernanceState | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const generation = useRef(0);
+  const load = useCallback(async () => {
+    const current = ++generation.current;
+    setPermissions(null);
+    setLoadError("");
+    try {
+      const [model, access] = await Promise.all([factoryModel.get(), governance.get()]);
+      if (current !== generation.current) return;
+      setState(model);
+      setPermissions(access);
+    } catch (error) {
+      if (current === generation.current) setLoadError((error as Error).message);
+    }
+  }, []);
   useEffect(() => {
     if (open) void load();
+    return () => { generation.current++; };
   }, [open, load]);
 
   const choices = state
@@ -67,10 +86,19 @@ export function FactoryModelDialog({
             models.yml); a run picks it up as it starts.
           </DialogDescription>
         </DialogHeader>
-        {!state ? (
+        {loadError ? (
+          <div role="alert" className="space-y-2 text-sm">
+            <p>Could not load model settings: {loadError}</p>
+            <Button variant="outline" onClick={() => void load()}>Retry</Button>
+          </div>
+        ) : !state || !permissions ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : (
           <div className="space-y-5">
+            {permissions.gated && !permissions.owner && <div className="space-y-3">
+              <p role="status" className="rounded-md border p-3 text-sm">Only governance owners can change models. These settings are read-only until you are assigned as an owner.</p>
+              <GovernanceOwners view={permissions} onSaved={load} />
+            </div>}
             {state.factory_error && (
               <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-sm">
                 {state.factory_error}. ChatGPT sign-in and the model list need
@@ -78,6 +106,7 @@ export function FactoryModelDialog({
               </p>
             )}
 
+            <fieldset disabled={permissions.gated && !permissions.owner} className="space-y-5">
             <section className="space-y-2">
               <h3 className="text-sm font-semibold">Default</h3>
               <div className="flex gap-2">
@@ -188,6 +217,7 @@ export function FactoryModelDialog({
                 </TabsContent>
               </Tabs>
             </section>
+            </fieldset>
           </div>
         )}
       </DialogContent>
