@@ -129,9 +129,7 @@ def test_the_runtime_is_given_the_allowed_services(strict, tmp_path):
         },
     )
     env = w.governance.runtime_environment(tmp_path)
-    assert json.loads(env["OMNIAGENTS_ALLOWED_MODEL_ENDPOINTS"]) == [
-        {"provider": "azure", "base_url": AZURE}
-    ]
+    assert env["OMNIAGENTS_ALLOWED_MODEL_ENDPOINTS"] == ""
     assert "OMNIAGENTS_ALLOWED_INTEGRATIONS" not in env
     overlay = yaml.safe_load(open(env["OMNIAGENTS_PROJECT_OVERLAYS"]))
     assert "mcp_require_allowlist" not in overlay["security"]
@@ -149,11 +147,6 @@ def test_the_runtime_is_given_the_allowed_services(strict, tmp_path):
         "memory=http://workplace/memory/mcp"
     ]
     assert overlay["security"]["audit"]["max_detail_chars"] == 0
-    # The model page refuses a provider that is not allowed.
-    w.governance.require_model("azure", AZURE)
-    with pytest.raises(HTTPException) as refused:
-        w.governance.require_model("openai", None)
-    assert refused.value.status_code == 422
 
 
 def test_review_is_forced_for_restricted_factories_under_the_strict_policy(tmp_path):
@@ -250,8 +243,7 @@ def test_raising_is_immediate_and_lowering_waits_for_the_governance_owner(strict
     ).json()
     assert raised["profile"]["classification"] == "confidential"
     assert raised["pending"] is None
-    # Classified, but no model is an allowed service yet.
-    assert not raised["startable"] and "No model" in raised["blocked"]
+    assert raised["startable"] and raised["blocked"] is None
     # Lowering waits.
     lowered = client.put(
         base,
@@ -441,7 +433,7 @@ def test_cards_reviews_reports_and_evidence(strict):
     assert "password" not in json.dumps(evidence).lower()
 
 
-def test_a_strict_factory_without_allowed_models_says_so_and_takes_no_work(strict):
+def test_strict_startup_does_not_require_duplicate_model_approval(strict):
     i, client, record = strict
     base = prefix(record) + "/workplace/api/factory/profile"
     client.put(
@@ -452,20 +444,10 @@ def test_a_strict_factory_without_allowed_models_says_so_and_takes_no_work(stric
             "reason": "Public",
         },
     )
-    view = client.get(base).json()
-    assert "No model is an allowed service" in view["blocked"]
-    started = client.post(f"/workplace/api/factories/{record['id']}/start")
-    assert started.status_code == 422 and "No model" in started.json()["detail"]
-    sent = client.post(
-        prefix(record) + "/workplace/api/personal/chats/main/messages",
-        json={"text": "hi", "submission_id": "00000000-0000-0000-0000-000000000002"},
-    )
-    assert sent.status_code == 409 and "No model" in sent.json()["detail"]
-    client.put(
-        "/workplace/api/installation/allowed-services",
-        json={"services": SERVICES, "reason": "Our Azure tenant"},
-    )
     assert client.get(base).json()["blocked"] is None
+    workplace, _ = i.instances[record["id"]]
+    assert workplace.governance.services() == []
+    assert workplace.governance.environ()["OMNIAGENTS_ALLOWED_MODEL_ENDPOINTS"] == ""
 
 
 def test_standalone_owner_management_is_discoverable(tmp_path):

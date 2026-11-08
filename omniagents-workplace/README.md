@@ -769,3 +769,17 @@ you move its watched folder.
 Backups check available capacity before starting and retain disk headroom while
 copying. A failed backup removes only its own incomplete output; completed backups
 keep the configured retention policy.
+
+## Model endpoint access
+
+Model connections use the deployment and factory egress allowlists. Private
+destinations must also be reachable under the deployment's network rules.
+Models do not require a second endpoint approval in Allowed services.
+Administrator access and, under strict policy, governance ownership are still
+required to change model configuration.
+
+Allowed services continues to govern integrations and MCP servers for Controlled
+and Confidential factories. Legacy model entries are ignored and are no longer
+shown in its editor. Workplace clears the obsolete model-endpoint restriction in
+the environment it supplies to managed runtimes; running processes must restart
+to receive that change. This does not modify network allowlists or firewall rules.

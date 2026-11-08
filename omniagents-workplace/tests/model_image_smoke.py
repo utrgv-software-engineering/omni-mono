@@ -41,18 +41,7 @@ def main():
         workplace.factory_config.apply(workplace)
         account = workplace.accounts.by_username("owner")
         workplace.store.set_meta(OWNERS_KEY, [account.id])
-        workplace.store.set_meta(
-            SERVICES_KEY,
-            [
-                {
-                    "kind": "model",
-                    "name": "Test Azure",
-                    "provider": "openai-compatible",
-                    "endpoint": "https://azure.example/openai/v1",
-                    "note": "",
-                }
-            ],
-        )
+        workplace.store.set_meta(SERVICES_KEY, [])
         client = TestClient(create_app(workplace, static_dir=root))
         client.cookies.set(SESSION_COOKIE, workplace.accounts.start_session(account))
         body = {
@@ -67,12 +56,13 @@ def main():
         saved = json.loads((root / "config/models.json").read_text())
         assert saved["default"] == response.json()["ref"]
         before = (root / "config/models.json").read_bytes()
-        response = client.post(
-            "/workplace/api/factory/model/providers",
-            json={**body, "base_url": "https://not-allowed.example/v1"},
+        from omniagents.core.allowed_services import model_allowed
+
+        environment = workplace.governance.environ()
+        assert environment["OMNIAGENTS_ALLOWED_MODEL_ENDPOINTS"] == ""
+        assert model_allowed(
+            {"provider": "openai-compatible", "base_url": body["base_url"]}, environment
         )
-        assert response.status_code == 422, response.text
-        assert (root / "config/models.json").read_bytes() == before
         workplace.store.set_meta(OWNERS_KEY, [])
         response = client.post("/workplace/api/factory/model/providers", json=body)
         assert response.status_code == 403, response.text

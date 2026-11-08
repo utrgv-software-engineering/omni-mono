@@ -228,7 +228,7 @@ export function FactoryGovernance() {
   );
 }
 
-const blank: AllowedService = { kind: "model", name: "", provider: "", endpoint: "", note: "" };
+const blank: AllowedService = { kind: "integration", name: "", provider: "", endpoint: "", note: "" };
 
 /** The deployment's allowed services, edited as a list and saved together. */
 export function AllowedServicesEditor({
@@ -260,25 +260,24 @@ export function AllowedServicesEditor({
       }}
     >
       <p className="text-sm text-muted-foreground">
-        Models every factory may use, and the integrations and MCP servers Controlled
-        and Confidential factories may use. Changes reach a factory when its runtime
-        next starts.
+        Integrations and MCP servers Controlled and Confidential factories may use.
+        Model connections use the deployment and factory network allowlists, not this list.
+        Changes reach a factory when its runtime next starts.
       </p>
-      {services.map((service, index) => (
+      {services.map((service, index) => service.kind === "model" ? null : (
         <fieldset key={index} className="grid gap-2 rounded-md border p-3 md:grid-cols-[8rem_1fr_1fr_2fr_auto]" disabled={readOnly}>
           <NativeSelect
             aria-label="Kind"
             value={service.kind}
             onChange={(e) => update(index, { kind: e.target.value as AllowedService["kind"] })}
           >
-            <NativeSelectOption value="model">Model</NativeSelectOption>
             <NativeSelectOption value="integration">Integration</NativeSelectOption>
             <NativeSelectOption value="mcp">MCP server</NativeSelectOption>
           </NativeSelect>
           <Input aria-label="Name" placeholder="Name" value={service.name} required onChange={(e) => update(index, { name: e.target.value })} />
           <Input
             aria-label="Provider or type"
-            placeholder={service.kind === "mcp" ? "—" : service.kind === "model" ? "azure, openai…" : "slack, github…"}
+            placeholder={service.kind === "mcp" ? "—" : "slack, github…"}
             value={service.provider}
             disabled={service.kind === "mcp"}
             onChange={(e) => update(index, { provider: e.target.value })}

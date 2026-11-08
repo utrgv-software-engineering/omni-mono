@@ -2210,18 +2210,6 @@ def create_app(
         workplace.governance.require_model_owner(
             me(request), f"Added the {body.kind} model {body.model.get('id', '')}"
         )
-        from .factory_models import normalize_compatible_base_url
-
-        workplace.governance.require_model(
-            {"openai": "openai", "anthropic": "litellm"}.get(
-                body.kind, "openai-compatible"
-            ),
-            (
-                normalize_compatible_base_url(body.base_url)
-                if body.kind not in ("openai", "anthropic") and body.base_url.strip()
-                else None
-            ),
-        )
         try:
             ref = models.add_provider(
                 body.kind,
@@ -2273,7 +2261,6 @@ def create_app(
         from .factory_models import CHATGPT_PROVIDER_ID, FactoryRpcError
 
         _, rpc = _factory(request)
-        workplace.governance.require_model("openai-oauth", None)
         workplace.governance.require_model_owner(
             me(request), "Signed the factory in to ChatGPT"
         )

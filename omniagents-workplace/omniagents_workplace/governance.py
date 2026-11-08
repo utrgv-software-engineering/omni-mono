@@ -126,13 +126,8 @@ def validate_services(services: List[Service]) -> List[dict]:
 
 
 def runtime_entries(services: List[dict]) -> dict:
-    """What the runtime is given: model endpoints, integrations, MCP servers."""
+    """What the runtime is given: integrations and MCP servers."""
     return {
-        "models": [
-            {"provider": s["provider"], "base_url": s["endpoint"] or None}
-            for s in services
-            if s["kind"] == "model"
-        ],
         "integrations": [
             {"type": s["provider"], "url": s["endpoint"] or None}
             for s in services
@@ -220,11 +215,6 @@ class Governance:
             return None
         if not self.classification() or self.heightened_risk() is None:
             return "Classify the factory's data and risk before starting it"
-        if not any(s["kind"] == "model" for s in self.services()):
-            return (
-                "No model is an allowed service, so under the strict policy the "
-                "factory can use none: add the deployment's models to its allowed services"
-            )
         return None
 
     def _apply_labels(self, labels: dict) -> None:
@@ -355,7 +345,7 @@ class Governance:
         if not self.w.policy.strict:
             return {}
         entries = runtime_entries(self.services())
-        env = {"OMNIAGENTS_ALLOWED_MODEL_ENDPOINTS": json.dumps(entries["models"])}
+        env = {"OMNIAGENTS_ALLOWED_MODEL_ENDPOINTS": ""}
         if self.restricted():
             env["OMNIAGENTS_ALLOWED_INTEGRATIONS"] = json.dumps(entries["integrations"])
         return env
@@ -372,17 +362,6 @@ class Governance:
             **self.w.policy.runtime_environment(directory, security),
             **self.environ(),
         }
-
-    def require_model(self, provider: str, base_url: Optional[str]) -> None:
-        """Refuse a model provider that is not allowed (the Factory model page)."""
-        if not self.w.policy.strict:
-            return
-        from omniagents.core.allowed_services import ServiceNotAllowed, require_model
-
-        try:
-            require_model({"provider": provider, "base_url": base_url}, self.environ())
-        except ServiceNotAllowed as exc:
-            raise HTTPException(422, str(exc)) from None
 
     # -- API -----------------------------------------------------------------
 
