@@ -98,6 +98,25 @@ def test_review_links_use_actual_workplace_github_routes(setup):
         assert client.post(URL, json={**BODY, "path": path}).status_code == 422
 
 
+@pytest.mark.parametrize("include_null", [False, True])
+def test_agent_notification_without_page_link(setup, include_null):
+    workplace, client, _ = setup
+    body = {key: value for key, value in BODY.items() if key != "path"}
+    if include_null:
+        body["path"] = None
+    response = client.post(URL, json=body)
+    assert response.status_code == 200
+    assert response.json() == {"status": "accepted", "duplicate": False, "url": None}
+    workplace.notifier.deliver.assert_awaited_once_with(
+        BODY["title"], BODY["text"], url=None
+    )
+    assert client.post(URL, json=body).json()["duplicate"]
+    assert (
+        "actions"
+        not in Notifier.card(BODY["title"], BODY["text"])["attachments"][0]["content"]
+    )
+
+
 @pytest.mark.parametrize(
     "path",
     [

@@ -37,19 +37,17 @@ After completing the requested review, call teams_notify once:
 - event_id: the source event's stable ID, prefixed with this automation's name
 - title: Review ready
 - text: a short non-sensitive summary
-- path: the actual Workplace page path for the reviewed item
 
-Use a returned Workplace URL to obtain the page path; do not invent an item URL.
-If no item link is available, use /automations/pr-opened and identify it as the
-automation page. Reuse the identical event ID and content when checking/retrying.
+No internal page path is needed. Reuse the identical event ID and content
+when checking/retrying.
 Do not post confidential content or secrets into the Teams channel.
 ```
 
-The `teams_notify(event_id, title, text, path)` tool calls `POST /factory/notifications/teams`. This endpoint accepts only the configured factory app's bearer token; ordinary browser sessions and other apps' tokens cannot publish. The tool remains subject to the factory's normal approval policy. It does not accept arbitrary webhook URLs or card JSON. No new automation schedules are created.
+The `teams_notify(event_id, title, text)` tool calls `POST /factory/notifications/teams`. This endpoint accepts only the configured factory app's bearer token; ordinary browser sessions and other apps' tokens cannot publish. The tool remains subject to the factory's normal approval policy. It does not accept internal paths, arbitrary webhook URLs or card JSON. No new automation schedules are created.
 
 Use explicit calls for meaningful review handoffs (including nightly improvement proposals) and questions posted to a shared originating thread instead of held by a waiting client tool. Do not infer review readiness from a successful run or a newly created PR. Do not mirror every Slack message or send "nothing changed" summaries. Do not duplicate automatic approval, pending-question, or failure notifications. Use an item/revision-based ID, for example `review:org/repo:42:<head-sha>`.
 
-`path` is a Workplace-relative page path such as `/factory/runs/9`, `/automations/pr-opened`, `/library/<id>`, `/org/repo/pull/42`, or the real `/apps/...` page for an event. External URLs, API/auth paths, path traversal, and credential query parameters are rejected. The sender builds an **Open in Workplace** button using the configured public Workplace URL. Opening the link still requires ordinary Workplace authorization.
+Agent tool calls send cards without an **Open in Workplace** button. Application-generated event notifications can supply their known `path`, such as `/factory/runs/9` or `/org/repo/pull/42`; agents do not invent these routes. This API field is optional. When supplied, it is validated: external URLs, API/auth paths, path traversal, and credential query parameters are rejected. The sender builds the button using the configured public Workplace URL. Opening the link still requires ordinary Workplace authorization.
 
 ## Delivery behavior
 

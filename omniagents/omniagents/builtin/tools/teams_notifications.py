@@ -9,14 +9,14 @@ from omniagents.core.tools.discovery import function_tool
 
 @function_tool
 async def teams_notify(
-    ctx: RunContextWrapper[Any], event_id: str, title: str, text: str, path: str
+    ctx: RunContextWrapper[Any], event_id: str, title: str, text: str
 ) -> dict:
     """Post an Adaptive Card to the factory's configured Teams channel.
 
     Use only when an automation or user asks for a Teams notification. Supply a
-    stable source event ID and reuse it with identical content on retries. Pass
-    the relevant Workplace page path, such as /automations/pr-opened, not a
-    webhook URL or secret. Keep confidential content out of channel summaries.
+    stable source event ID and reuse it with identical content on retries.
+    No Workplace page path is needed. Automatic event notifications attach
+    their own deep links. Keep confidential content out of channel summaries.
     Accepted means the Workflow accepted the request, not confirmed channel
     delivery. Unknown/sending must be checked by a person before resending;
     never invent a new event ID to bypass duplicate protection.
@@ -32,7 +32,7 @@ async def teams_notify(
             response = await client.post(
                 url,
                 headers={"Authorization": f"Bearer {token}"},
-                json={"event_id": event_id, "title": title, "text": text, "path": path},
+                json={"event_id": event_id, "title": title, "text": text},
             )
     except httpx.HTTPError:
         return {
@@ -43,6 +43,6 @@ async def teams_notify(
         return {
             "status": "failed",
             "http_status": response.status_code,
-            "detail": "Workplace rejected the notification; check configuration, event ID and page path",
+            "detail": "Workplace rejected the notification",
         }
     return response.json()

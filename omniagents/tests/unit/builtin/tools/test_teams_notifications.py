@@ -32,7 +32,6 @@ async def test_factory_notification_transport(monkeypatch):
         "event_id": "pr:42",
         "title": "Ready",
         "text": "Review complete",
-        "path": "/automations/pr-opened",
     }
     ctx = ToolContext(
         context={}, tool_name="teams_notify", tool_call_id="call-1", tool_arguments="{}"

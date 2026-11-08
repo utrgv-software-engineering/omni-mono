@@ -14,7 +14,7 @@ class TeamsNotification(BaseModel):
     event_id: str = Field(min_length=1, max_length=200)
     title: str = Field(min_length=1, max_length=160)
     text: str = Field(min_length=1, max_length=4000)
-    path: str = Field(min_length=1, max_length=2000)
+    path: str | None = Field(default=None, min_length=1, max_length=2000)
 
     @field_validator("event_id", "title", "text", mode="before")
     @classmethod
@@ -109,7 +109,11 @@ class TeamsNotifications:
         return await self.deliver("workplace", None, body)
 
     async def deliver(self, source, actor, body):
-        url = workplace_link(self.w.base_url, body.path)
+        url = (
+            workplace_link(self.w.base_url, body.path)
+            if body.path is not None
+            else None
+        )
         notifier = self.w.notifier
         if not notifier.url:
             raise HTTPException(503, "Teams Workflow webhook is not configured")
