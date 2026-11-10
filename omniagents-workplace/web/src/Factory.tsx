@@ -661,7 +661,7 @@ function Benchmarks({
   );
 }
 
-export function FactoryApp({ navigate, onConfigure, onModel, onSchedules }: { navigate: (p: string) => void; onConfigure?: () => void; onModel?: () => void; onSchedules?: () => void }) {
+export function FactoryApp({ navigate, onConfigure, onSettings, onModel, onSchedules }: { navigate: (p: string) => void; onConfigure?: () => void; onSettings?: () => void; onModel?: () => void; onSchedules?: () => void }) {
   const [secretsOpen, setSecretsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [governanceOpen, setGovernanceOpen] = useState(false);
@@ -720,6 +720,7 @@ export function FactoryApp({ navigate, onConfigure, onModel, onSchedules }: { na
           {onModel && <DropdownMenuItem onSelect={onModel}>Model</DropdownMenuItem>}
           {onModel && <DropdownMenuItem onSelect={() => setRoutingOpen(true)}>Automations</DropdownMenuItem>}
           {onSchedules && <DropdownMenuItem onSelect={onSchedules}>Schedules</DropdownMenuItem>}
+          {onSettings && <DropdownMenuItem onSelect={onSettings}>Factory settings</DropdownMenuItem>}
           <DropdownMenuItem onSelect={onConfigure}>Factory changes</DropdownMenuItem>
           <DropdownMenuItem onSelect={() => setProfileOpen(true)}>Data classification</DropdownMenuItem>
           <DropdownMenuItem onSelect={() => setServicesOpen(true)}>Allowed services</DropdownMenuItem>

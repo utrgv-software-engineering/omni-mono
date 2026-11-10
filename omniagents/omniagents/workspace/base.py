@@ -18,7 +18,7 @@ from __future__ import annotations
 import abc
 import posixpath
 from types import ModuleType
-from typing import Dict, List, Literal, Optional, Sequence, Union
+from typing import BinaryIO, Dict, List, Literal, Optional, Sequence, Union
 
 from .types import ExecResult, FileEntry, GrepMatch, WorkspaceEscapeError
 
@@ -81,7 +81,15 @@ class Workspace(abc.ABC):
         super().__init_subclass__(**kwargs)
         from ._ownership import guard_operation
 
-        for name in ("write_text", "write_bytes", "mkdir", "remove", "exec", "spawn"):
+        for name in (
+            "write_text",
+            "write_bytes",
+            "write_stream",
+            "mkdir",
+            "remove",
+            "exec",
+            "spawn",
+        ):
             method = cls.__dict__.get(name)
             if method is not None and not getattr(
                 method, "__isabstractmethod__", False
@@ -257,6 +265,13 @@ class Workspace(abc.ABC):
         append: bool = False,
         create_dirs: bool = True,
     ) -> None: ...
+
+    async def write_stream(self, path: str, stream: BinaryIO) -> None:
+        from .types import WorkspaceFeatureUnavailable
+
+        raise WorkspaceFeatureUnavailable(
+            "This workspace does not support streamed file imports"
+        )
 
     @abc.abstractmethod
     async def exists(self, path: str) -> bool: ...

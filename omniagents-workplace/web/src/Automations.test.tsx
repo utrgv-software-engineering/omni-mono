@@ -3,6 +3,11 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AutomationsApp, health, sentence, type Automation } from "./Automations";
+import { describeEvent } from "./automation-triggers";
+
+it("describes a Teams intake event without provider jargon", () => {
+  expect(describeEvent({ provider: "teams", event: "message" })).toBe("Someone messages the factory in Teams");
+});
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@omniagents/chat-ui/components/omni-avatar/AgentAvatar", () => ({ AgentAvatar: () => <span data-avatar /> }));
@@ -270,4 +275,45 @@ it("reads and writes the schedules people use", async () => {
   expect(readCron("0 9 * * 1")).toMatchObject({ kind: "weekly", day: 1 });
   expect(readCron("*/5 * * * *")).toMatchObject({ kind: "custom" });
   expect(writeCron({ kind: "weekly", time: "07:15", day: 3, cron: "" })).toBe("15 7 * * 3");
+});
+
+it("shows scoped Azure labels in the overview and keeps routing IDs on save", async () => {
+  const original = automations[2];
+  const trigger = { provider: "azure-devops", event: "pull_request_updated", filter: { connections: ["one"], projects: ["project"], repositories: ["repo"], base_branches: ["refs/heads/main"], review_eligible: ["true"] } };
+  automations[2] = { ...original, name: "azure-review", triggers: [trigger] };
+  vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
+    if (!url.includes("/azure-devops/")) return fetcher(url, options);
+    return { ok: true, json: async () => url.endsWith("connections") ? { connections: [{ id: "one", label: "School", organization: "org", scopes: [{ project: "project", repositories: ["repo"] }] }] } : url.includes("project=") ? { repositories: [{ id: "repo", name: "Application" }] } : { projects: [{ id: "project", name: "Faculty" }] } };
+  }));
+  try {
+    await act(async () => root.render(<AutomationsApp name="azure-review" navigate={vi.fn()} />));
+    await act(async () => {});
+    expect(node.textContent).toContain("School (org)");
+    expect(node.textContent).toContain("Faculty");
+    expect(node.textContent).toContain("Application");
+    expect(node.querySelector('[title="repo"]')).not.toBeNull();
+    const { AutomationForm } = await import("./AutomationForm");
+    await act(async () => root.render(<AutomationForm name="azure-review" commit={"a".repeat(40)} initial={{ description: "Review", agent: "foreman", triggers: [trigger], instruction: "Review", conversation: "thread" }} agents={[]} onSaved={vi.fn()} onCancel={vi.fn()} />));
+    await act(async () => button("Save").click());
+    const save = fetcher.mock.calls.find(([url, options]) => url.includes("/definition/automations/azure-review") && options?.method === "PUT")!;
+    expect(JSON.parse(save[1]!.body as string).triggers).toEqual([trigger]);
+  } finally {
+    automations[2] = original;
+  }
+});
+
+it("renders automations while Azure label lookup is unavailable", async () => {
+  const original = automations[2];
+  automations[2] = { ...original, triggers: [{ provider: "azure-devops", event: "pull_request_thread_changed", filter: { connections: ["deleted"] } }] };
+  vi.stubGlobal("fetch", vi.fn(async (url: string, options?: RequestInit) => {
+    if (url.includes("/azure-devops/")) throw new Error("lookup unavailable");
+    return fetcher(url, options);
+  }));
+  try {
+    await act(async () => root.render(<AutomationsApp name="slack-dms" navigate={vi.fn()} />));
+    expect(node.textContent).toContain("Unavailable connection (deleted)");
+    expect(node.querySelector('[role="alert"]')).toBeNull();
+  } finally {
+    automations[2] = original;
+  }
 });

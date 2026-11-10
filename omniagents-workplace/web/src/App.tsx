@@ -68,6 +68,8 @@ import { MemoryApp } from "./Memory";
 import { ConfigDialog } from "./Config";
 import { RepositoriesDialog, RepositoryView, type RepositoryDialogMode } from "./Repositories";
 import { FactoryApp } from "./Factory";
+import { FactorySettingsDialog } from "./FactorySettings";
+import { AzureDevOpsDialog } from "./AzureDevOps";
 import { parseFactoryRunPath } from "./factory-run-path";
 
 // The run page carries the chat UI: loaded when a run is opened.
@@ -153,6 +155,8 @@ export default function App({
   const [configOpen, setConfigOpen] = useState(false);
   const [repositoryDialogMode, setRepositoryDialogMode] = useState<RepositoryDialogMode>("connection");
   const [repositoriesOpen, setRepositoriesOpen] = useState(() => new URLSearchParams(window.location.search).has("connection"));
+  const [factorySettingsOpen, setFactorySettingsOpen] = useState(false);
+  const [azureDevOpsOpen, setAzureDevOpsOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [schedulesOpen, setSchedulesOpen] = useState(false);
   const [searchText, setSearchText] = useState("");
@@ -666,6 +670,8 @@ export default function App({
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => {closeNavigation();setTeamOpen(true);}}>Workspace settings</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setExtensionsOpen(true)}>Apps</DropdownMenuItem>
+              {account.admin && factory && <DropdownMenuItem onSelect={() => setFactorySettingsOpen(true)}>Factory settings</DropdownMenuItem>}
+              {account.admin && <DropdownMenuItem onSelect={() => setAzureDevOpsOpen(true)}>Azure DevOps connections</DropdownMenuItem>}
               {account.admin && factory && <DropdownMenuItem onSelect={() => {setRepositoryDialogMode("factory");setRepositoriesOpen(true);}}>Factory changes</DropdownMenuItem>}
               <DropdownMenuItem onSelect={() => setTokensOpen(true)}>
                 Your tokens
@@ -772,7 +778,7 @@ export default function App({
           <FactoryRun runId={parseFactoryRunPath(path)!} navigate={navigate} />
         </Suspense>
       ) : factoryRoute ? (
-        <FactoryApp navigate={navigate} onModel={account.admin && factory ? () => setModelOpen(true) : undefined} onSchedules={account.admin && factory ? () => setSchedulesOpen(true) : undefined} onConfigure={account.admin ? () => {setRepositoryDialogMode("factory");setRepositoriesOpen(true);} : undefined} />
+        <FactoryApp navigate={navigate} onSettings={account.admin && factory ? () => setFactorySettingsOpen(true) : undefined} onModel={account.admin && factory ? () => setModelOpen(true) : undefined} onSchedules={account.admin && factory ? () => setSchedulesOpen(true) : undefined} onConfigure={account.admin ? () => {setRepositoryDialogMode("factory");setRepositoriesOpen(true);} : undefined} />
       ) : memoryRoute ? (
         <MemoryApp />
       ) : sharedRoute ? (
@@ -964,6 +970,8 @@ export default function App({
         />
       )}
       {account.admin && <RepositoriesDialog mode={repositoryDialogMode} open={repositoriesOpen} onOpenChange={setRepositoriesOpen} />}
+      {account.admin && <AzureDevOpsDialog open={azureDevOpsOpen} onOpenChange={setAzureDevOpsOpen} />}
+      {account.admin && factory && <FactorySettingsDialog open={factorySettingsOpen} onOpenChange={setFactorySettingsOpen} onSaved={() => { void loadState(); }} />}
       {configurable && (
         <ConfigDialog
           open={configOpen}

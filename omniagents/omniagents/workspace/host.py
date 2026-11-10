@@ -11,12 +11,13 @@ import asyncio
 import os
 import re
 import shlex
+import shutil
 import time
 import uuid
 from datetime import datetime
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Dict, List, Literal, Optional
+from typing import BinaryIO, Dict, List, Literal, Optional
 
 from ._entries import log_skipped_entry, make_entry, sort_entries
 from .base import CommandLike, ProcessHandle, Workspace
@@ -193,6 +194,19 @@ class HostWorkspace(Workspace):
         except WorkspaceEscapeError:
             return False
         return await asyncio.to_thread(Path(absolute).exists)
+
+    async def write_stream(self, path: str, stream: BinaryIO) -> None:
+        absolute = Path(self.resolve_confined(path))
+
+        def write():
+            with absolute.open("xb") as output:
+                try:
+                    shutil.copyfileobj(stream, output, length=1048576)
+                except BaseException:
+                    absolute.unlink(missing_ok=True)
+                    raise
+
+        await await_cleanup(asyncio.create_task(asyncio.to_thread(write)))
 
     async def is_file(self, path: str) -> bool:
         try:

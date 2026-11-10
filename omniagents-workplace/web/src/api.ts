@@ -1467,6 +1467,13 @@ export interface ModelChoice {
   verified: boolean;
 }
 
+export interface FactoryModelEdit {
+  model?: string;
+  label?: string;
+  maxInput?: number;
+  maxOutput?: number;
+}
+
 export interface FactoryModelState {
   path: string;
   default: string | null;
@@ -1476,7 +1483,7 @@ export interface FactoryModelState {
     type: string;
     base_url: string | null;
     key: string | null;
-    models: { ref: string; label: string; realtime: boolean }[];
+    models: { ref: string; id?: string; model?: string; label: string; realtime: boolean; maxInput?: number | null; maxOutput?: number | null }[];
   }[];
   chatgpt: { state: string; email: string | null; plan: string | null } | null;
   runtime: {
@@ -1523,9 +1530,17 @@ export const factoryModel = {
   }) =>
     post<FactoryModelState & { ref: string }>("/factory/model/providers", body),
   removeProvider: (name: string) =>
-    call<FactoryModelState>(`/factory/model/providers/${name}`, {
+    call<FactoryModelState>(`/factory/model/providers/${encodeURIComponent(name)}`, {
       method: "DELETE",
     }),
+  updateProvider: (name: string, body: { base_url?: string; api_key?: string }) =>
+    call<FactoryModelState>(`/factory/model/providers/${encodeURIComponent(name)}`, { method: "PATCH", body: JSON.stringify(body) }),
+  addModel: (name: string, body: FactoryModelEdit & { id: string }) =>
+    post<FactoryModelState>(`/factory/model/providers/${encodeURIComponent(name)}/models`, body),
+  updateModel: (name: string, id: string, body: FactoryModelEdit) =>
+    call<FactoryModelState>(`/factory/model/providers/${encodeURIComponent(name)}/models/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(body) }),
+  removeModel: (name: string, id: string) =>
+    call<FactoryModelState>(`/factory/model/providers/${encodeURIComponent(name)}/models/${encodeURIComponent(id)}`, { method: "DELETE" }),
   setDefault: (model: string) =>
     call<FactoryModelState>("/factory/model/default", {
       method: "PUT",

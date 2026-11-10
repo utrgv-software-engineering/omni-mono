@@ -23,6 +23,7 @@ import re
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -304,7 +305,7 @@ class FactoryModels:
             temporary.unlink(missing_ok=True)
 
     def summary(self) -> Dict[str, Any]:
-        """What the page shows: providers and their models, keys masked."""
+        """What the page shows: providers, model fields and credential presence only."""
         config = self.read()
         providers = []
         for name, provider in config["providers"].items():
@@ -314,15 +315,15 @@ class FactoryModels:
                     "name": name,
                     "type": provider.get("type"),
                     "base_url": provider.get("base_url"),
-                    "key": (
-                        mask_api_key(key)
-                        if key and not key.startswith("${")
-                        else (key or None)
-                    ),
+                    "key": "Configured" if key else None,
                     "models": [
                         {
                             "ref": f"{name}/{k}",
+                            "id": k,
+                            "model": m.get("model") or k,
                             "label": m.get("label") or k,
+                            "maxInput": m.get("max_input_tokens"),
+                            "maxOutput": m.get("max_output_tokens"),
                             "realtime": bool(m.get("realtime")),
                         }
                         for k, m in (provider.get("models") or {}).items()
@@ -354,6 +355,11 @@ class FactoryModels:
         config = self.read()
         name = PROVIDER_NAMES[kind]
         existing = config["providers"].get(name)
+        expected_type = {"openai": "openai", "anthropic": "litellm"}.get(
+            kind, "openai-compatible"
+        )
+        if existing and existing.get("type") != expected_type:
+            raise ModelsError(f"Edit the existing provider {name} instead")
         provider = (
             {**existing, "models": dict(existing.get("models") or {})}
             if existing
@@ -370,6 +376,7 @@ class FactoryModels:
             provider["type"] = "openai-compatible"
             provider["base_url"] = normalize_compatible_base_url(base_url)
         if api_key.strip():
+            self._check_key(api_key)
             provider["api_key"] = api_key.strip()
         entry: Dict[str, Any] = {
             # litellm routes by its own provider/model ref; native providers take the bare id.
@@ -386,10 +393,13 @@ class FactoryModels:
                 "store": False,
                 "extra_body": {"include": ["reasoning.encrypted_content"]},
             }
-        provider["models"][model_id] = entry
+        old_entry = provider["models"].get(model_id) or {}
+        if old_entry.get("model_settings"):
+            entry["model_settings"] = old_entry["model_settings"]
+        provider["models"][model_id] = {**old_entry, **entry}
         config["providers"][name] = provider
         ref = f"{name}/{model_id}"
-        if make_default or not config.get("default"):
+        if make_default:
             config["default"] = ref
         self.write(config)
         return ref
@@ -429,6 +439,10 @@ class FactoryModels:
         self, ref: str, runtime_models: Optional[List[Dict[str, Any]]] = None
     ) -> None:
         config = self.read()
+        if not ref:
+            config["default"] = None
+            self.write(config)
+            return
         provider, _, key = ref.partition("/")
         discovered = any(
             model_ref(m) == ref
@@ -445,14 +459,162 @@ class FactoryModels:
         config["default"] = ref
         self.write(config)
 
-    def remove_provider(self, name: str) -> None:
-        config = self.read()
-        if name not in config["providers"]:
+    @staticmethod
+    def _check_key(key: str) -> None:
+        if (
+            "…" in key
+            or "•" in key
+            or key.strip().lower() in ("configured", "api key configured")
+        ):
+            raise ModelsError("Enter a new API key, not a masked key label")
+
+    @staticmethod
+    def _provider(config: Dict[str, Any], name: str) -> Dict[str, Any]:
+        provider = config["providers"].get(name)
+        if not isinstance(provider, dict):
             raise ModelsError(f"No provider {name}")
-        del config["providers"][name]
+        return provider
+
+    def update_provider(self, name: str, patch: Dict[str, Any]) -> None:
+        if set(patch) - {"base_url", "api_key"}:
+            raise ModelsError(
+                "Only the address and API key can change; provider IDs and types are fixed"
+            )
+        config = self.read()
+        provider = self._provider(config, name)
+        if provider.get("type") == "openai-oauth":
+            raise ModelsError(
+                "Use ChatGPT sign-in to manage this provider's credentials"
+            )
+        if "base_url" in patch:
+            url = str(patch["base_url"] or "").strip()
+            try:
+                parsed = urlsplit(url)
+                valid = (
+                    parsed.scheme in ("http", "https")
+                    and parsed.hostname
+                    and not parsed.username
+                    and not parsed.password
+                    and not parsed.query
+                    and not parsed.fragment
+                )
+            except ValueError:
+                valid = False
+            if url and not valid:
+                raise ModelsError(
+                    "Enter an HTTP or HTTPS address without credentials, query or fragment"
+                )
+            if not url and provider.get("type") == "openai-compatible":
+                raise ModelsError("The server's address is required")
+            if url:
+                provider["base_url"] = (
+                    normalize_compatible_base_url(url)
+                    if provider.get("type") == "openai-compatible"
+                    else url.rstrip("/")
+                )
+            else:
+                provider.pop("base_url", None)
+        key = str(patch.get("api_key") or "").strip()
+        if key:
+            self._check_key(key)
+            provider["api_key"] = key
+        self.write(config)
+
+    @staticmethod
+    def _model_patch(patch: Dict[str, Any]) -> Dict[str, Any]:
+        if set(patch) - {"model", "label", "maxInput", "maxOutput"}:
+            raise ModelsError(
+                "Model IDs are fixed; only the model name, label and token limits can change"
+            )
+        entry: Dict[str, Any] = {}
+        for key in ("model", "label"):
+            if key in patch:
+                value = str(patch[key] or "").strip()
+                if not value:
+                    raise ModelsError(f"The {key} is required")
+                entry[key] = value
+        for key, target in (
+            ("maxInput", "max_input_tokens"),
+            ("maxOutput", "max_output_tokens"),
+        ):
+            if key in patch:
+                value = patch[key]
+                if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                    raise ModelsError("Token limits must be positive whole numbers")
+                entry[target] = value
+        return entry
+
+    def add_model(self, name: str, body: Dict[str, Any]) -> None:
+        config = self.read()
+        provider = self._provider(config, name)
+        ident = str(body.get("id") or "").strip()
+        if (
+            not ident
+            or ident.startswith("/")
+            or any(c.isspace() for c in ident)
+            or "?" in ident
+            or "#" in ident
+        ):
+            raise ModelsError("Enter a model ID without whitespace, query or fragment")
+        models = provider.setdefault("models", {})
+        if ident in models:
+            raise ModelsError(f"Model {name}/{ident} already exists; edit it instead")
+        patch = {k: v for k, v in body.items() if k != "id"}
+        patch.setdefault("label", ident)
+        patch.setdefault(
+            "model",
+            (
+                f"anthropic/{ident}"
+                if provider.get("routing_prefix") == "anthropic"
+                else ident
+            ),
+        )
+        entry = self._model_patch(patch)
+        entry.setdefault("max_input_tokens", DEFAULT_MAX_INPUT_TOKENS)
+        entry.setdefault("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS)
+        if provider.get("type") == "openai":
+            entry["model_settings"] = {
+                "store": False,
+                "extra_body": {"include": ["reasoning.encrypted_content"]},
+            }
+        models[ident] = entry
+        self.write(config)
+
+    def update_model(self, name: str, ident: str, patch: Dict[str, Any]) -> None:
+        config = self.read()
+        models = self._provider(config, name).get("models") or {}
+        if ident not in models:
+            raise ModelsError(f"No model {name}/{ident}")
+        models[ident].update(self._model_patch(patch))
+        self.write(config)
+
+    def check_removal(self, name: str, ident: Optional[str] = None) -> None:
+        config = self.read()
+        provider = self._provider(config, name)
+        if ident is not None and ident not in (provider.get("models") or {}):
+            raise ModelsError(f"No model {name}/{ident}")
         for key in ("default", "voice_default"):
-            if str(config.get(key) or "").startswith(f"{name}/"):
-                config[key] = None
+            ref = str(config.get(key) or "")
+            if (ident is not None and ref in (f"{name}/{ident}", ident)) or (
+                ident is None
+                and (
+                    ref.startswith(f"{name}/") or ref in (provider.get("models") or {})
+                )
+            ):
+                raise ModelsError(
+                    f"Choose another {key.replace('_', ' ')} before removing {ref}"
+                )
+
+    def remove_model(self, name: str, ident: str) -> None:
+        self.check_removal(name, ident)
+        config = self.read()
+        del config["providers"][name]["models"][ident]
+        self.write(config)
+
+    def remove_provider(self, name: str) -> None:
+        self.check_removal(name)
+        config = self.read()
+        del config["providers"][name]
         self.write(config)
 
 

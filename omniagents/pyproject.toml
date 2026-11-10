@@ -33,6 +33,11 @@ dependencies = [
 omniagents = "omniagents.cli:main"
 
 [project.optional-dependencies]
+power-automate = [
+    "psycopg[binary]>=3.2,<4",
+    "azure-identity>=1.19,<2",
+    "azure-storage-blob>=12.24,<13",
+]
 voice = [
     "openai-agents[voice]>=0.24.0,<0.25",
 ]

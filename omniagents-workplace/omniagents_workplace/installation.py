@@ -454,6 +454,14 @@ class Installation:
                             }
                         )
                 w.installation_factory_id = factory_id
+
+                def rename_factory(name):
+                    with self.lock:
+                        current = self.records[factory_id]
+                        if current["name"] != name:
+                            self.save({**current, "name": name})
+
+                w.rename_factory = rename_factory
                 w.policy = self.policy
                 w.notifier = self.notifier
                 w.audit_log.notifier = self.notifier

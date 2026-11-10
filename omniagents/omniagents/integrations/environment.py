@@ -225,6 +225,15 @@ class RunEnvironments:
             git_environment = {
                 **self.github.git_environment(),
                 **self.github.identity_environment(),
+                **{
+                    key: os.environ[key]
+                    for key in (
+                        "AZURE_DEVOPS_MCP_URL",
+                        "AZURE_DEVOPS_MCP_TOKEN",
+                        "AZURE_DEVOPS_POLICY_URL",
+                    )
+                    if os.environ.get(key)
+                },
             }
             library_root = (
                 self.library_root

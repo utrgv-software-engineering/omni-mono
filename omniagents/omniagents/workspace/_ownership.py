@@ -24,7 +24,13 @@ def guard_operation(method):
             "host" if isinstance(args[0], HostWorkspace) else "remote"
         )
         with owner.operation():
-            if method.__name__ in ("write_text", "write_bytes", "mkdir", "remove"):
+            if method.__name__ in (
+                "write_text",
+                "write_bytes",
+                "write_stream",
+                "mkdir",
+                "remove",
+            ):
                 # Host writes use to_thread: cancelling their await does not
                 # stop the write. Hold admission until the actual write settles.
                 return await await_cleanup(asyncio.create_task(method(*args, **kwargs)))

@@ -31,6 +31,14 @@ async def refresh_environment(session, github, *, run_as=None):
         "GITHUB_MCP_TOKEN": token,
         **github.git_environment(),
         **github.identity_environment(),
+        **{
+            key: os.environ.get(key, "")
+            for key in (
+                "AZURE_DEVOPS_MCP_URL",
+                "AZURE_DEVOPS_MCP_TOKEN",
+                "AZURE_DEVOPS_POLICY_URL",
+            )
+        },
     }
     if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", github.token_env):
         values[github.token_env] = token

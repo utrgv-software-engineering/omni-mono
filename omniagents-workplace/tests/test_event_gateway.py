@@ -61,6 +61,53 @@ def rows(g):
     return g.w.store._db.execute("SELECT * FROM factory_events ORDER BY id").fetchall()
 
 
+@pytest.mark.asyncio
+async def test_ado_delivers_with_control_auth_and_cancels_revoked_access(gateway):
+    from omniagents_workplace.azure_devops.connections import ConnectionBody
+
+    g = gateway
+    project = "11111111-1111-1111-1111-111111111111"
+    repository = "22222222-2222-2222-2222-222222222222"
+    body = ConnectionBody(
+        label="ADO",
+        organization="school",
+        token="provider-token",
+        app_ids=[g.app().id],
+        scopes=[{"project": project, "repositories": [repository]}],
+        enabled=True,
+    )
+    connection = g.w.azure_devops.save("ado", body)
+    payload = {
+        "connection_id": "ado",
+        "scope_epoch": connection["scope_epoch"],
+        "project_id": project,
+        "repository_id": repository,
+        "event": "push",
+    }
+    g.enqueue("ado:ado", "azure-devops", "delivery", json.dumps(payload).encode(), {})
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await g.deliver_pending(client)
+        assert rows(g)[0][9] is not None
+        assert requests[0].headers["x-ado-delivery"] == "delivery"
+        assert (
+            requests[0].headers["authorization"]
+            == "Bearer " + g.config()["factory"]["auth_token"]
+        )
+        g.enqueue(
+            "ado:ado", "azure-devops", "revoked", json.dumps(payload).encode(), {}
+        )
+        g.w.azure_devops.delete("ado", connection["revision"])
+        await g.deliver_pending(client)
+    assert len(requests) == 1
+    assert "Cancelled" in rows(g)[1][10]
+
+
 def test_signed_inbound_commits_before_ack_and_deduplicates(gateway, tmp_path):
     g = gateway
     client = TestClient(create_app(g.w, static_dir=tmp_path))

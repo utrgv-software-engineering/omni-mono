@@ -62,6 +62,7 @@ from .github import (
     verify_github_request,
 )
 from .intake import EventIntake
+from .power_automate import PowerAutomateConfig, PowerAutomateSource
 from .slack import (
     SLACK_EVENTS_PATH,
     ChannelNames,
@@ -82,7 +83,15 @@ logger = logging.getLogger(__name__)
 RUNS_PATH = "/integrations/runs"
 
 
-Config = Union[SlackConfig, GitHubWebhookConfig, LinearConfig]
+from .azure_devops import AzureDevOpsConfig
+
+Config = Union[
+    SlackConfig,
+    GitHubWebhookConfig,
+    LinearConfig,
+    PowerAutomateConfig,
+    AzureDevOpsConfig,
+]
 
 
 def parse_integrations(entries: Any) -> List[Config]:
@@ -107,6 +116,17 @@ def parse_integrations(entries: Any) -> List[Config]:
         ):
             logger.warning(
                 "integrations: %r is not one of the allowed services; it is off", kind
+            )
+            continue
+        if kind == "power-automate":
+            configs.append(PowerAutomateConfig.parse(entry))
+            continue
+        if kind == "azure-devops":
+            configs.append(
+                AzureDevOpsConfig(
+                    markers=tuple(entry.get("markers") or ()),
+                    identity_ids=tuple(entry.get("identity_ids") or ()),
+                )
             )
             continue
         if kind == "github":
@@ -778,6 +798,15 @@ def mount_integrations(
     from .shared import mount_shared_route
 
     mount_shared_route(app, intake, _authorized)
+    from .azure_devops import mount_azure_devops_route
+
+    if any(isinstance(config, AzureDevOpsConfig) for config in configs):
+        mount_azure_devops_route(
+            app,
+            intake,
+            _authorized,
+            next(config for config in configs if isinstance(config, AzureDevOpsConfig)),
+        )
     from omniagents.core.memory.extract import shutdown as shutdown_memory
 
     app.router.on_shutdown.append(shutdown_memory)
@@ -825,7 +854,33 @@ def mount_integrations(
         )
 
     for config in configs:
-        if isinstance(config, GitHubWebhookConfig):
+        if isinstance(config, AzureDevOpsConfig):
+            continue
+        elif isinstance(config, PowerAutomateConfig):
+            if hasattr(app.state, "power_automate"):
+                raise ValueError("Only one Power Automate bridge may be configured")
+            source_type = PowerAutomateSource
+            if config.bridge_url:
+                from .power_automate_remote import RemotePowerAutomateSource
+
+                source_type = RemotePowerAutomateSource
+            source = source_type(
+                config,
+                intake.accept,
+                get_home_dir()
+                / "integrations"
+                / f"{project.product.slug}-power-automate.db",
+                event_store=store,
+            )
+            app.state.power_automate = source
+            from .power_automate_actions import PowerAutomateActions
+
+            service._power_automate = PowerAutomateActions(source, store)
+            service._power_automate_agent = project.entrypoint
+            intake.after_run["teams"] = source.finished
+            app.router.on_startup.append(source.start)
+            app.router.on_shutdown.append(source.stop)
+        elif isinstance(config, GitHubWebhookConfig):
             _mount_github_route(app, intake, config)
         elif isinstance(config, LinearConfig):
             _mount_linear_route(app, intake, config)
@@ -835,6 +890,14 @@ def mount_integrations(
             socket = SlackSocketMode(config, intake.accept)
             app.router.on_startup.append(socket.start)
             app.router.on_shutdown.append(socket.stop)
+    from .factory_settings import FactorySettings, mount_factory_settings
+
+    settings = FactorySettings(
+        get_home_dir() / "integrations" / f"{project.product.slug}-settings.db",
+        getattr(app.state, "power_automate", None),
+        project.product.name,
+    )
+    mount_factory_settings(app, settings, _controlled)
     _mount_replay_route(app, intake)
     if schedules:
         improve = {key for key, cfg in judges.items() if cfg.get("self_improve")}
@@ -860,7 +923,19 @@ def mount_integrations(
                     else (
                         "linear (agent sessions)"
                         if isinstance(c, LinearConfig)
-                        else f"slack ({c.delivery})"
+                        else (
+                            (
+                                "power-automate (private bridge)"
+                                if c.bridge_url
+                                else "power-automate (postgres)"
+                            )
+                            if isinstance(c, PowerAutomateConfig)
+                            else (
+                                "azure-devops (private gateway)"
+                                if isinstance(c, AzureDevOpsConfig)
+                                else f"slack ({c.delivery})"
+                            )
+                        )
                     )
                 )
                 for c in configs

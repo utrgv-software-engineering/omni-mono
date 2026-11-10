@@ -94,6 +94,10 @@ class AgentRuntimes:
                 result.state.agent_service._release_gate = getattr(
                     self.primary_app.state.agent_service, "_release_gate", None
                 )
+                result.state.agent_service._power_automate = getattr(
+                    self.primary_app.state.agent_service, "_power_automate", None
+                )
+                result.state.agent_service._power_automate_agent = key
             return result
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:

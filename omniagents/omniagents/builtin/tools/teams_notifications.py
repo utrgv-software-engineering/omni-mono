@@ -25,6 +25,17 @@ async def teams_notify(
     token = os.environ.get("FACTORY_SETTINGS_TOKEN", "")
     if not url or not token:
         raise ValueError("This factory has not configured Teams notifications")
+    from omniagents.core.agents.service import current_service
+    from omniagents.core.session.helpers import current_session_id
+
+    service = current_service()
+    backend = getattr(service, "_power_automate", None)
+    session_id = current_session_id()
+    if backend is not None and session_id:
+        correlation = backend.source.register_notification(
+            service._power_automate_agent, session_id, event_id
+        )
+        text = text + "\n\n[omni-conversation:" + correlation + "]"
     try:
         async with httpx.AsyncClient(
             timeout=45, trust_env=False, follow_redirects=False

@@ -9,6 +9,7 @@ import { factoryFetch } from "./factory-scope";
 import { EVENTS, describeTrigger, type Trigger } from "./automation-triggers";
 import { API, json, loadTree, savedMessage, send, type DefinitionError, type Saved } from "./definition-api";
 import { useDark } from "./Agents";
+import { scopeLabel, useScopeLabels } from "./automation-scope-labels";
 
 const CodeMirrorEditor = lazy(() => import("@omniagents/ui/code-editor").then(m => ({ default: m.CodeMirrorEditor })));
 
@@ -21,15 +22,26 @@ export type AutomationFields = {
 };
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const PROVIDERS: Record<string, string> = { github: "GitHub", slack: "Slack", linear: "Linear", shared: "Shared files", memory: "Memory" };
+const PROVIDERS: Record<string, string> = { github: "GitHub", "azure-devops": "Azure DevOps", teams: "Teams", slack: "Slack", linear: "Linear", shared: "Shared files", memory: "Memory" };
 /** The filters a form shows for each source, as comma-separated lists; others are kept as they are. */
 const FILTERS: Record<string, { key: string; label: string; placeholder: string }[]> = {
+  "azure-devops": [
+    { key: "connections", label: "Connections", placeholder: "Connection ID" },
+    { key: "projects", label: "Projects", placeholder: "Project GUID" },
+    { key: "repositories", label: "Repositories", placeholder: "Repository GUID" },
+    { key: "pipelines", label: "Pipelines", placeholder: "Pipeline ID" },
+    { key: "branches", label: "Branches", placeholder: "refs/heads/main" },
+    { key: "base_branches", label: "Target branches", placeholder: "refs/heads/main" },
+    { key: "statuses", label: "Statuses", placeholder: "active, completed" },
+    { key: "results", label: "Build results", placeholder: "succeeded, failed" },
+  ],
   github: [
     { key: "repos", label: "Repositories", placeholder: "acme/webapp, */api-service" },
     { key: "labels", label: "Labels", placeholder: "bug" },
     { key: "branches", label: "Branches", placeholder: "main" },
   ],
   slack: [{ key: "channels", label: "Channels", placeholder: "support" }],
+  teams: [{ key: "channels", label: "Channels", placeholder: "Teams channel ID" }],
   linear: [{ key: "teams", label: "Teams", placeholder: "ENG" }],
 };
 
@@ -61,6 +73,7 @@ const parse = (text: string) => text.split(",").map(v => v.trim()).filter(Boolea
 
 /** One thing that starts the automation: a schedule, or an event with its filters. */
 function TriggerRow({ trigger, name, onChange, onRemove }: { trigger: Trigger; name: string; onChange: (t: Trigger) => void; onRemove?: () => void }) {
+  const labels = useScopeLabels([trigger]);
   const kind = trigger.provider === "schedule" ? "schedule" : `${trigger.provider}:${trigger.event}`;
   const schedule = readCron(trigger.schedule?.cron ?? "0 9 * * *");
   const setSchedule = (next: Partial<Schedule>) => {
@@ -120,7 +133,7 @@ function TriggerRow({ trigger, name, onChange, onRemove }: { trigger: Trigger; n
         </div>
       ) : (
         (FILTERS[trigger.provider ?? ""] ?? []).map(filter => (
-          <div key={filter.key} className="flex items-center gap-2">
+          <div key={filter.key} className="flex flex-wrap items-center gap-2">
             <Label className="w-28 shrink-0 text-xs text-muted-foreground">{filter.label}</Label>
             <Input
               aria-label={filter.label}
@@ -134,6 +147,11 @@ function TriggerRow({ trigger, name, onChange, onRemove }: { trigger: Trigger; n
                 onChange({ ...trigger, filter: Object.keys(next).length ? next : undefined });
               }}
             />
+            {trigger.provider === "azure-devops" && ["connections", "projects", "repositories"].includes(filter.key) && (
+              <span className="w-full pl-28 text-xs text-muted-foreground">
+                {parse(list(trigger.filter?.[filter.key])).map(id => scopeLabel(labels, trigger, filter.key === "connections" ? "connection" : filter.key === "projects" ? "project" : "repo", id)).join(", ")}
+              </span>
+            )}
           </div>
         ))
       )}

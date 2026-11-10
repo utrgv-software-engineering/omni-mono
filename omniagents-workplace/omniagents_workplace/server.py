@@ -296,6 +296,11 @@ class Workplace:
         from .repository_settings import RepositorySettings
 
         self.repository_settings = RepositorySettings(self)
+        from .azure_devops.connections import AzureDevOpsConnections
+        from .azure_devops.mcp import AzureDevOpsMCP
+
+        self.azure_devops = AzureDevOpsConnections(self)
+        self.azure_devops_mcp = AzureDevOpsMCP(self.azure_devops)
         from .factory_secrets import FactorySecrets
 
         self.factory_secrets = FactorySecrets(self)
@@ -1085,6 +1090,7 @@ def person_json(account: Account, *, private: bool = False) -> Dict[str, Any]:
 # is for this machine.
 _SANDBOX_PATHS = re.compile(
     r"^/github/[^/]+/[^/]+\.git/(info/refs|git-upload-pack|git-receive-pack)$"
+    r"|^/azure-devops/git/[^/]+/[^/]+/[^/]+/(info/refs|git-upload-pack|git-receive-pack)$"
     r"|^/slack/upload/[^/]+$"
     r"|^/linear/uploads/put/[^/]+$"
 )
@@ -1157,16 +1163,20 @@ def create_app(
         workplace.event_gateway.configure_destinations()
         workplace.event_gateway.start()
         workplace.shared.start()
+        workplace.azure_devops.task = asyncio.create_task(
+            workplace.azure_devops.maintain()
+        )
         scheduler = asyncio.create_task(_post_scheduled(ws))
         repository_refresh = asyncio.create_task(
             workplace.repository_settings.maintain()
         )
         kill_switch = asyncio.create_task(workplace.kill_switch.maintain())
+        settings_refresh = asyncio.create_task(operational_settings.maintain())
         approvals = asyncio.create_task(workplace.approvals.maintain())
         from .attention import AttentionNotifications
 
         attention = asyncio.create_task(AttentionNotifications(workplace).maintain())
-        async with workplace.mcp.run(), workplace.github_mcp.run(), workplace.linear_mcp.run(), workplace.canvas_mcp.run(), workplace.memory_mcp.run(), extension_apps.run():
+        async with workplace.mcp.run(), workplace.github_mcp.run(), workplace.linear_mcp.run(), workplace.canvas_mcp.run(), workplace.memory_mcp.run(), workplace.azure_devops_mcp.run(), extension_apps.run():
             try:
                 yield
             finally:
@@ -1174,13 +1184,19 @@ def create_app(
                 scheduler.cancel()
                 repository_refresh.cancel()
                 kill_switch.cancel()
+                settings_refresh.cancel()
                 approvals.cancel()
                 with workplace.repository_settings.lock:
                     workplace.repository_settings.device.close()
                 await asyncio.gather(
-                    repository_refresh, kill_switch, approvals, return_exceptions=True
+                    repository_refresh,
+                    kill_switch,
+                    approvals,
+                    settings_refresh,
+                    return_exceptions=True,
                 )
                 await workplace.shared.close()
+                await workplace.azure_devops.close()
                 await workplace.event_gateway.close()
                 await workplace.memory_hooks.close()
                 await personal.close()
@@ -1201,6 +1217,19 @@ def create_app(
     from .repository_settings import repository_router, RepositoryProviderBoundary
 
     app.include_router(repository_router(workplace))
+    from .azure_devops.api import router as azure_devops_router
+
+    app.include_router(azure_devops_router(workplace.azure_devops))
+    from .azure_devops.git import router as azure_devops_git_router
+
+    app.include_router(azure_devops_git_router(workplace.azure_devops))
+    app.router.routes.append(
+        Route(
+            "/azure-devops/mcp",
+            endpoint=workplace.azure_devops_mcp,
+            methods=["GET", "POST", "DELETE"],
+        )
+    )
     app.include_router(workplace.factory_secrets.router())
     app.include_router(workplace.teams_notifications.router())
     app.include_router(workplace.event_gateway.router())
@@ -2223,15 +2252,127 @@ def create_app(
         return {"ref": ref, **models.summary()}
 
     @app.delete("/workplace/api/factory/model/providers/{name}")
-    def remove_model_provider(name: str, request: Request):
+    async def remove_model_provider(name: str, request: Request):
         from .factory_models import ModelsError
 
-        models, _ = _factory(request)
+        models, rpc = _factory(request)
         workplace.governance.require_model_owner(
             me(request), f"Removed the model provider {name}"
         )
         try:
+            models.check_removal(name)
+            await _check_model_references(rpc, name)
             models.remove_provider(name)
+        except ModelsError as exc:
+            _models_error(exc)
+        return models.summary()
+
+    async def _check_model_references(rpc, name: str, ident: Optional[str] = None):
+        from .factory_models import FactoryRpcError, ModelsError
+
+        if rpc is None:
+            raise ModelsError(
+                "Cannot safely remove settings while agent model references are unavailable. Start the factory and try again."
+            )
+        try:
+            tree = await rpc.http("GET", "/integrations/definition")
+            if not isinstance(tree.get("agents"), list):
+                raise ModelsError(
+                    "Cannot verify agent model references; removal was not saved"
+                )
+            for agent in tree["agents"]:
+                key = str(agent.get("key") or "")
+                if not re.fullmatch(r"[a-z][a-z0-9_]*", key):
+                    raise ModelsError(
+                        "Cannot verify agent model references; removal was not saved"
+                    )
+                settings = await rpc.http(
+                    "GET", f"/integrations/definition/agents/{key}"
+                )
+                if "model" not in settings or not isinstance(
+                    settings.get("inherited"), dict
+                ):
+                    raise ModelsError(
+                        "Cannot verify agent model references; removal was not saved"
+                    )
+                ref = settings.get("model") or settings["inherited"].get("model")
+                if ref is not None and not isinstance(ref, str):
+                    raise ModelsError(
+                        "Cannot verify agent model references; removal was not saved"
+                    )
+                if ref and (
+                    ref.startswith(f"{name}/")
+                    if ident is None
+                    else ref in (f"{name}/{ident}", ident)
+                ):
+                    raise ModelsError(
+                        f"Agent {key} uses {ref}. Choose another model for that agent before removing it."
+                    )
+                if ref and ident is None and "/" not in ref:
+                    raise ModelsError(
+                        f"Agent {key} uses an unqualified model reference. Choose a provider-qualified model before removing a provider."
+                    )
+        except FactoryRpcError:
+            raise ModelsError(
+                "Cannot verify agent model references. Start the factory and try again; removal was not saved."
+            ) from None
+
+    @app.patch("/workplace/api/factory/model/providers/{name}")
+    def edit_model_provider(name: str, body: Dict[str, Any], request: Request):
+        from .factory_models import ModelsError
+
+        models, _ = _factory(request)
+        workplace.governance.require_model_owner(
+            me(request), f"Edited the model provider {name}"
+        )
+        try:
+            models.update_provider(name, body)
+        except ModelsError as exc:
+            _models_error(exc)
+        return models.summary()
+
+    @app.post("/workplace/api/factory/model/providers/{name}/models")
+    def add_provider_model(name: str, body: Dict[str, Any], request: Request):
+        from .factory_models import ModelsError
+
+        models, _ = _factory(request)
+        workplace.governance.require_model_owner(
+            me(request), f"Added a model to {name}"
+        )
+        try:
+            models.add_model(name, body)
+        except ModelsError as exc:
+            _models_error(exc)
+        return models.summary()
+
+    @app.patch("/workplace/api/factory/model/providers/{name}/models/{ident:path}")
+    def edit_provider_model(
+        name: str, ident: str, body: Dict[str, Any], request: Request
+    ):
+        from .factory_models import ModelsError
+
+        models, _ = _factory(request)
+        workplace.governance.require_model_owner(
+            me(request), f"Edited model {name}/{ident}"
+        )
+        try:
+            models.update_model(name, ident, body)
+        except ModelsError as exc:
+            _models_error(exc)
+        return models.summary()
+
+    @app.delete("/workplace/api/factory/model/providers/{name}/models/{ident:path}")
+    async def remove_provider_model(name: str, ident: str, request: Request):
+        from .factory_models import ModelsError
+
+        models, rpc = _factory(request)
+        workplace.governance.require_model_owner(
+            me(request), f"Removed model {name}/{ident}"
+        )
+        try:
+            models.check_removal(name, ident)
+            await _check_model_references(rpc, name, ident)
+            models.remove_model(name, ident)
         except ModelsError as exc:
             _models_error(exc)
         return models.summary()
@@ -2538,6 +2679,17 @@ def create_app(
     from .factory_definition import FactoryDefinition, definition_router
 
     definition = FactoryDefinition(workplace, _factory_repository, _factory_endpoint)
+    from .factory_settings import FactorySettings, settings_router
+
+    def _factory_settings_endpoint():
+        try:
+            factory = workplace.factory_config.load().get("factory") or {}
+        except (ConfigError, AttributeError):
+            return None, None
+        return factory.get("url"), factory.get("admin_auth_token")
+
+    operational_settings = FactorySettings(workplace, _factory_settings_endpoint)
+    app.include_router(settings_router(operational_settings, admin))
     workplace.github.subscribe(definition.on_github)
     from .governance import install_repository_rules
 
@@ -3072,11 +3224,21 @@ def create_app(
 
     @app.patch("/workplace/api/team")
     def edit_team(body: EditTeam, request: Request):
-        admin(request)
+        account = admin(request)
         name = (body.name if body.name is not None else ws.name).strip()
         tz = body.tz if body.tz is not None else ws.tz
         if not name:
             raise HTTPException(status_code=422, detail="The workspace has a name")
+        if name != ws.name and workplace.store.meta("factory.operational_settings"):
+            settings = operational_settings.get()
+            operational_settings.save(
+                {
+                    "revision": settings["revision"],
+                    "display_name": name,
+                    "sources": settings["sources"],
+                },
+                account.username,
+            )
         _slack(lambda: ws.set_team(name, ws.domain, tz))
         workplace.linear.set_organization(name, workplace.linear.url_key)
         return {"team": {"name": ws.name, "domain": ws.domain, "tz": ws.tz}}

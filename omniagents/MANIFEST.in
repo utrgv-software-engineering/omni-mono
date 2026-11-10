@@ -18,3 +18,4 @@ include omniagents/backends/web/ui/tailwind.config.js
 include omniagents/backends/web/ui/postcss.config.js
 
 recursive-include vendor/quickjs-ng *.c *.h LICENSE README.md
+recursive-include omniagents/integrations *.sql

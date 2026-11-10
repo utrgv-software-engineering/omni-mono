@@ -22,7 +22,8 @@ class EventGateway:
         self.wake = asyncio.Event()
         with self.w.store._lock:
             self.w.store._db.execute("PRAGMA synchronous=FULL")
-            self.w.store._db.executescript("""
+            self.w.store._db.executescript(
+                """
                 CREATE TABLE IF NOT EXISTS factory_events (
                     id INTEGER PRIMARY KEY, origin TEXT NOT NULL,
                     provider TEXT NOT NULL, delivery TEXT NOT NULL,
@@ -33,7 +34,8 @@ class EventGateway:
                     UNIQUE(origin, provider, delivery));
                 CREATE INDEX IF NOT EXISTS factory_events_pending
                     ON factory_events(delivered, next_attempt);
-            """)
+            """
+            )
 
     def config(self):
         return self.w.factory_config.load() if self.w.factory_config else {}
@@ -183,14 +185,17 @@ class EventGateway:
 
     def signed(self, row):
         _, origin, provider, delivery, body, headers, *_ = row
-        if provider == "shared":
+        if provider in {"shared", "azure-devops"}:
             secret = self.config().get("factory", {}).get("auth_token", "")
             if not secret:
                 raise ValueError("Factory runtime is not configured")
-            return body, {
+            signed_headers = {
                 "content-type": "application/json",
                 "Authorization": "Bearer " + secret,
             }
+            if provider == "azure-devops":
+                signed_headers["x-ado-delivery"] = delivery
+            return body, signed_headers
         secret = self.secret(origin, provider)
         if not secret:
             raise ValueError("Signing secret is not configured; delivery retained")
@@ -273,6 +278,49 @@ class EventGateway:
                                 (
                                     time.time(),
                                     "Cancelled: workflow changed or disabled",
+                                    row[0],
+                                ),
+                            )
+                        continue
+                if row[2] == "azure-devops":
+                    payload = json.loads(row[4])
+                    connections = self.w.azure_devops
+                    connection = connections.records().get(payload.get("connection_id"))
+                    app = self.app()
+                    scope = next(
+                        (
+                            value
+                            for value in (connection or {}).get("scopes", [])
+                            if value["project"] == payload.get("project_id")
+                        ),
+                        None,
+                    )
+                    allowed = bool(
+                        connection
+                        and connection["enabled"]
+                        and app
+                        and app.id in connection["app_ids"]
+                        and scope
+                        and connection["scope_epoch"] == payload.get("scope_epoch")
+                        and payload.get("event") in connection["events"]
+                    )
+                    if payload.get("repository_id"):
+                        allowed = allowed and payload["repository_id"] in (
+                            scope or {}
+                        ).get("repositories", [])
+                    if payload.get("event", "").startswith("work_item_"):
+                        allowed = allowed and (scope or {}).get("boards", False)
+                    if payload.get("pipeline_id"):
+                        allowed = allowed and payload["pipeline_id"] in (
+                            scope or {}
+                        ).get("pipelines", [])
+                    if not allowed:
+                        with self.w.store.transaction():
+                            self.w.store._db.execute(
+                                "UPDATE factory_events SET delivered=?,error=? WHERE id=?",
+                                (
+                                    time.time(),
+                                    "Cancelled: Azure DevOps access changed",
                                     row[0],
                                 ),
                             )

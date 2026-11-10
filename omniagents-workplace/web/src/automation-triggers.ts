@@ -8,6 +8,24 @@ export type Trigger = {
 };
 
 export const EVENTS: Record<string, string> = {
+  "teams:message": "Someone messages the factory in Teams",
+  "azure-devops:pull_request_opened": "An Azure DevOps pull request opens",
+  "azure-devops:pull_request_updated": "An Azure DevOps pull request changes",
+  "azure-devops:pull_request_completed": "An Azure DevOps pull request completes",
+  "azure-devops:pull_request_abandoned": "An Azure DevOps pull request is abandoned",
+  "azure-devops:pull_request_reactivated": "An Azure DevOps pull request reactivates",
+  "azure-devops:pull_request_thread_changed": "An Azure DevOps discussion changes",
+  "azure-devops:pull_request_review_changed": "An Azure DevOps review changes",
+  "azure-devops:pull_request_status_changed": "An Azure DevOps validation status changes",
+  "azure-devops:pull_request_policy_changed": "An Azure DevOps policy evaluation changes",
+  "azure-devops:push": "Commits are pushed to Azure DevOps",
+  "azure-devops:refs_changed": "Azure DevOps repository refs change",
+  "azure-devops:work_item_created": "An Azure DevOps work item is created",
+  "azure-devops:work_item_updated": "An Azure DevOps work item changes",
+  "azure-devops:work_item_comment_changed": "Azure DevOps work item comments change",
+  "azure-devops:build_updated": "An Azure DevOps build changes",
+  "azure-devops:build_completed": "An Azure DevOps build completes",
+  "azure-devops:build_timeline_changed": "An Azure DevOps build timeline changes",
   "github:pull_request_opened": "A pull request is opened",
   "github:pull_request_ready": "A draft pull request is marked ready",
   "github:pull_request_synchronized": "A pull request gets new commits",
@@ -60,7 +78,7 @@ function and(items: string[]) {
 
 /** One thing a trigger's filter narrows to, and the values it allows. */
 export type Condition = {
-  kind: "repo" | "base" | "branch" | "path" | "label" | "not_label" | "mention" | "assignee" | "outcome" | "channel" | "emoji" | "team";
+  kind: "repo" | "base" | "branch" | "path" | "label" | "not_label" | "mention" | "assignee" | "outcome" | "channel" | "emoji" | "team" | "connection" | "project" | "pipeline" | "status";
   values: string[];
 };
 
@@ -72,6 +90,12 @@ export function conditionParts(filter: Record<string, unknown> = {}): Condition[
     if (values.length) out.push({ kind, values });
   };
   add("repo", filter.repos);
+  add("repo", filter.repositories);
+  add("connection", filter.connections);
+  add("project", filter.projects);
+  add("pipeline", filter.pipelines);
+  add("status", filter.statuses);
+  add("outcome", filter.results);
   add("base", filter.base_branches);
   add("branch", filter.branches);
   add("path", filter.paths);
@@ -89,6 +113,10 @@ export function conditionParts(filter: Record<string, unknown> = {}): Condition[
 
 const WORDS: Record<Condition["kind"], (values: string[]) => string> = {
   repo: v => `in ${and(v)}`,
+  connection: v => `through connection ${and(v)}`,
+  project: v => `in project ${and(v)}`,
+  pipeline: v => `for pipeline ${and(v)}`,
+  status: v => `with status ${and(v)}`,
   base: v => `into ${and(v)}`,
   branch: v => `on ${and(v)}`,
   path: v => `touching ${and(v)}`,

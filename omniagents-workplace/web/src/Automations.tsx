@@ -11,6 +11,7 @@ import { factoryFetch } from "./factory-scope";
 import { conditionParts, describeEvent, describeTrigger, scheduleName, type Condition, type Trigger } from "./automation-triggers";
 import { FileEditor } from "./Agents";
 import { AutomationForm, deleteAutomation, loadAutomation, type AutomationFields } from "./AutomationForm";
+import { scopeLabel, useScopeLabels } from "./automation-scope-labels";
 
 /** The new-automation page's name in the path; no automation can have it. */
 const NEW = "+new";
@@ -58,7 +59,9 @@ const CONVERSATIONS = {
 
 const SOURCES: Record<string, { icon: LucideIcon; label: string }> = {
   github: { icon: GitBranch, label: "GitHub" },
+  "azure-devops": { icon: GitBranch, label: "Azure DevOps" },
   slack: { icon: Hash, label: "Slack" },
+  teams: { icon: Users, label: "Teams" },
   linear: { icon: Sparkles, label: "Linear" },
   schedule: { icon: Clock, label: "Schedule" },
   shared: { icon: FolderOpen, label: "Shared" },
@@ -117,6 +120,10 @@ function SourceIcon({ trigger }: { trigger?: Trigger }) {
 }
 
 const CHIPS: Record<Condition["kind"], { icon: LucideIcon; text: (value: string) => string; mono?: boolean }> = {
+  connection: { icon: Zap, text: value => value },
+  project: { icon: FolderOpen, text: value => value },
+  pipeline: { icon: Play, text: value => value },
+  status: { icon: CircleCheck, text: value => value },
   repo: { icon: FolderGit2, text: v => v.replace(/^\*\//, "") },
   base: { icon: GitMerge, text: v => `into ${v}`, mono: true },
   branch: { icon: GitBranch, text: v => v, mono: true },
@@ -145,6 +152,7 @@ function Chip({ icon: Icon, children, mono, className = "", title }: { icon: Luc
 
 /** What starts it: the event in words, then each filter value as a chip. Folded, several repositories are one chip that names them on hover. */
 function TriggerLine({ trigger, fold = false }: { trigger: Trigger; fold?: boolean }) {
+  const labels = useScopeLabels([trigger]);
   return (
     <span className="flex flex-wrap items-center gap-1.5">
       <SourceIcon trigger={trigger} />
@@ -153,12 +161,12 @@ function TriggerLine({ trigger, fold = false }: { trigger: Trigger; fold?: boole
         conditionParts(trigger.filter).flatMap(({ kind, values }) => {
           const chip = CHIPS[kind];
           if (fold && kind === "repo" && values.length > 1)
-            return [<Chip key={kind} icon={chip.icon} title={values.map(chip.text).join(", ")}>{values.length} repos</Chip>];
+            return [<Chip key={kind} icon={chip.icon} title={values.map(value => chip.text(scopeLabel(labels, trigger, kind, value))).join(", ")}>{values.length} repos</Chip>];
           return values.map(value => {
             const outcome = kind === "outcome" ? OUTCOMES[value] : undefined;
             return (
-              <Chip key={`${kind}:${value}`} icon={outcome?.icon ?? chip.icon} mono={chip.mono} className={outcome?.className}>
-                {chip.text(value)}
+              <Chip key={`${kind}:${value}`} title={value} icon={outcome?.icon ?? chip.icon} mono={chip.mono} className={outcome?.className}>
+                {chip.text(scopeLabel(labels, trigger, kind, value))}
               </Chip>
             );
           });

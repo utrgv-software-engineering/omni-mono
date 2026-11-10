@@ -174,6 +174,12 @@ class EventIntake:
             await asyncio.gather(*list(self._tasks), return_exceptions=True)
 
     async def resume_received(self):
+        for event_id, event, automation in self.store.pending_dispatches():
+            task = asyncio.create_task(
+                self._dispatch(event_id, event, automation, intent=True)
+            )
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
         for event_id, event in self.store.received_events():
             task = asyncio.create_task(self._process(event_id, event))
             self._tasks.add(task)
@@ -225,11 +231,20 @@ class EventIntake:
                 "self-improvement is disabled or its factory repository is unavailable",
             )
             return
-        self.store.set_status(
-            event_id, "dispatched", ", ".join(a.name for a in matched)
+        from .azure_devops import admit
+
+        matched = self.store.prepare_dispatches(
+            event_id,
+            matched,
+            admission=lambda automation: admit(
+                event, automation, self.store, transaction=False
+            ),
         )
         await asyncio.gather(
-            *(self._dispatch(event_id, event, automation) for automation in matched)
+            *(
+                self._dispatch(event_id, event, automation, intent=True)
+                for automation in matched
+            )
         )
 
     async def hand_off(
@@ -289,10 +304,32 @@ class EventIntake:
         automation: Automation,
         *,
         agent: Optional[str] = None,
+        intent: bool = False,
     ) -> None:
+        if intent:
+            if self.release_gate:
+                await self.release_gate.wait()
+            from omniagents.core.runtime.factory_stop import current
+
+            if current() is not None or automation.name in self.store.turned_off():
+                with self.store._lock, self.store._db:
+                    self.store._db.execute(
+                        "UPDATE dispatch_intents SET state='cancelled' WHERE event_id=? AND automation=? AND state='queued'",
+                        (event_id, automation.name),
+                    )
+                return
         route = self.store.automation_routes().get(automation.name, {})
         agent = agent or route.get("agent") or automation.agent or self.entrypoint
         grouping = route.get("conversation") or automation.conversation
+        conversation = event.payload.get("factory_conversation")
+        if event.provider == "teams" and conversation:
+            bound_session = self.store.thread_session(
+                "teams", event.thread_key, conversation.get("agent")
+            )
+            if bound_session != conversation.get("session_id"):
+                raise ValueError("Teams conversation binding mismatch")
+            agent = conversation["agent"]
+            grouping = "thread"
         # Scheduled/Shared occurrences are independent tasks by default. Explicit
         # thread grouping can retain a conversation across those occurrences.
         reuse = grouping == "thread" or (
@@ -317,15 +354,15 @@ class EventIntake:
                 f"Thread: {event.thread_key or '(independent event)'}"
             ),
         ).run_input(event.payload, event.context)
-        dispatch_id = self.store.start_dispatch(
-            event_id,
-            automation.name,
-            agent,
-            session_id,
-            prompt=prompt,
-            version=self.version,
+        dispatch_id = None
+        lock_key = (
+            ("thread:" + event.provider, event.thread_key)
+            if reuse
+            and event.thread_key
+            and event.provider in {"azure-devops", "teams"}
+            else (agent, session_id)
         )
-        lock = self._conversation_locks.setdefault((agent, session_id), asyncio.Lock())
+        lock = self._conversation_locks.setdefault(lock_key, asyncio.Lock())
         slots = self._slots
         on_step = self.on_step.get(event.provider)
         progress: Optional[Progress] = None
@@ -344,6 +381,34 @@ class EventIntake:
         turn_started = time.time()
         try:
             async with lock, slots:
+                if intent and (
+                    current() is not None or automation.name in self.store.turned_off()
+                ):
+                    with self.store._lock, self.store._db:
+                        self.store._db.execute(
+                            "UPDATE dispatch_intents SET state='cancelled' WHERE event_id=? AND automation=? AND state='queued'",
+                            (event_id, automation.name),
+                        )
+                    return
+                if (
+                    reuse
+                    and event.thread_key
+                    and event.provider in {"azure-devops", "teams"}
+                ):
+                    prompt += self.store.thread_context(
+                        event.provider, event.thread_key, agent
+                    )
+                dispatch_id = self.store.start_dispatch(
+                    event_id,
+                    automation.name,
+                    agent,
+                    session_id,
+                    prompt=prompt,
+                    version=self.version,
+                    intent=intent,
+                )
+                if dispatch_id is None:
+                    return
                 from .self_improvement import guarded_run
 
                 turn_started = time.time()
@@ -375,9 +440,8 @@ class EventIntake:
             dispatch_id,
             "stopped" if result.stopped else "failed" if result.error else "completed",
             result.error,
+            output=result.output,
         )
-        if result.output:
-            self.store.record_output(dispatch_id, result.output)
         from omniagents.core.skills.usage import since
 
         self.store.record_skills(dispatch_id, since(session_id, turn_started))
