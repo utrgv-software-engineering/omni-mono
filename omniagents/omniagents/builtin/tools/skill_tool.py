@@ -113,6 +113,10 @@ async def load_skill(
     for path in _candidate_paths(name, workspace):
         loaded = await _read_candidate(path)
         if loaded is not None:
+            from omniagents.core.skills.usage import record_loaded
+
+            context = ctx.context if isinstance(ctx.context, dict) else {}
+            record_loaded(context.get("session_id"), name, str(path.parent))
             break
     if loaded is None:
         searched = [

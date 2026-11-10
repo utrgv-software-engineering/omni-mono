@@ -198,3 +198,16 @@ def test_circular_extends_is_rejected(project):
     base.write_text("extends: base\n" + base.read_text())
     with pytest.raises(ValueError, match="Circular 'extends'"):
         load_agent_spec_from_yaml(str(project / "agents/reviewer/agent.yml"))
+
+
+def test_edited_instructions_reach_the_next_render(project):
+    # The factory's editor saves files while it runs: the role's file and the
+    # base's are read again each time, not when the project loaded.
+    spec = build_spec_from_project(
+        load_project(str(project / "project.yml")), "reviewer"
+    )
+    (project / "agents/reviewer/instructions.md").write_text("# Reviewer\n\nBe kind.\n")
+    (project / "base/instructions.md").write_text("Base now.\n\n{{ role }}\n")
+    text = _render(spec, today="2026-10-23")
+    assert "Be kind." in text and "Review adversarially." not in text
+    assert text.startswith("Base now.")

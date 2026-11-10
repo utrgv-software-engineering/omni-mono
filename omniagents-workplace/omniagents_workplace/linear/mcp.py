@@ -32,7 +32,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import jsonschema
 from mcp import types
-from mcp.server.lowlevel import Server
+from ..mcp_server import tool_server, current_request
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 from ..wire import Wire
@@ -158,13 +158,13 @@ class LinearMCP:
         self._definitions: List[Dict[str, Any]] = reference["tools"]
         self._schemas = {d["name"]: d["inputSchema"] for d in self._definitions}
         info = reference.get("serverInfo") or {}
-        self.server = Server(
+        self.server = tool_server(
             info.get("name", "linear"),
+            list_tools=self._list_tools,
+            call_tool=self._call_tool,
             version=info.get("version"),
             instructions=reference.get("instructions"),
         )
-        self.server.list_tools()(self._list_tools)
-        self.server.call_tool(validate_input=False)(self._call_tool)
         self.manager = StreamableHTTPSessionManager(
             self.server, json_response=False, stateless=True
         )
@@ -209,7 +209,7 @@ class LinearMCP:
         return self.state.user_for_token(token) if token else None
 
     def _me(self) -> User:
-        request = self.server.request_context.request
+        request = current_request()
         user = (
             self._caller({k.lower(): v for k, v in request.headers.items()})
             if request

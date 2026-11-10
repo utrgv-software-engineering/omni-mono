@@ -1,44 +1,116 @@
 """Automation turns on the same service and durable queue as Personal chat."""
 
 import asyncio
+import logging
 import uuid
 import time
 
 from omniagents.rpc.base import _current_channel
 from omniagents.rpc.server import JsonRpcChannel
-from .architecture import PERSONAL_SESSION
-from .intake import RunResult
+from .intake import RunResult, RunStep
+
+logger = logging.getLogger(__name__)
 
 
 class _Sink:
-    async def send_json(self, message):
+    """An in-process connection: nothing is received over it."""
+
+    async def connect(self) -> None:
+        pass
+
+    async def disconnect(self) -> None:
+        pass
+
+    async def send_json(self, data):
         pass  # Canonical snapshots and the run-end listener retain the result.
 
+    async def receive_json(self):
+        raise RuntimeError("an in-process connection receives nothing")
 
-class PersonalRunner:
-    def __init__(self, service, principal):
+    def is_connected(self) -> bool:
+        return True
+
+
+class _Steps(_Sink):
+    """The conversation's live events, told to ``progress`` as this run's steps.
+
+    The conversation may run another turn first (a chat queued ahead), so
+    steps are held until the run's id is known and only its own are told.
+    They are told in order from a task of their own: a slow report (a Linear
+    session) never holds up the run, and a failing one never detaches us.
+    """
+
+    def __init__(self, progress):
+        self.progress = progress
+        self.run_id = None
+        self.held = []
+        self.steps: asyncio.Queue[RunStep | None] = asyncio.Queue()
+        self.reporter = asyncio.ensure_future(self._report())
+
+    async def send_json(self, data):
+        params = data.get("params") or {}
+        method = data.get("method")
+        if method == "tool_called":
+            step = RunStep("tool", name=params.get("tool") or "a tool")
+        elif method == "message_output" and str(params.get("content") or "").strip():
+            step = RunStep("message", text=params["content"])
+        else:
+            return
+        if self.run_id is None:
+            self.held.append((params.get("run_id"), step))
+        elif params.get("run_id") == self.run_id:
+            self.steps.put_nowait(step)
+
+    def mine(self, run_id):
+        if self.run_id is not None:
+            return
+        self.run_id = run_id
+        for held_run, step in self.held:
+            if held_run == run_id:
+                self.steps.put_nowait(step)
+        self.held = []
+
+    async def _report(self):
+        while (step := await self.steps.get()) is not None:
+            try:
+                await self.progress(step)
+            except Exception:
+                logger.exception("integrations: reporting a step failed")
+
+    async def drain(self):
+        self.steps.put_nowait(None)
+        await self.reporter
+
+    def cancel(self):
+        self.reporter.cancel()
+
+
+class ConversationRunner:
+    def __init__(self, service, principal, agent):
+        self.agent = agent
         self.service = service
         self.principal = principal
 
-    async def resume(self):
+    async def resume(self, session_id):
         channel = JsonRpcChannel(_Sink())
         channel.principal = await self.principal()
         token = _current_channel.set(channel)
         try:
             await self.service.server_call(
-                "session.ensure", {"session_id": PERSONAL_SESSION}, PERSONAL_SESSION
+                "session.ensure", {"session_id": session_id}, session_id
             )
-            await self.service.queue_status(PERSONAL_SESSION)
+            await self.service.queue_status(session_id)
         finally:
             _current_channel.reset(token)
 
     async def __call__(self, agent, session_id, prompt, progress=None):
         from .server import run_failure
 
-        if agent != "generalist" or session_id != PERSONAL_SESSION:
-            raise ValueError("Personal automation must use the shared generalist")
+        if agent != self.agent:
+            raise ValueError("Conversation agent does not match its runtime")
         service = self.service
-        channel = JsonRpcChannel(_Sink())
+        steps = _Steps(progress) if progress is not None else None
+        channel = JsonRpcChannel(steps or _Sink())
         channel.principal = await self.principal()
         token = _current_channel.set(channel)
         ends = {}
@@ -81,7 +153,7 @@ class PersonalRunner:
             queued = await service.enqueue_message(
                 session_id,
                 prompt,
-                source="automation:personal",
+                source="automation",
                 submission_id=str(uuid.uuid4()),
             )
             if not queued.get("ok"):
@@ -96,7 +168,11 @@ class PersonalRunner:
                 receipt = state.get("submission") or {}
                 if receipt.get("status") == "completed":
                     run_id = receipt["result"]["run_id"]
+                    if steps:
+                        steps.mine(run_id)
                     if run_id in ends:
+                        if steps:
+                            await steps.drain()
                         return ends[run_id]
                 elif receipt.get("status") in {"failed", "unknown"}:
                     raise RuntimeError(
@@ -123,8 +199,14 @@ class PersonalRunner:
                     await service.cancel_queued_message(session_id, queued["id"])
             raise
         finally:
+            if steps:
+                steps.cancel()
             service.remove_run_end_listener(session_id, ended)
             session = service._session_manager.get(session_id)
             if session and channel in session.channels:
                 session.channels.remove(channel)
             _current_channel.reset(token)
+
+
+# Compatibility for existing imports; routing has no role-specific behavior.
+PersonalRunner = ConversationRunner

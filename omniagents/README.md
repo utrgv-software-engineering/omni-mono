@@ -112,3 +112,7 @@ Run coverage locally with:
 ```bash
 make coverage-python
 ```
+
+### Experimental local VM sandbox
+
+[QuickSand setup and persistence](docs/guide/quicksand.md) describes the optional QEMU backend, interactive terminals, and the real-VM validation command. Docker remains the default.

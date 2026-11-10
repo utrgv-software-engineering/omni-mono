@@ -1,0 +1,21 @@
+{
+  "project_name": "School",
+  "pull_requests": [
+    {"pullRequestId": 8, "title": "Preserve intake after restart", "sourceRefName": "refs/heads/factory/recovery", "targetRefName": "refs/heads/main", "lastMergeSourceCommit": {"commitId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "createdBy": {"displayName": "Maya Chen"}},
+    {"pullRequestId": 9, "title": "Correct account totals", "sourceRefName": "refs/heads/factory/totals", "targetRefName": "refs/heads/release", "createdBy": {"displayName": "Leo Patel"}}
+  ],
+  "threads": [{"id": 12, "status": "active", "comments": [{"content": "The recovery test still loses the queued item.", "author": {"displayName": "Priya Shah"}}]}],
+  "iterations": [{"id": 1}, {"id": 2}],
+  "statuses": [{"context": {"name": "recovery-check"}, "state": "failed"}],
+  "policies": [{"status": "rejected", "configuration": {"type": {"displayName": "Required reviewers"}}}],
+  "changes": [{"item": {"path": "/src/queue.py"}, "changeType": "edit"}],
+  "file": {"content": "retry_window_seconds=180\n"},
+  "commits": [{"commitId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "author": {"name": "Maya Chen"}, "comment": "Preserve queued work"}],
+  "builds": [{"id": 21, "definition": {"id": 7, "name": "Validate recovery"}, "sourceBranch": "refs/heads/factory/recovery", "result": "failed"}],
+  "timeline": {"records": [{"id": "job-1", "name": "Restart regression", "result": "failed", "log": {"id": 4}}]},
+  "log": "AssertionError: pending item disappeared after restart\n",
+  "artifacts": [{"name": "recovery-evidence", "resource": {"type": "Container"}}],
+  "work_items": [{"id": 31, "rev": 3, "fields": {"System.TeamProject": "School", "System.Title": "Restart loses queued intake", "System.State": "Active", "System.AssignedTo": {"displayName": "Maya Chen"}}}],
+  "revisions": [{"rev": 2, "fields": {"System.State": "New"}}, {"rev": 3, "fields": {"System.State": "Active"}}],
+  "comments": [{"id": 2, "text": "Reproduce with build 21; related pull request 8."}]
+}

@@ -52,6 +52,16 @@ an explicit model can select a smaller extractor. Failures are logged.
 Extraction is background work, not a durable job queue: process shutdown
 can cancel unfinished extraction.
 
+An agent people talk to, and that automations also run, declares both kinds
+of trigger: `[run_end, idle, compaction, daily]`. A turn an automation queued
+schedules no idle or daily extraction; its run's `run_end` extraction covers it.
+
+When several people share a conversation, Workplace starts each person's
+message with `[From <name> (@<username>)]`. Extraction writes a preference
+someone states about their own taste as theirs (`@<username> prefers …`, tagged
+`person:<username>`) in the agent's store, and a convention without a person
+only when it is stated for everyone.
+
 Factory `run_end` extraction runs after grading, including failed runs and
 child-agent transcripts. Each write carries source run/session/automation
 metadata and grade evidence. Duplicate active lessons are skipped and

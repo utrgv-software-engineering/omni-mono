@@ -58,6 +58,13 @@ describe('messageKey', () => {
     expect(messageKey({ type: 'artifact', artifact_id: 'art_1', title: 't', content: '' }, 0)).toBe('artifact:art_1');
   });
 
+  it('keys a message by its message id, so older history can go in above it', () => {
+    const reply = { type: 'chat', role: 'assistant', content: 'Done', message_id: 'm1' } as MessageItem;
+    const question = { type: 'chat', role: 'user', content: 'Ready?', message_id: 'm1' } as MessageItem;
+    expect(messageKey(reply, 7)).toBe(messageKey(reply, 0));
+    expect(messageKey(reply, 0)).not.toBe(messageKey(question, 0));
+  });
+
   it('falls back to position only when the item carries no id at all', () => {
     const live: MessageItem = { type: 'chat', role: 'assistant', content: 'streaming' };
     expect(messageKey(live, 2)).toBe('at:2:chat');

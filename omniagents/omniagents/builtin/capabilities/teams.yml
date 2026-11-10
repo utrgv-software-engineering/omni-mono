@@ -1,0 +1,11 @@
+name: teams
+description: Send event notifications to the factory's configured Teams Workflow.
+tools:
+  - teams_notify
+instructions: |
+  Use teams_notify only for requested Teams notifications. Use the event's stable
+  ID and an existing Workplace page path. Keep webhook credentials out of prompts
+  and tool arguments. Do not send confidential content into channel summaries.
+  Reuse the same event ID and content when retrying. Do not bypass duplicate
+  protection with new IDs. Accepted means the Workflow accepted the request;
+  unknown or sending requires checking before another notification is attempted.

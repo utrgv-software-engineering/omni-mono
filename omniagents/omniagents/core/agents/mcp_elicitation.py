@@ -12,16 +12,12 @@ wires MCP's requests INTO that lane instead of inventing a parallel one:
 * the first client response maps back to the MCP ``ElicitResult``
   (``accept``+content / ``decline`` / ``cancel``).
 
-Wiring point: the openai-agents SDK constructs ``mcp.ClientSession``
-inside ``connect()`` without an ``elicitation_callback``, and the MCP
-client only *advertises* the elicitation capability when the callback is
-present at ``initialize()`` time. We therefore install (once, process
-wide) a ``ClientSession`` subclass into the SDK module that pulls the
-callback from a :class:`~contextvars.ContextVar` at construction — the
-session MCP lifecycle task sets that var per server before entering it,
-so only session-scoped connections advertise and receive elicitations;
-management probes and out-of-session connects keep the default
-"not supported" behavior.
+Wiring point: the Agents SDK creates an MCP Client without callbacks and
+then calls its low-level session directly. Install a context-local client
+factory so legacy callbacks and modern input-required rounds both use the
+owning session's user-input handler. Modern retries use MCP's own driver,
+including its opaque request-state echo and round limit. Connections made
+outside an elicitation scope do not advertise an input handler.
 """
 
 from __future__ import annotations
@@ -49,11 +45,7 @@ _installed = False
 
 
 def install_client_session_elicitation() -> None:
-    """Install the ContextVar-aware ``ClientSession`` into the SDK.
-
-    Idempotent and behavior-preserving: when no scope is active the
-    subclass is byte-for-byte the stock ``ClientSession``.
-    """
+    """Install the context-aware SDK client factory once per process."""
     global _installed
     if _installed:
         return
@@ -62,6 +54,57 @@ def install_client_session_elicitation() -> None:
         from mcp import ClientSession
     except Exception:  # pragma: no cover - SDK not importable
         logger.debug("MCP elicitation wiring unavailable", exc_info=True)
+        return
+
+    if getattr(sdk_server, "MCP_V2", False):
+        from mcp import Client
+
+        class ElicitationClient(Client):
+            async def __aenter__(self):
+                await super().__aenter__()
+                # Agents SDK calls the low-level session directly. Preserve its
+                # call path while using MCP's own multi-round input driver.
+                if self.session.discover_result is not None:
+                    for name in ("call_tool", "read_resource", "get_prompt"):
+                        original = getattr(self.session, name)
+
+                        def wrap(method):
+                            async def invoke(*args, **kwargs):
+                                if kwargs.get("allow_input_required"):
+                                    return await method(*args, **kwargs)
+                                responses = kwargs.pop("input_responses", None)
+                                state = kwargs.pop("request_state", None)
+                                kwargs.pop("allow_input_required", None)
+
+                                async def retry(responses, state):
+                                    return await method(
+                                        *args,
+                                        **kwargs,
+                                        input_responses=responses,
+                                        request_state=state,
+                                        allow_input_required=True,
+                                    )
+
+                                return await self._drive_input_required(
+                                    await retry(responses, state), retry
+                                )
+
+                            return invoke
+
+                        setattr(self.session, name, wrap(original))
+                return self
+
+        def create_client(transport, **kwargs):
+            return ElicitationClient(
+                transport,
+                mode="auto",
+                cache=None,
+                elicitation_callback=_current_elicitation_callback.get(),
+                **kwargs,
+            )
+
+        sdk_server.create_v2_client = create_client
+        _installed = True
         return
 
     if getattr(sdk_server.ClientSession, "_omni_elicitation_aware", False):
@@ -111,7 +154,9 @@ def make_mcp_elicitation_handler(
         from mcp import types as mcp_types
 
         message = str(getattr(params, "message", "") or "")
-        schema = getattr(params, "requestedSchema", None)
+        schema = getattr(
+            params, "requested_schema", getattr(params, "requestedSchema", None)
+        )
         if schema is not None and hasattr(schema, "model_dump"):
             try:
                 schema = schema.model_dump(mode="json", by_alias=True)

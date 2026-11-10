@@ -155,7 +155,7 @@ def test_sources_mapping_empty_without_routed_run():
 
 
 def test_project_context_prefers_current_agent_definition(monkeypatch):
-    project = object()
+    project = SimpleNamespace(agents_map={})
     service = SimpleNamespace(spec=SimpleNamespace(project_context=project))
     monkeypatch.setattr(
         "omniagents.core.agents.service.current_service", lambda: service
@@ -250,7 +250,7 @@ def test_install_spec_loader_derives_all_inputs(monkeypatch):
 
     monkeypatch.setattr("omniagents.core.models.model_store", lambda: _FakeStore())
 
-    project = object()
+    project = SimpleNamespace(agents_map={})
     service = SimpleNamespace(spec=SimpleNamespace(project_context=project))
     monkeypatch.setattr(
         "omniagents.core.agents.service.current_service", lambda: service
@@ -260,7 +260,7 @@ def test_install_spec_loader_derives_all_inputs(monkeypatch):
 
     built = []
 
-    def fake_build(proj, agent_key=None):
+    def fake_build(proj, agent_key=None, **_):
         built.append((proj, agent_key))
         return SimpleNamespace(
             project_slug="from-project",
@@ -302,7 +302,7 @@ def test_install_honors_product_model_resolver_hook(monkeypatch):
     monkeypatch.setattr(
         project_runtime,
         "build_spec_from_project",
-        lambda proj, agent_key=None: SimpleNamespace(
+        lambda proj, agent_key=None, **_: SimpleNamespace(
             project_slug=None,
             model_name=None,
             model_settings=None,
@@ -311,7 +311,9 @@ def test_install_honors_product_model_resolver_hook(monkeypatch):
             sandbox_run_config=None,
         ),
     )
-    service = SimpleNamespace(spec=SimpleNamespace(project_context=object()))
+    service = SimpleNamespace(
+        spec=SimpleNamespace(project_context=SimpleNamespace(agents_map={}))
+    )
     monkeypatch.setattr(
         "omniagents.core.agents.service.current_service", lambda: service
     )

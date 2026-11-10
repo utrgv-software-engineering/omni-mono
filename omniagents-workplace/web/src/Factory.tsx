@@ -1,3 +1,12 @@
+import { AutomationRoutes } from "./AutomationRoutes";
+import { FactorySecrets } from "./FactorySecrets";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@omniagents/ui/dialog";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem } from "@omniagents/ui/dropdown-menu";
+import { factoryUrl } from "./factory-scope";
+import { FactoryStopControl } from "./FactoryStop";
+import { AllowedServicesEditor, ApprovalInbox, FactoryBlocked, FactoryGovernance, FactoryProfileForm } from "./Governance";
+import { allowedServices } from "./api";
+import { EgressSettings } from "./EgressSettings";
 // The factory, as its engineers watch it: what it is doing now, what its pull
 // requests took (cost, human touches, time to ship) and where its spend goes.
 // Costs come from the factory's own prices (pricing.yml); on a ChatGPT
@@ -47,6 +56,9 @@ const tokens = (n: number) =>
 const when = (epoch: number) => new Date(epoch * 1000).toLocaleString();
 
 const API_EQUIVALENT = "API-equivalent cost";
+
+const percent = (value: number | null | undefined) =>
+  value == null ? "–" : `${(value * 100).toFixed(value < 0.1 ? 1 : 0)}%`;
 
 function Figure({
   label,
@@ -137,7 +149,7 @@ function Runs({
                   {run.source.link ? (
                     <a
                       className="text-sky-700 hover:underline dark:text-sky-300"
-                      href={run.source.link}
+                      href={factoryUrl(run.source.link)}
                     >
                       {run.source.provider} {run.source.event}
                     </a>
@@ -649,10 +661,25 @@ function Benchmarks({
   );
 }
 
-export function FactoryApp({ navigate }: { navigate: (p: string) => void }) {
+export function FactoryApp({ navigate, onConfigure, onSettings, onModel, onSchedules }: { navigate: (p: string) => void; onConfigure?: () => void; onSettings?: () => void; onModel?: () => void; onSchedules?: () => void }) {
+  const [secretsOpen, setSecretsOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [governanceOpen, setGovernanceOpen] = useState(false);
+  const [egressOpen, setEgressOpen] = useState(false);
+  const [servicesOpen, setServicesOpen] = useState(false);
+  const [servicesManaged, setServicesManaged] = useState(true);
+  const loadServices = useCallback(
+    () =>
+      allowedServices.get().then((r) => {
+        setServicesManaged(r.managed_by_installation);
+        return r.services;
+      }),
+    [],
+  );
   const [days, setDays] = useState(7);
   const [report, setReport] = useState<FactoryReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [routingOpen, setRoutingOpen] = useState(false);
   const [benchmarking, setBenchmarking] = useState<FactoryRun | null>(null);
   const load = useCallback(
     () =>
@@ -674,7 +701,8 @@ export function FactoryApp({ navigate }: { navigate: (p: string) => void }) {
 
   const s = report?.summary;
   return (
-    <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-4 md:p-6">
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="workplace-page flex flex-col gap-6">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold">The factory</h1>
         <NativeSelect
@@ -687,8 +715,29 @@ export function FactoryApp({ navigate }: { navigate: (p: string) => void }) {
           <NativeSelectOption value="7">Last 7 days</NativeSelectOption>
           <NativeSelectOption value="30">Last 30 days</NativeSelectOption>
         </NativeSelect>
+        {onConfigure && <div className="ml-auto"><FactoryStopControl /></div>}
+        {onConfigure && <DropdownMenu><DropdownMenuTrigger asChild><Button variant="outline">Factory settings</Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuGroup>
+          {onModel && <DropdownMenuItem onSelect={onModel}>Model</DropdownMenuItem>}
+          {onModel && <DropdownMenuItem onSelect={() => setRoutingOpen(true)}>Automations</DropdownMenuItem>}
+          {onSchedules && <DropdownMenuItem onSelect={onSchedules}>Schedules</DropdownMenuItem>}
+          {onSettings && <DropdownMenuItem onSelect={onSettings}>Factory settings</DropdownMenuItem>}
+          <DropdownMenuItem onSelect={onConfigure}>Factory changes</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setProfileOpen(true)}>Data classification</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setServicesOpen(true)}>Allowed services</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setGovernanceOpen(true)}>Governance</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setEgressOpen(true)}>Egress allowlist</DropdownMenuItem>
+          {onModel && <DropdownMenuItem onSelect={() => setSecretsOpen(true)}>Secrets</DropdownMenuItem>}
+        </DropdownMenuGroup></DropdownMenuContent></DropdownMenu>}
+        <Dialog open={routingOpen} onOpenChange={setRoutingOpen}><DialogContent><DialogHeader><DialogTitle>Automations</DialogTitle><DialogDescription>Choose the agent and conversation for each workflow. Changes apply to future events.</DialogDescription></DialogHeader>{routingOpen && <AutomationRoutes />}</DialogContent></Dialog>
+        <Dialog open={profileOpen} onOpenChange={setProfileOpen}><DialogContent><DialogHeader><DialogTitle>Data classification</DialogTitle><DialogDescription>What data this factory touches, what it is for, and who owns it.</DialogDescription></DialogHeader>{profileOpen && <FactoryProfileForm onSaved={() => setProfileOpen(false)} />}</DialogContent></Dialog>
+        <Dialog open={egressOpen} onOpenChange={setEgressOpen}><DialogContent><DialogHeader><DialogTitle>Egress allowlist</DialogTitle><DialogDescription>Where this factory&apos;s runtime and sandboxes may connect, through the deployment&apos;s egress proxy.</DialogDescription></DialogHeader>{egressOpen && <EgressSettings />}</DialogContent></Dialog>
+        <Dialog open={governanceOpen} onOpenChange={setGovernanceOpen}><DialogContent className="sm:max-w-3xl"><DialogHeader><DialogTitle>Governance</DialogTitle><DialogDescription>Every governance decision about this factory, and its system card.</DialogDescription></DialogHeader>{governanceOpen && <FactoryGovernance />}</DialogContent></Dialog>
+        <Dialog open={servicesOpen} onOpenChange={setServicesOpen}><DialogContent className="sm:max-w-3xl"><DialogHeader><DialogTitle>Allowed services</DialogTitle><DialogDescription>{servicesManaged ? "Kept by the installation's administrators, for all of its factories." : "The models, integrations and MCP servers this Workplace allows."}</DialogDescription></DialogHeader>{servicesOpen && <AllowedServicesEditor load={loadServices} save={(s) => allowedServices.save(s).then((r) => r.services)} readOnly={servicesManaged} />}</DialogContent></Dialog>
+        <Dialog open={secretsOpen} onOpenChange={setSecretsOpen}><DialogContent><DialogHeader><DialogTitle>Factory secrets</DialogTitle><DialogDescription>Credentials available to this factory.</DialogDescription></DialogHeader>{secretsOpen && <FactorySecrets />}</DialogContent></Dialog>
       </div>
       {error && <p className="text-sm text-destructive">{error}</p>}
+      {onConfigure && <FactoryBlocked />}
+      {onConfigure && <ApprovalInbox />}
       {report && !report.priced && !error && (
         <p className="text-sm text-amber-700 dark:text-amber-300">
           The factory has no prices (paths.pricing in its project.yml): costs
@@ -732,6 +781,21 @@ export function FactoryApp({ navigate }: { navigate: (p: string) => void }) {
           <Figure
             label="Runs"
             value={`${s.runs}${s.running ? ` (${s.running} running)` : ""}`}
+          />
+          <Figure
+            label="Error rate"
+            value={percent(s.error_rate)}
+            hint="Runs that failed, of the runs that finished"
+          />
+          <Figure
+            label="Tool failures"
+            value={percent(s.tool_failure_rate)}
+            hint="Tool calls that failed, of all the runs' tool calls"
+          />
+          <Figure
+            label="Uptime"
+            value={percent(s.uptime)}
+            hint="How often the runtime answered Workplace's checks (a stopped factory is not counted)"
           />
         </div>
       )}
@@ -778,6 +842,7 @@ export function FactoryApp({ navigate }: { navigate: (p: string) => void }) {
           <Runs runs={report.runs} navigate={navigate} onBenchmark={setBenchmarking} />
         </section>
       )}
+      </div>
     </div>
   );
 }

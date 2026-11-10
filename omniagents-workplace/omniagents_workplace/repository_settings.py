@@ -25,6 +25,12 @@ from .credentials import decrypt, encrypt
 from .github_device import GitHubDeviceLogin
 
 KEY = "repository.settings"
+# The webhooks Workplace keeps on selected repositories when no GitHub App
+# delivers events: {"repositories": {name: hook_id}, "url": ..., "checked": epoch}.
+WEBHOOKS = "repository.github.webhooks"
+WEBHOOK_SECRET = "repository.github.webhook_secret"
+# How often hooks Workplace already made are rechecked (one may be deleted on GitHub).
+WEBHOOK_RECHECK = 3600
 CALLBACK = "/workplace/api/repositories/github/callback"
 REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
@@ -104,6 +110,21 @@ class RepositorySettings:
             "self_improvement": False,
         }
 
+    def selections(self):
+        saved = dict(self.w.store.meta("repository.selections") or {})
+        current = self.settings()
+        saved[current["provider"]] = list(current["repositories"])
+        return {provider: saved.get(provider, []) for provider in ("standin", "github")}
+
+    def activate(self, value):
+        # Preserve the outgoing provider before replacing the active settings.
+        # New GitHub authorization supplies an empty list, clearing the old identity.
+        with self.lock:
+            selections = self.selections()
+            selections[value["provider"]] = list(value["repositories"])
+            self.w.store.set_meta("repository.selections", selections)
+            self.w.store.set_meta(KEY, value)
+
     def _key(self):
         path = self.w.data_dir / "github-connection.key"
         with self.lock:
@@ -128,8 +149,8 @@ class RepositorySettings:
         if sealed:
             return json.loads(decrypt(sealed, self._key()))
         return {
-            "client_id": os.environ.get("WORKPLACE_GITHUB_CLIENT_ID", ""),
-            "client_secret": os.environ.get("WORKPLACE_GITHUB_CLIENT_SECRET", ""),
+            "client_id": self.w.environ.get("WORKPLACE_GITHUB_CLIENT_ID", ""),
+            "client_secret": self.w.environ.get("WORKPLACE_GITHUB_CLIENT_SECRET", ""),
         }
 
     def save_app(self, body):
@@ -162,6 +183,7 @@ class RepositorySettings:
         connection = self.connection()
         return {
             **self.settings(),
+            "selections": self.selections(),
             "connected_as": connection.get("login") if connection else None,
             "auth_type": connection.get("auth_type", "oauth") if connection else None,
             "oauth_configured": bool(
@@ -271,6 +293,129 @@ class RepositorySettings:
         if response.is_error:
             raise HTTPException(502, "GitHub could not complete the request.")
         return response.json()
+
+    def github_write(self, method, path, body=None):
+        """A GitHub API change (``POST``/``PATCH``/``DELETE``); ``None`` when it has no body."""
+        try:
+            response = httpx.request(
+                method,
+                "https://api.github.com" + path,
+                json=body,
+                headers={
+                    "Authorization": f"Bearer {self.token()}",
+                    "Accept": "application/vnd.github+json",
+                },
+                timeout=20,
+            )
+        except httpx.HTTPError:
+            raise HTTPException(502, "GitHub is unavailable. Try again.") from None
+        if response.status_code == 404 and method == "DELETE":
+            return None
+        if response.is_error:
+            raise HTTPException(
+                502,
+                f"GitHub refused {method} {path.split('?')[0]}: HTTP {response.status_code}",
+            )
+        return response.json() if response.content else None
+
+    def webhook_secret(self):
+        """The secret GitHub signs events with: the GitHub App's, the environment's,
+        or (when neither delivers events) the one Workplace made for its own hooks."""
+        configured = self.oauth_config().get("webhook_secret") or self.w.environ.get(
+            "WORKPLACE_GITHUB_WEBHOOK_SECRET", ""
+        )
+        if configured:
+            return configured
+        sealed = self.w.store.meta(WEBHOOK_SECRET)
+        return decrypt(sealed, self._key()) if sealed else ""
+
+    def _own_webhook_secret(self):
+        with self.lock:
+            sealed = self.w.store.meta(WEBHOOK_SECRET)
+            if sealed:
+                return decrypt(sealed, self._key())
+            value = secrets.token_hex(32)
+            self.w.store.set_meta(WEBHOOK_SECRET, encrypt(value, self._key()))
+            return value
+
+    def sync_webhooks(self, now=None):
+        """Keep one Workplace webhook on each selected real repository, and none on
+        others. Only hooks at exactly Workplace's event URL are touched; a GitHub App
+        or environment secret means GitHub already delivers, so none are made."""
+        now = time.time() if now is None else now
+        settings = self.settings()
+        url = self.w.base_url.rstrip("/") + "/github/events"
+        recorded = dict(self.w.store.meta(WEBHOOKS) or {})
+        hooks = dict(recorded.get("repositories") or {})
+        delivered = bool(
+            self.oauth_config().get("webhook_secret")
+            or self.w.environ.get("WORKPLACE_GITHUB_WEBHOOK_SECRET")
+        )
+        wanted = (
+            set(settings["repositories"])
+            if settings["provider"] == "github" and not delivered
+            else set()
+        )
+        recheck = (
+            recorded.get("url") != url
+            or now - recorded.get("checked", 0) >= WEBHOOK_RECHECK
+        )
+        if set(hooks) == wanted and not recheck:
+            return
+        if wanted or hooks:
+            try:
+                self.token()
+            except HTTPException:
+                return  # No connection: nothing can be made or removed now.
+        for repo in sorted(set(hooks) - wanted):
+            for hook in self._hooks_at(repo, recorded.get("url") or url):
+                self.github_write("DELETE", f"/repos/{repo}/hooks/{hook['id']}")
+            hooks.pop(repo)
+        if wanted:
+            config = {
+                "url": url,
+                "content_type": "json",
+                "secret": self._own_webhook_secret(),
+                "insecure_ssl": "0",
+            }
+            for repo in sorted(wanted):
+                if repo in hooks and not recheck:
+                    continue
+                existing = self._hooks_at(repo, url)
+                if existing:
+                    # Its secret cannot be read back; set ours so signatures verify.
+                    hook = self.github_write(
+                        "PATCH",
+                        f"/repos/{repo}/hooks/{existing[0]['id']}",
+                        {"config": config, "events": ["*"], "active": True},
+                    )
+                else:
+                    hook = self.github_write(
+                        "POST",
+                        f"/repos/{repo}/hooks",
+                        {
+                            "name": "web",
+                            "config": config,
+                            "events": ["*"],
+                            "active": True,
+                        },
+                    )
+                hooks[repo] = hook["id"]
+        self.w.store.set_meta(
+            WEBHOOKS,
+            {
+                "repositories": hooks,
+                "url": url,
+                "checked": now if recheck else recorded.get("checked", now),
+            },
+        )
+
+    def _hooks_at(self, repo, url):
+        return [
+            hook
+            for hook in self.github(f"/repos/{repo}/hooks?per_page=100")
+            if (hook.get("config") or {}).get("url") == url
+        ]
 
     def search_owners(self):
         # Organization names are small; never enumerate their repositories to search.
@@ -423,7 +568,7 @@ class RepositorySettings:
             raise HTTPException(
                 422, "Link a factory repository before enabling self-improvement."
             )
-        self.w.store.set_meta(KEY, settings)
+        self.activate(settings)
         self.write_environment()
         return self.public()
 
@@ -454,8 +599,7 @@ class RepositorySettings:
                 GITHUB_MCP_TOKEN=token,
                 GITHUB_GIT_URL="",
                 GITHUB_ACCOUNT=connection.get("login", ""),
-                GITHUB_WEBHOOK_SECRET=self.oauth_config().get("webhook_secret")
-                or os.environ.get("WORKPLACE_GITHUB_WEBHOOK_SECRET", ""),
+                GITHUB_WEBHOOK_SECRET=self.webhook_secret(),
             )
         else:
             env["GITHUB_ACCOUNT"] = ""  # Clear a previous real identity on switch back.
@@ -506,6 +650,8 @@ class RepositorySettings:
                 with self.lock:
                     self.device.expire()
                 await asyncio.to_thread(self.policy)
+                # Before the environment: the runtime verifies with the secret it makes.
+                await asyncio.to_thread(self.sync_webhooks)
                 await asyncio.to_thread(self.write_environment)
             except Exception:
                 # No tokens or response bodies in logs. Policy readers fail closed.
@@ -546,7 +692,15 @@ def repository_router(w):
         value = settings.settings()
         return {
             "provider": value["provider"],
-            "repositories": value["repositories"] if account.admin else [],
+            "repositories": (
+                (
+                    value["repositories"]
+                    if value["provider"] == "standin" or account.admin
+                    else []
+                )
+                if w.store.meta(KEY) is not None or w.factory_config
+                else list(w.github.repos)
+            ),
         }
 
     def device_owner(request):
@@ -588,8 +742,7 @@ def repository_router(w):
                     }
                 )
                 w.store.set_meta("repository.github.oauth", None)
-                w.store.set_meta(
-                    KEY,
+                settings.activate(
                     {
                         "provider": "github",
                         "repositories": [],
@@ -631,8 +784,7 @@ def repository_router(w):
                 }
             )
             w.store.set_meta("repository.github.oauth", None)
-            w.store.set_meta(
-                KEY,
+            settings.activate(
                 {
                     "provider": "github",
                     "repositories": [],
@@ -701,7 +853,9 @@ def repository_router(w):
                 )
             w.store.set_meta("repository.github.oauth", None)
         if not code:
-            return RedirectResponse("/github?connection=declined", status_code=303)
+            return RedirectResponse(
+                w.base_url.rstrip("/") + "/github?connection=declined", status_code=303
+            )
         tokens = settings.exchange(
             {
                 "code": code,
@@ -714,8 +868,7 @@ def repository_router(w):
             {**tokens, "login": user["login"], "account_id": account.id}
         )
         # A new identity never inherits another connection's selected repositories or opt-in.
-        w.store.set_meta(
-            KEY,
+        settings.activate(
             {
                 "provider": "github",
                 "repositories": [],
@@ -724,7 +877,9 @@ def repository_router(w):
             },
         )
         settings.write_environment()
-        return RedirectResponse("/github?connection=connected", status_code=303)
+        return RedirectResponse(
+            w.base_url.rstrip("/") + "/github?connection=connected", status_code=303
+        )
 
     @router.put("/workplace/api/repositories/github/app")
     def save_app(body: GitHubAppBody, request: Request):
@@ -734,9 +889,7 @@ def repository_router(w):
     @router.post("/github/events")
     async def events(request: Request):
         value = settings.settings()
-        secret = settings.oauth_config().get("webhook_secret") or os.environ.get(
-            "WORKPLACE_GITHUB_WEBHOOK_SECRET", ""
-        )
+        secret = settings.webhook_secret()
         body = await request.body()
         signature = (
             "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
@@ -757,33 +910,21 @@ def repository_router(w):
             return {"ok": True}
         if payload.get("repository", {}).get("full_name") not in value["repositories"]:
             return {"ignored": True}
-        factory = w.factory_config.load().get("factory", {}) if w.factory_config else {}
-        if not factory.get("url"):
-            raise HTTPException(503, "Factory runtime is not configured")
-        async with httpx.AsyncClient(timeout=15) as client:
-            try:
-                response = await client.post(
-                    factory["url"].rstrip("/") + "/integrations/github/events",
-                    content=body,
-                    headers={
-                        k: request.headers[k]
-                        for k in (
-                            "x-hub-signature-256",
-                            "x-github-event",
-                            "x-github-delivery",
-                        )
-                        if k in request.headers
-                    },
-                )
-            except httpx.HTTPError:
-                raise HTTPException(
-                    503, "Factory runtime is unavailable; retry this delivery"
-                ) from None
-        if response.is_error:
-            raise HTTPException(
-                503,
-                "Factory runtime has not accepted this delivery; retry it after settings reload",
-            )
+        if request.headers.get("x-github-event") == "pull_request" and hasattr(
+            w, "preview_changed"
+        ):
+            w.preview_changed()
+        if not w.event_gateway.enabled():
+            raise HTTPException(503, "Factory event gateway is not configured")
+        if len(body) > 2 * 1024 * 1024:
+            raise HTTPException(413, "Event exceeds 2 MiB")
+        w.event_gateway.enqueue(
+            "real-github",
+            "github",
+            request.headers.get("x-github-delivery", ""),
+            body,
+            dict(request.headers),
+        )
         return {"ok": True}
 
     @router.delete("/workplace/api/repositories/github/connection")

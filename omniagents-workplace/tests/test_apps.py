@@ -4,6 +4,7 @@ import subprocess
 import sys
 
 import httpx
+import httpx2
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
@@ -20,14 +21,14 @@ async def _who(base_url, service, token):
     headers = {"Authorization": f"Bearer {token}"}
     if service == "github":
         headers["X-MCP-Toolsets"] = "default"
-    http = httpx.AsyncClient(headers=headers)
+    http = httpx2.AsyncClient(headers=headers)
     async with http, streamable_http_client(
         f"{base_url}/{service}/mcp", http_client=http
-    ) as (read, write, _):
+    ) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
             result = await session.call_tool(tool, args)
-            assert not result.isError, result.content[0].text
+            assert not result.is_error, result.content[0].text
             return result.content[0].text
 
 

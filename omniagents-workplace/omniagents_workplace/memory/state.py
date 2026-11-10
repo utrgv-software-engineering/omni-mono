@@ -178,8 +178,25 @@ class MemoryState:
         }
 
     def search(self, principal, query="", stores=None, limit=20, kind=None):
-        selected = self._selected(principal, stores)
         limit = max(1, min(int(limit), 100))
+        return self._search_items(principal, query, stores, kind)[:limit]
+
+    def page(self, principal, store, query="", offset=0, limit=10):
+        items = self._search_items(principal, query, [store])
+        limit = max(1, min(int(limit), 50))
+        total = len(items)
+        offset = min(
+            max(0, int(offset)), ((total - 1) // limit) * limit if total else 0
+        )
+        return {
+            "items": items[offset : offset + limit],
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+        }
+
+    def _search_items(self, principal, query="", stores=None, kind=None):
+        selected = self._selected(principal, stores)
         terms = re.findall(r"\w+", query, flags=re.UNICODE)[:64]
         with self.store._lock:
             ranks = (
@@ -203,7 +220,7 @@ class MemoryState:
         items.sort(
             key=lambda m: ((ranks or {}).get(m["id"], 0), -m["updated_at"], m["id"])
         )
-        return items[:limit]
+        return items
 
     def core(self, principal, stores=None):
         selected = self._selected(principal, stores)

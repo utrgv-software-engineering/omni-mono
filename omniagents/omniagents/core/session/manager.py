@@ -58,6 +58,7 @@ class QueuedItem:
     state: str = "pending"
     error: str | None = None
     worker_reports: list[dict] = field(default_factory=list)
+    notifications: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         """JSON-safe wire shape for ``list_queue`` and ``queue_changed``."""
@@ -72,6 +73,7 @@ class QueuedItem:
             "enqueued_at": self.enqueued_at,
             "state": self.state,
             "error": self.error,
+            **({"notifications": self.notifications} if self.notifications else {}),
             **({"worker_reports": self.worker_reports} if self.worker_reports else {}),
         }
 
@@ -1198,7 +1200,7 @@ class Session:  # noqa: D101
         chat_tool_call_ids_seen: set[str] = set()
         chat_tool_outputs_seen: set[str] = set()
 
-        for item in (self.history if self._sdk_history is None else self._sdk_history):
+        for item in self.history if self._sdk_history is None else self._sdk_history:
             if not isinstance(item, dict):
                 continue
 

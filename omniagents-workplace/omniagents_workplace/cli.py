@@ -162,25 +162,35 @@ def _serve_options(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--workflows",
-        choices=("host", "docker", "off"),
+        choices=("host", "docker", "quicksand", "off"),
         default="host",
-        help="Where repositories' workflows run: on this machine as this user (host, for your own "
-        "computer), in a container per job (docker, for a workplace others push to), or not at all "
+        help="Where act executes workflows: a private Docker controller (docker; host is a legacy alias), "
+        "a QuickSand VM (quicksand), or not at all "
         "(default: %(default)s)",
     )
     parser.add_argument(
+        "--workflow-quicksand-image",
+        type=Path,
+        help="Prepared clean QuickSand runner save directory",
+    )
+    parser.add_argument(
+        "--workflow-agent-profile",
+        type=Path,
+        help="Admin-selected QuickSand tool profile for trusted host agent-runtime jobs",
+    )
+    parser.add_argument(
         "--workflow-image",
-        help="The image a job's container starts from (with --workflows docker)",
+        help="Registry image act uses for Ubuntu job containers (with --workflows docker)",
     )
     parser.add_argument(
         "--workflow-network",
         default="bridge",
-        help="The Docker network jobs' containers are on (default: %(default)s)",
+        help="Legacy option; act controllers use an isolated Docker network per run",
     )
     parser.add_argument(
         "--workflow-memory",
         default="2g",
-        help="A job container's memory (default: %(default)s)",
+        help="Private workflow controller memory (default: %(default)s)",
     )
     parser.add_argument(
         "--workflow-cpus",
@@ -297,6 +307,27 @@ def repoint_webhooks(data: Path, to: str) -> List[str]:
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(prog="omniagents-workplace")
     sub = parser.add_subparsers(dest="command", required=True)
+    manage = sub.add_parser(
+        "manage", help="Host isolated factories with shared sign-in"
+    )
+    _environment(manage)
+    manage.add_argument(
+        "--data", type=Path, default=default_data_dir() / "installation"
+    )
+    manage.add_argument("--host", default="127.0.0.1")
+    manage.add_argument("--port", type=int, default=7300)
+    manage.add_argument("--public-url")
+    manage.add_argument("--sandbox-url", default="http://10.0.2.101:7300")
+    manage.add_argument("--workflow-quicksand-image", type=Path)
+    manage.add_argument("--internal-url")
+    manage.add_argument("--sandbox-port", type=int)
+    manage.add_argument("--proxy-ips", default="127.0.0.1")
+    manage.add_argument("--docker-image")
+    manage.add_argument("--docker-network")
+    manage.add_argument("--docker-host-data")
+    manage.add_argument("--workflow-image")
+    manage.add_argument("--template", type=Path)
+    manage.add_argument("--deployment-backend", choices=["docker", "quicksand"])
     serve = sub.add_parser("serve", help="Run the workplace and its UI")
     _serve_options(serve)
     up = sub.add_parser(
@@ -323,10 +354,54 @@ def main(argv=None) -> None:
     )
     backup.add_argument("--to", type=Path, required=True, help="Where backups go")
     backup.add_argument(
+        "--include",
+        action="append",
+        default=[],
+        metavar="NAME=PATH",
+        help="Include an additional runtime/config directory; SQLite databases are snapshotted consistently",
+    )
+    backup.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        help="Exclude an additional-directory path/glob, e.g. factory-home/quicksand; never excludes Workplace data",
+    )
+    backup.add_argument(
         "--keep",
         type=int,
         default=14,
         help="How many backups to keep (default: %(default)s)",
+    )
+    backup.add_argument(
+        "--without-keys",
+        action="store_true",
+        help="Leave the encryption keys out (always, under WORKPLACE_POLICY=strict); escrow them with `keys export`",
+    )
+    backup.add_argument(
+        "--skip-confidential",
+        action="store_true",
+        help="Leave out Confidential factories' Shared uploads and sandbox disks (always, under WORKPLACE_POLICY=strict)",
+    )
+    backup.add_argument(
+        "--upload",
+        metavar="CONTAINER_SAS_URL",
+        help="Upload the backup to an Azure Blob Storage container",
+    )
+    backup.add_argument(
+        "--upload-only",
+        action="store_true",
+        help="Remove the local copy once it is uploaded",
+    )
+    keys = sub.add_parser("keys", help="Escrow a workplace's encryption keys")
+    keys.add_argument("action", choices=("export",))
+    keys.add_argument("--data", type=Path, default=default_data_dir())
+    keys.add_argument("--to", type=Path, required=True, help="An empty directory")
+    keys.add_argument(
+        "--include",
+        action="append",
+        default=[],
+        metavar="NAME=PATH",
+        help="Escrow keys from an additional directory using the same name as backup --include",
     )
     restore = sub.add_parser(
         "restore",
@@ -344,6 +419,29 @@ def main(argv=None) -> None:
         type=Path,
         required=True,
         help="A backup, or a directory of them (the latest is restored)",
+    )
+    restore.add_argument(
+        "--mode",
+        choices=("staging", "production"),
+        default="staging",
+        help="Production preserves integration identities; staging disconnects GitHub (default)",
+    )
+    restore.add_argument(
+        "--restore-include",
+        action="append",
+        default=[],
+        metavar="NAME=EMPTY_PATH",
+        help="Restore an additional runtime/config directory into an empty destination",
+    )
+    restore.add_argument(
+        "--keys",
+        type=Path,
+        help="Escrowed encryption keys (from `keys export`) to put back, for a production restore",
+    )
+    restore.add_argument(
+        "--confirm-production-stopped",
+        action="store_true",
+        help="Confirm the original production installation and its workers are stopped",
     )
     creds = sub.add_parser(
         "credentials",
@@ -400,7 +498,75 @@ def main(argv=None) -> None:
         help="The workplace's data directory",
     )
     env.add_argument("--app", help="The app's username (default: the only one)")
+    egress = sub.add_parser(
+        "egress-proxy",
+        help="Run the egress proxy: the only way out for what factories run",
+    )
+    egress.add_argument(
+        "--config",
+        type=Path,
+        required=True,
+        help="The JSON configuration Workplace writes",
+    )
+    egress.add_argument(
+        "--denials", type=Path, help="Where denials are appended (JSONL) for Workplace"
+    )
+    egress.add_argument("--host", default="0.0.0.0")
+    egress.add_argument("--port", type=int, default=3128)
     args = parser.parse_args(argv)
+
+    if args.command == "egress-proxy":
+        import asyncio
+
+        from .egress_proxy import EgressProxy
+
+        logging.basicConfig(level=logging.INFO, format="%(message)s")
+        asyncio.run(EgressProxy(args.config, args.denials).serve(args.host, args.port))
+        return
+
+    if args.command == "manage":
+        import uvicorn
+        from .installation import Installation
+        from .installation_server import create_installation_app
+
+        installation = Installation(
+            args.data,
+            base_url=args.public_url or f"http://{args.host}:{args.port}",
+            internal_url=args.internal_url or f"http://127.0.0.1:{args.port}",
+            sandbox_url=args.sandbox_url,
+            environment=args.environment,
+            runner_image=args.workflow_quicksand_image,
+            docker_image=args.docker_image,
+            docker_network=args.docker_network,
+            docker_host_data=args.docker_host_data,
+            workflow_image=args.workflow_image,
+            template=args.template,
+            sandbox_port=args.sandbox_port,
+            deployment_backend=args.deployment_backend,
+        )
+        if installation.accounts.needs_setup():
+            print(
+                f"Set up factories: {installation.base_url}/setup/{installation.setup_token}",
+                flush=True,
+            )
+        bridge = (
+            docker_bridge_gateway()
+            if args.deployment_backend == "docker" and args.host == "127.0.0.1"
+            else None
+        )
+        sockets = _sockets(args.host, args.port, bridge)
+        if args.sandbox_port:
+            sockets += _sockets(args.host, args.sandbox_port, None)
+        uvicorn.Server(
+            uvicorn.Config(
+                create_installation_app(installation),
+                host=args.host,
+                port=args.port,
+                proxy_headers=True,
+                forwarded_allow_ips=args.proxy_ips,
+            )
+        ).run(sockets=sockets)
+        return
 
     if args.command == "env":
         print_env(args.data, args.app)
@@ -446,12 +612,63 @@ def main(argv=None) -> None:
     if args.command == "restore":
         from .backup import restore as restore_backup
 
-        print(f"Restored {restore_backup(args.source, args.data)} into {args.data}")
+        if args.mode == "production" and not args.confirm_production_stopped:
+            parser.error("Production restore requires --confirm-production-stopped")
+        included = {}
+        for entry in args.restore_include:
+            name, sep, path = entry.partition("=")
+            if not sep or name in included:
+                parser.error("Each --restore-include needs a unique NAME=EMPTY_PATH")
+            included[name] = Path(path)
+        print(
+            f"Restored {restore_backup(args.source, args.data, mode=args.mode, include=included, keys=args.keys)} into {args.data}"
+        )
         return
     if args.command == "backup":
         from .backup import backup as make_backup
 
-        print(make_backup(args.data, args.to, keep=args.keep))
+        included = {}
+        for entry in args.include:
+            name, sep, path = entry.partition("=")
+            if not sep or name in included:
+                parser.error("Each --include needs a unique NAME=PATH")
+            included[name] = Path(path)
+        from .policy import Policy
+
+        strict = Policy().strict
+        made = make_backup(
+            args.data,
+            args.to,
+            keep=args.keep,
+            include=included,
+            exclude=tuple(args.exclude),
+            keys=not (args.without_keys or strict),
+            confidential=args.skip_confidential or strict,
+        )
+        print(made)
+        if args.upload:
+            import shutil as _shutil
+
+            from .backup import upload
+
+            print(f"Uploaded {upload(made, args.upload)} bytes")
+            if args.upload_only:
+                _shutil.rmtree(made)
+        return
+
+    if args.command == "keys":
+        from .backup import export_keys
+
+        if args.to.exists() and any(args.to.iterdir()):
+            parser.error("--to must be an empty directory")
+        included = {}
+        for entry in args.include:
+            name, separator, path = entry.partition("=")
+            if not separator or not path or name in included:
+                parser.error("Each --include needs a unique NAME=PATH")
+            included[name] = Path(path)
+        for key in export_keys(args.data, args.to, include=included):
+            print(key)
         return
 
     import sys
@@ -469,7 +686,7 @@ def main(argv=None) -> None:
         refused = []
         if args.workflows == "host":
             refused.append(
-                "--workflows host runs other people's workflows as this user: use docker (or off)"
+                "--workflows host is a development alias: select docker, quicksand or off explicitly"
             )
         if "*" in args.proxy_ips:
             refused.append("--proxy-ips must name specific trusted proxies, not *")
@@ -507,6 +724,25 @@ def main(argv=None) -> None:
             memory=args.workflow_memory,
             cpus=args.workflow_cpus,
         )
+    quicksand = None
+    if args.workflows == "quicksand":
+        from .github.quicksand_space import QuicksandSettings
+        from quicksand import Sandbox
+
+        if not args.workflow_quicksand_image:
+            sys.exit("--workflows quicksand requires --workflow-quicksand-image")
+        Sandbox.validate_save(args.workflow_quicksand_image)
+        quicksand = QuicksandSettings(
+            str(args.workflow_quicksand_image.resolve()),
+            args.workflow_memory.upper(),
+            int(args.workflow_cpus),
+        )
+    if args.workflow_agent_profile:
+        import yaml
+
+        selected = yaml.safe_load(args.workflow_agent_profile.read_text()) or {}
+        if (selected.get("client") or {}).get("type") != "quicksand":
+            sys.exit("--workflow-agent-profile must select QuickSand")
     self_hosted = None
     if args.self_hosted_image:
         from .github.spaces import ContainerSettings
@@ -542,13 +778,19 @@ def main(argv=None) -> None:
         sandbox_url=args.sandbox_url,
         run_workflows=args.workflows != "off",
         workflow_container=container,
+        workflow_quicksand=quicksand,
+        workflow_agent_profile=(
+            args.workflow_agent_profile.resolve()
+            if args.workflow_agent_profile
+            else None
+        ),
         self_hosted_runner=self_hosted,
         internal_url=args.internal_url,
         environment=args.environment,
     )
     print(f"Environment: {args.environment}")
     print(
-        f"Workflows: {dict(host='on this machine', docker=f'in containers of {args.workflow_image}', off='off')[args.workflows]}"
+        f"Workflows: {dict(host='act in a private Docker controller', docker=f'act with job image {args.workflow_image}', quicksand='act in QuickSand VMs', off='off')[args.workflows]}"
     )
     if self_hosted is not None:
         print(

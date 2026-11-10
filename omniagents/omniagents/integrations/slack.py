@@ -293,12 +293,12 @@ class SlackSocketMode:
             )
             return False
         envelope_id = message.get("envelope_id")
-        if envelope_id:
-            # Acknowledge first: Slack redelivers what is not acknowledged
-            # within 3 seconds, whatever the work it starts.
-            await socket.send(json.dumps({"envelope_id": envelope_id}))
         if kind == "events_api":
             event = normalize_slack_event(message.get("payload") or {})
             if event is not None:
                 await self._accept(await self.names.named(event))
+        # An acknowledgment means the intake accepted it durably. On failure,
+        # leave it unacknowledged so the provider can redeliver.
+        if envelope_id:
+            await socket.send(json.dumps({"envelope_id": envelope_id}))
         return True

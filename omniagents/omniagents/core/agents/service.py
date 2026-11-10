@@ -83,7 +83,7 @@ from omniagents.workspace.host import HostWorkspace
 from omniagents.core.providers.accounts import AccountManager
 from omniagents.core.providers.auth.base import UserIdentity
 from omniagents.core.conversation import service as _conversation_service_module
-from omniagents.core.conversation.model import UNSCOPED, ThreadFilter
+from omniagents.core.conversation.model import UNSCOPED, ThreadFilter, encode_cursor
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.agents.approval import configure_tool_approval
 from omniagents.core.session import Session, SessionManager
@@ -92,6 +92,7 @@ from omniagents.core.session.event_log import (
     stamp_session_event,
 )
 from omniagents.core.session.manager import QueuedItem
+from omniagents.core.runtime.release_gate import admission
 from omniagents.core.runtime.bridge import stream_agent
 from omniagents.core.agents.builder import _default_build_agent
 from omniagents.core.agents.mcp import (
@@ -1597,13 +1598,22 @@ class AgentService(RpcMethodsBase):
             ):
                 _use_safe = True
                 _skip_approvals = False
-            if _use_safe:
+            # Tools a person must approve (security.human_approval_tools): gated
+            # even when nothing else is.
+            session.human_approval_tools = list(
+                (build_spec.security_config or {}).get("human_approval_tools") or []
+            )
+            if _use_safe or session.human_approval_tools:
                 configure_tool_approval(
                     agent,
                     session=session,
-                    safe_tool_names=opts.safe_tool_names if opts else None,
-                    safe_tool_patterns=opts.safe_tool_patterns if opts else None,
-                    skip_approvals=_skip_approvals,
+                    safe_tool_names=(
+                        opts.safe_tool_names if opts and _use_safe else None
+                    ),
+                    safe_tool_patterns=(
+                        opts.safe_tool_patterns if opts and _use_safe else None
+                    ),
+                    skip_approvals=_skip_approvals if _use_safe else True,
                 )
 
             # (the last agent built: what an out-of-band tool call's guardrails
@@ -2357,7 +2367,7 @@ class AgentService(RpcMethodsBase):
         for res in resources_attr:
             if hasattr(res, "model_dump"):
                 try:
-                    out.append(res.model_dump(mode="json"))
+                    out.append(res.model_dump(mode="json", by_alias=True))
                     continue
                 except Exception:
                     pass
@@ -2401,7 +2411,11 @@ class AgentService(RpcMethodsBase):
         for content in contents_attr:
             if hasattr(content, "model_dump"):
                 try:
-                    out.append(content.model_dump(mode="json", exclude_none=True))
+                    out.append(
+                        content.model_dump(
+                            mode="json", by_alias=True, exclude_none=True
+                        )
+                    )
                     continue
                 except Exception:
                     pass
@@ -2881,6 +2895,20 @@ class AgentService(RpcMethodsBase):
             Message returned to the model in place of the tool result when
             the user rejects.
         """
+        return await self._answer_tool_approval(
+            call_id, decision, always_approve, rejection_message
+        )
+
+    async def _answer_tool_approval(
+        self,
+        call_id: str,
+        decision: str,
+        always_approve: bool = False,
+        rejection_message: str | None = None,
+        approver: str | None = None,
+    ) -> bool:
+        """``tool_approval_response``, with who decided (the factory's approval
+        inbox), recorded in the audit."""
         _debug_rpc(
             "tool_approval_response",
             {
@@ -2899,6 +2927,7 @@ class AgentService(RpcMethodsBase):
                     bool(always_approve) if decision == "approve" else False
                 ),
                 "rejection_message": rejection_message,
+                "approver": approver,
             },
         )
         if claim is None:
@@ -2907,8 +2936,19 @@ class AgentService(RpcMethodsBase):
         if not claimed:
             return True
 
+        from omniagents.core.agents.human_approval import (
+            requires_person,
+            session_entries,
+        )
+
+        tool_ref = getattr(sess, "_pending_approval_tool_names", {}).get(call_id)
+        if requires_person(
+            session_entries(sess),
+            tool_ref if isinstance(tool_ref, str) else None,
+            tool_ref if isinstance(tool_ref, tuple) else None,
+        ):
+            always_approve = False  # a person approves each call
         if decision == "approve" and always_approve:
-            tool_ref = getattr(sess, "_pending_approval_tool_names", {}).get(call_id)
             if isinstance(tool_ref, tuple):
                 # MCP-derived tool: grant is keyed by (server, tool) so a
                 # same-named tool on a different server still prompts.
@@ -3207,7 +3247,17 @@ class AgentService(RpcMethodsBase):
             ApprovalRoute,
             resolve_approval_route,
         )
+        from omniagents.core.agents.human_approval import (
+            requires_person,
+            session_entries,
+        )
 
+        from omniagents.core.agents.mcp_identity import lookup_identity
+
+        if requires_person(
+            session_entries(session), tool_name, lookup_identity(session, tool_name)
+        ):
+            return None  # a person's: never the guardian or the sandbox tier
         route, environment = await resolve_approval_route(self, session)
         if route is ApprovalRoute.HUMAN:
             return None
@@ -3414,6 +3464,14 @@ class AgentService(RpcMethodsBase):
         mcp_identity = lookup_identity(session, tool_name)
         if mcp_identity is not None:
             payload["server_label"], payload["tool_label"] = mcp_identity
+        from omniagents.core.agents.human_approval import (
+            requires_person,
+            session_entries,
+        )
+
+        payload["requires_person"] = requires_person(
+            session_entries(session), tool_name, mcp_identity
+        )
 
         resolved = await self._resolve_approval_without_client(
             session=session,
@@ -3496,6 +3554,8 @@ class AgentService(RpcMethodsBase):
             decision = response.get("decision")
             event_type = "tool_approved" if decision == "approve" else "tool_rejected"
             details: dict[str, Any] = {"tool": tool_name}
+            if response.get("approver"):
+                details["approver"] = response["approver"]
             if decision != "approve" and response.get("rejection_message"):
                 details["reason"] = response["rejection_message"]
             await self.emit_runtime_hook(
@@ -4026,6 +4086,7 @@ class AgentService(RpcMethodsBase):
                     },
                 )
 
+    @admission
     async def start_run(
         self,
         prompt: str,
@@ -4734,11 +4795,16 @@ class AgentService(RpcMethodsBase):
 
                 memory_config = getattr(self.spec, "memory_config", None)
                 if memory_config:
-                    from omniagents.core.memory.extract import schedule
+                    from omniagents.core.memory.extract import (
+                        conversation_triggers,
+                        schedule,
+                    )
 
                     extraction = memory_config.get("extraction") or {}
-                    triggers = extraction.get("triggers", [])
-                    if "idle" in triggers or "daily" in triggers:
+                    triggers = conversation_triggers(
+                        memory_config, getattr(sess, "_run_source", None)
+                    )
+                    if triggers:
                         try:
                             history = await self.get_session_history(sess.id)
                             source = {
@@ -4872,6 +4938,17 @@ class AgentService(RpcMethodsBase):
         # What the prompt carried besides text (image thumbnails, file
         # names), so the transcript shows what was sent.
         attachments = describe_attachments(content)
+        # Keep notification provenance out of model input, but preserve it in
+        # both the live run event and its canonical prompt item.
+        from omniagents.core.session import queue_inbox
+
+        notifications = []
+        dispatch = queue_inbox.current_dispatch.get()
+        if dispatch and dispatch[0] == sess.id:
+            for entry in queue_inbox.entries(self._queue_store(sess), sess.id):
+                if entry["item"]["id"] == dispatch[1]:
+                    notifications = entry["item"].get("notifications", [])
+                    break
         await self._broadcast_session(
             sess,
             "run_started",
@@ -4880,6 +4957,7 @@ class AgentService(RpcMethodsBase):
                 "session_id": sess.id,
                 "prompt": prompt,
                 "prompt_role": prompt_role,
+                **({"notifications": notifications} if notifications else {}),
                 **({"attachments": attachments} if attachments else {}),
             },
             track_live=True,
@@ -6840,6 +6918,7 @@ class AgentService(RpcMethodsBase):
     #  serializes cleanly against user-initiated runs.
     # ------------------------------------------------------------------
 
+    @admission
     async def enqueue_message(
         self,
         session_id: str,
@@ -7083,8 +7162,15 @@ class AgentService(RpcMethodsBase):
         session_id: str,
         include_snapshot: bool = False,
         submission_id: str | None = None,
+        snapshot_limit: int | None = None,
     ) -> dict:  # noqa: D401
-        """Return the queue/run state for a session."""
+        """Return the queue/run state for a session.
+
+        ``snapshot_limit`` keeps the snapshot to the newest items; its
+        ``earlier_cursor`` then pages back with ``list_items(order="desc")``.
+        """
+        if snapshot_limit is not None and snapshot_limit < 1:
+            raise ValueError("snapshot_limit must be positive")
         sess = self._session_manager.get_or_create(
             session_id, user_id=self._current_user_id()
         )
@@ -7110,7 +7196,9 @@ class AgentService(RpcMethodsBase):
             # A conversation with no thread yet reads as empty; reading it
             # does not create it.
             self._existing_queue_store(sess)
-            stored = self._conversation_service().store.read_snapshot(sess.id)
+            stored = self._conversation_service().store.read_snapshot(
+                sess.id, limit=snapshot_limit
+            )
             items = [item.to_dict() for item in stored["items"]]
             queue = snapshot_queue(stored["inbox"], sess)
             result["depth"] = len(queue)
@@ -7125,6 +7213,11 @@ class AgentService(RpcMethodsBase):
                     "state_events": snapshot_state_events(sess),
                     "stream_id": sess.event_log.stream_id,
                     "last_seq": sess.event_log.last_seq,
+                    "earlier_cursor": (
+                        encode_cursor({"seq": stored["before_seq"]})
+                        if stored.get("before_seq") is not None
+                        else None
+                    ),
                 }
             )
         if submission_id is not None:
@@ -7267,6 +7360,9 @@ class AgentService(RpcMethodsBase):
                 dispatch_token = queue_inbox.current_dispatch.set(
                     (sess.id, item.id, sess.queue_owner)
                 )
+                # Whoever queued it (a person's chat, an automation) for the
+                # run's end-of-turn work, such as which memory extraction runs.
+                sess._run_source = item.source
                 try:
                     # Worker lifecycle admission wraps the same serialized queue.
                     dispatch = getattr(self, "_worker_queue_dispatch", self.start_run)
@@ -7283,11 +7379,14 @@ class AgentService(RpcMethodsBase):
                 finally:
                     queue_inbox.current_dispatch.reset(dispatch_token)
                 await _wait_for_current_task()
+                sess._run_source = None
                 queue_inbox.finish(store, sess.id, item.id, sess.queue_owner)
                 self._refresh_queue(sess)
             except asyncio.CancelledError:
+                sess._run_source = None
                 raise
             except Exception as exc:
+                sess._run_source = None
                 logger.exception(
                     "drain failed",
                     extra={"session": sess.id, "source": item.source},
@@ -7391,6 +7490,14 @@ class AgentService(RpcMethodsBase):
         def make_item(items):
             return QueuedItem(
                 content=self._format_notification_batch(items),
+                notifications=[
+                    {
+                        key: item[key]
+                        for key in ("source", "content", "worker")
+                        if key in item
+                    }
+                    for item in items
+                ],
                 role="assistant",
                 source="notifications:batch",
                 safe_tool_overrides=self._merge_notification_safe_tool_overrides(items),
@@ -7723,6 +7830,15 @@ class AgentService(RpcMethodsBase):
         if held:
             raise _conversation_service_module.ThreadOnLegalHold(session_id, held)
 
+        # The sessions of the workers each conversation started: their own
+        # histories, kept by id in the conversation's worker journal.
+        workers = [
+            worker
+            for owner in [*descendant_ids, session_id]
+            for worker in self._worker_session_ids(owner)
+        ]
+        for worker in workers:
+            await self._delete_one_session(worker)
         # Deepest first, so a parent is never removed before a child that
         # still points at it — an interrupted cascade then leaves a shorter
         # valid chain rather than a broken one.
@@ -7766,6 +7882,27 @@ class AgentService(RpcMethodsBase):
             if on_hold:
                 held.append(session_id)
         return held
+
+    def _worker_session_ids(self, session_id: str) -> list[str]:
+        """The sessions of the workers ``session_id`` started (its journal)."""
+        try:
+            from omniagents.core.conversation.store import get_conversation_store
+
+            store = get_conversation_store(
+                getattr(self._session_manager, "_project_slug", None),
+                getattr(self._session_manager, "_agent_slug", None),
+            )
+            state = store.read_queue(session_id)
+        except Exception:  # noqa: BLE001 - no journal: no workers to delete
+            return []
+        workers = ((state or {}).get("worker_recovery") or {}).get("workers") or {}
+        return [
+            str(w["session_id"])
+            for w in workers.values()
+            if isinstance(w, dict)
+            and w.get("session_id")
+            and w["session_id"] != session_id
+        ]
 
     async def _delete_one_session(self, session_id: str) -> bool:
         """Delete exactly one session from every store that holds it."""

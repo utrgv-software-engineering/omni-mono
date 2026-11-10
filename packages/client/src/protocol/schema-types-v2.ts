@@ -488,6 +488,7 @@ export interface SetSessionHold {
 export interface QueueStatus {
   include_snapshot?: boolean;
   session_id: string;
+  snapshot_limit?: number;
   submission_id?: string;
 }
 export interface EnqueueNotification {
@@ -877,6 +878,7 @@ export interface GetRunDiff {
 }
 export interface Initialized {}
 export interface RunStarted {
+  notifications?: unknown[];
   prompt?: string;
   prompt_role?: string;
   run_id: string;

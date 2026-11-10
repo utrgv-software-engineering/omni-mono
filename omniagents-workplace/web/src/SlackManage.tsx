@@ -1,3 +1,4 @@
+import { factoryUrl } from "./factory-scope";
 // Managing Slack: browsing and joining channels, a channel's details (about,
 // members, settings), drafts and scheduled messages, search, your profile and
 // the workspace's settings.
@@ -549,7 +550,7 @@ export function ChannelBar({
           className="group flex items-center gap-1 rounded-md border px-2 py-0.5"
         >
           <a
-            href={b.link}
+            href={factoryUrl(b.link)}
             target="_blank"
             rel="noreferrer"
             className="hover:underline"
@@ -1039,12 +1040,16 @@ export function TeamDialog({
   team,
   channels,
   onSaved,
+  admin = true,
+  actions,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   team: { name: string; domain: string; tz: string };
   channels: SlackChannel[];
   onSaved: () => Promise<void>;
+  admin?: boolean;
+  actions?: React.ReactNode;
 }) {
   const [name, setName] = useState(team.name);
   const [tz, setTz] = useState(team.tz);
@@ -1059,14 +1064,14 @@ export function TeamDialog({
     .sort((a, b) => a.name.localeCompare(b.name));
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Workspace settings</DialogTitle>
           <DialogDescription>
             {team.domain}: its Slack domain, GitHub organization and Linear URL.
           </DialogDescription>
         </DialogHeader>
-        <form
+        {admin && <><form
           className="space-y-3"
           onSubmit={(e) => {
             e.preventDefault();
@@ -1119,7 +1124,8 @@ export function TeamDialog({
               </label>
             ))}
           </div>
-        </div>
+        </div></>}
+        {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
       </DialogContent>
     </Dialog>
   );

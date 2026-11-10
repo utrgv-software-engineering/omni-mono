@@ -2904,6 +2904,9 @@
         "session_id": {
           "type": "string"
         },
+        "snapshot_limit": {
+          "type": "integer"
+        },
         "submission_id": {
           "type": "string"
         }
@@ -3010,6 +3013,10 @@
     "run_started": {
       "additionalProperties": false,
       "properties": {
+        "notifications": {
+          "items": {},
+          "type": "array"
+        },
         "prompt": {
           "type": "string"
         },

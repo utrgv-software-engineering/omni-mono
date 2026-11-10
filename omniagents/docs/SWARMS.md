@@ -5,6 +5,9 @@ alias for that same toolset. Omni Code regular chats and residents both use it;
 there is no separate swarm creation, roster, shared objective or closure step.
 
 Use `spawn_worker(task, name?, role?, peer_communication=false, isolation?, allow_dirty?)`.
+A worker runs the project's `worker` agent; with `inherit: spawner` it is built
+from the agent that spawned it, and its `max_depth` decides whether it can
+spawn workers of its own (docs/guide/defining-agents.md).
 Names are optional, unique within the parent session, and identify assignments.
 Keep the returned worker ID for status, messages, cancellation, resumption and
 workspace cleanup. Message the existing worker with `send_worker_message` for follow-up

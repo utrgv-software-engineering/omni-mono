@@ -99,8 +99,14 @@ class AgentToolConfig:
     # clients can watch it live. Off for tools whose internals are noise
     # or sensitive.
     observable: bool = True
+    # ``call`` (a helper inside the caller's run, Agent.as_tool()) or
+    # ``conversation`` (a run of the agent's own, in its own conversation for
+    # where the request came from; core/agents/handoffs.py).
+    mode: str = "call"
 
     def __post_init__(self):
+        if self.mode not in ("call", "conversation"):
+            raise ValueError("agent_tools mode is call or conversation")
         if (self.yaml_path is None) == (self.inline_spec is None):
             raise ValueError(
                 "AgentToolConfig must have exactly one of 'yaml_path' or 'inline_spec'"

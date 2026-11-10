@@ -7,10 +7,12 @@ routes for ``delivery: http`` and GitHub, outbound connections for
 (:mod:`omniagents.integrations.schedule`), started with the server and
 stopped with it. Each
 event goes through :class:`~omniagents.integrations.intake.EventIntake`,
-and matched automations run their agent on the server's AgentHost, as an
-unattended run (no person answers its approval prompts; the approvals
-reviewer the project configures decides them), in a fresh sandbox from the
-project's sandbox profile with its repositories checked out
+and each matched automation runs as a turn on its agent's durable
+conversation (:class:`~omniagents.integrations.personal.ConversationRunner`),
+unattended (no person answers its approval prompts; the approvals reviewer
+the project configures decides them). Every agent's tools run on the
+factory's one shared machine, brought up from the project's sandbox profile
+with its repositories checked out and kept across restarts
 (:mod:`omniagents.integrations.environment`).
 
 ``project.yml``::
@@ -34,6 +36,7 @@ is left off, with the reason logged.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 import os
@@ -58,7 +61,8 @@ from .github import (
     normalize_github_event,
     verify_github_request,
 )
-from .intake import EventIntake, Progress, RunResult, RunStep
+from .intake import EventIntake
+from .power_automate import PowerAutomateConfig, PowerAutomateSource
 from .slack import (
     SLACK_EVENTS_PATH,
     ChannelNames,
@@ -79,18 +83,52 @@ logger = logging.getLogger(__name__)
 RUNS_PATH = "/integrations/runs"
 
 
-Config = Union[SlackConfig, GitHubWebhookConfig, LinearConfig]
+from .azure_devops import AzureDevOpsConfig
+
+Config = Union[
+    SlackConfig,
+    GitHubWebhookConfig,
+    LinearConfig,
+    PowerAutomateConfig,
+    AzureDevOpsConfig,
+]
 
 
 def parse_integrations(entries: Any) -> List[Config]:
     """The event sources in a ``project.yml`` ``integrations:`` list."""
     from omniagents.core.config.loader import _substitute_env_vars
 
+    from omniagents.core.allowed_services import INTEGRATIONS_ENV, integration_allowed
+
+    def _resolved_or_raw(entry):
+        try:
+            return _substitute_env_vars(dict(entry))
+        except ValueError:  # a variable it needs is unset: its own check reports it
+            return dict(entry)
+
     configs: List[Config] = []
     for entry in entries or []:
         if not isinstance(entry, dict):
             continue
         kind = entry.get("type")
+        if os.environ.get(INTEGRATIONS_ENV) and not integration_allowed(
+            _resolved_or_raw(entry)
+        ):
+            logger.warning(
+                "integrations: %r is not one of the allowed services; it is off", kind
+            )
+            continue
+        if kind == "power-automate":
+            configs.append(PowerAutomateConfig.parse(entry))
+            continue
+        if kind == "azure-devops":
+            configs.append(
+                AzureDevOpsConfig(
+                    markers=tuple(entry.get("markers") or ()),
+                    identity_ids=tuple(entry.get("identity_ids") or ()),
+                )
+            )
+            continue
         if kind == "github":
             from omniagents.core.project.github_settings import github_settings
 
@@ -147,6 +185,12 @@ def parse_integrations(entries: Any) -> List[Config]:
         except ValueError as exc:
             logger.warning("integrations: slack is off: %s", exc)
             continue
+        if os.environ.get("OMNIAGENTS_EVENT_GATEWAY") == "1":
+            entry["delivery"] = "http"
+            entry["signing_secret"] = os.environ.get("SLACK_SIGNING_SECRET", "")
+            entry["token"] = os.environ.get(
+                "OMNIAGENTS_GATEWAY_SLACK_TOKEN", entry.get("token", "")
+            )
         app_token = entry.get("app_token") or None
         signing_secret = entry.get("signing_secret") or None
         delivery = entry.get("delivery") or ("socket" if app_token else "http")
@@ -171,6 +215,20 @@ def parse_integrations(entries: Any) -> List[Config]:
     return configs
 
 
+def _left_out(name: str, kinds: set, event: Dict[str, Any]) -> bool:
+    """Whether ``event`` was one of automation ``name``'s kinds that it did not run for."""
+    if (event["provider"], event["event"]) not in kinds or name in event["automations"]:
+        return False
+    if event["provider"] == "schedule":
+        # Each timer belongs to one automation: another automation's timer firing
+        # is not one this left out, only its own while it was turned off.
+        detail = event.get("detail") or ""
+        return detail.startswith("turned off: ") and name in detail[
+            len("turned off: ") :
+        ].split(", ")
+    return True
+
+
 def mount_integrations(
     app: Any, spec: Any, resources: Any, *, auth_token: Optional[str] = None
 ) -> Optional[EventIntake]:
@@ -182,14 +240,18 @@ def mount_integrations(
         data = yaml.safe_load(Path(manifest).read_text(encoding="utf-8")) or {}
     except Exception:
         return None
-    from .architecture import factory_architecture, PERSONAL_SESSION, claim_architecture
+    from .architecture import PERSONAL_SESSION, claim_intake
 
-    architecture = factory_architecture()
     configs = parse_integrations(data.get("integrations"))
     from .schedule import ScheduleSource, project_schedules
 
     schedules = project_schedules(Path(manifest).parent)
-    if not configs and not schedules and not data.get("memory") and not architecture:
+    if (
+        not configs
+        and not schedules
+        and not data.get("memory")
+        and not os.environ.get("SHARED_FILES_HOST_PATH")
+    ):
         return None
 
     from omniagents.core.paths import get_home_dir
@@ -200,6 +262,13 @@ def mount_integrations(
     if not project.entrypoint:
         logger.warning("integrations: the project has no entrypoint agent; off")
         return None
+    from omniagents.core.skills import default_skill_roots, set_skill_roots_provider
+
+    # A factory's skills are its repository's and its repositories': never
+    # the installation's unversioned global folder.
+    set_skill_roots_provider(
+        lambda workspace_root: default_skill_roots(workspace_root, include_global=False)
+    )
     profile = product_default_profile_path(manifest)
     environments = None
     if profile is not None:
@@ -207,44 +276,77 @@ def mount_integrations(
     else:
         logger.warning(
             "integrations: the project has no sandbox profile; "
-            "automation runs have no workspace"
+            "its agents have no shared machine"
         )
     store = EventStore(get_home_dir() / "integrations" / f"{project.product.slug}.db")
-    architecture_lock = claim_architecture(project, store)
+    intake_lock = claim_intake(project)
     principal = _server_principal(app, auth_token)
-    persistent = architecture in ("personal", "specialist")
-    if persistent and environments:
+    if environments:
         _attach_factory_workspace(app, project, resources, environments, principal)
-    run = _run_starter(
-        project, resources, None if persistent else environments, principal
+    from .agent_runtimes import AgentRuntimes, AGENTS_PATH
+    from .personal import ConversationRunner
+
+    runtimes = AgentRuntimes(
+        project,
+        auth_token=auth_token,
+        primary_app=app,
+        primary_agent=spec.agent_slug,
+        host_resources=resources,
     )
-    if architecture == "personal":
-        from .personal import PersonalRunner
 
-        run = PersonalRunner(app.state.agent_service, principal)
-        app.router.on_startup.append(run.resume)
+    async def run(agent, session_id, prompt, progress=None):
+        """Every automation run is a turn on its agent's durable conversation."""
+        runtime = await runtimes.app(agent)
+        if runtime is None:
+            raise ValueError(f"Unknown automation agent: {agent}")
+        runtime.state.agent_service._release_gate = (
+            app.state.agent_service._release_gate
+        )
+        return await ConversationRunner(runtime.state.agent_service, principal, agent)(
+            agent, session_id, prompt, progress
+        )
 
-    async def architecture_status(request: Request):
+    # Presentation metadata belongs to the configured agents, not the host UI.
+    def agent_details() -> List[Dict[str, str]]:
+        details = []
+        for agent_id, agent_path in project.agents_map.items():
+            definition = yaml.safe_load(agent_path.read_text()) or {}
+            details.append(
+                {
+                    "id": agent_id,
+                    "name": definition.get("label")
+                    or agent_id.replace("_", " ").replace("-", " ").title(),
+                    "description": definition.get("description") or "",
+                }
+            )
+        return details
+
+    async def factory_status(request: Request):
         if not await _authorized(request):
             return Response(status_code=401)
         service = app.state.agent_service
-        busy = store.running() + len(service.active_run_ids())
-        busy += sum(
-            item.state == "pending"
-            for session in service.active_sessions()
-            for item in session.message_queue
-        )
+        busy = store.unsettled() + runtimes.busy()
         return JSONResponse(
             {
-                "architecture": architecture or "specialist",
-                "session_id": PERSONAL_SESSION if architecture == "personal" else None,
+                "session_id": PERSONAL_SESSION,
+                "routing_version": 1,
+                "agents": sorted(project.agents_map),
+                "chat_agent": project.chat_entrypoint,
+                "chat_agents": project.chat_agents,
+                "agent_details": agent_details(),
                 "busy": busy,
+                "version": os.environ.get("FACTORY_VERSION"),
+                "release_protocol": 1,
+                "event_gateway": os.environ.get("OMNIAGENTS_EVENT_GATEWAY") == "1",
+                "release_paused": bool(
+                    getattr(service, "_release_gate", None)
+                    and service._release_gate.paused
+                ),
+                "stopped": factory_stop.current(),
             }
         )
 
-    app.add_api_route(
-        "/integrations/architecture", architecture_status, methods=["GET"]
-    )
+    app.add_api_route("/integrations/architecture", factory_status, methods=["GET"])
     interrupted = store.mark_interrupted()
     if interrupted:
         logger.info(
@@ -256,11 +358,369 @@ def mount_integrations(
         entrypoint=project.entrypoint,
         store=store,
         run=run,
-        shared_session=PERSONAL_SESSION if architecture == "personal" else None,
     )
     app.state.event_intake = intake
+
+    @app.get("/integrations/conversations")
+    async def conversations(request: Request, session_id: str | None = None):
+        if not await _authorized(request):
+            return Response(status_code=401)
+        return {"conversations": store.conversations(session_id)}
+
+    @app.get("/integrations/automations")
+    async def automations_view(request: Request, days: float = 7):
+        """Each automation as a person reads it: what it does and what starts it,
+        who runs it, its recent runs, and recent events of its kinds that it did
+        not run for (a filter that excluded them, or no match at all)."""
+        if not await _authorized(request):
+            return Response(status_code=401)
+        import time as clock
+
+        from omniagents.core.automations import list_automations
+
+        since = clock.time() - max(0.0, min(float(days), 90.0)) * 86400
+        overrides = store.automation_routes()
+        off = store.turned_off()
+        from .self_improvement import allowed
+
+        runs = await asyncio.to_thread(store.runs_since, since)
+        events = await asyncio.to_thread(store.event_outcomes, since)
+        out = []
+        for a in list_automations(project.root):
+            kinds = {(t.get("provider"), t.get("event")) for t in a.triggers}
+            own = [r for r in runs if r["automation"] == a.name]
+            # What stops it running at all, said so a person can fix it.
+            blocked = None if await allowed(a) else "Self-improvement is off"
+            out.append(
+                {
+                    "name": a.name,
+                    "description": a.description,
+                    "instruction": a.instruction,
+                    "triggers": a.triggers,
+                    "self_improvement": a.self_improvement,
+                    "enabled": a.name not in off,
+                    "agent": overrides.get(a.name, {}).get("agent")
+                    or a.agent
+                    or project.entrypoint,
+                    "conversation": overrides.get(a.name, {}).get("conversation")
+                    or a.conversation,
+                    "runs": [
+                        {
+                            k: r.get(k)
+                            for k in (
+                                "id",
+                                "agent",
+                                "session_id",
+                                "status",
+                                "error",
+                                "started_at",
+                                "finished_at",
+                                "provider",
+                                "event",
+                                "thread_key",
+                                "grades",
+                            )
+                        }
+                        for r in reversed(own)
+                    ][:50],
+                    "blocked": blocked,
+                    "skipped": [e for e in events if _left_out(a.name, kinds, e)][:20],
+                }
+            )
+        return {"automations": out, "since": since}
+
+    @app.put("/integrations/automations/{name}/enabled")
+    async def set_automation_enabled(name: str, request: Request):
+        """Turn an automation on or off; off, its events start nothing."""
+        if not await _authorized(request):
+            return Response(status_code=401)
+        from omniagents.core.automations import list_automations
+
+        body = await request.json()
+        if name not in {a.name for a in list_automations(project.root)}:
+            return JSONResponse({"detail": "Unknown automation"}, status_code=404)
+        if (
+            not isinstance(body, dict)
+            or set(body) != {"enabled"}
+            or not isinstance(body["enabled"], bool)
+        ):
+            return JSONResponse(
+                {"detail": "Expected {enabled: true|false}"}, status_code=422
+            )
+        store.set_automation_enabled(name, body["enabled"])
+        return {"name": name, "enabled": body["enabled"]}
+
+    @app.get("/integrations/automation-routes")
+    async def automation_routes(request: Request):
+        if not await _authorized(request):
+            return Response(status_code=401)
+        from omniagents.core.automations import list_automations
+
+        overrides = store.automation_routes()
+        return {
+            "agents": sorted(project.agents_map),
+            "chat_agent": project.chat_entrypoint,
+            "chat_agents": project.chat_agents,
+            "automations": [
+                {
+                    "name": a.name,
+                    "description": a.description,
+                    "agent": overrides.get(a.name, {}).get("agent")
+                    or a.agent
+                    or project.entrypoint,
+                    "conversation": overrides.get(a.name, {}).get("conversation")
+                    or a.conversation,
+                }
+                for a in list_automations(project.root)
+            ],
+        }
+
+    @app.put("/integrations/automation-routes/{name}")
+    async def set_automation_route(name: str, request: Request):
+        if not await _authorized(request):
+            return Response(status_code=401)
+        from omniagents.core.automations import list_automations
+
+        body = await request.json()
+        if name not in {a.name for a in list_automations(project.root)}:
+            return JSONResponse({"detail": "Unknown automation"}, status_code=404)
+        if (
+            not isinstance(body, dict)
+            or set(body) != {"agent", "conversation"}
+            or body.get("agent") not in project.agents_map
+            or body.get("conversation") not in {"auto", "thread", "new"}
+        ):
+            return JSONResponse(
+                {"detail": "Choose an available agent and conversation grouping"},
+                status_code=422,
+            )
+        store.set_automation_route(name, body)
+        return {"ok": True}
+
+    from omniagents.core.runtime.release_gate import ReleaseGate
+
+    service = app.state.agent_service
+    gate = ReleaseGate(
+        lambda: (runtimes.busy() + len(intake._tasks) + store.unsettled())
+    )
+    pending_release = os.environ.get("FACTORY_RELEASE_PENDING")
+    if pending_release and Path(pending_release).is_file():
+        gate.owner = Path(pending_release).read_text().strip()
+        gate.until = float("inf")  # Candidate cannot accept work before verification.
+    service._release_gate = intake.release_gate = gate
+    from omniagents.core.runtime import factory_stop
+
+    factory_stop.set_state(store.stop_state())
+
+    async def queued_conversations():
+        """Every (agent, conversation, pending item ids) with queued work."""
+        from omniagents.core.conversation.model import ThreadFilter
+        from omniagents.core.conversation.store import get_conversation_store
+        from omniagents.core.project.runtime import build_spec_from_project
+        from omniagents.rpc.auth import ANONYMOUS_USER_ID
+
+        identity = await principal()
+        owner = identity.user_id if identity else ANONYMOUS_USER_ID
+        for agent in project.agents_map:
+            agent_spec = build_spec_from_project(project, agent)
+            conversations = get_conversation_store(
+                agent_spec.project_slug, agent_spec.agent_slug
+            )
+            after = None
+            while True:
+                threads = conversations.list_threads(
+                    ThreadFilter(user_id=owner), limit=100, after=after
+                )
+                for thread in threads:
+                    pending = conversations.mutate_queue(
+                        thread.thread_id,
+                        lambda state, receipt: (
+                            [
+                                entry["item"]["id"]
+                                for entry in state.get("items", [])
+                                if entry.get("item", {}).get("state") == "pending"
+                            ],
+                            None,
+                        ),
+                    )
+                    if pending:
+                        yield agent, thread.thread_id, pending
+                if len(threads) < 100:
+                    break
+                last = threads[-1]
+                after = (last.updated_at, last.thread_id)
+
+    async def resume_conversations():
+        if gate.paused or factory_stop.current() is not None:
+            return
+        async for agent, thread_id, _pending in queued_conversations():
+            runtime = await runtimes.app(agent)
+            await ConversationRunner(
+                runtime.state.agent_service, principal, agent
+            ).resume(thread_id)
+
+    async def stop_factory(state: dict) -> dict:
+        return await stop_all_work(state, store, intake, runtimes, queued_conversations)
+
+    app.router.on_startup.append(resume_conversations)
+    app.router.on_startup.append(intake.resume_received)
+
+    async def release_lease(request: Request):
+        import hmac
+
+        expected = os.environ.get("OMNIAGENTS_AGENT_HOST_CONTROL_TOKEN", "")
+        supplied = request.headers.get("authorization", "")
+        if not expected or not hmac.compare_digest(supplied, "Bearer " + expected):
+            return Response(status_code=403)
+        try:
+            if request.method == "POST":
+                return JSONResponse({"lease": gate.acquire(), "expires_in": 120})
+            body = await request.json()
+            gate.release(body.get("lease"))
+            await resume_conversations()
+            if pending_release:
+                Path(pending_release).unlink(missing_ok=True)
+            return JSONResponse({"ok": True})
+        except RuntimeError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=409)
+        except (ValueError, AttributeError):
+            return JSONResponse({"detail": "Invalid release lease"}, status_code=409)
+
+    app.add_api_route(
+        "/integrations/release-lease", release_lease, methods=["POST", "DELETE"]
+    )
+
+    from .approvals import PersonApprovals
+
+    approvals = PersonApprovals(store, runtimes)
+    if store.interrupt_approvals():
+        logger.info("integrations: approvals a person must give carried over a restart")
+
+    def _controlled(request: Request) -> bool:
+        import hmac
+
+        expected = os.environ.get("OMNIAGENTS_AGENT_HOST_CONTROL_TOKEN", "")
+        supplied = request.headers.get("authorization", "")
+        return bool(expected) and hmac.compare_digest(supplied, "Bearer " + expected)
+
+    async def approvals_listing(request: Request):
+        """The approvals people must give, for whoever runs the factory."""
+        if not _controlled(request):
+            return Response(status_code=403)
+        return JSONResponse({"approvals": approvals.listing()})
+
+    async def approval_decision(request: Request):
+        if not _controlled(request):
+            return Response(status_code=403)
+        body = await request.json()
+        approver = str(body.get("approver") or "").strip()
+        if not approver or body.get("decision") not in ("approve", "reject"):
+            return JSONResponse(
+                {"detail": "Give the decision and who made it"}, status_code=422
+            )
+        try:
+            row = await approvals.decide(
+                request.path_params["call_id"],
+                body["decision"] == "approve",
+                approver,
+                str(body.get("reason") or ""),
+            )
+        except LookupError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=409)
+        return JSONResponse(row)
+
+    app.add_api_route("/integrations/approvals", approvals_listing, methods=["GET"])
+    app.add_api_route(
+        "/integrations/approvals/{call_id}", approval_decision, methods=["POST"]
+    )
+
+    async def keep_approvals():
+        while True:
+            try:
+                approvals.sync()
+                await approvals.expire()
+            except Exception:  # noqa: BLE001 - the loop outlives a failure
+                logger.exception("integrations: approvals upkeep failed")
+            await asyncio.sleep(15)
+
+    async def start_approvals():
+        app.state.approvals_task = asyncio.create_task(keep_approvals())
+
+    async def stop_approvals():
+        task = getattr(app.state, "approvals_task", None)
+        if task:
+            task.cancel()
+
+    app.router.on_startup.append(start_approvals)
+    app.router.on_shutdown.append(stop_approvals)
+
+    async def stop_control(request: Request):
+        """``POST`` stops the factory (``{stopped_by, stopped_at, reason}``),
+        ``DELETE`` resumes it, ``GET`` says which; whoever runs the factory
+        holds the control token."""
+        import hmac
+
+        expected = os.environ.get("OMNIAGENTS_AGENT_HOST_CONTROL_TOKEN", "")
+        supplied = request.headers.get("authorization", "")
+        if not expected or not hmac.compare_digest(supplied, "Bearer " + expected):
+            return Response(status_code=403)
+        if request.method == "GET":
+            return JSONResponse({"stopped": factory_stop.current()})
+        if request.method == "DELETE":
+            store.set_stop_state(None)
+            factory_stop.set_state(None)
+            logger.warning("integrations: factory resumed")
+            return JSONResponse({"stopped": None})
+        body = await request.json()
+        if not isinstance(body, dict):
+            return JSONResponse(
+                {"detail": "Give the stop as an object"}, status_code=422
+            )
+        state = {
+            key: body[key]
+            for key in ("stopped_by", "stopped_at", "reason", "scope")
+            if body.get(key) is not None
+        }
+        return JSONResponse(await stop_factory(state))
+
+    app.add_api_route(
+        "/integrations/stop", stop_control, methods=["GET", "POST", "DELETE"]
+    )
     # The factory's version, from whoever runs it (the supervisor: the commit it promoted).
     intake.version = os.environ.get("FACTORY_VERSION") or None
+    from omniagents.core.agents.handoffs import set_handler
+
+    # Agents hand work to each other's own conversations through the intake.
+    set_handler(intake.hand_off)
+
+    def reload_agents() -> None:
+        """Agents' settings, agents added or deleted, or the project's agents
+        section changed by a published edit: the running project takes the new
+        definitions, and each running agent's next run is built from its new
+        settings (an agent not running yet is built on first use)."""
+        from omniagents.core.project.runtime import build_spec_from_project
+
+        fresh = load_project(str(manifest))
+        for field in dataclasses.fields(project):
+            setattr(project, field.name, getattr(fresh, field.name))
+        running = dict(runtimes._apps)
+        if runtimes.primary_app is not None and runtimes.primary_agent:
+            running[runtimes.primary_agent] = runtimes.primary_app
+        for key, runtime in running.items():
+            if key not in project.agents_map:
+                continue  # deleted: no new conversations reach it
+            service = runtime.state.agent_service
+            spec = build_spec_from_project(project, key)
+            spec.project_slug = service.spec.project_slug
+            spec.agent_slug = service.spec.agent_slug
+            service.spec = spec
+        logger.info(
+            "integrations: agents reloaded: %s", ", ".join(sorted(project.agents_map))
+        )
+
+    _mount_definition_routes(
+        app, project.root, intake, data.get("integrations"), reload_agents
+    )
     from omniagents.core.project.runtime import build_spec_from_project
     from omniagents.core.session.history_db import load_history
 
@@ -335,10 +795,25 @@ def mount_integrations(
     from .memory import mount_memory_route
 
     mount_memory_route(app, intake)
+    from .shared import mount_shared_route
+
+    mount_shared_route(app, intake, _authorized)
+    from .azure_devops import mount_azure_devops_route
+
+    if any(isinstance(config, AzureDevOpsConfig) for config in configs):
+        mount_azure_devops_route(
+            app,
+            intake,
+            _authorized,
+            next(config for config in configs if isinstance(config, AzureDevOpsConfig)),
+        )
     from omniagents.core.memory.extract import shutdown as shutdown_memory
 
     app.router.on_shutdown.append(shutdown_memory)
     intake.links = PullRequestLinks(store, history, children)
+    from .attention import FactoryAttention, mount_attention
+
+    mount_attention(app, FactoryAttention(store, runtimes, children), _controlled)
     # What every model call uses, recorded as it happens, whatever tracing does.
     from omniagents.core.tracing import (
         add_permanent_processor,
@@ -349,20 +824,11 @@ def mount_integrations(
     recorder = UsageRecorder(store.record_usage)
     add_permanent_processor(recorder)
     app.router.on_shutdown.append(lambda: remove_permanent_processor(recorder))
-    _mount_runs_route(app, store, _price_list(project.root, data))
+    _mount_runs_route(app, store, _price_list(project.root, data), project.root)
     # Each agent's sessions, for the shared chat UI to read (agent_runtimes.py).
     from .agent_runtimes import AGENTS_PATH, AgentRuntimes
 
-    app.mount(
-        AGENTS_PATH,
-        AgentRuntimes(
-            project,
-            auth_token=auth_token,
-            primary_app=app,
-            architecture=architecture,
-            host_resources=resources if persistent else None,
-        ),
-    )
+    app.mount(AGENTS_PATH, runtimes)
 
     def session_started(agent_key: str, thread_id: str) -> Optional[float]:
         from omniagents.core.conversation.store import get_conversation_store
@@ -373,7 +839,7 @@ def mount_integrations(
         )
         return thread.created_at if thread else None
 
-    _mount_case_route(app, store, history, children, session_started)
+    _mount_case_route(app, store, history, children, session_started, project.root)
 
     judges = live_judges(project.root, data)
     if judges:
@@ -388,7 +854,33 @@ def mount_integrations(
         )
 
     for config in configs:
-        if isinstance(config, GitHubWebhookConfig):
+        if isinstance(config, AzureDevOpsConfig):
+            continue
+        elif isinstance(config, PowerAutomateConfig):
+            if hasattr(app.state, "power_automate"):
+                raise ValueError("Only one Power Automate bridge may be configured")
+            source_type = PowerAutomateSource
+            if config.bridge_url:
+                from .power_automate_remote import RemotePowerAutomateSource
+
+                source_type = RemotePowerAutomateSource
+            source = source_type(
+                config,
+                intake.accept,
+                get_home_dir()
+                / "integrations"
+                / f"{project.product.slug}-power-automate.db",
+                event_store=store,
+            )
+            app.state.power_automate = source
+            from .power_automate_actions import PowerAutomateActions
+
+            service._power_automate = PowerAutomateActions(source, store)
+            service._power_automate_agent = project.entrypoint
+            intake.after_run["teams"] = source.finished
+            app.router.on_startup.append(source.start)
+            app.router.on_shutdown.append(source.stop)
+        elif isinstance(config, GitHubWebhookConfig):
             _mount_github_route(app, intake, config)
         elif isinstance(config, LinearConfig):
             _mount_linear_route(app, intake, config)
@@ -398,6 +890,14 @@ def mount_integrations(
             socket = SlackSocketMode(config, intake.accept)
             app.router.on_startup.append(socket.start)
             app.router.on_shutdown.append(socket.stop)
+    from .factory_settings import FactorySettings, mount_factory_settings
+
+    settings = FactorySettings(
+        get_home_dir() / "integrations" / f"{project.product.slug}-settings.db",
+        getattr(app.state, "power_automate", None),
+        project.product.name,
+    )
+    mount_factory_settings(app, settings, _controlled)
     _mount_replay_route(app, intake)
     if schedules:
         improve = {key for key, cfg in judges.items() if cfg.get("self_improve")}
@@ -412,8 +912,7 @@ def mount_integrations(
         app.router.on_shutdown.append(source.stop)
         _mount_run_schedule_route(app, source)
     app.router.on_shutdown.append(store.close)
-    if architecture_lock:
-        app.router.on_shutdown.append(architecture_lock.close)
+    app.router.on_shutdown.append(intake_lock.close)
     logger.info(
         "integrations: %s",
         ", ".join(
@@ -424,7 +923,19 @@ def mount_integrations(
                     else (
                         "linear (agent sessions)"
                         if isinstance(c, LinearConfig)
-                        else f"slack ({c.delivery})"
+                        else (
+                            (
+                                "power-automate (private bridge)"
+                                if c.bridge_url
+                                else "power-automate (postgres)"
+                            )
+                            if isinstance(c, PowerAutomateConfig)
+                            else (
+                                "azure-devops (private gateway)"
+                                if isinstance(c, AzureDevOpsConfig)
+                                else f"slack ({c.delivery})"
+                            )
+                        )
                     )
                 )
                 for c in configs
@@ -452,7 +963,142 @@ def _price_list(root: Path, data: dict):
     return prices
 
 
-def _mount_runs_route(app: Any, store: EventStore, prices: Any) -> None:
+def _mount_definition_routes(
+    app: Any,
+    root: Path,
+    intake: EventIntake,
+    integrations: Any,
+    reload_agents: Callable[[], None] = lambda: None,
+) -> None:
+    """What people edit in the factory (``GET /integrations/definition``),
+    checking edits before they are saved (``POST .../check``), and moving
+    the factory to the commit that saved them (``POST .../advance``)."""
+    from . import definition
+
+    lock = asyncio.Lock()
+
+    @app.get("/integrations/definition")
+    async def definition_tree(request: Request):
+        if not await _authorized(request):
+            return Response(status_code=401)
+        tree = await asyncio.to_thread(definition.definition_tree, root)
+        commit = await asyncio.to_thread(definition.live_commit, root)
+        return {
+            **tree,
+            "commit": commit,
+            "origin": await asyncio.to_thread(definition.origin, root),
+            "uncommitted": (
+                await asyncio.to_thread(definition.uncommitted, root) if commit else []
+            ),
+        }
+
+    @app.post("/integrations/definition/check")
+    async def check_definition(request: Request):
+        """``{"changes": [{"path", "content" | null}]}``: each path's problems."""
+        if not await _authorized(request):
+            return Response(status_code=401)
+        body = await request.json()
+        changes = body.get("changes") if isinstance(body, dict) else None
+        if not isinstance(changes, list) or not all(
+            isinstance(c, dict) and isinstance(c.get("path"), str) for c in changes
+        ):
+            return JSONResponse(
+                {"detail": "Expected {changes: [{path, content}]}"}, status_code=422
+            )
+        problems = await asyncio.to_thread(definition.check_changes, root, changes)
+        return {"problems": problems}
+
+    @app.post("/integrations/definition/new-agent")
+    async def new_agent(request: Request):
+        """``{key, description, template?, chat?}``: the files that add an agent."""
+        if not await _authorized(request):
+            return Response(status_code=401)
+        body = await request.json()
+        if not isinstance(body, dict) or not isinstance(body.get("key"), str):
+            return JSONResponse(
+                {"detail": "Expected {key, description}"}, status_code=422
+            )
+        try:
+            changes = await asyncio.to_thread(
+                definition.new_agent_changes,
+                root,
+                body["key"],
+                description=str(body.get("description") or ""),
+                template=body.get("template") or None,
+                chat=bool(body.get("chat")),
+            )
+        except definition.DefinitionError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=exc.status)
+        return {"changes": changes}
+
+    @app.get("/integrations/definition/agents/{key}")
+    async def agent_settings(key: str, request: Request):
+        """An agent's settings as fields, what it inherits, and the choices."""
+        if not await _authorized(request):
+            return Response(status_code=401)
+        try:
+            return await asyncio.to_thread(definition.agent_settings, root, key)
+        except definition.DefinitionError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=exc.status)
+
+    @app.post("/integrations/definition/agents/{key}/changes")
+    async def agent_changes(key: str, request: Request):
+        """``{settings}``: the files that give an agent those settings, or
+        (``{"delete": true}``) that delete it."""
+        if not await _authorized(request):
+            return Response(status_code=401)
+        body = await request.json()
+        if not isinstance(body, dict):
+            return JSONResponse(
+                {"detail": "Expected {settings} or {delete}"}, status_code=422
+            )
+        try:
+            if body.get("delete") is True:
+                changes = await asyncio.to_thread(
+                    definition.delete_agent_changes, root, key
+                )
+            elif isinstance(body.get("settings"), dict):
+                changes = await asyncio.to_thread(
+                    definition.agent_changes, root, key, body["settings"]
+                )
+            else:
+                return JSONResponse(
+                    {"detail": "Expected {settings} or {delete}"}, status_code=422
+                )
+        except definition.DefinitionError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=exc.status)
+        return {"changes": changes}
+
+    @app.post("/integrations/definition/advance")
+    async def advance_definition(request: Request):
+        """``{"commit"}``: run that commit of the factory's repository from now on."""
+        if not await _authorized(request):
+            return Response(status_code=401)
+        body = await request.json()
+        commit = body.get("commit") if isinstance(body, dict) else None
+        github = parse_github(integrations)
+        token = github.resolved_token() if github else None
+        async with lock:
+            try:
+                moved = await asyncio.to_thread(
+                    definition.advance, root, str(commit or ""), token=token
+                )
+            except definition.DefinitionError as exc:
+                return JSONResponse(
+                    {"detail": str(exc), "paths": exc.paths}, status_code=exc.status
+                )
+            if moved["reload"]:
+                await asyncio.to_thread(reload_agents)
+        live = moved["commit"]
+        # Runs from now on are recorded with it (the supervisor restarts on it too).
+        os.environ["FACTORY_VERSION"] = live
+        intake.version = live
+        return {"commit": live, "reloaded": moved["reload"]}
+
+
+def _mount_runs_route(
+    app: Any, store: EventStore, prices: Any, root: Optional[Path] = None
+) -> None:
     """``GET /integrations/runs?since=<epoch seconds>``: the factory's runs, newest
     last, each with what started it, how it went, its grades, what its model calls
     used and cost (API prices; a subscription's are API-equivalent), and its pull
@@ -488,6 +1134,7 @@ def _mount_runs_route(app: Any, store: EventStore, prices: Any) -> None:
                             else (0.0 if not usage else None)
                         ),
                         "pull_requests": store.run_pull_requests(run["id"]),
+                        "skills": _run_skills(store, run["id"], root),
                     }
                 )
             return out
@@ -497,6 +1144,25 @@ def _mount_runs_route(app: Any, store: EventStore, prices: Any) -> None:
         )
 
     app.add_api_route(RUNS_PATH, runs, methods=["GET"])
+
+
+def _run_skills(store: EventStore, dispatch_id: int, root: Optional[Path]) -> Dict:
+    """The skills a run was offered and loaded, each with where it came from."""
+    from .definition import skill_source
+
+    used = store.run_skills(dispatch_id)
+    return {
+        part: [
+            {
+                "name": s["name"],
+                "source": (
+                    skill_source(root, s["path"]) if root else {"kind": "unknown"}
+                ),
+            }
+            for s in used.get(part, [])
+        ]
+        for part in ("offered", "loaded")
+    }
 
 
 def _first_user_text(history: list) -> Optional[str]:
@@ -520,6 +1186,7 @@ def _mount_case_route(
     history: Any,
     children: Any,
     session_started: Any = lambda agent, thread: None,
+    root: Optional[Path] = None,
 ) -> None:
     """``GET /integrations/runs/{id}/case``: what a run was given, to make a benchmark
     task of it: its own input, and each session's (the agents it called as tools)."""
@@ -579,6 +1246,7 @@ def _mount_case_route(
                 "payload": run["payload"],
                 "version": run.get("version"),
                 "pull_requests": store.run_pull_requests(dispatch_id),
+                "skills": _run_skills(store, dispatch_id, root),
                 "sessions": sessions,
             }
 
@@ -749,11 +1417,12 @@ def _server_principal(
 
 
 def _attach_factory_workspace(app, project, resources, environments, principal):
-    """Both architectures share one durable factory environment, not a conversation."""
+    """The factory's shared machine: every agent's tools run on it, and it
+    survives restarts (its identity is saved, so the next start reattaches)."""
     from omniagents.core.paths import get_home_dir
 
-    # Keep the original filename so switching architectures adopts the same
-    # installed toolchain and the existing backup/reset commands keep working.
+    # The filename predates the shared machine being unconditional; existing
+    # factories and the backup/reset/restore commands use it.
     context = environments.sandbox(
         "factory",
         state_path=get_home_dir()
@@ -761,90 +1430,71 @@ def _attach_factory_workspace(app, project, resources, environments, principal):
         / f"{project.product.slug}.personal-sandbox.json",
     )
 
+    from .desktop import mount_desktop
+
+    active_workspace = None
+    mount_desktop(app, lambda: active_workspace, principal)
+
     async def start_workspace():
+        nonlocal active_workspace
         sandbox = await context.__aenter__()
+        active_workspace = sandbox
         owner = await principal()
         sandbox.register(resources, owner_user_id=owner.user_id if owner else None)
 
     async def stop_workspace():
+        nonlocal active_workspace
+        active_workspace = None
         await context.__aexit__(None, None, None)
 
     app.router.on_startup.insert(0, start_workspace)
     app.router.on_shutdown.append(stop_workspace)
 
 
-def _run_starter(
-    project: Any,
-    resources: Any,
-    environments: Optional[RunEnvironments],
-    principal: Callable[[], Awaitable[Any]],
-):
-    from omniagents.core.agents.factory import create_unified_agent
-    from omniagents.core.project.runtime import build_spec_from_project
+async def stop_all_work(state, store, intake, runtimes, queued_conversations) -> dict:
+    """The kill switch: end all AI work now, and start none until resumed.
 
-    async def run_in(
-        host_resources: Any,
-        agent_key: str,
-        session_id: str,
-        prompt: str,
-        progress: Optional[Progress],
-    ) -> RunResult:
-        from agents import ItemHelpers
+    Admission, model and tool calls refuse from the moment the state is set;
+    then every run, queued message and event in progress is cancelled and
+    every sandbox command ended. Queued work is removed, not deferred, so
+    resuming replays nothing."""
+    from omniagents.core.runtime import factory_stop
 
-        spec = build_spec_from_project(project, agent_key)
-        agent = await create_unified_agent(
-            spec, host_resources=host_resources, unattended=True, session_id=session_id
-        )
-        result = None
-        try:
-            owner = await principal()
-            if owner is not None and callable(getattr(agent, "set_principal", None)):
-                await agent.initialize()
-                agent.set_principal(owner)
-            result = agent.run_streamed([{"role": "user", "content": prompt}])
-            last: Optional[str] = None
-            async for event in result.stream_events():
-                name = getattr(event, "name", None)
-                step: Optional[RunStep] = None
-                if name == "message_output_created":
-                    text = ItemHelpers.text_message_output(event.item)
-                    if text.strip():
-                        last = text
-                        step = RunStep("message", text=text)
-                elif name == "tool_called":
-                    called = (
-                        event.item.to_input_item()
-                        if hasattr(event.item, "to_input_item")
-                        else {}
-                    )
-                    tool = called.get("name") if isinstance(called, dict) else None
-                    step = RunStep("tool", name=tool or "a tool")
-                if step is not None and progress is not None:
-                    await progress(step)
-            return RunResult(error=run_failure(agent.get_last_run_end()), output=last)
-        except asyncio.CancelledError:
-            # Stopped: the streamed run stops too, not just our reading of it.
-            cancel = getattr(result, "cancel", None)
-            if callable(cancel):
-                cancel()
-            raise
-        finally:
-            cleanup = getattr(agent, "cleanup", None)
-            if callable(cleanup):
-                await cleanup()
-
-    async def run(
-        agent_key: str,
-        session_id: str,
-        prompt: str,
-        progress: Optional[Progress] = None,
-    ) -> RunResult:
-        if environments is None:
-            return await run_in(resources, agent_key, session_id, prompt, progress)
-        async with environments.open() as sandbox:
-            return await run_in(sandbox, agent_key, session_id, prompt, progress)
-
-    return run
+    store.set_stop_state(state)
+    factory_stop.set_state(state)
+    events = intake.cancel_all()
+    runs = 0
+    for agent_service in runtimes.services():
+        for run_id in list(agent_service.active_run_ids()):
+            try:
+                runs += bool(await agent_service.stop_run(run_id))
+            except Exception:  # noqa: BLE001 - keep stopping the rest
+                logger.exception("factory stop: run %s did not stop", run_id)
+    queued = 0
+    async for agent, thread_id, pending in queued_conversations():
+        runtime = await runtimes.app(agent)
+        for item_id in pending:
+            result = await runtime.state.agent_service.cancel_queued_message(
+                thread_id, item_id
+            )
+            queued += bool(result.get("ok"))
+    sandboxes = await factory_stop.terminate_sandbox_commands()
+    logger.warning(
+        "integrations: factory stopped (%s): %d run(s), %d queued message(s), "
+        "%d event(s) cancelled; commands ended in %d sandbox(es)",
+        state.get("reason") or "no reason given",
+        runs,
+        queued,
+        events,
+        sandboxes,
+    )
+    return {
+        "stopped": state,
+        "runs": runs,
+        "queued": queued,
+        "events": events,
+        "sandboxes": sandboxes,
+    }
 
 
 def run_failure(end: Optional[dict]) -> Optional[str]:

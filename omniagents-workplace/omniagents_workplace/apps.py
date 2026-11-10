@@ -20,6 +20,8 @@ connects with: its MCP servers, tokens, git remote and webhook secrets.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import os
 import secrets
 import string
@@ -162,13 +164,20 @@ class AppRegistry:
             or self.by_username(username) is not None
         ):
             raise AccountError(f"{username} is taken")
+        # People must never mistake an agent for a person: its accounts say AI.
+        shown = name if "(AI)" in name else f"{name} (AI)"
         with self._lock:
             if slack_user_id is not None:
                 slack_user = w.slack.user(slack_user_id)
             elif any(u.name == username for u in w.slack.users.values()):
                 raise AccountError(f"{username} is taken")
             else:
-                slack_user = w.slack.add_user(username, name, "", title=description)
+                slack_user = w.slack.add_user(
+                    username,
+                    shown,
+                    "",
+                    title=("AI agent: " + description) if description else "AI agent",
+                )
             slack_app = w.slack.add_app(
                 SlackApp(
                     id=w.slack._new_id("A"),
@@ -180,7 +189,7 @@ class AppRegistry:
                     socket_mode=True,
                 )
             )
-            github = w.github.add_user(username, name=name, slack=slack_user.id)
+            github = w.github.add_user(username, name=shown, slack=slack_user.id)
             w.github.set_token(github, github_token())
             linear = w.linear.find_user(username)
             if linear is not None and not linear.is_app:
@@ -421,6 +430,9 @@ class AppRegistry:
             "SLACK_MCP_TOKEN": slack.user_token or "",
             "SLACK_API_URL": f"{base}/slack/api",
             "GITHUB_MCP_URL": f"{base}/github/mcp",
+            "AZURE_DEVOPS_MCP_URL": f"{base}/azure-devops/mcp",
+            "AZURE_DEVOPS_MCP_TOKEN": app.memory_token or "",
+            "AZURE_DEVOPS_POLICY_URL": f"{base}/azure-devops/policy",
             "GITHUB_MCP_TOKEN": w.github.users[app.github_login].token or "",
             "GITHUB_GIT_URL": f"{w.sandbox_url.rstrip('/')}/github",
             "LINEAR_MCP_URL": f"{base}/linear/mcp",
@@ -431,8 +443,14 @@ class AppRegistry:
             "MEMORY_MCP_TOKEN": app.memory_token,
             "MEMORY_WEBHOOK_SECRET": app.memory_webhook_secret,
             "MEMORY_AGENT_STORE": w.memory.provision(app.id, "agent"),
+            "SHARED_FILES_HOST_PATH": w.environ.get("SHARED_FILES_HOST_PATH")
+            or (
+                str(Path(w.environ["LIBRARY_FILES_HOST_PATH"]).parent / "shared")
+                if w.environ.get("LIBRARY_FILES_HOST_PATH")
+                else str(w.shared.root.resolve())
+            ),
             "LIBRARY_API_URL": f"{base}/library/api",
-            "LIBRARY_FILES_HOST_PATH": os.environ.get("LIBRARY_FILES_HOST_PATH")
+            "LIBRARY_FILES_HOST_PATH": w.environ.get("LIBRARY_FILES_HOST_PATH")
             or str(w.library.root.resolve()),
             "CANVAS_MCP_URL": f"{base}/canvas/mcp",
             "CANVAS_MCP_TOKEN": (
@@ -453,8 +471,14 @@ class AppRegistry:
         # A member's own app must never inherit the factory's real GitHub identity.
         config = w.factory_config.load() if w.factory_config else {}
         if (config.get("app") or {}).get("username") == app.username:
+            env.update(w.factory_secrets.environment())
             env.update(w.repository_settings.environment())
+            env.update(w.event_gateway.environment())
+            if w.environ.get("COOLIFY_MCP_URL"):
+                env["COOLIFY_MCP_URL"] = w.environ["COOLIFY_MCP_URL"]
+                env["COOLIFY_MCP_TOKEN"] = app.memory_token
             env["FACTORY_SETTINGS_TOKEN"] = app.memory_token
+            env["FACTORY_TEAMS_NOTIFY_URL"] = f"{base}/factory/notifications/teams"
             env["FACTORY_BOOTSTRAP_TOKEN"] = (
                 w.github.users[app.github_login].token or ""
             )

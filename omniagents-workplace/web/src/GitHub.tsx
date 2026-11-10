@@ -1,3 +1,8 @@
+import { AppImage } from "./extensions/Media";
+import { PreviewSetup } from "./PreviewSetup";
+import { factoryBase } from "./factory-scope";
+import { WorkflowSettings } from "./WorkflowSettings";
+import { factoryUrl } from "./factory-scope";
 import {
   createContext,
   useCallback,
@@ -174,6 +179,7 @@ const ViewerContext = createContext<{ login: string; admin: boolean }>({
 });
 
 interface Props {
+  selectedRepositories: string[];
   route: GitHubRoute;
   actor: string;
   admin?: boolean;
@@ -182,12 +188,14 @@ interface Props {
 }
 
 export function GitHubApp({
+  selectedRepositories,
   route,
   actor,
   admin = false,
   version,
   navigate,
 }: Props) {
+  const [previewRepository, setPreviewRepository] = useState<string | null>(null);
   const [repos, setRepos] = useState<RepoDetails[]>([]);
   const [people, setPeople] = useState<Mentionable[]>([]);
   useEffect(() => {
@@ -210,9 +218,11 @@ export function GitHubApp({
           actor={actor}
           version={version}
           navigate={navigate}
-          repos={repos}
+          repos={repos.filter(repo => selectedRepositories.includes(repo.full_name))}
           setRepos={setRepos}
+          onPreview={admin && factoryBase() ? setPreviewRepository : undefined}
         />
+        <PreviewSetup repository={previewRepository} onClose={() => setPreviewRepository(null)} />
       </MentionsContext.Provider>
     </ViewerContext.Provider>
   );
@@ -225,9 +235,11 @@ function GitHubPages({
   navigate,
   repos,
   setRepos,
-}: Props & {
+  onPreview,
+}: Omit<Props, "selectedRepositories"> & {
   repos: RepoDetails[];
   setRepos: (repos: RepoDetails[]) => void;
+  onPreview?: (repository: string) => void;
 }) {
   const repo = repos.find((r) => r.full_name === route.repo);
   const { admin } = useContext(ViewerContext);
@@ -249,8 +261,8 @@ function GitHubPages({
         )}
         <div className="divide-y rounded-md border">
           {repos.map((r) => (
+            <div key={r.full_name} className="flex items-center gap-2 pr-3">
             <button
-              key={r.full_name}
               type="button"
               onClick={() => navigate(`/${r.full_name}`)}
               className="flex w-full flex-col items-start gap-1 px-4 py-3 text-left hover:bg-accent"
@@ -267,6 +279,8 @@ function GitHubPages({
                 · {r.branches.length} branches
               </span>
             </button>
+            {onPreview && <Button variant="outline" size="sm" onClick={() => onPreview(r.full_name)}>PR previews</Button>}
+            </div>
           ))}
         </div>
       </div>
@@ -466,8 +480,8 @@ function ago(iso: string | null | undefined) {
 
 function Avatar({ login }: { login: string }) {
   return (
-    <img
-      src={`/workplace/api/github/avatars/${login}`}
+    <AppImage
+      src={factoryUrl(`/workplace/api/github/avatars/${login}`)}
       alt=""
       className="size-6 shrink-0 rounded-full"
     />
@@ -498,6 +512,7 @@ export function Markdown({ text }: { text: string }) {
   return (
     <div className="prose-sm max-w-none text-sm leading-relaxed [overflow-wrap:anywhere] [&_table]:block [&_table]:overflow-x-auto [&_a]:text-sky-600 [&_a]:underline [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_h1]:text-lg [&_h1]:font-semibold [&_h2]:font-semibold [&_li]:ml-5 [&_ol]:list-decimal [&_p]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:bg-muted [&_pre]:p-3 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_table]:my-2 [&_td]:border [&_td]:px-2 [&_th]:border [&_th]:px-2 [&_ul]:list-disc">
       <ReactMarkdown
+        skipHtml
         remarkPlugins={[remarkGfm]}
         components={MARKDOWN_COMPONENTS}
       >
@@ -3358,6 +3373,7 @@ function SettingsView({
   navigate: (p: string) => void;
   onChanged: () => void;
 }) {
+  const { admin } = useContext(ViewerContext);
   const [description, setDescription] = useState(repo.description);
   const [defaultBranch, setDefaultBranch] = useState(repo.default_branch);
   const [newRule, setNewRule] = useState("");
@@ -3501,6 +3517,8 @@ function SettingsView({
           </Button>
         </div>
       </section>
+
+      {admin && <WorkflowSettings repository={repo.full_name} />}
 
       <section className="space-y-3">
         <h2 className="border-b pb-2 text-lg">Runners</h2>

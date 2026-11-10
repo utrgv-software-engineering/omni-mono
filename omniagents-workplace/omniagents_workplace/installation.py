@@ -1,0 +1,956 @@
+"""Installation registry and isolated Workplace instances. No active-factory global."""
+
+import asyncio
+import contextlib
+import json
+import os
+import re
+import secrets
+import shutil
+import threading
+import uuid
+from pathlib import Path
+
+import yaml
+
+from .accounts import Accounts, AccountError
+from .config import FactoryConfig
+from .factory_process import FactoryProcess
+from .server import Workplace, create_app
+from .store import Store
+
+#: The installation's stop of every factory (the kill switch's "stop all").
+STOP_KEY = "installation.stop"
+#: The models, integrations and MCP servers every factory may use.
+SERVICES_KEY = "installation.allowed_services"
+#: Who governs AI risk for every factory (identity ids).
+OWNERS_KEY = "installation.governance_owners"
+#: Where every factory may connect, through the egress proxy.
+EGRESS_KEY = "installation.egress"
+
+
+class FactoryAccounts:
+    """Resolve shared sign-ins to this factory's local identity and role."""
+
+    def __init__(self, installation, factory_id, local):
+        self.installation, self.factory_id, self.local = installation, factory_id, local
+
+    def __getattr__(self, name):
+        return getattr(self.local, name)
+
+    def signed_in(self, token):
+        identity = self.installation.accounts.signed_in(token)
+        if identity is None:
+            return None
+        member = self.installation.membership(self.factory_id, identity.id)
+        if member is None:
+            return None
+        account = self.local.accounts.get(member.get("local_id"))
+        return account if account and not account.disabled else None
+
+    def change_password(self, account, current, new):
+        identity = self.installation.accounts.by_username(account.username)
+        return self.installation.accounts.change_password(identity, current, new)
+
+    def sign_out(self, token):
+        self.installation.accounts.sign_out(token)
+
+    def username_of(self, account_id):
+        # Easy Auth maps Microsoft identities to installation accounts.
+        return self.installation.accounts.username_of(account_id)
+
+
+class Installation:
+    def __init__(
+        self,
+        directory,
+        *,
+        base_url,
+        internal_url=None,
+        sandbox_url=None,
+        environment="development",
+        runner_image=None,
+        docker_image=None,
+        docker_network=None,
+        docker_host_data=None,
+        workflow_image=None,
+        template=None,
+        sandbox_port=None,
+        deployment_backend=None,
+    ):
+        self.directory = Path(directory).expanduser().resolve()
+        self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.base_url = base_url.rstrip("/")
+        self.internal_url = (internal_url or base_url).rstrip("/")
+        self.sandbox_url = (sandbox_url or base_url).rstrip("/")
+        self.environment = environment
+        self.runner_image = runner_image
+        self.docker_image, self.docker_network = docker_image, docker_network
+        self.docker_host_data, self.workflow_image = docker_host_data, workflow_image
+        self.template = Path(template).resolve() if template else None
+        self.sandbox_port = sandbox_port
+        self.deployment_backend = deployment_backend
+        if docker_image and not (docker_network and docker_host_data):
+            raise ValueError("Docker hosting requires its network and host data path")
+        self.store = Store(self.directory / "installation.db")
+        from .audit import AuditLog
+        from .policy import Policy
+
+        #: What the deployment requires (``WORKPLACE_POLICY``); every factory's too.
+        self.policy = Policy()
+        self.audit_log = AuditLog(self.store)
+        from .decisions import Decisions
+
+        self.decisions = Decisions(self.store, self.audit_log)
+        self.decisions.appliers["allowed_services"] = self._apply_services
+        from .governance_reports import Reviews
+
+        self.reviews = Reviews(self.store, self.audit_log)
+        self.egress_proxy = os.environ.get("WORKPLACE_EGRESS_PROXY", "").strip() or None
+        self.egress_config = (
+            Path(os.environ["WORKPLACE_EGRESS_CONFIG"])
+            if os.environ.get("WORKPLACE_EGRESS_CONFIG")
+            else None
+        )
+        self.egress_denials = (
+            Path(os.environ["WORKPLACE_EGRESS_DENIALS"])
+            if os.environ.get("WORKPLACE_EGRESS_DENIALS")
+            else None
+        )
+        self.decisions.appliers["egress"] = lambda change: self.save_egress(
+            change["after"]
+        )
+        from .notifications import Notifier
+
+        self.notifier = Notifier()
+        self.audit_log.notifier = self.notifier
+        self.accounts = self.new_accounts()
+        self.records = dict(self.store.docs("factory"))
+        self.members = dict(self.store.docs("membership"))
+        self.instances = {}
+        #: Each mounted factory app's lifespan (``stopped``, ``task``).
+        self.lifespans = {}
+        self.processes = {}
+        self.errors = {}
+        self.setup_token = secrets.token_urlsafe(32)
+        self.lock = threading.RLock()
+        self.stack = None
+        self.mount_lock = asyncio.Lock()
+        from .deployments.managed import Deployments
+
+        self.deployments = Deployments(self)
+
+    def adopt(
+        self, data, config, *, project, runtime_container, environ=None, workflow=None
+    ):
+        """Register an offline existing factory without moving its service/runtime data."""
+        if self.records or self.accounts.people():
+            raise ValueError("Adoption requires an empty installation registry")
+        source = Store(Path(data) / "workplace.db")
+        try:
+            factory_id = uuid.uuid4().hex
+            directory = self.directory / "factories" / factory_id
+            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            directory.chmod(0o700)
+            # Keep operational settings, not demo seeds or plaintext login passwords.
+            kept = {
+                k: config[k]
+                for k in ("organization", "factory", "app", "env_file", "memory")
+                if k in config
+            }
+            kept["factory"] = dict(kept["factory"])
+            kept["factory"].pop("repository", None)
+            path = directory / "workplace.yml"
+            path.write_text(yaml.safe_dump(kept, sort_keys=False))
+            path.chmod(0o600)
+            record = {
+                "id": factory_id,
+                "name": config["organization"]["name"],
+                "project": str(project),
+                "autostart": True,
+                "adopted": True,
+                "runtime_container": runtime_container,
+                "workplace_dir": str(Path(data).resolve()),
+                "environ": environ or {},
+                "workflow": workflow,
+            }
+            with self.store.transaction():
+                for kind in (
+                    "account",
+                    "account.session",
+                    "account.invite",
+                    "account.failures",
+                ):
+                    for key, value in source.docs(kind):
+                        self.store.put(kind, key, value)
+                self.save(record)
+                for key, value in source.docs("account"):
+                    if not value.get("disabled"):
+                        membership = {
+                            "factory_id": factory_id,
+                            "identity_id": key,
+                            "local_id": key,
+                            "role": "admin" if value.get("admin") else "member",
+                        }
+                        self.members[factory_id + ":" + key] = membership
+                        self.store.put("membership", factory_id + ":" + key, membership)
+                self.store.set_meta("installation.legacy_factory", factory_id)
+            self.accounts = self.new_accounts()
+            return record
+        finally:
+            source.close()
+
+    def new_accounts(self):
+        accounts = Accounts(
+            self.store,
+            min_password=15 if self.environment in {"production", "staging"} else 8,
+            **self.policy.session_limits(),
+        )
+        if getattr(self, "audit_log", None) is not None:
+            accounts.audit_log = self.audit_log
+        return accounts
+
+    @staticmethod
+    def product_config_name(project):
+        product = (yaml.safe_load((project / "project.yml").read_text()) or {}).get(
+            "product"
+        ) or {}
+        source_name = product.get("name") or product.get("slug", "omniagents")
+        slug = product.get("slug") or re.sub(
+            r"[-_]+", "_", re.sub(r"[^a-z0-9\-_]+", "_", source_name.strip().lower())
+        ).strip("_")
+        name = product.get("config_dir") or slug
+        if os.name == "nt":
+            label = product.get("label") or " ".join(
+                p[:1].upper() + p[1:] for p in re.split(r"[-_]+", source_name) if p
+            )
+            name = product.get("windows_config_dir") or label.replace(" ", "")
+        if not isinstance(name, str) or Path(name).name != name or name in {".", ".."}:
+            raise ValueError("Product config_dir must be a directory name")
+        return name
+
+    def membership(self, factory_id, identity_id):
+        return self.members.get(factory_id + ":" + identity_id)
+
+    def record(self, factory_id):
+        return self.records.get(factory_id)
+
+    def save(self, record):
+        self.records[record["id"]] = record
+        self.store.put("factory", record["id"], record)
+
+    def add(self, *, name, project, owner):
+        name = name.strip()
+        factory_id = uuid.uuid4().hex
+        if not project:
+            if not self.template or not (self.template / "project.yml").is_file():
+                raise ValueError("Choose a factory project directory")
+            project = self.directory / "factories" / factory_id / "project"
+            shutil.copytree(
+                self.template,
+                project,
+                ignore=shutil.ignore_patterns(
+                    ".git",
+                    ".env",
+                    ".venv",
+                    ".workplace",
+                    "config",
+                    "deploy",
+                    "target",
+                    "__pycache__",
+                ),
+            )
+        project = Path(project).expanduser().resolve()
+        if self.docker_image and not project.is_relative_to(
+            self.directory / "factories"
+        ):
+            raise ValueError(
+                "Hosted project directories must be inside the installation's factories directory"
+            )
+        if not name or len(name) > 100:
+            raise ValueError("Name the factory (at most 100 characters)")
+        if not (project / "project.yml").is_file():
+            raise ValueError(
+                "Choose a factory project directory containing project.yml"
+            )
+        with self.lock:
+            for existing in self.records.values():
+                other = Path(existing["project"])
+                if (
+                    project == other
+                    or project in other.parents
+                    or other in project.parents
+                ):
+                    raise ValueError(
+                        "Each factory needs a separate, non-overlapping project directory"
+                    )
+            record = {
+                "id": factory_id,
+                "name": name,
+                "project": str(project),
+                "autostart": False,
+            }
+            directory = self.directory / "factories" / factory_id
+            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+            directory.chmod(0o700)
+            config = {
+                "organization": {
+                    "name": name,
+                    "slug": "f-" + factory_id[:12],
+                    "tz": "UTC",
+                },
+                "factory": {
+                    "url": "http://127.0.0.1:1",
+                    "auth_token": secrets.token_urlsafe(32),
+                    "admin_auth_token": secrets.token_urlsafe(32),
+                    "config_dir": str(
+                        directory / "config" / self.product_config_name(project)
+                    ),
+                },
+                "app": {
+                    "name": name,
+                    "username": "factory-agent",
+                    "slack_delivery": "socket",
+                    "github_webhook": "http://127.0.0.1:1/integrations/github/events",
+                    "linear_webhook": "http://127.0.0.1:1/integrations/linear/events",
+                    "memory_webhook": "http://127.0.0.1:1/integrations/memory/events",
+                },
+                "memory": {"grants": {"team": "write"}},
+            }
+            path = directory / "workplace.yml"
+            path.write_text(yaml.safe_dump(config, sort_keys=False))
+            path.chmod(0o600)
+            self.save(record)
+            self.grant(factory_id, owner.id, "admin")
+            return record
+
+    def grant(self, factory_id, identity_id, role, actor=None):
+        if factory_id not in self.records or identity_id not in self.accounts.accounts:
+            raise ValueError("Unknown factory or account")
+        if role not in {"admin", "member", None}:
+            raise ValueError("Role must be admin or member")
+        previous_role = (self.members.get(factory_id + ":" + identity_id) or {}).get(
+            "role"
+        )
+        if previous_role != role:
+            self.audit_log.record(
+                "membership.changed",
+                actor=actor,
+                factory=factory_id,
+                account_id=identity_id,
+                before=previous_role,
+                after=role,
+            )
+        with self.lock:
+            key = factory_id + ":" + identity_id
+            previous = self.members.get(key)
+            if previous and previous["role"] == "admin" and role != "admin":
+                admins = [
+                    m
+                    for m in self.members.values()
+                    if m["factory_id"] == factory_id and m["role"] == "admin"
+                ]
+                if len(admins) == 1:
+                    raise ValueError("Keep at least one factory administrator")
+            if role is None:
+                self.members.pop(key, None)
+                self.store.delete("membership", key)
+                if factory_id in self.instances and previous:
+                    w, _ = self.instances[factory_id]
+                    account = w.accounts.accounts.get(previous.get("local_id"))
+                    if account:
+                        w.update_person(account, disabled=True)
+            else:
+                import time
+
+                member = {
+                    **(previous or {}),
+                    "factory_id": factory_id,
+                    "identity_id": identity_id,
+                    "role": role,
+                }
+                if not previous or previous.get("role") != role:
+                    member["granted_at"] = time.time()
+                self.members[key] = member
+                self.store.put("membership", key, member)
+                if factory_id in self.instances:
+                    self.sync_member(self.instances[factory_id][0], member)
+
+    def sync_member(self, workplace, member):
+        identity = self.accounts.accounts[member["identity_id"]]
+        account = workplace.accounts.by_username(identity.username)
+        if account is None:
+            account = workplace.add_person(
+                username=identity.username,
+                name=identity.name,
+                email=identity.email,
+                admin=member["role"] == "admin",
+            )
+        else:
+            workplace.update_person(
+                account,
+                name=identity.name,
+                email=identity.email,
+                admin=member["role"] == "admin",
+                disabled=identity.disabled,
+            )
+        member["local_id"] = account.id
+        self.store.put("membership", member["factory_id"] + ":" + identity.id, member)
+
+    async def mount(self, factory_id):
+        async with self.mount_lock:
+            if factory_id in self.instances:
+                return self.instances[factory_id]
+            record = self.records[factory_id]
+            prefix = "/factories/" + factory_id
+            directory = self.directory / "factories" / factory_id
+            environ = {"EVALUATIONS_ARCHIVE": str(directory / "evaluations")}
+            environ.update(record.get("environ", {}))
+            environ["COOLIFY_MCP_URL"] = self.internal_url + prefix + "/coolify/mcp"
+            if self.docker_host_data and not record.get("workplace_dir"):
+                environ["LIBRARY_FILES_HOST_PATH"] = str(
+                    Path(self.docker_host_data)
+                    / "factories"
+                    / factory_id
+                    / "workplace"
+                    / "library"
+                )
+            if environ.get("LIBRARY_FILES_HOST_PATH"):
+                environ["SHARED_FILES_HOST_PATH"] = str(
+                    Path(environ["LIBRARY_FILES_HOST_PATH"]).parent / "shared"
+                )
+            w = Workplace(
+                Path(record.get("workplace_dir") or directory / "workplace"),
+                base_url=self.base_url + prefix,
+                internal_url=self.internal_url + prefix,
+                sandbox_url=self.sandbox_url + prefix,
+                environment=self.environment,
+                run_workflows=False,
+                environ=environ,
+            )
+            try:
+                for member in list(self.members.values()):
+                    if member["factory_id"] == factory_id:
+                        self.sync_member(w, member)
+                w.accounts = FactoryAccounts(self, factory_id, w.accounts)
+                w.unclaimed = lambda: None
+                w.factory_config = FactoryConfig(
+                    directory / "workplace.yml", None, environ=environ
+                )
+                if record.get("adopted"):
+                    # Existing state is authoritative. Never reapply seed/config data.
+                    w.factory_config.write_environment(w)
+                else:
+                    w.factory_config.apply(w)
+                    from .repository_settings import KEY
+
+                    if w.store.meta(KEY) is None:
+                        w.repository_settings.activate(
+                            {
+                                "provider": "standin",
+                                "repositories": [],
+                                "factory_repository": None,
+                                "self_improvement": False,
+                            }
+                        )
+                w.installation_factory_id = factory_id
+
+                def rename_factory(name):
+                    with self.lock:
+                        current = self.records[factory_id]
+                        if current["name"] != name:
+                            self.save({**current, "name": name})
+
+                w.rename_factory = rename_factory
+                w.policy = self.policy
+                w.notifier = self.notifier
+                w.audit_log.notifier = self.notifier
+                w.accounts.local.audit_log = w.audit_log
+                w.audit_log.factory = factory_id
+                w.kill_switch.installation_state = lambda: self.store.meta(STOP_KEY)
+                w.governance.installation_services = lambda: (
+                    self.store.meta(SERVICES_KEY) or []
+                )
+                w.governance.is_owner = self.is_governance_owner
+                w.governance.project = Path(record["project"])
+                w.egress.proxy = self.egress_proxy
+                w.egress.installation_deployment = lambda: (
+                    self.store.meta(EGRESS_KEY) or []
+                )
+                w.egress.on_change = self.write_egress
+                w.kill_switch.installation_admin = self.installation_admin
+
+                async def stop_changed(stopped, factory_id=factory_id):
+                    await self.apply_stop(factory_id, stopped)
+
+                w.kill_switch.on_change = stop_changed
+                loop = asyncio.get_running_loop()
+
+                def preview_changed(*_args):
+                    bridge = self.deployments.previews.get(factory_id)
+                    if bridge:
+                        loop.call_soon_threadsafe(bridge.wake.set)
+
+                w.preview_changed = preview_changed
+                w.github.subscribe(
+                    lambda kind, _data: (
+                        preview_changed() if kind.startswith("pull_request_") else None
+                    )
+                )
+                if self.docker_image or record.get("runtime_container"):
+                    from .docker_factory import DockerFactoryProcess
+
+                    process = DockerFactoryProcess(
+                        directory, Path(record["project"]), self, record
+                    )
+                else:
+                    process = FactoryProcess(directory, Path(record["project"]))
+                if self.workflow_image:
+                    from .github.actions import ActionsRunner
+                    from .github.spaces import ContainerSettings
+
+                    own = record.get("workflow") or {
+                        "image": self.docker_image,
+                        "network": self.docker_network,
+                        "docker_socket": True,
+                        "volumes": [
+                            str(
+                                Path(self.docker_host_data)
+                                / "factories"
+                                / factory_id
+                                / "credentials"
+                                / "codex"
+                            )
+                            + ":/secrets/codex"
+                        ],
+                        "env": {"OMNIAGENTS_CODEX_HOME": "/secrets/codex"},
+                    }
+                    w.github.actions = ActionsRunner(
+                        w.github,
+                        lambda: w.internal_url,
+                        container=ContainerSettings(image=self.workflow_image),
+                        self_hosted=ContainerSettings(**own),
+                        instance=w.instance,
+                    )
+                if self.runner_image:
+                    from urllib.parse import urlsplit
+                    from .github.actions import ActionsRunner
+                    from .github.quicksand_space import QuicksandSettings
+
+                    profile = process.prepare_profile(
+                        urlsplit(self.internal_url).port or 80
+                    )
+                    cfg = w.factory_config.load()["factory"]
+                    runtime_env = process.environment(
+                        w,
+                        0,
+                        cfg["auth_token"],
+                        cfg["admin_auth_token"],
+                        profile,
+                    )
+                    w.github.actions = ActionsRunner(
+                        w.github,
+                        lambda: w.internal_url,
+                        instance=w.instance,
+                        quicksand=QuicksandSettings(
+                            str(Path(self.runner_image).resolve())
+                        ),
+                        agent_profile=profile,
+                        agent_environment=runtime_env,
+                    )
+                app = create_app(w, static_dir=getattr(self, "static_dir", None))
+                if self.stack is not None:
+                    handle = self.lifespans.setdefault(factory_id, {})
+                    await self.stack.enter_async_context(
+                        self.child_lifespan(app, handle)
+                    )
+                self.instances[factory_id] = (w, app)
+                self.processes[factory_id] = process
+                self.errors.pop(factory_id, None)
+                return w, app
+            except BaseException:
+                w.close()
+                raise
+
+    async def delete(self, factory_id, identity):
+        """Delete a factory and everything it holds, now: its runtime, previews,
+        conversations, files and settings. Its backups expire on their own
+        schedule (30 days on Azure). Audited on the installation."""
+        record = self.records.get(factory_id)
+        if record is None:
+            raise ValueError("No such factory")
+        if record.get("adopted") or record.get("workplace_dir"):
+            raise ValueError(
+                "An adopted factory's data belongs to the deployment that runs it; retire it there"
+            )
+        if (record.get("deployment") or {}).get("enabled"):
+            await self.deployments.stop(factory_id)
+        process = self.processes.pop(factory_id, None)
+        if process is not None:
+            await process.stop()
+        if self.docker_image:
+            for name in ("omni-factory-" + factory_id, "omni-deploy-" + factory_id):
+                proc = await asyncio.create_subprocess_exec(
+                    "docker",
+                    "rm",
+                    "--force",
+                    "--volumes",
+                    name,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await proc.wait()
+        handle = self.lifespans.pop(factory_id, None)
+        if handle and handle.get("task"):
+            handle["stopped"].set()
+            await asyncio.gather(handle["task"], return_exceptions=True)
+        found = self.instances.pop(factory_id, None)
+        if found is not None:
+            found[0].close()
+        with self.lock:
+            for key in [
+                k for k, m in self.members.items() if m["factory_id"] == factory_id
+            ]:
+                self.members.pop(key)
+                self.store.delete("membership", key)
+            self.records.pop(factory_id)
+            self.store.delete("factory", factory_id)
+        shutil.rmtree(self.directory / "factories" / factory_id, ignore_errors=True)
+        self.errors.pop(factory_id, None)
+        self.audit_log.record(
+            "factory.deleted",
+            actor=identity.username,
+            factory=factory_id,
+            name=record["name"],
+        )
+        self.write_egress()
+
+    def installation_admin(self, account):
+        identity = self.accounts.by_username(account.username)
+        return bool(identity and identity.admin and not identity.disabled)
+
+    def stopped(self, factory_id):
+        """The kill switch's stop in force for a factory, or ``None``."""
+        if factory_id in self.instances:
+            return self.instances[factory_id][0].kill_switch.state()
+        return self.store.meta(STOP_KEY)
+
+    async def apply_stop(self, factory_id, stopped):
+        """Shut down a stopped factory's runtime; start a resumed one that
+        was meant to run. The runtime has already ended its AI work."""
+        process = self.processes.get(factory_id)
+        if stopped:
+            if process and process.status()["running"]:
+                await process.stop()
+        elif self.records[factory_id].get("autostart") and not (
+            process and process.status()["running"]
+        ):
+            await self.start(factory_id)
+
+    async def stop_all(self, identity, reason):
+        import time
+
+        self.store.set_meta(
+            STOP_KEY,
+            {
+                "stopped_by": identity.username,
+                "stopped_at": time.time(),
+                "reason": reason,
+                "scope": "installation",
+                "by_installation_admin": True,
+            },
+        )
+        self.audit_log.record(
+            "installation.stopped", actor=identity.username, reason=reason
+        )
+
+        await asyncio.gather(
+            *(w.kill_switch.changed() for w, _ in list(self.instances.values()))
+        )
+
+    def governance_factories(self):
+        return [
+            {
+                "id": record["id"],
+                "name": record["name"],
+                "heightened_risk": self.instances[record["id"]][
+                    0
+                ].governance.heightened_risk(),
+            }
+            for record in self.records.values()
+            if record["id"] in self.instances
+        ]
+
+    def cards(self):
+        from .governance_reports import system_card
+
+        return [
+            system_card(
+                self.instances[record["id"]][0], record["name"], Path(record["project"])
+            )
+            for record in self.records.values()
+            if record["id"] in self.instances
+        ]
+
+    def governance_sources(self):
+        sources = [
+            {
+                "name": "installation",
+                "decisions": self.decisions,
+                "audit_log": self.audit_log,
+            }
+        ]
+        for record in self.records.values():
+            if record["id"] in self.instances:
+                w = self.instances[record["id"]][0]
+                sources.append(
+                    {
+                        "name": record["name"],
+                        "decisions": w.governance.decisions,
+                        "audit_log": w.audit_log,
+                    }
+                )
+        return sources
+
+    def write_egress(self):
+        """The proxy's configuration: the deployment's list, and every factory's
+        credentials and own list."""
+        if self.egress_config is None:
+            return
+        from .egress import write_proxy_config
+
+        write_proxy_config(
+            self.egress_config,
+            self.store.meta(EGRESS_KEY) or [],
+            {
+                factory_id: w.egress.proxy_entry()
+                for factory_id, (w, _) in self.instances.items()
+            },
+        )
+
+    def save_egress(self, entries):
+        self.store.set_meta(EGRESS_KEY, entries)
+        self.write_egress()
+
+    def record_denials(self, offset):
+        """Audit the proxy's new denials (an alert for Confidential factories)."""
+        if self.egress_denials is None or not self.egress_denials.exists():
+            return offset, []
+        alerts = []
+        with self.egress_denials.open() as lines:
+            lines.seek(offset)
+            for line in lines:
+                try:
+                    denial = json.loads(line)
+                except ValueError:
+                    continue
+                found = self.instances.get(denial.get("factory") or "")
+                if found:
+                    w = found[0]
+                    w.egress.record_denial(denial)
+                    if w.governance.classification() == "confidential":
+                        # An alert: recorded, and announced in Teams.
+                        w.audit_log.record(
+                            "egress.denied_confidential",
+                            destination=f"{denial.get('host')}:{denial.get('port')}",
+                        )
+                        alerts.append((self.records[denial["factory"]]["name"], denial))
+            offset = lines.tell()
+        return offset, alerts
+
+    def is_governance_owner(self, account):
+        identity = self.accounts.by_username(account.username)
+        return bool(
+            identity
+            and not identity.disabled
+            and identity.id in (self.store.meta(OWNERS_KEY) or [])
+        )
+
+    def set_governance_owners(self, identity, account_ids):
+        unknown = [a for a in account_ids if a not in self.accounts.accounts]
+        if unknown:
+            raise ValueError("Unknown account")
+        before = self.store.meta(OWNERS_KEY) or []
+        self.store.set_meta(OWNERS_KEY, list(account_ids))
+        self.audit_log.record(
+            "governance.owners_changed",
+            actor=identity.username,
+            before=before,
+            after=list(account_ids),
+        )
+
+    def _apply_services(self, change):
+        self.store.set_meta(SERVICES_KEY, change["after"])
+        self.audit_log.record(
+            "allowed_services.changed", before=change["before"], after=change["after"]
+        )
+
+    def set_allowed_services(self, identity, services, reason=""):
+        from .decisions import decide_or_propose
+        from .governance import validate_services
+
+        change = {
+            "before": self.store.meta(SERVICES_KEY) or [],
+            "after": validate_services(services),
+        }
+        return decide_or_propose(
+            self.decisions,
+            gated=self.policy.strict,
+            owner=self.is_governance_owner(identity),
+            account=identity,
+            kind="allowed_services",
+            summary=f"Allowed services: {len(change['after'])} service(s)",
+            change=change,
+            reason=reason,
+            apply=lambda: self._apply_services(change),
+        )
+
+    async def resume_all(self, identity, reason):
+        if not self.store.meta(STOP_KEY):
+            raise ValueError("Factories are not stopped")
+        self.store.set_meta(STOP_KEY, None)
+        self.audit_log.record(
+            "installation.resumed", actor=identity.username, reason=reason
+        )
+        await self.notifier.send(
+            "All factories resumed",
+            f"Factories were resumed by {identity.username}: {reason}",
+            [("By", identity.username), ("Reason", reason)],
+        )
+        await asyncio.gather(
+            *(w.kill_switch.changed() for w, _ in list(self.instances.values()))
+        )
+
+    async def start(self, factory_id):
+        from urllib.parse import urlsplit
+
+        if self.stopped(factory_id):
+            from .kill_switch import describe
+
+            raise ValueError(describe(self.stopped(factory_id)))
+        w, _ = await self.mount(factory_id)
+        refused = w.governance.startable()
+        if refused:
+            raise ValueError(refused)
+        port = urlsplit(self.internal_url).port or 80
+        await self.processes[factory_id].start(
+            w, self.records[factory_id], port, self.runner_image
+        )
+        self.save({**self.records[factory_id], "autostart": True})
+
+    async def stop(self, factory_id):
+        if factory_id in self.processes:
+            await self.processes[factory_id].stop()
+        self.save({**self.records[factory_id], "autostart": False})
+
+    def view(self, record, identity):
+        membership = self.membership(record["id"], identity.id)
+        process = self.processes.get(record["id"])
+        return {
+            **{key: record[key] for key in ("id", "name")},
+            "project": record["project"] if identity.admin else None,
+            "role": membership["role"] if membership else None,
+            "deployment": (
+                self.deployments.view(record["id"])
+                if membership and membership["role"] == "admin"
+                else None
+            ),
+            "runtime": (
+                process.status()
+                if process
+                else {"running": False, "error": self.errors.get(record["id"])}
+            ),
+            "stopped": self.stopped(record["id"]),
+        }
+
+    @staticmethod
+    @contextlib.asynccontextmanager
+    async def child_lifespan(app, handle=None):
+        # MCP's AnyIO cancel scopes must enter and exit in the same task, even
+        # when a factory is created by an HTTP request after host startup.
+        ready = asyncio.get_running_loop().create_future()
+        stopped = asyncio.Event()
+
+        async def run():
+            try:
+                async with app.router.lifespan_context(app):
+                    ready.set_result(None)
+                    await stopped.wait()
+            except BaseException as exc:
+                if not ready.done():
+                    ready.set_exception(exc)
+                raise
+
+        task = asyncio.create_task(run())
+        if handle is not None:
+            # Ending one factory's app before the installation's (deleting it).
+            handle.update(stopped=stopped, task=task)
+        try:
+            await ready
+            yield
+        finally:
+            stopped.set()
+            await task
+
+    @contextlib.asynccontextmanager
+    async def lifespan(self, _app):
+        from filelock import FileLock
+
+        lock = FileLock(str(self.directory / "installation.lock"))
+        lock.acquire(timeout=0)
+        try:
+            async with contextlib.AsyncExitStack() as stack:
+                self.stack = stack
+                for factory_id in self.records:
+                    try:
+                        await self.mount(factory_id)
+                        if self.records[factory_id].get(
+                            "autostart"
+                        ) and not self.stopped(factory_id):
+                            await self.start(factory_id)
+                    except Exception as exc:
+                        self.errors[factory_id] = str(exc)
+                for factory_id, record in self.records.items():
+                    if (record.get("deployment") or {}).get("enabled"):
+                        await self.deployments.start(factory_id)
+                from .governance_reports import notify_overdue
+
+                reminders = asyncio.create_task(
+                    notify_overdue(
+                        lambda: self.reviews.calendar(self.governance_factories()),
+                        self.notifier,
+                        self.store,
+                        "installation.reviews_reminded",
+                    )
+                )
+                stack.callback(reminders.cancel)
+                self.write_egress()
+
+                async def watch_denials():
+                    offset = self.store.meta("installation.egress_denials_offset") or 0
+                    while True:
+                        try:
+                            # Confidential factories' denials are alerts
+                            # (audit.ALERTS), announced as they are recorded.
+                            offset, _alerts = self.record_denials(offset)
+                            self.store.set_meta(
+                                "installation.egress_denials_offset", offset
+                            )
+                        except Exception:  # noqa: BLE001 - keep watching
+                            pass
+                        await asyncio.sleep(10)
+
+                denials = asyncio.create_task(watch_denials())
+                stack.callback(denials.cancel)
+                try:
+                    yield
+                finally:
+                    await self.deployments.close()
+                    await asyncio.gather(*(p.stop() for p in self.processes.values()))
+        finally:
+            self.stack = None
+            for w, _ in self.instances.values():
+                w.close()
+            self.instances.clear()
+            self.store.close()
+            lock.release()

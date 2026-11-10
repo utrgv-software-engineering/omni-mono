@@ -48,7 +48,9 @@ async def _capture_ui_after_call(
     # Resource-URI form: prefer this when we have a cached URI for the tool.
     cached = mcp_ui.lookup_tool_ui_resource(tool_name, server_name)
     if cached is not None:
-        structured = getattr(result, "structuredContent", None)
+        structured = getattr(
+            result, "structured_content", getattr(result, "structuredContent", None)
+        )
         if structured is None and isinstance(result, dict):
             structured = result.get("structuredContent")
         # Some Pydantic models — coerce to JSON-safe shape for transport.
@@ -301,6 +303,9 @@ def _resolve_setting_placeholders(value: Any, settings: Dict[str, Any]) -> Any:
 
 
 def _instantiate_server(cfg: MCPServerConfig, params: Dict[str, Any]) -> MCPServer:
+    from .mcp_transport import install_resource_transport_support
+
+    install_resource_transport_support()
     server_type = cfg.type.lower()
     options = cfg.options or {}
     common_kwargs = {

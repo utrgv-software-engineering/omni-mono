@@ -10,15 +10,10 @@ clean:
 # Build the UI bundle the wheel ships. The web app is an npm workspace of
 # the monorepo, so it installs at the root; the bundle is never committed.
 assets:
-	cd .. && npm ci
-	cd .. && npm run build -w omniagents-workplace-web
-	rm -rf $(STATIC_DIR)
-	mkdir -p $(STATIC_DIR)
-	cp -R $(WEB_DIR)/dist/. $(STATIC_DIR)/
-	@test -f $(STATIC_DIR)/index.html || (echo "Web UI build failed: index.html not found" && exit 1)
+	python scripts/build_package.py --assets-only
 
-build: assets
-	python -m build
+build:
+	python scripts/build_package.py
 
 # Releases come only from a clean, up-to-date main (dev is where work happens),
 # as omniagents' do.

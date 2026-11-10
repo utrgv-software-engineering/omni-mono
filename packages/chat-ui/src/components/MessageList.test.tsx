@@ -376,3 +376,20 @@ describe('MessageList machinery chain', () => {
     }
   });
 });
+
+it('names who wrote each person message in a shared conversation', async () => {
+  await act(async () =>
+    root.render(
+      <MessageList
+        items={[
+          { type: 'chat', role: 'user', content: 'Use sharper corners', message_id: '1', sender: { name: 'Priya Shah' } },
+          { type: 'chat', role: 'user', content: 'Unattributed', message_id: '2' },
+        ]}
+        thinking={false}
+      />,
+    ),
+  );
+  expect(container.textContent).toContain('Priya Shah');
+  expect(container.textContent).toContain('PS');
+  expect(container.textContent?.match(/Priya Shah/g)).toHaveLength(1);
+});

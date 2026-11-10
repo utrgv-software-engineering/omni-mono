@@ -272,7 +272,7 @@ async def test_preallocated_worker_is_owned_before_configuration(monkeypatch, tm
     async def build(settings, mcp, app):
         return Agent(name="worker", model="gpt-4.1", instructions="Test worker")
 
-    def loader(model):
+    def loader(model, **_):
         return (
             AgentSpec(
                 name="worker",
@@ -603,7 +603,7 @@ def test_worker_cache_scopes_identical_ids_to_parent_and_namespace(monkeypatch):
         reset_current_session_id,
     )
 
-    manager = WorkerManager(spec_loader=lambda model: None)
+    manager = WorkerManager(spec_loader=lambda model, **_: None)
     for project, parent in [
         ("project-a", "parent"),
         ("project-b", "parent"),
@@ -635,3 +635,34 @@ def test_worker_cache_scopes_identical_ids_to_parent_and_namespace(monkeypatch):
         finally:
             reset_current_session_id(session_token)
             reset_current_service(service_token)
+
+
+def test_listing_workers_reads_the_journal_and_writes_nothing(journal, monkeypatch):
+    from types import SimpleNamespace
+    from omniagents.builtin.tools import worker_tools
+    from omniagents.core.agents import service as service_module
+
+    row = admit(journal)
+    journal.finish(
+        row["worker_id"], row["generation"], "runtime-one", "completed", "done"
+    )
+    session = SimpleNamespace(id="parent", user_id="alice")
+    service = SimpleNamespace(
+        get_session=lambda sid: session if sid == "parent" else None,
+        _queue_store=lambda s: journal.store,
+    )
+    monkeypatch.setattr(service_module, "current_service", lambda: service)
+    monkeypatch.setattr(worker_tools, "_MANAGER", None)
+
+    def written(*args, **kwargs):
+        raise AssertionError("a worker listing must not write")
+
+    monkeypatch.setattr(journal.store, "mutate_queue", written)
+    [state] = worker_tools.workers_snapshot("parent")
+    assert (state["worker_id"], state["status"], state["result"], state["task"]) == (
+        "worker",
+        "completed",
+        "done",
+        "task",
+    )
+    assert state["parent_session_id"] == "parent" and state["recovered"]

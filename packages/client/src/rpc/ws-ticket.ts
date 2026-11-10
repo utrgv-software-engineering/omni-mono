@@ -55,7 +55,15 @@ export async function fetchWsTicket(wsUrl: string, token: string, signal?: Abort
 
 /** Append a freshly minted connect ticket to a WebSocket URL when a token
  *  is configured; otherwise return the URL unchanged. */
+let hostTicketProvider: ((url: string, signal?: AbortSignal) => Promise<string>) | undefined;
+export const hasHostTicketProvider = () => !!hostTicketProvider;
+
+export function setHostTicketProvider(provider: typeof hostTicketProvider): void {
+  hostTicketProvider = provider;
+}
+
 export async function withConnectTicket(wsUrl: string, token?: string, signal?: AbortSignal): Promise<string> {
+  if (hostTicketProvider) return hostTicketProvider(wsUrl, signal);
   if (!token) {
     return wsUrl;
   }

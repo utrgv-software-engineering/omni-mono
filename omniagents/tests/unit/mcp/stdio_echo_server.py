@@ -1,8 +1,8 @@
 """Small local protocol server for real MCP lifecycle verification."""
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
-server = FastMCP("lifecycle-test")
+server = MCPServer("lifecycle-test")
 
 
 @server.tool()

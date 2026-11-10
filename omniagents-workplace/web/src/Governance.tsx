@@ -1,0 +1,499 @@
+// A factory's data classification, and the services a deployment allows.
+import { useEffect, useState } from "react";
+import { Button } from "@omniagents/ui/button";
+import { Input } from "@omniagents/ui/input";
+import { Checkbox } from "@omniagents/ui/checkbox";
+import { NativeSelect, NativeSelectOption } from "@omniagents/ui/native-select";
+import { toast } from "sonner";
+import { factoryApprovals, factoryProfile, governance, type GovernanceState, type AllowedService, type GovernanceDecision, type PendingApproval } from "./api";
+import { GovernanceOwners } from "./GovernanceOwners";
+
+const CLASSES: Record<string, string> = {
+  published: "Published: public information",
+  controlled: "Controlled: internal information",
+  confidential: "Confidential: PHI, student records and other personal data",
+};
+
+type ProfileFields = {
+  classification: string;
+  heightened_risk: string;
+  purpose: string;
+  owner: string;
+  sponsor: string;
+  data: string;
+  affected: string;
+  decides: string;
+  reason: string;
+};
+
+const emptyProfile: ProfileFields = {
+  classification: "",
+  heightened_risk: "",
+  purpose: "",
+  owner: "",
+  sponsor: "",
+  data: "",
+  affected: "",
+  decides: "",
+  reason: "",
+};
+
+/** Classification and risk, purpose, owner, sponsor and intended use. Raising a
+ * label takes effect at once; lowering one is the governance owner's decision. */
+export function FactoryProfileForm({ onSaved }: { onSaved?: () => void }) {
+  const [fields, setFields] = useState<ProfileFields>(emptyProfile);
+  const [forced, setForced] = useState(false);
+  const [pending, setPending] = useState<string | null>(null);
+  const set = (change: Partial<ProfileFields>) => setFields((f) => ({ ...f, ...change }));
+  useEffect(() => {
+    void factoryProfile.get().then((view) => {
+      const p = view.profile;
+      setFields({
+        ...emptyProfile,
+        classification: p.classification ?? "",
+        heightened_risk: p.heightened_risk == null ? "" : p.heightened_risk ? "yes" : "no",
+        purpose: p.purpose ?? "",
+        owner: p.owner ?? "",
+        sponsor: p.sponsor ?? "",
+        data: p.data ?? "",
+        affected: p.affected ?? "",
+        decides: p.decides ?? "",
+      });
+      setForced(view.review_forced);
+      setPending(view.pending[0]?.summary ?? null);
+    });
+  }, []);
+  const text = (key: keyof ProfileFields, label: string, max = 2000) => (
+    <label className="block space-y-1">
+      <span className="text-sm font-medium">{label}</span>
+      <Input value={fields[key]} onChange={(e) => set({ [key]: e.target.value })} maxLength={max} />
+    </label>
+  );
+  return (
+    <form
+      className="space-y-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        factoryProfile
+          .save({
+            ...fields,
+            heightened_risk: fields.heightened_risk === "" ? null : fields.heightened_risk === "yes",
+          })
+          .then((view) => {
+            setForced(view.review_forced);
+            if (view.pending) {
+              setPending(view.pending.summary);
+              toast.success("Saved. The lower classification waits for the governance owner.");
+            } else {
+              toast.success("Saved");
+              onSaved?.();
+            }
+          })
+          .catch((e: unknown) => toast.error((e as Error).message));
+      }}
+    >
+      {pending && (
+        <p role="status" className="rounded-md border p-2 text-sm">
+          Waiting for the governance owner: {pending}
+        </p>
+      )}
+      <label className="block space-y-1">
+        <span className="text-sm font-medium">Data classification</span>
+        <NativeSelect
+          value={fields.classification}
+          onChange={(e) => set({ classification: e.target.value })}
+          required
+          aria-label="Data classification"
+        >
+          <NativeSelectOption value="">Choose…</NativeSelectOption>
+          {Object.entries(CLASSES).map(([value, label]) => (
+            <NativeSelectOption key={value} value={value}>
+              {label}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+        <span className="block text-xs text-muted-foreground">
+          By the data the factory touches, not its purpose. Controlled and Confidential
+          factories use only allowed services, and every change to them is reviewed.
+        </span>
+      </label>
+      <label className="block space-y-1">
+        <span className="text-sm font-medium">Heightened risk</span>
+        <NativeSelect
+          value={fields.heightened_risk}
+          onChange={(e) => set({ heightened_risk: e.target.value })}
+          required
+          aria-label="Heightened risk"
+        >
+          <NativeSelectOption value="">Choose…</NativeSelectOption>
+          <NativeSelectOption value="yes">Yes: it may materially affect people&apos;s rights, opportunities, safety or access to services</NativeSelectOption>
+          <NativeSelectOption value="no">No: it prepares work, and people decide</NativeSelectOption>
+        </NativeSelect>
+      </label>
+      {text("purpose", "Purpose")}
+      {text("owner", "Owner", 200)}
+      {text("sponsor", "Sponsor: the clinical or business leader it is built for", 200)}
+      {text("data", "Data it touches")}
+      {text("affected", "Who is affected")}
+      {text("decides", "What the AI does and does not decide")}
+      {text("reason", "Reason (needed to lower the classification or risk)")}
+      {forced && (
+        <p className="text-sm text-muted-foreground">
+          Every change to this factory&apos;s definition arrives by a reviewed pull request.
+        </p>
+      )}
+      <Button type="submit" disabled={!fields.classification || !fields.heightened_risk}>
+        Save
+      </Button>
+    </form>
+  );
+}
+
+function DecisionList({
+  decisions,
+  owner,
+  decide,
+}: {
+  decisions: GovernanceDecision[];
+  owner: boolean;
+  decide: (id: string, approve: boolean, reasoning: string) => Promise<unknown>;
+}) {
+  if (!decisions.length) return <p className="text-sm text-muted-foreground">No decisions yet.</p>;
+  return (
+    <ul className="divide-y rounded-md border text-sm">
+      {[...decisions].reverse().map((d) => (
+        <li key={d.id} className="flex flex-wrap items-center gap-2 p-2">
+          <span className="flex-1">
+            <span className="font-medium">{d.summary}</span>
+            <span className="block text-xs text-muted-foreground">
+              {d.status === "pending"
+                ? `Proposed by ${d.proposed_by ?? "—"}${d.reason ? `: ${d.reason}` : ""}`
+                : `${d.status === "declined" ? "Declined" : "Decided"} by ${d.decided_by ?? "—"}${d.reasoning ? `: ${d.reasoning}` : ""}`}
+            </span>
+          </span>
+          {d.status === "pending" && owner && (
+            <>
+              <Button size="sm" onClick={() => {
+                const reasoning = window.prompt("Your reasoning") ?? "";
+                void decide(d.id, true, reasoning).catch((e: unknown) => toast.error((e as Error).message));
+              }}>Approve</Button>
+              <Button size="sm" variant="outline" onClick={() => {
+                const reasoning = window.prompt("Why decline?") ?? "";
+                void decide(d.id, false, reasoning).catch((e: unknown) => toast.error((e as Error).message));
+              }}>Decline</Button>
+            </>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** A factory's decisions and its system card (Factory settings → Governance). */
+export function FactoryGovernance() {
+  const [view, setView] = useState<GovernanceState | null>(null);
+  const [card, setCard] = useState("");
+  const [error, setError] = useState("");
+  const load = async () => {
+    setError("");
+    try {
+      const next = await governance.get();
+      setView(next);
+      const result = await governance.card();
+      setCard(result.markdown);
+    } catch (error) { setError((error as Error).message); }
+  };
+  useEffect(() => { void load(); }, []);
+  if (!view) return error ? <div role="alert"><p>{error}</p><Button onClick={() => void load()}>Retry</Button></div> : <p className="text-sm">Loading governance settings…</p>;
+  return (
+    <div className="space-y-4">
+      {error && <div role="alert"><p>{error}</p><Button onClick={() => void load()}>Retry</Button></div>}
+      <GovernanceOwners view={view} onSaved={load} />
+      <section className="space-y-2">
+        <h3 className="font-medium">Decisions</h3>
+        <DecisionList
+          decisions={view.decisions}
+          owner={view.owner}
+          decide={(id, approve, reasoning) => governance.decide(id, approve, reasoning).then(load)}
+        />
+      </section>
+      <section className="space-y-2">
+        <h3 className="font-medium">System card</h3>
+        <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-md border p-2 text-xs">{card}</pre>
+        <Button variant="outline" size="sm" onClick={() => void navigator.clipboard.writeText(card).then(() => toast.success("Copied"))}>
+          Copy for the AI Inventory
+        </Button>
+      </section>
+    </div>
+  );
+}
+
+const blank: AllowedService = { kind: "integration", name: "", provider: "", endpoint: "", note: "" };
+
+/** The deployment's allowed services, edited as a list and saved together. */
+export function AllowedServicesEditor({
+  load,
+  save,
+  readOnly = false,
+}: {
+  load: () => Promise<AllowedService[]>;
+  save: (services: AllowedService[]) => Promise<AllowedService[]>;
+  readOnly?: boolean;
+}) {
+  const [services, setServices] = useState<AllowedService[]>([]);
+  useEffect(() => {
+    void load().then(setServices);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- loaded once, when opened
+  const update = (index: number, change: Partial<AllowedService>) =>
+    setServices((list) => list.map((s, i) => (i === index ? { ...s, ...change } : s)));
+  return (
+    <form
+      className="space-y-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        save(services)
+          .then((saved) => {
+            setServices(saved);
+            toast.success("Saved");
+          })
+          .catch((e: unknown) => toast.error((e as Error).message));
+      }}
+    >
+      <p className="text-sm text-muted-foreground">
+        Integrations and MCP servers Controlled and Confidential factories may use.
+        Model connections use the deployment and factory network allowlists, not this list.
+        Changes reach a factory when its runtime next starts.
+      </p>
+      {services.map((service, index) => service.kind === "model" ? null : (
+        <fieldset key={index} className="grid gap-2 rounded-md border p-3 md:grid-cols-[8rem_1fr_1fr_2fr_auto]" disabled={readOnly}>
+          <NativeSelect
+            aria-label="Kind"
+            value={service.kind}
+            onChange={(e) => update(index, { kind: e.target.value as AllowedService["kind"] })}
+          >
+            <NativeSelectOption value="integration">Integration</NativeSelectOption>
+            <NativeSelectOption value="mcp">MCP server</NativeSelectOption>
+          </NativeSelect>
+          <Input aria-label="Name" placeholder="Name" value={service.name} required onChange={(e) => update(index, { name: e.target.value })} />
+          <Input
+            aria-label="Provider or type"
+            placeholder={service.kind === "mcp" ? "—" : "slack, github…"}
+            value={service.provider}
+            disabled={service.kind === "mcp"}
+            onChange={(e) => update(index, { provider: e.target.value })}
+          />
+          <Input
+            aria-label="Endpoint"
+            placeholder={service.kind === "mcp" ? "URL or command:executable" : "URL (empty: the provider's own)"}
+            value={service.endpoint}
+            onChange={(e) => update(index, { endpoint: e.target.value })}
+          />
+          {!readOnly && (
+            <Button type="button" variant="ghost" onClick={() => setServices((list) => list.filter((_, i) => i !== index))}>
+              Remove
+            </Button>
+          )}
+        </fieldset>
+      ))}
+      {!readOnly && (
+        <div className="flex gap-2">
+          <Button type="button" variant="outline" onClick={() => setServices((list) => [...list, { ...blank }])}>
+            Add a service
+          </Button>
+          <Button type="submit">Save</Button>
+        </div>
+      )}
+    </form>
+  );
+}
+
+/** An egress allowlist, one host per line (host, *.domain, or either with :port). */
+export function AllowlistEditor({
+  load,
+  save,
+  help,
+  allowClear = false,
+  label = "Allowlist",
+  choices = [],
+  allowAdd = false,
+  readOnly = false,
+}: {
+  load: () => Promise<string[] | null>;
+  save: (entries: string[] | null, reason: string) => Promise<{ pending: unknown }>;
+  help: string;
+  allowClear?: boolean;
+  label?: string;
+  choices?: string[];
+  allowAdd?: boolean;
+  readOnly?: boolean;
+}) {
+  const [entries, setEntries] = useState<string[]>([]);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [inherited, setInherited] = useState(false);
+  const [destination, setDestination] = useState("");
+  const [reason, setReason] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [addError, setAddError] = useState<string | null>(null);
+  const refresh = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const saved = await load();
+      setEntries([...new Set([...choices, ...(saved ?? [])])].sort());
+      setSelected(saved ?? choices);
+      setInherited(allowClear && saved === null);
+    } catch (failure) {
+      setError((failure as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    void refresh();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- loaded once, when opened
+  const add = () => {
+    const entry = destination.trim().toLowerCase();
+    const [host, port, extra] = entry.split(":");
+    const name = host.startsWith("*.") ? host.slice(2) : host;
+    if (!name || name.length > 253 || extra !== undefined ||
+      !name.split(".").every((part) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(part)) ||
+      (host.startsWith("*.") && !name.includes(".")) ||
+      (port !== undefined && (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535))) {
+      setAddError("Enter a hostname, optionally with :port, not a URL or path.");
+      return;
+    }
+    if (entries.includes(entry)) {
+      setAddError("That destination is already listed.");
+      return;
+    }
+    setEntries((current) => [...current, entry].sort());
+    setSelected((current) => [...current, entry]);
+    setDestination("");
+    setAddError(null);
+  };
+  const submit = async () => {
+    if (saving || loading || readOnly) return;
+    setSaving(true);
+    try {
+      const result = await save(inherited ? null : [...selected].sort(), reason);
+      toast.success(result.pending ? "Saved. Widening it waits for the governance owner." : "Saved");
+      await refresh();
+    } catch (failure) {
+      toast.error((failure as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  if (error) return <div role="alert" className="space-y-2"><p>{error}</p><Button variant="outline" onClick={() => void refresh()}>Retry</Button></div>;
+  return (
+    <form
+      className="space-y-3"
+      aria-label={label}
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit();
+      }}
+    >
+      <p className="text-sm text-muted-foreground">{help}</p>
+      <fieldset disabled={loading || saving || readOnly} className="min-w-0 space-y-3">
+        {allowClear && <label className="flex items-start gap-2 text-sm"><Checkbox checked={inherited} onCheckedChange={(checked) => {
+          setInherited(checked === true);
+          if (checked === true) setSelected(choices);
+        }} /><span>Use all deployment destinations, including future additions</span></label>}
+        {loading ? <p role="status" className="text-sm">Loading destinations…</p> : <>
+          <div className="max-h-60 overflow-y-auto rounded-md border divide-y">
+            {entries.map((entry) => <label key={entry} className="flex items-start gap-3 p-3 text-sm">
+              <Checkbox checked={selected.includes(entry)} onCheckedChange={(checked) => {
+                setInherited(false);
+                setSelected((current) => checked === true ? [...current, entry] : current.filter((value) => value !== entry));
+              }} />
+              <span className="min-w-0 break-all font-mono">{entry}</span>
+            </label>)}
+            {!entries.length && <p className="p-3 text-sm text-muted-foreground">{allowAdd ? "No destinations yet. Add one below." : "No deployment destinations available."}</p>}
+          </div>
+          <p className="text-xs text-muted-foreground">{inherited ? "Following the deployment list automatically." : selected.length ? `${selected.length} selected. Changes apply when saved.` : "No destinations selected. Saving blocks all destinations through the proxy."}</p>
+        </>}
+        {allowAdd && !readOnly && <div className="space-y-2">
+          <label className="block space-y-1 text-sm"><span>New destination</span><Input
+            value={destination}
+            placeholder="api.example.com:443"
+            aria-invalid={!!addError}
+            onChange={(event) => { setDestination(event.target.value); setAddError(null); }}
+            onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); add(); } }}
+          /></label>
+          <Button type="button" variant="outline" disabled={!destination.trim()} onClick={add}>Add destination</Button>
+          {addError && <p role="alert" className="text-sm text-destructive">{addError}</p>}
+        </div>}
+        {!readOnly && <>
+          <label className="block space-y-1 text-sm"><span>Reason for change</span><Input placeholder="Why change access?" value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+          <Button type="submit">{saving ? "Saving…" : "Save changes"}</Button>
+        </>}
+      </fieldset>
+    </form>
+  );
+}
+
+/** Approvals a person must give: the factory's whole inbox (administrators). */
+export function ApprovalInbox() {
+  const [approvals, setApprovals] = useState<PendingApproval[]>([]);
+  const load = () => void factoryApprovals.list().then((r) => setApprovals(r.approvals), () => undefined);
+  useEffect(() => {
+    if (approvals.length && window.location.hash === "#approvals") {
+      document.getElementById("approvals")?.scrollIntoView({ block: "start" });
+    }
+  }, [approvals.length]);
+  useEffect(() => {
+    load();
+    const timer = window.setInterval(load, 15000);
+    return () => window.clearInterval(timer);
+  }, []);
+  if (!approvals.length) return null;
+  const decide = (a: PendingApproval, decision: "approve" | "reject") => {
+    const reason = decision === "reject" ? (window.prompt("Why decline?") ?? "") : "";
+    void factoryApprovals
+      .decide(a.call_id, decision, reason)
+      .then(load)
+      .catch((e: unknown) => toast.error((e as Error).message));
+  };
+  return (
+    <section id="approvals" className="space-y-2 rounded-md border border-amber-500/40 p-3" aria-label="Approvals">
+      <h2 className="text-lg font-semibold">Waiting for your approval</h2>
+      <ul className="divide-y text-sm">
+        {approvals.map((a) => (
+          <li key={a.call_id} className="space-y-2 py-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="flex-1">
+                <span className="font-medium">{a.agent}</span> wants to use <span className="font-mono">{a.tool}</span>
+                <span className="block text-xs text-muted-foreground">
+                  {new Date(a.requested_at * 1000).toLocaleString()}
+                  {a.status === "interrupted" ? " · its run ended; approving runs it in a new turn" : ""}
+                </span>
+              </span>
+              <Button size="sm" onClick={() => decide(a, "approve")}>Approve</Button>
+              <Button size="sm" variant="outline" onClick={() => decide(a, "reject")}>Decline</Button>
+            </div>
+            {a.arguments && (
+              <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 text-xs">{a.arguments}</pre>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** On the Factory tab: why the factory may not start or take work, if so. */
+export function FactoryBlocked() {
+  const [blocked, setBlocked] = useState<string | null>(null);
+  useEffect(() => {
+    void factoryProfile.get().then((view) => setBlocked(view.blocked ?? null), () => undefined);
+  }, []);
+  if (!blocked) return null;
+  return (
+    <p role="alert" className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+      {blocked}
+    </p>
+  );
+}

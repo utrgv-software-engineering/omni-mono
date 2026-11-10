@@ -4914,6 +4914,13 @@
           "schema": {
             "$ref": "./schemas/gui-v2.schema.json#/$defs/queue_status/properties/submission_id"
           }
+        },
+        {
+          "name": "snapshot_limit",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v2.schema.json#/$defs/queue_status/properties/snapshot_limit"
+          }
         }
       ],
       "result": {
@@ -9731,6 +9738,13 @@
           "required": false,
           "schema": {
             "$ref": "./schemas/gui-v2.schema.json#/$defs/run_started/properties/prompt_role"
+          }
+        },
+        {
+          "name": "notifications",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v2.schema.json#/$defs/run_started/properties/notifications"
           }
         },
         {

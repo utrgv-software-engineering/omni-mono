@@ -170,7 +170,21 @@ class _BashTimeoutMarker(Exception):
         self.wall_time_ms = wall_time_ms
 
 
-@rich_function_tool(running_summary="Running shell command...")
+def _bash_error_message(ctx, error: Exception) -> str:
+    from agents.tool import default_tool_error_function
+    from omniagents.core.errors import WorkspaceRootRequiredError
+
+    # Preserve actionable configuration errors while retaining the SDK's
+    # redaction for unexpected exceptions (which may contain sensitive data).
+    if isinstance(error, WorkspaceRootRequiredError):
+        return str(error)
+    return default_tool_error_function(ctx, error)
+
+
+@rich_function_tool(
+    running_summary="Running shell command...",
+    failure_error_function=_bash_error_message,
+)
 async def execute_bash(
     ctx: RunContextWrapper[Any],
     command: str,

@@ -561,7 +561,7 @@ async def test_agents_plan_with_projects_milestones_cycles_and_documents(
             ],
         )
     )[1]
-    assert missing.isError and "not found" in _text(missing)
+    assert missing.is_error and "not found" in _text(missing)
 
     # The inbox, as the agent's own.
     factory = li.find_user("acme-factory")
@@ -591,7 +591,7 @@ async def test_agents_plan_with_projects_milestones_cycles_and_documents(
             [("mark_notification", {"id": next(iter(li.notifications)), "read": True})],
         )
     )[1]
-    assert blocked.isError
+    assert blocked.is_error
 
 
 @pytest.mark.asyncio

@@ -694,6 +694,7 @@ class QueueStatusParams(BaseModel):
     session_id: str
     include_snapshot: bool | None = None
     submission_id: str | None = None
+    snapshot_limit: int | None = None
 
 
 class QueueStatusResult(RootModel[dict[str, Any]]):
@@ -1402,6 +1403,7 @@ class RunStartedParams(BaseModel):
     session_id: str
     prompt: str | None = None
     prompt_role: str | None = None
+    notifications: list[Any] | None = None
     seq: int | None = None
     stream_id: str | None = None
 

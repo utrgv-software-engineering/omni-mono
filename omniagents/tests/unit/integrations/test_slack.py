@@ -454,6 +454,22 @@ def test_mount_integrations_without_a_manifest_or_integrations(tmp_path):
     assert mount_integrations(app, Spec(), None) is None
 
 
+def test_mount_integrations_reads_configured_manifest(tmp_path, monkeypatch):
+    manifest = tmp_path / "project.yml"
+    manifest.write_text("memory:\n  url: http://memory.invalid\n")
+
+    class Spec:
+        manifest_path = str(manifest)
+
+    def load_project(path):
+        assert path == str(manifest)
+        raise RuntimeError("reached project loading")
+
+    monkeypatch.setattr("omniagents.core.project.runtime.load_project", load_project)
+    with pytest.raises(RuntimeError, match="reached project loading"):
+        mount_integrations(FastAPI(), Spec(), None)
+
+
 def test_a_run_counts_as_done_only_when_it_completed():
     from omniagents.integrations.server import run_failure
 
@@ -506,3 +522,52 @@ async def test_with_a_token_an_events_channel_filter_has_its_name(monkeypatch):
     # Without a token, ids only.
     bare = ChannelNames(SlackConfig(delivery="socket"))
     assert (await bare.named(event)) is event
+
+
+@pytest.mark.asyncio
+async def test_socket_does_not_ack_when_intake_fails():
+    sent = []
+
+    class Socket:
+        async def send(self, value):
+            sent.append(value)
+
+    async def fail(event):
+        raise OSError("durable storage unavailable")
+
+    source = SlackSocketMode(SlackConfig(delivery="socket"), fail)
+    with pytest.raises(OSError):
+        await source._handle(
+            Socket(),
+            json.dumps(
+                {
+                    "type": "events_api",
+                    "envelope_id": "envelope",
+                    "payload": {
+                        "type": "event_callback",
+                        "event_id": "event",
+                        "team_id": "team",
+                        "event": {
+                            "type": "app_mention",
+                            "channel": "channel",
+                            "user": "user",
+                            "text": "hello",
+                            "ts": "1",
+                        },
+                    },
+                }
+            ),
+        )
+    assert sent == []
+
+
+def test_gateway_owns_socket_mode_ingestion(monkeypatch):
+    from omniagents.integrations.server import parse_integrations
+
+    monkeypatch.setenv("OMNIAGENTS_EVENT_GATEWAY", "1")
+    monkeypatch.setenv("SLACK_SIGNING_SECRET", "gateway-secret")
+    configs = parse_integrations(
+        [{"type": "slack", "delivery": "socket", "app_token": "xapp-test"}]
+    )
+    assert configs[0].delivery == "http"
+    assert configs[0].signing_secret == "gateway-secret"

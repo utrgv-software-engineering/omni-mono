@@ -1,3 +1,5 @@
+import { ShareButton } from "./Sharing";
+import { factoryUrl } from "./factory-scope";
 // Canvases: design boards laid out as their index places them, live (each
 // board a sandboxed page), with their version history and comments pinned
 // to boards.
@@ -147,13 +149,19 @@ function CanvasList({
 
 type Mode = "interact" | "move" | "comment";
 
-function CanvasView({
+export function CanvasView({
   id,
   account,
   version,
   navigate,
+  board,
+  client = api,
+  readOnly = false,
 }: {
   id: string;
+  board?: string;
+  client?: typeof api;
+  readOnly?: boolean;
   account: Person;
   version: number;
   navigate: (path: string) => void;
@@ -164,8 +172,10 @@ function CanvasView({
   const [zoom, setZoom] = useState(0.25);
   const [pan, setPan] = useState({ x: 40, y: 80 });
   const [mode, setMode] = useState<Mode>("interact");
-  const [panel, setPanel] = useState<"comments" | "history" | null>(null);
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [panel, setPanel] = useState<"comments" | "history" | null>(() => readOnly && window.matchMedia("(min-width: 768px)").matches ? "comments" : null);
+  const [generalComment, setGeneralComment] = useState("");
+  const [commentBusy, setCommentBusy] = useState(false);
+  const [expanded, setExpanded] = useState<string | null>(board ?? null);
   const [draft, setDraft] = useState<{
     board: string;
     x: number;
@@ -178,14 +188,14 @@ function CanvasView({
 
   const load = useCallback(
     () =>
-      api.get(id, shown).then(
+      client.get(id, shown).then(
         (d) => {
           setDetail(d);
           setMissing(false);
         },
         () => setMissing(true),
       ),
-    [id, shown],
+    [id, shown, client],
   );
   useEffect(() => {
     void load();
@@ -254,7 +264,7 @@ function CanvasView({
       y: Math.round(y),
     };
     setDetail({ ...detail, index: next });
-    void api
+    void client
       .publish(detail.id, {
         files: { "canvas.json": JSON.stringify(next, null, 2) },
         base_version: detail.version,
@@ -270,15 +280,15 @@ function CanvasView({
     <div className="relative flex min-h-0 flex-1">
       <div className="relative min-w-0 flex-1 overflow-hidden bg-muted/40">
         <div className="absolute top-3 left-3 z-20 flex flex-wrap items-center gap-2 rounded-lg border bg-background/95 p-1.5 shadow-sm max-md:right-3">
-          <Button size="xs" variant="ghost" onClick={() => navigate("/canvas")}>
+          {!readOnly && <Button size="xs" variant="ghost" onClick={() => navigate("/canvas")}>
             ← Library
-          </Button>
+          </Button>}
           {editingTitle !== null ? (
             <form
               className="flex gap-1"
               onSubmit={(e) => {
                 e.preventDefault();
-                void api.rename(detail.id, editingTitle).then(() => {
+                void client.rename(detail.id, editingTitle).then(() => {
                   setEditingTitle(null);
                   void load();
                 }, fail);
@@ -299,8 +309,8 @@ function CanvasView({
             <button
               type="button"
               className="px-1 font-semibold hover:underline"
-              onClick={() => current && setEditingTitle(detail.title)}
-              title={current ? "Rename" : undefined}
+              onClick={() => !readOnly && current && setEditingTitle(detail.title)}
+              title={!readOnly && current ? "Rename" : undefined}
             >
               {detail.title}
             </button>
@@ -310,7 +320,7 @@ function CanvasView({
               ? `version ${detail.version}`
               : `viewing version ${detail.shown} of ${detail.version}`}
           </span>
-          {!current && (
+          {!readOnly && !current && (
             <>
               <Button
                 size="xs"
@@ -322,7 +332,7 @@ function CanvasView({
               <Button
                 size="xs"
                 onClick={() =>
-                  void api.restore(detail.id, detail.shown).then(() => {
+                  void client.restore(detail.id, detail.shown).then(() => {
                     setShown(undefined);
                   }, fail)
                 }
@@ -338,7 +348,7 @@ function CanvasView({
               ["move", Move, "Move boards"],
               ["comment", MessageCircle, "Comment on a board"],
             ] as const
-          ).map(([m, Icon, title]) => (
+          ).filter(([m]) => !readOnly || m !== "move").map(([m, Icon, title]) => (
             <Button
               key={m}
               size="icon-xs"
@@ -378,21 +388,22 @@ function CanvasView({
           >
             <MessageCircle /> {openRoots.length}
           </Button>
-          <Button
+          {!readOnly && <Button
             size="xs"
             variant={panel === "history" ? "secondary" : "ghost"}
             onClick={() => setPanel(panel === "history" ? null : "history")}
           >
             <History /> History
-          </Button>
-          {(detail.owner_id === account.id || account.admin) && (
+          </Button>}
+          {!readOnly && (detail.owner_id === account.id || account.admin) && <ShareButton kind="canvas" id={id} />}
+          {!readOnly && (detail.owner_id === account.id || account.admin) && (
             <Button
               size="icon-xs"
               variant="ghost"
               title="Delete the canvas"
               onClick={() => {
                 if (window.confirm(`Delete "${detail.title}" and its history?`))
-                  void api
+                  void client
                     .remove(detail.id)
                     .then(() => navigate("/canvas"), fail);
               }}
@@ -458,7 +469,7 @@ function CanvasView({
                   key={name}
                   name={name}
                   board={board}
-                  src={`${detail.view}${encodeURIComponent(name)}`}
+                  src={factoryUrl(`${detail.view}${encodeURIComponent(name)}`)}
                   zoom={zoom}
                   mode={current ? mode : "interact"}
                   comments={openRoots.filter((c) => c.board === name)}
@@ -499,7 +510,7 @@ function CanvasView({
                 size="sm"
                 disabled={!draft.text.trim()}
                 onClick={() =>
-                  void api
+                  void client
                     .comment(detail.id, {
                       body: draft.text,
                       board: draft.board,
@@ -525,7 +536,7 @@ function CanvasView({
                 {index.boards[expanded].title ?? expanded}
               </span>
               <a
-                href={`${detail.view}${encodeURIComponent(expanded)}`}
+                href={factoryUrl(`${detail.view}${encodeURIComponent(expanded)}`)}
                 target="_blank"
                 rel="noreferrer"
                 className="flex items-center gap-1 text-xs text-sky-600 hover:underline"
@@ -543,7 +554,7 @@ function CanvasView({
             </div>
             <iframe
               title={expanded}
-              src={`${detail.view}${encodeURIComponent(expanded)}`}
+              src={factoryUrl(`${detail.view}${encodeURIComponent(expanded)}`)}
               sandbox="allow-scripts"
               className="min-h-0 flex-1 border-0 bg-white"
             />
@@ -560,6 +571,7 @@ function CanvasView({
               size="icon-xs"
               variant="ghost"
               className="ml-auto"
+              aria-label="Close panel"
               onClick={() => setPanel(null)}
             >
               <X />
@@ -592,6 +604,14 @@ function CanvasView({
               ))
             ) : (
               <>
+                <form className="space-y-2 mb-3" onSubmit={async e => {
+                  e.preventDefault(); setCommentBusy(true);
+                  try { await client.comment(id, { body: generalComment }); setGeneralComment(""); await load(); }
+                  catch (e) { fail(e); } finally { setCommentBusy(false); }
+                }}>
+                  <Textarea aria-label="Comment" placeholder="Leave a comment…" value={generalComment} onChange={e => setGeneralComment(e.target.value)} />
+                  <Button size="sm" disabled={commentBusy || !generalComment.trim()}>Comment</Button>
+                </form>
                 {roots.length === 0 && (
                   <p className="text-muted-foreground">
                     No comments. Pick the comment tool and click a board.
@@ -610,6 +630,8 @@ function CanvasView({
                         : null
                     }
                     account={account}
+                    client={client}
+                    readOnly={readOnly}
                     canvasId={detail.id}
                     onChanged={() => void load()}
                   />
@@ -699,7 +721,7 @@ function Board({
       </div>
       <iframe
         title={board.title ?? name}
-        src={src}
+        src={factoryUrl(src)}
         sandbox="allow-scripts"
         loading="lazy"
         className="h-full w-full rounded-sm border-0 bg-white shadow-md"
@@ -770,7 +792,11 @@ function Thread({
   account,
   canvasId,
   onChanged,
+  client,
+  readOnly,
 }: {
+  client: typeof api;
+  readOnly: boolean;
   root: CanvasComment;
   replies: CanvasComment[];
   boardTitle: string | null;
@@ -786,31 +812,31 @@ function Thread({
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         {boardTitle ?? "The canvas"}
         {root.resolved && " · resolved"}
-        <Button
+        {!readOnly && <Button
           size="xs"
           variant="ghost"
           className="ml-auto"
           onClick={() =>
-            void api.resolve(root.id, !root.resolved).then(onChanged, fail)
+            void client.resolve(root.id, !root.resolved).then(onChanged, fail)
           }
         >
           {root.resolved ? "Reopen" : "Resolve"}
-        </Button>
+        </Button>}
       </div>
       {[root, ...replies].map((c) => (
         <div key={c.id} className="group">
           <div className="flex items-center gap-1 text-xs">
-            <b>{c.author}</b>
+            <b>{c.author}</b>{c.guest && <span className="text-muted-foreground">Guest</span>}
             <span className="text-muted-foreground">
               {new Date(c.at * 1000).toLocaleString()} · v{c.version}
             </span>
-            {(c.author_id === account.id || account.admin) && (
+            {!readOnly && (c.author_id === account.id || account.admin) && (
               <button
                 type="button"
                 title="Delete"
                 className="ml-auto hidden group-hover:block"
                 onClick={() =>
-                  void api.deleteComment(c.id).then(onChanged, fail)
+                  void client.deleteComment(c.id).then(onChanged, fail)
                 }
               >
                 <Trash2 className="size-3 text-destructive" />
@@ -824,7 +850,7 @@ function Thread({
         className="flex gap-1"
         onSubmit={(e) => {
           e.preventDefault();
-          void api
+          void client
             .comment(canvasId, { body: text, parent_id: root.id })
             .then(() => {
               setText("");

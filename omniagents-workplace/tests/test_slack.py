@@ -2,6 +2,7 @@ import asyncio
 import json
 
 import httpx
+import httpx2
 import pytest
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
@@ -73,13 +74,12 @@ def test_replies_join_their_thread_and_unknown_threads_fail(tmp_path):
 
 async def _mcp(base_url, calls, token=None):
     token = token or factory_env(base_url)["SLACK_MCP_TOKEN"]
-    http = httpx.AsyncClient(headers={"Authorization": f"Bearer {token}"})
+    http = httpx2.AsyncClient(headers={"Authorization": f"Bearer {token}"})
     async with http, streamable_http_client(
         f"{base_url}/slack/mcp", http_client=http
     ) as (
         read,
         write,
-        _,
     ):
         async with ClientSession(read, write) as session:
             init = await session.initialize()
@@ -100,7 +100,7 @@ def _json(result):
 async def test_mcp_serves_slacks_tools_as_the_token_user(workplace_server):
     _, base_url = workplace_server
     init, tools = await _mcp(base_url, [("tools/list", None)])
-    assert (init.serverInfo.name, init.serverInfo.version) == ("Slack MCP", "1.0.0")
+    assert (init.server_info.name, init.server_info.version) == ("Slack MCP", "1.0.0")
     assert len(tools.tools) == 27
     send = next(t for t in tools.tools if t.name == "slack_send_message")
     assert f"user_id is {FACTORY}" in send.description
@@ -157,7 +157,7 @@ async def test_mcp_messages_read_back_in_slacks_formats(workplace_server):
     assert _json(react) == {
         "result": "Successfully added :eyes: reaction to the message."
     }
-    assert (again.isError, again.content[0].text) == (
+    assert (again.is_error, again.content[0].text) == (
         True,
         "execution_failed: already_reacted",
     )
@@ -181,7 +181,7 @@ async def test_mcp_messages_read_back_in_slacks_formats(workplace_server):
         == "There are no more messages in this thread.\n"
     )
     assert _json(concise)["messages"].startswith("THREAD: Picking up _issue #12_.")
-    assert (missing.isError, missing.content[0].text) == (
+    assert (missing.is_error, missing.content[0].text) == (
         True,
         "execution_failed: thread_not_found",
     )
@@ -190,6 +190,44 @@ async def test_mcp_messages_read_back_in_slacks_formats(workplace_server):
     assert [m.text for m in workplace.slack.replies(ENG, ts)] == ["PR is up."]
     calls = [e for e in workplace.wire.recent() if e.kind == "mcp"]
     assert calls[-1].title == "slack_read_thread" and calls[-1].status == "error"
+
+
+@pytest.mark.asyncio
+async def test_sending_a_draft_removes_it_for_good(workplace_server):
+    workplace, base_url = workplace_server
+    _, drafted, blocked = await _mcp(
+        base_url,
+        [
+            (
+                "slack_send_message_draft",
+                {"channel_id": ENG, "message": "Draft PR: #12"},
+            ),
+            (
+                "slack_send_message_draft",
+                {"channel_id": ENG, "message": "Draft PR: #13"},
+            ),
+        ],
+    )
+    assert "channel_link" in _json(drafted)
+    assert "attached_draft_exists" in blocked.content[0].text
+    (draft,) = workplace.slack.drafts.values()
+    _, sent, again = await _mcp(
+        base_url,
+        [
+            (
+                "slack_send_message",
+                {"channel_id": ENG, "message": "PR #12 is up.", "draft_id": draft.id},
+            ),
+            (
+                "slack_send_message_draft",
+                {"channel_id": ENG, "message": "Draft PR: #13"},
+            ),
+        ],
+    )
+    assert "message_link" in _json(sent)
+    assert "channel_link" in _json(again)
+    # The sent draft is gone from the store too (checked as the fixture closes).
+    assert [d.text for d in workplace.slack.drafts.values()] == ["Draft PR: #13"]
 
 
 @pytest.mark.asyncio
@@ -253,7 +291,7 @@ async def test_mcp_refuses_unknown_tokens_and_unavailable_tools(workplace_server
         base_url, [("slack_create_canvas", {"title": "x", "content": "y"})]
     )
     assert (
-        canvas.isError
+        canvas.is_error
         and canvas.content[0].text == "execution_failed: not_available_in_workplace"
     )
 

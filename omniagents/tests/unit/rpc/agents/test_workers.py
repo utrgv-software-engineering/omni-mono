@@ -69,7 +69,7 @@ class FakeAgent:
 
 
 def make_manager():
-    def spec_loader(model):
+    def spec_loader(model, **_):
         return SimpleNamespace(
             variables={}, project_slug="proj", agent_slug="worker"
         ), {"model": model}
@@ -266,7 +266,7 @@ async def test_worker_manager_threads_host_resources_to_factory():
     bundle must reach the agent factory."""
     sentinel = object()
 
-    def spec_loader(model):
+    def spec_loader(model, **_):
         return SimpleNamespace(
             variables={}, project_slug="proj", agent_slug="worker"
         ), {"model": model}
@@ -315,7 +315,7 @@ async def test_worker_manager_relays_narrative_events_to_observer():
     async def on_event(handle, method, params):
         relayed.append((handle.worker_id, method, params))
 
-    def spec_loader(model):
+    def spec_loader(model, **_):
         return SimpleNamespace(
             variables={}, project_slug="proj", agent_slug="worker"
         ), {"model": model}
@@ -363,7 +363,7 @@ async def test_worker_manager_relay_failure_does_not_poison_lifecycle():
     async def on_event(handle, method, params):
         raise RuntimeError("relay down")
 
-    def spec_loader(model):
+    def spec_loader(model, **_):
         return SimpleNamespace(
             variables={}, project_slug="proj", agent_slug="worker"
         ), {"model": model}
@@ -394,7 +394,7 @@ async def test_worker_spec_configuration_is_opt_in_and_survives_resume():
         variables={}, available_tools=[], project_slug="proj", agent_slug="worker"
     )
     manager = WorkerManager(
-        spec_loader=lambda model: (cached, {}), agent_factory=FakeAgent
+        spec_loader=lambda model, **_: (cached, {}), agent_factory=FakeAgent
     )
 
     def configure(spec):
@@ -439,7 +439,7 @@ async def test_swarm_runs_through_real_worker_adapter_and_manager(monkeypatch):
 
     completion = AsyncMock()
     manager = WorkerManager(
-        spec_loader=lambda model: (
+        spec_loader=lambda model, **_: (
             SimpleNamespace(variables={}, available_tools=[]),
             {},
         ),
@@ -531,3 +531,23 @@ async def test_resume_inherits_parent_model_after_selection_changes(
     resumed = await manager.resume("inherit", "continue")
     assert resumed.model == "company/b"
     await manager.close("inherit")
+
+
+@pytest.mark.asyncio
+async def test_a_worker_is_loaded_for_its_spawner_and_depth_through_resume():
+    loads = []
+
+    def spec_loader(model, **kwargs):
+        loads.append(kwargs)
+        return SimpleNamespace(variables={}), {}
+
+    manager = WorkerManager(spec_loader=spec_loader, agent_factory=FakeAgent)
+    handle = await manager.spawn(
+        worker_id="deep", task_description="t", agent_slug="gym", depth=2
+    )
+    await handle.agent._event_queue.put(
+        {"method": "run_end", "params": {"run_id": handle.run_id}}
+    )
+    await asyncio.wait_for(handle.done_event.wait(), timeout=1)
+    await manager.resume("deep", "again")
+    assert loads == [{"spawner": "gym", "depth": 2}] * 2

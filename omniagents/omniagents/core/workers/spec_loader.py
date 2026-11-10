@@ -23,8 +23,8 @@ def make_project_worker_spec_loader(
 ) -> Callable[[Optional[str]], Tuple[Any, Any]]:
     """Build a ``WorkerDefaults.spec_loader`` bound to a project registry.
 
-    The returned ``loader(model) -> (spec, model_runtime)`` matches the
-    callable shape ``WorkerManager`` expects.
+    The returned ``loader(model, spawner=, depth=) -> (spec, model_runtime)``
+    matches the callable shape ``WorkerManager`` expects.
 
     Args:
         project_provider: Returns the ``ProjectContext`` to build the
@@ -42,12 +42,26 @@ def make_project_worker_spec_loader(
             exposed via ``spec.resolve_default_model_config``.
     """
 
-    def load_worker_spec(model: Optional[str] = None) -> Tuple[Any, Any]:
-        from omniagents.core.project.runtime import build_spec_from_project
+    def load_worker_spec(
+        model: Optional[str] = None,
+        *,
+        spawner: Optional[str] = None,
+        depth: int = 1,
+    ) -> Tuple[Any, Any]:
+        from omniagents.core.project.runtime import _slugify, build_spec_from_project
 
         model_runtime = model_resolver(model) if model_resolver is not None else None
 
-        spec = build_spec_from_project(project_provider(), agent_key=agent_key)
+        # ``spawner`` is the spawning agent's slug (workers run in its
+        # session namespace); a worker definition with ``inherit: spawner``
+        # is built from that agent.
+        project = project_provider()
+        spawner_key = next(
+            (k for k in project.agents_map if _slugify(k, k) == spawner), None
+        )
+        spec = build_spec_from_project(
+            project, agent_key=agent_key, spawner=spawner_key, worker_depth=depth
+        )
         if project_slug:
             spec.project_slug = project_slug
 

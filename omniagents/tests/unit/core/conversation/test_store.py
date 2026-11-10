@@ -63,6 +63,46 @@ class TestRunOwnership:
         )
         first["inbox"]["marker"] = "client mutation"
         assert store.read_snapshot("snapshot")["inbox"]["marker"] == "stable"
+        assert first["before_seq"] is None
+
+    def test_a_limited_snapshot_reads_the_newest_items_and_where_to_page_back(
+        self, store
+    ):
+        from omniagents.core.conversation.recorder import ConversationRecorder
+
+        recorder = ConversationRecorder(store)
+        recorder.ensure_thread("window", project_legacy_history=False)
+        for index in range(30):
+            recorder.record(
+                "window",
+                "message_output",
+                {"run_id": "run", "message_id": str(index), "content": str(index)},
+            )
+        every = store.read_snapshot("window")["items"]
+        window = store.read_snapshot("window", limit=10)
+        assert window["items"] == every[-10:]
+        assert window["before_seq"] == every[-10].seq
+        older = store.list_items(
+            "window", limit=100, before_seq=window["before_seq"], descending=True
+        )
+        assert [item.seq for item in older][::-1] == [item.seq for item in every[:-10]]
+        assert store.read_snapshot("window", limit=30)["before_seq"] is None
+
+    def test_a_queue_read_is_what_a_mutation_sees_and_writes_nothing(self, store):
+        store.upsert_thread(make_thread("read"))
+        store.mutate_queue(
+            "read", lambda state, receipt: (state.update(marker="stable"), None)
+        )
+        seen = []
+        store.mutate_queue(
+            "read", lambda state, receipt: (seen.append(dict(state)), None)
+        )
+        read = store.read_queue("read")
+        assert read == seen[0]
+        read["marker"] = "client mutation"
+        assert store.read_queue("read")["marker"] == "stable"
+        with pytest.raises(KeyError):
+            store.read_queue("missing")
 
     def test_unconfirmed_execution_releases_normally(self, store):
         from omniagents.core.runtime.ownership import reserve_run

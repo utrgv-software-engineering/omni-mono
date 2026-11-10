@@ -336,6 +336,20 @@ def _by_version(runs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     ]
 
 
+def uptime(w: "Workplace", since: float) -> Optional[float]:
+    """The share of Workplace's checks in which the runtime answered, since ``since``."""
+    import time as _time
+
+    up = down = 0
+    day = since or (_time.time() - 30 * 86400)
+    while day <= _time.time() + 86400:
+        key = "runtime.availability." + _time.strftime("%Y-%m-%d", _time.gmtime(day))
+        counts = w.store.meta(key) or {}
+        up, down = up + counts.get("up", 0), down + counts.get("down", 0)
+        day += 86400
+    return up / (up + down) if up + down else None
+
+
 def factory_report(
     w: "Workplace",
     runs: List[Dict[str, Any]],
@@ -368,6 +382,8 @@ def factory_report(
                 "usage": run.get("usage") or [],
                 "cost": run.get("cost"),
                 "pull_requests": run.get("pull_requests") or [],
+                "tool_calls": run.get("tool_calls") or 0,
+                "tool_failures": run.get("tool_failures") or 0,
             }
         )
         for row in run.get("usage") or []:
@@ -443,6 +459,17 @@ def factory_report(
         ),
     }
     summary["reverted"] = sum(1 for p in merged if p["reverted"])
+    finished = [r for r in out_runs if r["status"] in ("completed", "failed")]
+    summary["error_rate"] = (
+        sum(1 for r in finished if r["status"] == "failed") / len(finished)
+        if finished
+        else None
+    )
+    calls = sum(r["tool_calls"] for r in out_runs)
+    summary["tool_failure_rate"] = (
+        sum(r["tool_failures"] for r in out_runs) / calls if calls else None
+    )
+    summary["uptime"] = uptime(w, since)
     return {
         "summary": summary,
         "runs": out_runs,
@@ -457,3 +484,67 @@ def factory_report(
         "by_version": _by_version(out_runs),
         "promotions": _promotions(w, factory_repo, since),
     }
+
+
+def agent_readiness(
+    runs: List[Dict[str, Any]],
+    lessons: List[Dict[str, Any]],
+    messages: List[float],
+    agent: str,
+    *,
+    since: float,
+) -> Dict[str, Any]:
+    """Whether an agent is ready to work unattended, week by week.
+
+    ``messages`` are when people wrote to the agent in its chats; ``lessons``
+    the memories it gained (attributed to a person when tagged ``person:``);
+    ``runs`` the factory's runs, of which this agent's own count, and every
+    grade of this agent counts, including where another agent called it.
+    Lessons that level off while people keep working with it, and passing
+    grades on its own runs, are the evidence; neither is a verdict.
+    """
+    weeks: Dict[float, Dict[str, Any]] = {}
+
+    def week(at: float) -> Dict[str, Any]:
+        start = _bucket_start(at, "week")
+        return weeks.setdefault(
+            start,
+            {
+                "start": start,
+                "messages": 0,
+                "lessons": 0,
+                "personal_lessons": 0,
+                "runs": 0,
+                "failed": 0,
+                "grades": [],
+            },
+        )
+
+    at = _bucket_start(since, "week")
+    while at <= time.time():
+        week(at)
+        at += 7 * 86400
+    for when in messages:
+        if when >= since:
+            week(when)["messages"] += 1
+    for lesson in lessons:
+        if lesson["created_at"] < since or lesson["kind"] not in ("fact", "core"):
+            continue
+        slot = week(lesson["created_at"])
+        slot["lessons"] += 1
+        if any(tag.startswith("person:") for tag in lesson.get("tags") or []):
+            slot["personal_lessons"] += 1
+    for run in runs:
+        if run["agent"] == agent:
+            slot = week(run["started_at"])
+            slot["runs"] += 1
+            slot["failed"] += int(run["status"] in ("failed", "interrupted"))
+        week(run["started_at"])["grades"] += [
+            g for g in run.get("grades") or [] if g.get("agent") == agent
+        ]
+    out = []
+    for start in sorted(weeks):
+        slot = weeks[start]
+        grades = slot.pop("grades")
+        out.append({**slot, "pass_rates": _rates(grades)})
+    return {"agent": agent, "weeks": out}

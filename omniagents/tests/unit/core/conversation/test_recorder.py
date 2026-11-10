@@ -107,12 +107,25 @@ class TestThreadAndTurns:
                 {
                     "run_id": RUN,
                     "prompt": "3 jobs finished",
+                    "notifications": [
+                        {
+                            "source": "worker.message",
+                            "content": "Report",
+                            "worker": {"id": "one", "message": "Report"},
+                        }
+                    ],
                     "prompt_role": "assistant",
                 },
             ),
         )
         assert only(store, ItemKind.USER_MESSAGE) == []
         assert only(store, ItemKind.AGENT_MESSAGE)[0].role == "assistant"
+        assert (
+            only(store, ItemKind.AGENT_MESSAGE)[0].content["notifications"][0][
+                "worker"
+            ]["id"]
+            == "one"
+        )
 
     def test_turn_ordinals_are_dense_across_runs(self, store, recorder):
         for index in range(3):

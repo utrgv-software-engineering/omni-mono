@@ -38,6 +38,9 @@ export interface Palette {
   warm: string;
 }
 
+/** The planet's radius as a share of the canvas, at sizes with an aura (>= 64px). */
+export const PLANET_RADIUS = 0.22;
+
 export const MARK_PALETTE: Palette = {
   light: '#a8e4ff',
   mid: '#5ac8fa',
@@ -336,7 +339,7 @@ export class OmniPlanet {
     ctx.clearRect(0, 0, S, S);
     // The planet's radius: room around it for the ring and the energy
     // (an icon is mostly planet: no aura or sparks to leave room for, the ring just inside)
-    const R = S * (detail ? 0.22 : 0.3);
+    const R = S * (detail ? PLANET_RADIUS : 0.3);
     const cx = S / 2;
     const cy = S / 2 + this.bob * R * 2.2;
     const swell = 1 + this.lean * 0.04 + (this.o.mood === 'listening' ? this.level * 0.05 : 0);

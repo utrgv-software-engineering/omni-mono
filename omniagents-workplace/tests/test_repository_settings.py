@@ -525,3 +525,153 @@ def test_repository_search_is_remote_scoped_and_paginated(setup, monkeypatch):
     assert response.json()["has_more"]
     assert response.json()["repositories"][0]["full_name"] == "my-org/needle"
     assert len(paths) == 2
+
+
+def test_provider_selections_survive_switches_and_new_login(setup, monkeypatch):
+    w, client, owner = setup
+    assert (
+        client.put(
+            "/workplace/api/repositories", json=body(repositories=["initech/app"])
+        ).status_code
+        == 200
+    )
+    connect_fake(w, owner)
+    monkeypatch.setattr(
+        w.repository_settings,
+        "github",
+        lambda path, **kw: {
+            "login": "new-user",
+            "default_branch": "main",
+            "permissions": {"push": True},
+        },
+    )
+    assert (
+        client.put(
+            "/workplace/api/repositories",
+            json=body(provider="github", repositories=["real/private"]),
+        ).status_code
+        == 200
+    )
+    saved = client.get("/workplace/api/repositories").json()
+    assert saved["selections"] == {
+        "standin": ["initech/app"],
+        "github": ["real/private"],
+    }
+    assert (
+        client.put(
+            "/workplace/api/repositories",
+            json=body(repositories=saved["selections"]["standin"]),
+        ).status_code
+        == 200
+    )
+    assert client.get("/workplace/api/repositories/view").json()["repositories"] == [
+        "initech/app"
+    ]
+    assert (
+        "initech/factory" in w.github.repos
+    )  # Deselecting never deletes repository data.
+    from omniagents_workplace.repository_settings import RepositorySettings
+
+    assert RepositorySettings(w).public()["selections"] == saved["selections"]
+    response = client.put(
+        "/workplace/api/repositories/github/token", json={"token": "github_pat_new"}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["selections"] == {"standin": ["initech/app"], "github": []}
+
+
+def test_workplace_keeps_its_own_webhook_on_each_selected_repository(
+    setup, monkeypatch
+):
+    """With no GitHub App delivering events, Workplace makes one webhook per selected
+    repository, signs with its own secret, leaves other hooks alone and removes its
+    hook from a repository no longer selected."""
+    w, client, owner = setup
+    connect_fake(w, owner)
+    settings = w.repository_settings
+    url = w.base_url.rstrip("/") + "/github/events"
+    hooks = {
+        "initech/factory": [
+            {"id": 1, "config": {"url": "https://deploys.example/hook"}}
+        ],
+        "initech/app": [],
+    }
+    writes = []
+
+    def github(path, **kw):
+        repo = path.split("/repos/", 1)[1].split("/hooks", 1)[0]
+        return hooks[repo]
+
+    def write(method, path, body=None):
+        writes.append((method, path))
+        repo = path.split("/repos/", 1)[1].split("/hooks", 1)[0]
+        if method == "POST":
+            hook = {"id": len(writes) + 10, "config": dict(body["config"])}
+            hooks[repo].append(hook)
+            return hook
+        if method == "DELETE":
+            hooks[repo] = [
+                h for h in hooks[repo] if str(h["id"]) != path.rsplit("/", 1)[1]
+            ]
+            return None
+        hook = next(h for h in hooks[repo] if str(h["id"]) == path.rsplit("/", 1)[1])
+        hook["config"] = dict(body["config"])
+        return hook
+
+    monkeypatch.setattr(settings, "github", github)
+    monkeypatch.setattr(settings, "github_write", write)
+    w.store.set_meta(KEY, body(provider="github"))
+    settings.sync_webhooks(now=1000)
+    assert sorted(writes) == [
+        ("POST", "/repos/initech/app/hooks"),
+        ("POST", "/repos/initech/factory/hooks"),
+    ]
+    secret = settings.webhook_secret()
+    assert secret and all(
+        h["config"]["secret"] == secret
+        for r in hooks.values()
+        for h in r
+        if h["config"]["url"] == url
+    )
+    # The deploy hook is untouched; nothing more until the selection changes or a recheck.
+    assert hooks["initech/factory"][0] == {
+        "id": 1,
+        "config": {"url": "https://deploys.example/hook"},
+    }
+    settings.sync_webhooks(now=1001)
+    assert len(writes) == 2
+
+    # Events signed with Workplace's secret are accepted.
+    content = json.dumps({"repository": {"full_name": "other/repo"}}).encode()
+    signed = {
+        "x-hub-signature-256": "sha256="
+        + hmac.new(secret.encode(), content, hashlib.sha256).hexdigest(),
+        "x-github-event": "push",
+    }
+    assert client.post("/github/events", content=content, headers=signed).json() == {
+        "ignored": True
+    }
+    assert (
+        w.apps.env(w.apps.by_username("initech-factory"))["GITHUB_WEBHOOK_SECRET"]
+        == secret
+    )
+
+    # Deselected: only its own hook goes.
+    w.store.set_meta(KEY, body(provider="github", repositories=["initech/app"]))
+    settings.sync_webhooks(now=1002)
+    assert writes[-1][0] == "DELETE" and writes[-1][1].startswith(
+        "/repos/initech/factory/hooks/"
+    )
+    assert [h["id"] for h in hooks["initech/factory"]] == [1]
+
+    # A GitHub App with a webhook delivers events itself: Workplace's hooks go.
+    configure(client)
+    client.put(
+        "/workplace/api/repositories/github/app",
+        json={"client_id": "Iv1.test", "webhook_secret": "app-hook"},
+    )
+    connect_fake(w, owner)
+    w.store.set_meta(KEY, body(provider="github", repositories=["initech/app"]))
+    settings.sync_webhooks(now=1003)
+    assert not [h for h in hooks["initech/app"] if h["config"]["url"] == url]
+    assert settings.webhook_secret() == "app-hook"

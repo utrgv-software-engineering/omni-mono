@@ -246,7 +246,7 @@ def _build_snapshot(
     """
     if snapshot_dir is None:
         return None
-    if client_type in no_snapshot_client_types:
+    if client_type == "quicksand" or client_type in no_snapshot_client_types:
         return None
     from agents.sandbox.snapshot import LocalSnapshot
 
@@ -645,7 +645,7 @@ def write_session_state(state_path: Path, client: Any, session: Any) -> None:
 
 async def _reconcile_resumed_sources(
     session: Any, manifest: Any, *, retain_removed: bool = False
-) -> None:
+) -> Any:
     """Seed added entries without replaying init over a durable workspace.
 
     A resumed container retains its serialized manifest. Publishing the new
@@ -655,14 +655,41 @@ async def _reconcile_resumed_sources(
     """
     from agents.sandbox.entries import resolve_workspace_path
 
-    previous = session.state.manifest
-    if previous.root != manifest.root:
+    if session.state.manifest.root != manifest.root:
         raise ValueError("Cannot change a resumed workspace root")
+
+    if retain_removed:
+        # Reconcile independently: one inaccessible repository must not take
+        # the agent offline. The saved manifest records only installed sources.
+        active = {}
+        errors = {}
+        for name, entry in manifest.entries.items():
+            previous = session.state.manifest
+            requested = manifest.model_copy(
+                update={"entries": {**previous.entries, name: entry}}
+            )
+            try:
+                await _reconcile_resumed_sources(session, requested)
+                active[name] = entry
+            except Exception as exc:
+                errors[str(name)] = type(exc).__name__
+                print(
+                    f"[serve] repository {name!r} unavailable ({type(exc).__name__}); "
+                    "existing files retained; retry on next startup",
+                    file=sys.stderr,
+                )
+        # Expose current provider paths separately from retained checkouts.
+        status = json.dumps({"active": [str(n) for n in active], "errors": errors})
+        status_path = shlex.quote(str(Path(manifest.root) / ".omni-repositories.json"))
+        await session.exec(
+            f"printf %s {shlex.quote(status)} > {status_path}", shell=True
+        )
+        return manifest.model_copy(update={"entries": active})
+
+    previous = session.state.manifest
     old = {str(name): entry for name, entry in previous.entries.items()}
     wanted = {str(name): entry for name, entry in manifest.entries.items()}
     for name, entry in old.items():
-        if retain_removed and name not in wanted:
-            continue
         if name not in wanted or wanted[name] != entry:
             raise ValueError(
                 f"Resumed workspace source {name!r} changed or was removed; "
@@ -706,13 +733,6 @@ async def _reconcile_resumed_sources(
         old[name] = entry
         session.state = session.state.model_copy(
             update={"manifest": previous.model_copy(update={"entries": dict(old)})}
-        )
-
-    if retain_removed:
-        session.state = session.state.model_copy(
-            update={
-                "manifest": manifest.model_copy(update={"entries": {**old, **wanted}})
-            }
         )
 
 
@@ -759,6 +779,10 @@ async def bring_up_session(
     if state_path is not None and state_path.is_file() and hasattr(client, "resume"):
         record = _read_session_state(state_path)
         recorded_state = record.get("session_state") if record else None
+        if durable and record and record.get("backend") not in (None, client_type):
+            raise RuntimeError(
+                "Saved sandbox belongs to another backend; use a separate state path"
+            )
         if durable and (
             not isinstance(recorded_state, dict)
             or not record.get("container_id")
@@ -798,7 +822,9 @@ async def bring_up_session(
 
     if session is None:
         session = await client.create(
-            manifest=manifest,
+            manifest=(
+                manifest.model_copy(update={"entries": {}}) if durable else manifest
+            ),
             options=options,
             snapshot=snapshot,
         )
@@ -864,11 +890,13 @@ async def bring_up_session(
             credentials_parsed or [],
             run_as_user=_run_as_exec_user(profile.raw),
         )
-        if recorded_container_id is not None:
+        if recorded_container_id is not None or durable:
             try:
-                await _reconcile_resumed_sources(
+                reconciled = await _reconcile_resumed_sources(
                     session, manifest, retain_removed=durable
                 )
+                if durable:
+                    manifest = reconciled
             finally:
                 if state_path is not None:
                     write_session_state(state_path, client, session)
@@ -899,6 +927,10 @@ async def bring_up_session(
         )
         raise
 
+    if client_type == "quicksand":
+        from omniagents.core.sandbox.lifecycle_session import resolve_backend_session
+
+        await resolve_backend_session(session).persist_durable()
     if state_path is not None:
         write_session_state(state_path, client, session)
         if (
@@ -910,6 +942,9 @@ async def bring_up_session(
                 "Could not persist sandbox identity; container retained for recovery"
             )
 
+    from omniagents.core.runtime.factory_stop import track
+
+    track(session)
     return BroughtUpSession(
         session=session,
         started_services=started_services,
@@ -1072,7 +1107,15 @@ async def teardown_session(
     """
     if session is None:
         return
+    from omniagents.core.runtime.factory_stop import untrack
+
+    untrack(session)
     if detach and not destroy:
+        from omniagents.core.sandbox.lifecycle_session import resolve_backend_session
+
+        suspend = getattr(resolve_backend_session(session), "suspend_durable", None)
+        if suspend is not None:
+            await suspend()
         return
     # pty_terminate_all is broad but appropriate — every PTY in this session
     # was started by us.

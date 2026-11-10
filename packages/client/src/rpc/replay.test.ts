@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { createActor } from 'xstate';
+import { chatSessionMachine } from '../machines/chat-session.machine';
 
 import { ReplayTracker, type ResumeResult, RESYNC_REQUIRED_CODE, SessionReplayCoordinator } from './replay';
 
@@ -279,5 +281,92 @@ describe('SessionReplayCoordinator', () => {
     expect(resyncs).toEqual([]);
     expect(coordinator.tracker('s').streamId).toBe('new-stream');
     expect(coordinator.tracker('s').lastSeq).toBe(50);
+  });
+});
+
+describe('replay recovery without a new socket or event', () => {
+  it('delivers the saved answer and clears Thinking after a transient replay failure', async () => {
+    vi.useFakeTimers();
+    const actor = createActor(chatSessionMachine).start();
+    actor.send({ type: 'SELECT_SESSION', id: 's' });
+    actor.send({ type: 'HISTORY_LOADED', items: [] });
+    actor.send({ type: 'RUN_STARTED', session_id: 's', run_id: 'r' });
+    let attempts = 0;
+    const coordinator = new SessionReplayCoordinator(
+      async () => {
+        if (++attempts === 1) throw new Error('Replay request timed out');
+        return {
+          stream_id: 'stream-1',
+          last_seq: 3,
+          events: [
+            { method: 'message_output', params: { ...payload(2), content: 'Saved answer', run_id: 'r' } },
+            { method: 'run_end', params: { ...payload(3), run_id: 'r' } },
+          ],
+        };
+      },
+      (method, params) => {
+        if (method === 'message_output')
+          actor.send({ type: 'MESSAGE_OUTPUT', session_id: 's', content: String(params.content) });
+        if (method === 'run_end') actor.send({ type: 'RUN_END', session_id: 's', run_id: 'r' });
+      }
+    );
+    try {
+      coordinator.handle('run_started', payload(1));
+      coordinator.handle('run_end', payload(3));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(actor.getSnapshot().matches({ ready: 'running' })).toBe(true);
+      expect(actor.getSnapshot().context.items).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(attempts).toBe(2);
+      expect(actor.getSnapshot().matches({ ready: 'idle' })).toBe(true);
+      expect(actor.getSnapshot().context.items).toHaveLength(1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      coordinator.dispose();
+      actor.stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it('falls back to an authoritative reload after three retries', async () => {
+    vi.useFakeTimers();
+    const resume = vi.fn(async () => {
+      throw new Error('Replay unavailable');
+    });
+    const reload = vi.fn();
+    const coordinator = new SessionReplayCoordinator(resume, () => {}, reload);
+    try {
+      coordinator.handle('run_started', payload(1));
+      coordinator.handle('run_end', payload(3));
+      await vi.advanceTimersByTimeAsync(7000);
+      expect(resume).toHaveBeenCalledTimes(4);
+      expect(reload).toHaveBeenCalledExactlyOnceWith('s');
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      coordinator.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['snapshot', 'unregister', 'dispose'] as const)('cancels pending retries on %s', async (operation) => {
+    vi.useFakeTimers();
+    const resume = vi.fn(async () => {
+      throw new Error('Transient failure');
+    });
+    const coordinator = new SessionReplayCoordinator(resume, () => {});
+    try {
+      coordinator.handle('run_started', payload(1));
+      coordinator.handle('run_end', payload(3));
+      await vi.advanceTimersByTimeAsync(0);
+      if (operation === 'snapshot') coordinator.beginSnapshot('s');
+      if (operation === 'unregister') coordinator.unregisterSession('s');
+      if (operation === 'dispose') coordinator.dispose();
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(resume).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      coordinator.dispose();
+      vi.useRealTimers();
+    }
   });
 });

@@ -14,7 +14,8 @@ export function decodeSessionSnapshot(result: any, sessionId: string) {
     snapshot.last_seq < 0 ||
     !Array.isArray(snapshot.items) ||
     !Array.isArray(snapshot.queue) ||
-    !Array.isArray(snapshot.pending_requests)
+    !Array.isArray(snapshot.pending_requests) ||
+    !(snapshot.earlier_cursor == null || (typeof snapshot.earlier_cursor === 'string' && snapshot.earlier_cursor))
   ) {
     throw new ConversationProtocolError('Invalid conversation snapshot identity or watermark');
   }

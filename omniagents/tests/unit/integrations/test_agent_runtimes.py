@@ -91,7 +91,6 @@ async def test_pipelined_runtimes_share_factory_environment(monkeypatch):
     runtime = AgentRuntimes(
         SimpleNamespace(agents_map={"implementer": object(), "reviewer": object()}),
         auth_token="t",
-        architecture="specialist",
         host_resources=resources,
     )
     await runtime.app("implementer")
@@ -99,3 +98,30 @@ async def test_pipelined_runtimes_share_factory_environment(monkeypatch):
     assert len(seen) == 2
     assert all(call["agent_host_resources"] is resources for call in seen)
     assert all(call["integrations"] is False for call in seen)
+
+
+def test_release_gate_counts_all_loaded_agent_conversations():
+    from types import SimpleNamespace
+    from omniagents.core.runtime.release_gate import ReleaseGate
+
+    def app(active=(), queued=()):
+        return SimpleNamespace(
+            state=SimpleNamespace(
+                agent_service=SimpleNamespace(
+                    active_run_ids=lambda: list(active),
+                    active_sessions=lambda: [
+                        SimpleNamespace(
+                            message_queue=[SimpleNamespace(state=s) for s in queued]
+                        )
+                    ],
+                )
+            )
+        )
+
+    runtimes = AgentRuntimes(
+        SimpleNamespace(entrypoint="assistant"), auth_token=None, primary_app=app()
+    )
+    runtimes._apps["coordinator"] = app(active=["run"], queued=["pending"])
+    assert runtimes.busy() == 2
+    with pytest.raises(RuntimeError, match="active or queued"):
+        ReleaseGate(runtimes.busy).acquire()

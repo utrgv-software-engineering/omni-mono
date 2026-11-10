@@ -36,7 +36,7 @@ import type { ExecutionTarget } from './execution';
 import { McpManagementClient } from './mcp-management';
 import { type ResumeResult, SessionReplayCoordinator } from './replay';
 import { decodeSessionSnapshot } from './session-snapshot';
-import { withConnectTicket, WsTicketError } from './ws-ticket';
+import { hasHostTicketProvider, withConnectTicket, WsTicketError } from './ws-ticket';
 
 type JSONRPCResponse = {
   jsonrpc: '2.0';
@@ -496,7 +496,7 @@ export class RPCClient {
     // ticket ever appears in the dial URL — never the token itself.
     // Tokenless (unauthenticated server) dials stay fully synchronous.
     let wsUrl = this.url;
-    if (this.token) {
+    if (this.token || hasHostTicketProvider()) {
       try {
         wsUrl = await withConnectTicket(this.url, this.token, signal);
         signal.throwIfAborted();
@@ -861,6 +861,7 @@ export class RPCClient {
       clearTimeout(timer);
     }
     this.ackTimers.clear();
+    this.replay.dispose();
     this.resyncListeners.clear();
     this.elicitations.dispose();
     this.disconnect();
@@ -1170,9 +1171,15 @@ export class RPCClient {
     return this.call('start_run', params);
   }
 
-  async getSessionSnapshot(sessionId: string): Promise<any> {
+  /** The conversation's atomic snapshot. With ``limit``, only its newest
+   * items; ``snapshot.earlier_cursor`` then pages back through ``list_items``. */
+  async getSessionSnapshot(sessionId: string, options: { limit?: number } = {}): Promise<any> {
     this.replay.beginSnapshot(sessionId);
-    const result = await this.call('queue_status', { session_id: sessionId, include_snapshot: true });
+    const result = await this.call('queue_status', {
+      session_id: sessionId,
+      include_snapshot: true,
+      ...(options.limit !== undefined ? { snapshot_limit: options.limit } : {}),
+    });
     return decodeSessionSnapshot(result, sessionId);
   }
 

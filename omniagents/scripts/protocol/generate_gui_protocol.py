@@ -223,7 +223,7 @@ OPTIONAL_FIELDS = {
     "mcp_approval_response": ("rejection_message",),
     "client_functions": ("version",),
     "client_response": ("result", "error"),
-    "queue_status": ("include_snapshot", "submission_id"),
+    "queue_status": ("include_snapshot", "submission_id", "snapshot_limit"),
     "server_call": (
         "args",
         "session_id",
@@ -246,7 +246,7 @@ OPTIONAL_FIELDS = {
     "report_incident": ("disable_tools", "disable_mcp_servers"),
     "export_session": ("redact",),
     "message_output": ("is_final", "message_id"),
-    "run_started": ("prompt", "prompt_role"),
+    "run_started": ("prompt", "prompt_role", "notifications"),
     "run_status": ("attempt", "total", "next_delay"),
     "tool_result": ("metadata",),
     "token": (
@@ -469,6 +469,7 @@ BOOLEAN_FIELDS = {
 }
 INTEGER_FIELDS = {
     "after_seq",
+    "snapshot_limit",
     "environment_generation",
     "max_depth",
     "retention_days",
@@ -548,6 +549,7 @@ OBJECT_FIELDS = {
 #: to three stable methods, so the exception is declared per operation and
 #: stays visible here rather than being smuggled in as a renamed wire field.
 OPERATION_FIELD_TYPES = {
+    ("run_started", "notifications"): "array",
     ("start_run", "content"): "message_content",
     ("enqueue_message", "input_content"): "array",
     ("item_updated", "content"): "object",

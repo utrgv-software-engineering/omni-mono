@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
-import httpx
+import httpx2 as httpx
 
 logger = logging.getLogger(__name__)
 
@@ -385,11 +385,14 @@ class McpOAuthBroker:
             assert flow.url_ready is not None
             flow.url_ready.set()
 
-        async def callback_handler() -> Tuple[str, str | None]:
+        async def callback_handler() -> Any:
             assert flow.code_future is not None
-            return await asyncio.wait_for(
+            from mcp.shared.auth import AuthorizationCodeResult
+
+            code, state = await asyncio.wait_for(
                 asyncio.shield(flow.code_future), timeout=self._flow_timeout
             )
+            return AuthorizationCodeResult(code=code, state=state)
 
         provider = OAuthClientProvider(
             server_url=server_url,
@@ -567,7 +570,7 @@ class McpOAuthBroker:
             self._noninteractive_failures[server_name] = had_tokens
             raise McpInteractiveAuthRequired(server_name, had_tokens=had_tokens)
 
-        async def callback_handler() -> Tuple[str, str | None]:
+        async def callback_handler() -> Any:
             self._noninteractive_failures[server_name] = had_tokens
             raise McpInteractiveAuthRequired(server_name, had_tokens=had_tokens)
 

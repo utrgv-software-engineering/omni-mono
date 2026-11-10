@@ -104,7 +104,7 @@ def inspect_worker(journal, worker_id=None):
                 )
         return {"messages": messages, "legacy_swarms": legacy}
 
-    return journal.mutate(read)
+    return journal.read(read)
 
 
 def context(journal, worker_id):
@@ -131,7 +131,7 @@ def context(journal, worker_id):
             ],
         }
 
-    return journal.mutate(read)
+    return journal.read(read)
 
 
 def accept_message(journal, sender, recipient, message, operation_id):
@@ -178,6 +178,14 @@ def accept_message(journal, sender, recipient, message, operation_id):
                     "source": "worker.message",
                     "enqueued_at": row["created_at"],
                     "worker_message_id": row["id"],
+                    "worker": {
+                        "id": sender,
+                        "session_id": rows[sender].get("session_id"),
+                        "name": rows[sender]["recipe"].get("name") or sender,
+                        "task": rows[sender]["task"],
+                        "message": message,
+                        "message_id": row["id"],
+                    },
                 }
             )
             row["delivery"] = "message_queued"
@@ -269,9 +277,8 @@ def configure_worker(service, parent_id, worker_id):
         )
 
     def configure(spec):
-        from omniagents.builtin.tools.swarm_tools import _validate_worker_spec
-
-        _validate_worker_spec(spec)
+        # Whether this worker may spawn workers is its definition's
+        # max_depth, applied when its spec was loaded.
         spec.available_tools = list(spec.available_tools) + [
             worker_context,
             worker_message,

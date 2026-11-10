@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@omniagents/ui/button";
 import { Paperclip, X } from "lucide-react";
@@ -13,13 +13,24 @@ export function Composer({
   users,
   onSend,
   onAttach,
+  insertText,
+  onInserted,
 }: {
+  insertText?: {id:string;text:string};
+  onInserted?: () => void;
   placeholder: string;
   users: SlackUser[];
   onSend: (text: string) => Promise<void>;
   onAttach?: (file: File, comment: string) => Promise<void>;
 }) {
   const [text, setText] = useState("");
+  const inserted = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!insertText || inserted.current === insertText.id) return;
+    inserted.current = insertText.id;
+    setText(value => [value, insertText.text].filter(Boolean).join("\n\n"));
+    onInserted?.();
+  }, [insertText, onInserted]);
   const [file, setFile] = useState<File | null>(null);
   const [sending, setSending] = useState(false);
   const picker = useRef<HTMLInputElement>(null);

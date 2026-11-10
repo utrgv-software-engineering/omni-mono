@@ -362,7 +362,9 @@ def stream_event_payload(
         # with (see protocol.md § Conversation Domain Objects).
         from omniagents.core.conversation.model import provider_item_id
 
-        message_id = provider_item_id(getattr(getattr(item, "raw_item", None), "id", None))
+        message_id = provider_item_id(
+            getattr(getattr(item, "raw_item", None), "id", None)
+        )
         payload = {
             "run_id": run_id,
             "session_id": session_id,
@@ -1057,7 +1059,14 @@ async def stream_agent(
                 # grants are tuple-keyed by (server, tool); everything
                 # else keys on the flat name.
                 mcp_identity = lookup_identity(session, tool_name)
-                if (
+                from omniagents.core.agents.human_approval import (
+                    requires_person,
+                    session_entries,
+                )
+
+                if not requires_person(
+                    session_entries(session), tool_name, mcp_identity
+                ) and (
                     session_allows_mcp_tool(session, *mcp_identity)
                     if mcp_identity is not None
                     else session_allows_tool(session, tool_name)

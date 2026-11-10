@@ -148,10 +148,12 @@
       for (const child of [...helmet.childNodes]) doc.head.appendChild(child);
       helmet.remove();
     }
+    // Capture logic before moving board children into the detached template:
+    // authors may place the component script inside or after <x-dc>.
+    const script = root.querySelector('script[type="text/x-dc"]') || doc.querySelector('script[type="text/x-dc"]');
     const template = doc.createElement("template");
     for (const child of [...root.childNodes]) template.content.appendChild(child);
     root.style.display = "contents";
-    const script = doc.querySelector('script[type="text/x-dc"]');
     let props = {};
     try {
       props = JSON.parse((script && script.getAttribute("data-props")) || "{}");

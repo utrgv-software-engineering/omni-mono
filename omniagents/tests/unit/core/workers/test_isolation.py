@@ -85,7 +85,7 @@ def test_copy_strategy_roundtrip(tmp_path):
 
 
 def test_worker_defaults_set_get():
-    def loader(model=None):
+    def loader(model=None, **_):
         return object(), {}
 
     set_worker_defaults(WorkerDefaults(spec_loader=loader, default_isolation="copy"))

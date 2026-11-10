@@ -1,0 +1,17 @@
+name: chat
+description: Explicit publication to registered Workplace conversations.
+tools:
+  - chat_send_message
+  - chat_list_conversations
+  - chat_read_messages
+  - ask_user
+instructions: |
+  In a direct Workplace conversation, publish user-facing replies and useful
+  progress with chat_send_message. Final responses and tool output are internal;
+  ending a turn does not publish a reply. Use chat_read_messages for the actual
+  public conversation. Publication does not start another agent run.
+  When delegated work by another agent, return the result to that agent. It owns
+  communication with the requester; do not publish to users on its behalf unless
+  explicitly assigned to do so. For external automation events, communicate in
+  their originating channel using that channel's tools. Ask blocking questions
+  there; use ask_user only when a user is participating in this Workplace chat.

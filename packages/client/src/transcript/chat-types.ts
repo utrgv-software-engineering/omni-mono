@@ -42,6 +42,7 @@ export type CanonicalItemEnvelope = {
 };
 
 export type ChatMessage = {
+  notifications?: import('./worker-messages').Notification[];
   /** Spoken transcript for the captions display preference, not task output. */
   voice_caption?: boolean;
   type: 'chat';
@@ -60,6 +61,8 @@ export type ChatMessage = {
    */
   item_id?: string;
   timestamp?: string;
+  /** Who wrote a user message, when several people share the conversation. */
+  sender?: { name: string };
   attachments?: Attachment[];
   /**
    * MCP-Apps staged context entries that were flushed and prepended to

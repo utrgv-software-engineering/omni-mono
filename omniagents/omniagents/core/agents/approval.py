@@ -22,6 +22,11 @@ from typing import Any, Callable, Awaitable, Iterable, List, Pattern
 
 from agents.tool import FunctionTool
 
+from omniagents.core.agents.human_approval import (
+    consume_preapproval,
+    requires_person,
+    session_entries,
+)
 from omniagents.core.agents.mcp_identity import stamp_mcp_tool_identities
 
 NeedsApprovalCallable = Callable[[Any, dict, str], Awaitable[bool]]
@@ -96,6 +101,11 @@ def _make_mcp_predicate(
     async def needs_approval(
         ctx: Any, args: dict, call_id: str
     ) -> bool:  # noqa: ANN401
+        if requires_person(session_entries(session), public_name, identity):
+            # A person approves it, whatever else would allow it.
+            return not consume_preapproval(
+                getattr(session, "id", ""), public_name, args
+            )
         if skip_approvals:
             return False
         if session_allows_mcp_tool(session, identity[0], identity[1]):
@@ -122,6 +132,9 @@ def _make_predicate(
     async def needs_approval(
         ctx: Any, args: dict, call_id: str
     ) -> bool:  # noqa: ANN401
+        if requires_person(session_entries(session), tool_name):
+            # A person approves it, whatever else would allow it.
+            return not consume_preapproval(getattr(session, "id", ""), tool_name, args)
         if skip_approvals:
             return False
 

@@ -1,3 +1,6 @@
+import { SharedReview } from "./Sharing";
+import { factoryPath, factoryUrl } from "./factory-scope";
+import { InstallationApp } from "./Installation";
 // Getting into the workplace: setting a new one up, accepting an invite,
 // signing in. Once signed in, the workplace itself (App).
 import { useCallback, useEffect, useState } from "react";
@@ -22,11 +25,17 @@ import { Toaster } from "@omniagents/ui/sonner";
 
 import { auth, type Invite, type Person, type Session } from "./api";
 import App from "./App";
+import { inTeams, teamsSignOut } from "./teams";
 
 export default function Root() {
+  const shared = /^\/share\/([a-f0-9]+)\/?$/.exec(factoryPath());
+  return shared ? <SharedReview id={shared[1]} /> : <SignedRoot />;
+}
+
+function SignedRoot() {
   const [session, setSession] = useState<Session | null>(null);
   const [failed, setFailed] = useState("");
-  const path = window.location.pathname;
+  const path = factoryPath();
 
   const load = useCallback(() => {
     auth.session().then(setSession, (e: Error) => setFailed(e.message));
@@ -34,7 +43,7 @@ export default function Root() {
   useEffect(load, [load]);
 
   const signedIn = (account: Person) => {
-    window.history.replaceState(null, "", "/");
+    window.history.replaceState(null, "", factoryUrl("/"));
     setSession((s) => ({
       account,
       setup: false,
@@ -47,10 +56,20 @@ export default function Root() {
     return <Centered>The workplace did not answer: {failed}</Centered>;
   if (!session) return <Centered>Connecting to the workplace…</Centered>;
 
+  const signOut = () => {
+    void auth.signOut().then(() => {
+      if (inTeams()) teamsSignOut();
+      else if (session.azure_auth) window.location.assign(session.azure_auth.logout_url);
+      else load();
+    });
+  };
+
   const setupToken = path.match(/^\/setup\/([^/]+)$/)?.[1];
   const inviteToken = path.match(/^\/invite\/([^/]+)$/)?.[1];
   if (inviteToken)
     return <InvitePage token={inviteToken} onSignedIn={signedIn} />;
+  if (session.account && session.installation)
+    return <InstallationApp account={session.account} onSignOut={signOut} />;
   if (session.account)
     return (
       <App
@@ -58,10 +77,7 @@ export default function Root() {
         environment={session.environment ?? "development"}
         configurable={!!session.configurable}
         factory={!!session.factory}
-        architecture={session.architecture ?? "specialist"}
-        onSignOut={() => {
-          void auth.signOut().then(load);
-        }}
+        onSignOut={signOut}
       />
     );
   if (session.claim_here)
@@ -86,7 +102,7 @@ export default function Root() {
       </Page>
     );
   return (
-    <SignInPage organization={session.organization} onSignedIn={signedIn} />
+    <SignInPage organization={session.organization} onSignedIn={signedIn} microsoftUrl={session.azure_auth?.login_url} />
   );
 }
 
@@ -175,10 +191,12 @@ function useSubmit(run: () => Promise<Person>, onDone: (p: Person) => void) {
 }
 
 function SignInPage({
+  microsoftUrl,
   organization,
   onSignedIn,
 }: {
   organization: string | null;
+  microsoftUrl?: string;
   onSignedIn: (p: Person) => void;
 }) {
   const [username, setUsername] = useState("");
@@ -193,6 +211,14 @@ function SignInPage({
       title={organization ? `Sign in to ${organization}` : "Sign in"}
       description="An admin adds you and sends you an invite link."
     >
+      {microsoftUrl && (
+        <CardContent>
+          <Button type="button" variant="outline" className="w-full"
+            onClick={() => window.location.assign(microsoftUrl)}>
+            Sign in with Microsoft
+          </Button>
+        </CardContent>
+      )}
       <form onSubmit={submit}>
         <CardContent>
           <FieldGroup>

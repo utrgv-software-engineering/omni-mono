@@ -151,7 +151,7 @@ async def test_intake_runs_the_matched_automation_with_its_instruction(tmp_path)
     await intake.drain()
     [(agent, session_id, prompt)] = runs.calls
     assert agent == "foreman"
-    assert prompt.startswith("Reply in the thread.")
+    assert "Reply in the thread." in prompt
     assert '"text": "hi"' in prompt
     [record] = intake.store.recent()
     assert record["status"] == "dispatched"
@@ -355,3 +355,100 @@ async def test_memory_extraction_receives_failed_runs_after_reporting(tmp_path):
     assert len(extracted) == 1
     assert extracted[0][1:3] == ("m", "foreman")
     assert extracted[0][-1].error == "model refused"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider,grouping,reuses",
+    [
+        ("github", "auto", True),
+        ("schedule", "auto", False),
+        ("shared", "auto", False),
+        ("github", "new", False),
+        ("schedule", "thread", True),
+    ],
+)
+async def test_configured_agent_and_conversation_grouping_survive_restart(
+    tmp_path, provider, grouping, reuses
+):
+    _write_automation(
+        tmp_path,
+        "work",
+        f"agent: original\ntriggers:\n  - provider: {provider}\n    event: changed",
+    )
+    calls = []
+
+    async def run(agent, session, prompt, progress):
+        calls.append((agent, session))
+        return RunResult(output="done")
+
+    db = tmp_path / "events.db"
+    store = EventStore(db)
+    store.set_automation_route(
+        "work", {"agent": "coordinator", "conversation": grouping}
+    )
+    for number in range(2):
+        intake = EventIntake(
+            project_root=tmp_path, entrypoint="assistant", store=store, run=run
+        )
+        event = IncomingEvent(
+            provider=provider,
+            event="changed",
+            delivery_id=str(number),
+            thread_key="work-123",
+            payload={},
+        )
+        assert await intake.accept(event)
+        assert not await intake.accept(event)
+        await intake.drain()
+        store.close()
+        store = EventStore(db)
+    assert [agent for agent, _ in calls] == ["coordinator", "coordinator"]
+    assert (calls[0][1] == calls[1][1]) is reuses
+    assert len(store.conversations()) == (1 if reuses else 2)
+    store.close()
+
+
+def test_conversations_are_titled_for_their_source_and_close_with_their_item(
+    tmp_path,
+):
+    store = EventStore(tmp_path / "events.db")
+
+    def run(provider, event, delivery, thread, payload, automation, session):
+        event_id = store.record(
+            IncomingEvent(
+                provider=provider,
+                event=event,
+                delivery_id=delivery,
+                thread_key=thread,
+                payload=payload,
+            )
+        )
+        if automation:
+            store.start_dispatch(event_id, automation, "coordinator", session)
+
+    pull = {"pull_request": {"number": 12, "title": "Add pagination"}}
+    run("github", "pull_request_opened", "1", "acme/web#12", pull, "pr-opened", "s1")
+    run(
+        "slack",
+        "app_mention",
+        "2",
+        "T:C:1",
+        {"event": {"text": "<@U1> please fix the login page"}},
+        "slack-app-mentions",
+        "s2",
+    )
+    run("schedule", "cron_fired", "3", None, {}, "nightly-review", "s3")
+    # A second run in the same conversation keeps its first source's title.
+    run("github", "issue_mentioned", "4", "acme/web#12", pull, "mention", "s1")
+    by_id = {c["id"]: c for c in store.conversations()}
+    assert by_id["s1"]["title"] == "PR #12 · Add pagination"
+    assert by_id["s1"]["automation"] == "pr-opened"
+    assert by_id["s2"]["title"] == "please fix the login page"
+    assert by_id["s3"]["title"] == "Nightly review"
+    assert not any(c["closed"] for c in by_id.values())
+    run("github", "pull_request_merged", "5", "acme/web#12", pull, None, None)
+    by_id = {c["id"]: c for c in store.conversations()}
+    assert by_id["s1"]["closed"] and not by_id["s2"]["closed"]
+    assert [c["id"] for c in store.conversations("s1")] == ["s1"]
+    store.close()

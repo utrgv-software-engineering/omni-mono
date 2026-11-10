@@ -1,3 +1,12 @@
+import { McpAppFrame, extensionRequest, type AppCatalog, type InstalledApp } from "./McpAppFrame";
+import { AppsLauncher } from "./AppsLauncher";
+import { ExtensionsDialog } from "./Extensions";
+import { Mic, Plug, LayoutGrid } from "lucide-react";
+import { appTransport } from "./extensions/transport";
+import { SharedApp } from "./Shared";
+import { FolderOpen } from "lucide-react";
+import { getConversationDraft, updateConversationDraft } from "@omniagents/client/session/conversation-drafts";
+import { factoryBase, factoryPath, factoryUrl } from "./factory-scope";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@omniagents/ui/button";
@@ -9,9 +18,6 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-  DropdownMenuSub,
-  DropdownMenuSubTrigger,
-  DropdownMenuSubContent,
 } from "@omniagents/ui/dropdown-menu";
 import {
   ResizableHandle,
@@ -23,6 +29,8 @@ import { Input } from "@omniagents/ui/input";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@omniagents/ui/sheet";
 import { Toaster } from "@omniagents/ui/sonner";
 import {
+  Monitor,
+  Rocket,
   Archive,
   LibraryBig,
   Factory,
@@ -32,6 +40,7 @@ import {
   Lock,
   Menu,
   MessageSquare,
+  Workflow,
   Pencil,
   Search,
   Sparkles,
@@ -52,11 +61,15 @@ import {
 } from "./api";
 import { Composer } from "./Composer";
 import { CanvasApp, parseCanvasPath } from "./Canvas";
+import { Desktop, useDesktopAvailable } from "./Desktop";
 import { LibraryApp } from "./Library";
+import { Coolify } from "./Coolify";
 import { MemoryApp } from "./Memory";
 import { ConfigDialog } from "./Config";
-import { RepositoriesDialog, RepositoryView } from "./Repositories";
+import { RepositoriesDialog, RepositoryView, type RepositoryDialogMode } from "./Repositories";
 import { FactoryApp } from "./Factory";
+import { FactorySettingsDialog } from "./FactorySettings";
+import { AzureDevOpsDialog } from "./AzureDevOps";
 import { parseFactoryRunPath } from "./factory-run-path";
 
 // The run page carries the chat UI: loaded when a run is opened.
@@ -64,6 +77,8 @@ const PersonalApp = lazy(() => import("./Personal").then((m) => ({ default: m.Pe
 const FactoryRun = lazy(() => import("./FactoryRun").then((m) => ({ default: m.FactoryRun })));
 import { FactoryModelDialog } from "./FactoryModel";
 import { FactorySchedulesDialog } from "./FactorySchedules";
+import { AutomationsApp } from "./Automations";
+import { AgentsApp } from "./Agents";
 import { GitHubApp, parseGitHubPath } from "./GitHub";
 import { LinearApp, parseLinearPath } from "./Linear";
 import { AppsDialog, TokensDialog } from "./Apps";
@@ -92,21 +107,28 @@ export default function App({
   environment,
   configurable,
   factory,
-  architecture,
   onSignOut,
+  embedded = false,
 }: {
   account: Person;
+  embedded?: boolean;
   /** development, test, staging or production: shown unless production. */
   environment: string;
   /** Development, served by `up`: the configuration page edits workplace.yml. */
   configurable: boolean;
   /** Served with a factory's workplace.yml: its model is configured here. */
   factory: boolean;
-  architecture: "personal" | "specialist";
   onSignOut: () => void;
 }) {
   const [state, setState] = useState<WorkplaceState | null>(null);
+  const [appCatalog, setAppCatalog] = useState<AppCatalog | null>(null);
+  const [extensionsOpen, setExtensionsOpen] = useState(false);
+  const [recorderOpened, setRecorderOpened] = useState(false);
+  const refreshApps = useCallback(async () => { if (!embedded) setAppCatalog(await extensionRequest<AppCatalog>("")); }, [embedded]);
+  useEffect(() => { void refreshApps().catch(error => toast.error(error.message)); }, [refreshApps]);
+
   // The signed-in person, as Slack knows them.
+  const desktopAvailable = useDesktopAvailable(!embedded && account.admin && factory);
   const actingAs = account.slack_id;
   const [peopleOpen, setPeopleOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
@@ -121,7 +143,7 @@ export default function App({
   const [wire, setWire] = useState<WireEntry[]>([]);
   const [wireOpen, setWireOpen] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
-  const [path, setPath] = useState(window.location.pathname);
+  const [path, setPath] = useState(factoryPath());
   const [githubVersion, setGithubVersion] = useState(0);
   const [linearVersion, setLinearVersion] = useState(0);
   const [canvasVersion, setCanvasVersion] = useState(0);
@@ -131,7 +153,10 @@ export default function App({
   const [profileOpen, setProfileOpen] = useState(false);
   const [teamOpen, setTeamOpen] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
+  const [repositoryDialogMode, setRepositoryDialogMode] = useState<RepositoryDialogMode>("connection");
   const [repositoriesOpen, setRepositoriesOpen] = useState(() => new URLSearchParams(window.location.search).has("connection"));
+  const [factorySettingsOpen, setFactorySettingsOpen] = useState(false);
+  const [azureDevOpsOpen, setAzureDevOpsOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [schedulesOpen, setSchedulesOpen] = useState(false);
   const [searchText, setSearchText] = useState("");
@@ -147,22 +172,32 @@ export default function App({
   const adoptSlot = useAdoptSlot(navSlot);
 
   const navigate = useCallback((to: string) => {
-    window.history.pushState(null, "", to);
-    setPath(to);
+    if (appTransport()) { appTransport()!.navigate(to); return; }
+    window.history.pushState(null, "", factoryUrl(to));
+    setPath(factoryPath());
   }, []);
   useEffect(() => {
-    const onPop = () => setPath(window.location.pathname);
+    const onPop = () => setPath(factoryPath());
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
+  const [sharedDraft, setSharedDraft] = useState<{id:string;text:string}>();
+  const launcherRoute = path === "/apps" || path === "/apps/";
+  const extensionRoute = path.startsWith("/apps/") ? path.split("/")[2] : null;
+  useEffect(() => { if (extensionRoute === "recorder") setRecorderOpened(true); }, [extensionRoute]);
+  const sharedRoute = path === "/shared";
   const libraryRoute = path === "/library" || path.startsWith("/library/") || path === "/canvas";
+  const coolifyRoute = path === "/coolify";
+  const desktopRoute = path === "/desktop";
   const personalRoute = path === "/personal";
   const memoryRoute = path === "/memory";
   const factoryRoute = path === "/factory" || path.startsWith("/factory/");
-  const canvasRoute = libraryRoute || factoryRoute || personalRoute ? null : parseCanvasPath(path);
-  const linearRoute = libraryRoute || factoryRoute || personalRoute || canvasRoute ? null : parseLinearPath(path);
+  const automationsRoute = path === "/automations" || path.startsWith("/automations/");
+  const agentsRoute = path === "/agents" || path.startsWith("/agents/");
+  const canvasRoute = launcherRoute || extensionRoute || sharedRoute || libraryRoute || factoryRoute || automationsRoute || agentsRoute || personalRoute ? null : parseCanvasPath(path);
+  const linearRoute = launcherRoute || extensionRoute || sharedRoute || libraryRoute || factoryRoute || automationsRoute || agentsRoute || personalRoute || canvasRoute ? null : parseLinearPath(path);
   const route =
-    libraryRoute || factoryRoute || personalRoute || canvasRoute || linearRoute ? null : parseGitHubPath(path);
+    launcherRoute || extensionRoute || sharedRoute || libraryRoute || factoryRoute || automationsRoute || agentsRoute || personalRoute || canvasRoute || linearRoute ? null : parseGitHubPath(path);
   // Going somewhere closes the drawer.
   useEffect(() => setNavOpen(false), [path, channelId]);
 
@@ -188,13 +223,13 @@ export default function App({
   }, []);
 
   const loadMessages = useCallback(async (id: string) => {
-    if (!id) return;
+    if (!embedded || !id) return;
     const { messages } = await api.messages(id);
     if (current.current.channelId === id) setMessages(messages);
   }, []);
 
   const loadThread = useCallback(async (t: Thread | null) => {
-    if (!t) return setThreadMessages(null);
+    if (!embedded || !t) return setThreadMessages(null);
     try {
       const data = await api.thread(t.channel, t.ts);
       const now = current.current.thread;
@@ -207,7 +242,7 @@ export default function App({
 
   useEffect(() => {
     void loadState();
-    if (account.admin) void api.wire().then(({ entries }) => setWire(entries)).catch(() => setWire([]));
+    if (account.admin && !embedded) void api.wire().then(({ entries }) => setWire(entries)).catch(() => setWire([]));
     else { setWire([]); setWireOpen(false); }
   }, [loadState, account.admin]);
 
@@ -223,6 +258,7 @@ export default function App({
   // What you see is read: the open conversation, up to its last message.
   const marked = useRef<Record<string, string>>({});
   useEffect(() => {
+    if (!embedded) return;
     const last = messages.at(-1)?.ts;
     const open = state?.slack.channels.find((c) => c.id === channelId);
     if (!last || !open || !open.members.includes(account.slack_id)) return;
@@ -494,6 +530,8 @@ export default function App({
             </div>
           ) : joined ? (
             <Composer
+              insertText={sharedDraft}
+              onInserted={() => setSharedDraft(undefined)}
               placeholder={`Message ${channel.is_im || channel.is_mpim ? label(channel) : "#" + channel.name} as ${me?.real_name ?? ""}`}
               users={state.slack.users}
               onSend={(text) => send(text)}
@@ -578,17 +616,37 @@ export default function App({
     ) : null;
 
   // One ordered set of destinations for the rail, phone bar, and More sheet.
-  const slackRoute = !libraryRoute && !route && !linearRoute && !canvasRoute && !factoryRoute && !personalRoute && !memoryRoute;
+  const slackRoute = !launcherRoute && !extensionRoute && !sharedRoute && !coolifyRoute && !desktopRoute && !libraryRoute && !route && !linearRoute && !canvasRoute && !factoryRoute && !automationsRoute && !agentsRoute && !personalRoute && !memoryRoute;
   const sections = [
-    ...(factory && architecture === "personal" && account.admin ? [{ name: "Chat", to: "/personal", icon: MessageSquare, active: personalRoute }] : []),
-    ...(factory && (architecture !== "personal" || !account.admin) ? [{ name: "Factory", to: "/factory", icon: Factory, active: factoryRoute }] : []),
-    { name: "Slack", to: "/", icon: Hash, active: slackRoute },
-    { name: "GitHub", to: "/github", icon: GitBranch, active: !!route },
-    { name: "Linear", to: "/linear", icon: Sparkles, active: !!linearRoute },
+    ...(factory && account.admin ? [{ name: "Chat", to: "/personal", icon: MessageSquare, active: personalRoute }] : []),
+    ...(factory && account.admin ? [{ name: "Automations", to: "/automations", icon: Workflow, active: automationsRoute }] : []),
+    ...(factory && !account.admin ? [{ name: "Factory", to: "/factory", icon: Factory, active: factoryRoute }] : []),
+    ...(!embedded ? [{name: "Apps", to: "/apps", icon: LayoutGrid, active: launcherRoute}] : []),
+    ...(embedded ? [{ name: "Slack", to: "/", icon: Hash, active: slackRoute }] : (appCatalog?.apps ?? []).filter(app => app.enabled && app.entrypoints.length).flatMap(app => app.entrypoints.map((entry, index) => ({
+      showInNavigation: app.showInNavigation !== false, name: entry.name, to: app.path ?? `/apps/${app.id}/${index}`, icon: app.id === "slack" ? Hash : app.id === "github" ? GitBranch : app.id === "linear" ? Sparkles : app.id === "recorder" ? Mic : entry.icons?.[0]?.src?.match(/^(https:\/\/|data:image\/)/) ? (props: { "aria-hidden"?: boolean }) => <img {...props} src={entry.icons![0].src} className="size-4" alt="" /> : Plug,
+      active: app.id === "slack" ? slackRoute : app.id === "github" ? !!route : app.id === "linear" ? !!linearRoute : extensionRoute === app.id && Number(path.split("/")[3] || 0) === index,
+    })))) ,
+    { name: "Shared", to: "/shared", icon: FolderOpen, active: sharedRoute },
     { name: "Library", to: "/library", icon: LibraryBig, active: libraryRoute || !!canvasRoute },
+    ...(desktopAvailable ? [{ name: "Desktop", to: "/desktop", icon: Monitor, active: desktopRoute }] : []),
+    ...(factoryBase() && account.admin ? [{ name: "Coolify", to: "/coolify", icon: Rocket, active: coolifyRoute }] : []),
     { name: "Memory", to: "/memory", icon: Archive, active: memoryRoute },
-    ...(factory && architecture === "personal" && account.admin ? [{ name: "Factory", to: "/factory", icon: Factory, active: factoryRoute }] : []),
+    ...(factory && account.admin ? [{ name: "Factory", to: "/factory", icon: Factory, active: factoryRoute }] : []),
   ];
+  const nativeApps: InstalledApp[] = sections.filter(section => !("showInNavigation" in section) && section.to !== "/apps").map(section => ({
+    id: "native:" + section.to.slice(1), name: section.name, kind: "native", enabled: true,
+    path: section.to, permissions: {}, showInNavigation: appCatalog?.nativeNavigation?.[section.to.slice(1)] !== false,
+    entrypoints: [{tool: "native:" + section.to.slice(1), name: section.name, uri: ""}],
+  }));
+  const launcherCatalog = appCatalog ? {...appCatalog, apps: [...nativeApps, ...appCatalog.apps]} : null;
+  const appSurface = (id: string) => {
+    const app = appCatalog?.apps.find(value => value.id === id && value.enabled);
+    if (!app || !appCatalog) return <p className="p-6 text-sm text-muted-foreground">{appCatalog ? "This app is disabled." : "Opening app…"}</p>;
+    const index = app.kind === "builtin" ? 0 : Number(path.split("/")[3] || 0);
+    const entry = app.entrypoints[index];
+    if (!entry) return <p className="p-6">App entrypoint not found.</p>;
+    return <McpAppFrame key={app.id + JSON.stringify(app.permissions)} app={app} entry={entry} sandboxOrigin={appCatalog.sandboxOrigin} path={path} navigate={navigate} />;
+  };
   const accountMenu = (closeNavigation: () => void) => (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -610,53 +668,18 @@ export default function App({
               <DropdownMenuItem onSelect={() => setProfileOpen(true)}>
                 Profile
               </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setPeopleOpen(true)}>
-                People
-              </DropdownMenuItem>
-              {account.admin && (
-                <DropdownMenuItem onSelect={() => setTeamOpen(true)}>
-                  Workspace settings
-                </DropdownMenuItem>
-              )}
-              {account.admin && (
-                <DropdownMenuItem onSelect={() => setRepositoriesOpen(true)}>Repositories</DropdownMenuItem>
-              )}
-              {account.admin && factory && (
-                <DropdownMenuItem onSelect={() => setModelOpen(true)}>
-                  Factory model
-                </DropdownMenuItem>
-              )}
-              {account.admin && factory && (
-                <DropdownMenuItem onSelect={() => setSchedulesOpen(true)}>
-                  Factory schedules
-                </DropdownMenuItem>
-              )}
-              {account.admin && configurable && (
-                <DropdownMenuItem onSelect={() => setConfigOpen(true)}>
-                  Configuration
-                </DropdownMenuItem>
-              )}
-              <DropdownMenuItem onSelect={() => { closeNavigation(); setConnectOpen(true); }}>
-                Connections
-              </DropdownMenuItem>
-              {account.admin && (
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger>Developer tools</DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent>
-                    <DropdownMenuGroup>
-                      <DropdownMenuItem onSelect={() => { closeNavigation(); setWireOpen(true); }}>
-                        Event log
-                      </DropdownMenuItem>
-                    </DropdownMenuGroup>
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-              )}
+              <DropdownMenuItem onSelect={() => {closeNavigation();setTeamOpen(true);}}>Workspace settings</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setExtensionsOpen(true)}>Apps</DropdownMenuItem>
+              {account.admin && factory && <DropdownMenuItem onSelect={() => setFactorySettingsOpen(true)}>Factory settings</DropdownMenuItem>}
+              {account.admin && <DropdownMenuItem onSelect={() => setAzureDevOpsOpen(true)}>Azure DevOps connections</DropdownMenuItem>}
+              {account.admin && factory && <DropdownMenuItem onSelect={() => {setRepositoryDialogMode("factory");setRepositoriesOpen(true);}}>Factory changes</DropdownMenuItem>}
               <DropdownMenuItem onSelect={() => setTokensOpen(true)}>
                 Your tokens
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setPasswordOpen(true)}>
                 Change password
               </DropdownMenuItem>
+              {factoryBase() && <DropdownMenuItem onSelect={() => window.location.assign("/")}>Factories</DropdownMenuItem>}
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={onSignOut}>Sign out</DropdownMenuItem>
               </DropdownMenuGroup>
@@ -667,10 +690,11 @@ export default function App({
   return (
     <NavSlot.Provider value={navSlot}>
     <div className="flex h-[var(--workplace-viewport-height,100%)] flex-col bg-background text-foreground md:flex-row">
-      <WorkplaceNav sections={sections} brand={state.slack.team.name} personalMode={architecture === "personal"} navigate={navigate}
-        account={accountMenu} />
+      {!embedded && <WorkplaceNav sections={sections.filter(section => section.to === "/apps" || ("showInNavigation" in section ? section.showInNavigation : appCatalog?.nativeNavigation?.[section.to.slice(1)] !== false))} brand={state.slack.team.name} personalMode={!!factory && !!account.admin} navigate={navigate}
+        account={accountMenu} />}
       <div className="order-first flex min-h-0 min-w-0 flex-1 flex-col md:order-none" style={personalRoute ? { paddingTop: "env(safe-area-inset-top)" } : undefined}>
       <Toaster />
+      {!embedded && <ExtensionsDialog admin={account.admin} open={extensionsOpen} onOpenChange={setExtensionsOpen} catalog={launcherCatalog} refresh={refreshApps} />}
       <Sheet open={navOpen} onOpenChange={setNavOpen}>
         <SheetContent side="left" className="w-80 gap-0 overflow-y-auto p-0">
           <SheetTitle className="flex h-12 shrink-0 items-center gap-2 border-b px-4 text-base">
@@ -704,8 +728,8 @@ export default function App({
           </div>
         </SheetContent>
       </Sheet>
-      {!personalRoute && <header className="box-content flex h-12 shrink-0 items-center gap-2 border-b px-2 pt-[env(safe-area-inset-top)] lg:gap-3 lg:px-3">
-        {(slackRoute || linearRoute) && <Button variant="ghost" size="icon" className="md:hidden"
+      {!personalRoute && !desktopRoute && (embedded || !slackRoute) && <header className="box-content flex h-12 shrink-0 items-center gap-2 border-b px-2 pt-[env(safe-area-inset-top)] lg:gap-3 lg:px-3">
+        {embedded && (slackRoute || linearRoute) && <Button variant="ghost" size="icon" className="md:hidden"
           aria-label={`${slackRoute ? "Slack" : "Linear"} navigation`} onClick={() => setNavOpen(true)}><Menu /></Button>}
         <div className="flex min-w-0 items-center gap-3">
           <span className="truncate font-semibold">{sections.find((a) => a.active)?.name}</span>
@@ -713,7 +737,7 @@ export default function App({
           {environment !== "production" && <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground">{environment}</span>}
         </div>
         <div className="ml-auto flex items-center gap-2">
-          {!libraryRoute && !route && !linearRoute && !canvasRoute && !factoryRoute && !personalRoute && !memoryRoute && (
+          {slackRoute && (
             <form
               className="relative hidden md:block"
               onSubmit={(e) => {
@@ -733,17 +757,40 @@ export default function App({
         </div>
       </header>}
 
-      {personalRoute ? (
-        architecture !== "personal" ? <p className="p-6">Chat is disabled in the specialist architecture.</p> : account.admin ? <Suspense fallback={<div className="p-6">Opening Chat…</div>}><PersonalApp key={account.id} /></Suspense>
+      {!embedded && recorderOpened && appCatalog?.apps.some(app => app.id === "recorder" && app.enabled) && <div className={extensionRoute === "recorder" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>{appSurface("recorder")}</div>}
+      {!embedded && launcherRoute ? <AppsLauncher catalog={launcherCatalog} refresh={refreshApps} navigate={navigate} manage={() => setExtensionsOpen(true)} /> : !embedded && extensionRoute ? (extensionRoute === "recorder" ? null : appSurface(extensionRoute)) : coolifyRoute ? (
+        account.admin && factoryBase() ? <Coolify /> : <p className="p-6">Factory administrator access required.</p>
+      ) : desktopRoute ? (
+        account.admin ? <Desktop /> : <p className="p-6">Desktop requires an administrator account.</p>
+      ) : personalRoute ? (
+        account.admin ? <Suspense fallback={<div className="p-6">Opening Chat…</div>}><PersonalApp key={account.id} account={account} navigate={navigate} /></Suspense>
           : <p className="p-6">Chat currently requires an administrator account.</p>
+      ) : automationsRoute ? (
+        account.admin && factory
+          ? <AutomationsApp key={path} name={path.startsWith("/automations/") ? decodeURIComponent(path.slice("/automations/".length)) : undefined} navigate={navigate} onFactorySettings={() => {setRepositoryDialogMode("factory");setRepositoriesOpen(true);}} />
+          : <p className="p-6">Automations require a factory administrator.</p>
+      ) : agentsRoute ? (
+        account.admin && factory
+          ? <AgentsApp key={path} agent={path.startsWith("/agents/") ? decodeURIComponent(path.slice("/agents/".length)) : undefined} navigate={navigate} />
+          : <p className="p-6">Editing agents requires a factory administrator.</p>
       ) : factoryRoute && parseFactoryRunPath(path) != null ? (
         <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Opening the run…</div>}>
           <FactoryRun runId={parseFactoryRunPath(path)!} navigate={navigate} />
         </Suspense>
       ) : factoryRoute ? (
-        <FactoryApp navigate={navigate} />
+        <FactoryApp navigate={navigate} onSettings={account.admin && factory ? () => setFactorySettingsOpen(true) : undefined} onModel={account.admin && factory ? () => setModelOpen(true) : undefined} onSchedules={account.admin && factory ? () => setSchedulesOpen(true) : undefined} onConfigure={account.admin ? () => {setRepositoryDialogMode("factory");setRepositoriesOpen(true);} : undefined} />
       ) : memoryRoute ? (
         <MemoryApp />
+      ) : sharedRoute ? (
+        <SharedApp account={account} onUse={text => {
+          if (account.admin) {
+            let id = "factory-personal";
+            try { id = JSON.parse(localStorage.getItem((factoryBase() ? factoryBase() + ":" : "") + "workplace.chat.selected") || '"factory-personal"'); } catch { /* use main chat */ }
+            const draft = getConversationDraft(id);
+            updateConversationDraft(id, {text: [draft.text,text].filter(Boolean).join("\n\n")});
+            navigate("/personal?chat=" + encodeURIComponent(id));
+          } else { setSharedDraft({id:crypto.randomUUID(),text}); navigate("/"); }
+        }} />
       ) : libraryRoute ? (
         <LibraryApp key={path} id={path.startsWith("/library/") ? decodeURIComponent(path.split("/")[2]) : undefined} account={account} version={canvasVersion} navigate={navigate} />
       ) : canvasRoute ? (
@@ -753,7 +800,7 @@ export default function App({
           version={canvasVersion}
           navigate={to => navigate(to === "/canvas" ? "/library" : to)}
         />
-      ) : linearRoute ? (
+      ) : linearRoute && !embedded ? appSurface("linear") : linearRoute ? (
         <LinearApp
           route={linearRoute}
           me={account.linear_id}
@@ -761,14 +808,15 @@ export default function App({
           navigate={navigate}
         />
       ) : route ? (
-        <RepositoryView admin={account.admin} onSettings={() => setRepositoriesOpen(true)} standin={<GitHubApp
+        <RepositoryView admin={account.admin} onSettings={mode => {setRepositoryDialogMode(mode);setRepositoriesOpen(true);}} standin={repositories => !embedded ? appSurface("github") : <GitHubApp
+          selectedRepositories={repositories}
           route={route}
           actor={account.github_login}
           admin={account.admin}
           version={githubVersion}
           navigate={navigate}
         />} />
-      ) : (
+      ) : !embedded ? appSurface("slack") : (
         <div className="flex min-h-0 flex-1">
           <AppNav className="flex w-60 shrink-0 flex-col gap-4 overflow-y-auto border-r bg-muted/30 p-3 text-sm">
             <div className="flex flex-col">
@@ -866,25 +914,6 @@ export default function App({
                 </button>
               ))}
             </Section>
-            <Section title="Repositories">
-              {state.github.repositories.map((r) => (
-                <button
-                  type="button"
-                  key={r.full_name}
-                  onClick={() => navigate(`/${r.full_name}`)}
-                  className="flex items-start gap-2 rounded-md px-2 py-1 text-left hover:bg-accent"
-                  title={r.description}
-                >
-                  <GitBranch className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-                  <div className="min-w-0">
-                    <div className="truncate font-medium">{r.full_name}</div>
-                    <div className="truncate text-xs text-muted-foreground">
-                      {r.open_issues} issues · {r.open_pulls} pull requests
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </Section>
           </AppNav>
 
           {mobile ? (
@@ -940,7 +969,9 @@ export default function App({
           onOpenChange={setSchedulesOpen}
         />
       )}
-      {account.admin && <RepositoriesDialog open={repositoriesOpen} onOpenChange={setRepositoriesOpen} />}
+      {account.admin && <RepositoriesDialog mode={repositoryDialogMode} open={repositoriesOpen} onOpenChange={setRepositoriesOpen} />}
+      {account.admin && <AzureDevOpsDialog open={azureDevOpsOpen} onOpenChange={setAzureDevOpsOpen} />}
+      {account.admin && factory && <FactorySettingsDialog open={factorySettingsOpen} onOpenChange={setFactorySettingsOpen} onSaved={() => { void loadState(); }} />}
       {configurable && (
         <ConfigDialog
           open={configOpen}
@@ -1006,15 +1037,20 @@ export default function App({
           onSaved={loadState}
         />
       )}
-      {account.admin && (
-        <TeamDialog
+      <TeamDialog
           open={teamOpen}
           onOpenChange={setTeamOpen}
           team={state.slack.team}
           channels={state.slack.channels}
+          admin={account.admin}
+          actions={<>
+            {!factoryBase() && <Button variant="outline" onClick={() => {setTeamOpen(false);setPeopleOpen(true);}}>People</Button>}
+            <Button variant="outline" onClick={() => {setTeamOpen(false);setConnectOpen(true);}}>Agent connections</Button>
+            {account.admin && configurable && <Button variant="outline" onClick={() => {setTeamOpen(false);setConfigOpen(true);}}>Advanced configuration</Button>}
+            {account.admin && <Button variant="outline" onClick={() => {setTeamOpen(false);setWireOpen(true);}}>Event log</Button>}
+          </>}
           onSaved={loadState}
         />
-      )}
       <PeopleDialog
         open={peopleOpen}
         onOpenChange={setPeopleOpen}

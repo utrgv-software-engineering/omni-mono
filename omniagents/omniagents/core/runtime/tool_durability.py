@@ -15,6 +15,7 @@ from agents import RunHooks
 from omniagents.core.conversation.recorder import recorder_for_session
 from omniagents.core.agents import mcp_ui
 from omniagents.core.agents.mcp_identity import lookup_identity
+from omniagents.core.runtime.factory_stop import raise_if_stopped
 
 
 class DurableToolHooks(RunHooks):
@@ -58,10 +59,12 @@ class DurableToolHooks(RunHooks):
             ownership.assert_current()
 
     async def on_llm_start(self, context, agent, system_prompt, input_items):
+        raise_if_stopped()
         self.assert_owner()
         await self.delegate.on_llm_start(context, agent, system_prompt, input_items)
 
     async def on_tool_start(self, context, agent, tool):
+        raise_if_stopped()
         self.assert_owner()
         call_id = getattr(context, "tool_call_id", None)
         if isinstance(call_id, str) and call_id:

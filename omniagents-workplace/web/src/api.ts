@@ -1,3 +1,7 @@
+import { appTransport } from "./extensions/transport";
+import { inTeams, teamsSubscribe } from "./teams";
+import { factoryFetch, factoryUrl } from "./factory-scope";
+import type { Scope } from "./definition-api";
 // The workplace server's UI API (/workplace/api) and its live stream.
 
 export interface SlackUser {
@@ -122,6 +126,8 @@ export interface Person {
 }
 
 export interface Session {
+  azure_auth?: { login_url: string; logout_url: string } | null;
+  installation?: boolean;
   account: Person | null;
   setup: boolean;
   organization: string | null;
@@ -135,7 +141,6 @@ export interface Session {
   configurable?: boolean;
   /** Served with a factory's workplace.yml: its model is configured in the UI. */
   factory?: boolean;
-  architecture?: "personal" | "specialist";
 }
 
 export interface Invite {
@@ -199,7 +204,7 @@ export interface AppSettings {
 }
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/workplace/api${path}`, {
+  const response = await factoryFetch(`/workplace/api${path}`, {
     ...init,
     headers: { "Content-Type": "application/json", ...init?.headers },
   });
@@ -960,7 +965,7 @@ export const linear = {
     const form = new FormData();
     form.set("file", file);
     form.set("title", file.name);
-    const response = await fetch(
+    const response = await factoryFetch(
       `/workplace/api/linear/issues/${identifier}/attachments`,
       { method: "POST", body: form },
     );
@@ -1135,7 +1140,7 @@ export const api = {
     form.set("file", body.file);
     form.set("comment", body.comment);
     if (body.thread_ts) form.set("thread_ts", body.thread_ts);
-    const response = await fetch("/workplace/api/slack/files", {
+    const response = await factoryFetch("/workplace/api/slack/files", {
       method: "POST",
       body: form,
     });
@@ -1287,7 +1292,9 @@ export type StreamEvent =
 
 /** Subscribe to the workplace's changes; reconnects on its own. */
 export function subscribe(onEvent: (event: StreamEvent) => void): () => void {
-  const source = new EventSource("/workplace/api/stream");
+  if (appTransport()) return appTransport()!.subscribe(onEvent);
+  if (inTeams()) return teamsSubscribe(event => onEvent(event as StreamEvent));
+  const source = new EventSource(factoryUrl("/workplace/api/stream"));
   source.addEventListener("ready", () => onEvent({ type: "ready" }));
   source.addEventListener("slack", (e) =>
     onEvent({ type: "slack", data: JSON.parse((e as MessageEvent).data) }),
@@ -1351,6 +1358,7 @@ export interface CanvasSummary {
 }
 
 export interface CanvasComment {
+  guest?: boolean;
   id: string;
   body: string;
   author: string | null;
@@ -1459,6 +1467,13 @@ export interface ModelChoice {
   verified: boolean;
 }
 
+export interface FactoryModelEdit {
+  model?: string;
+  label?: string;
+  maxInput?: number;
+  maxOutput?: number;
+}
+
 export interface FactoryModelState {
   path: string;
   default: string | null;
@@ -1468,7 +1483,7 @@ export interface FactoryModelState {
     type: string;
     base_url: string | null;
     key: string | null;
-    models: { ref: string; label: string; realtime: boolean }[];
+    models: { ref: string; id?: string; model?: string; label: string; realtime: boolean; maxInput?: number | null; maxOutput?: number | null }[];
   }[];
   chatgpt: { state: string; email: string | null; plan: string | null } | null;
   runtime: {
@@ -1485,6 +1500,12 @@ export interface FactoryModelState {
   } | null;
   factory_error: string | null;
 }
+
+export const factorySecrets = {
+  get: () => call<{ configured: string[] }>("/factory/secrets"),
+  save: (values: Record<string, string | null>) =>
+    put<{ configured: string[] }>("/factory/secrets", { values }),
+};
 
 export const factoryModel = {
   get: () => call<FactoryModelState>("/factory/model"),
@@ -1509,9 +1530,17 @@ export const factoryModel = {
   }) =>
     post<FactoryModelState & { ref: string }>("/factory/model/providers", body),
   removeProvider: (name: string) =>
-    call<FactoryModelState>(`/factory/model/providers/${name}`, {
+    call<FactoryModelState>(`/factory/model/providers/${encodeURIComponent(name)}`, {
       method: "DELETE",
     }),
+  updateProvider: (name: string, body: { base_url?: string; api_key?: string }) =>
+    call<FactoryModelState>(`/factory/model/providers/${encodeURIComponent(name)}`, { method: "PATCH", body: JSON.stringify(body) }),
+  addModel: (name: string, body: FactoryModelEdit & { id: string }) =>
+    post<FactoryModelState>(`/factory/model/providers/${encodeURIComponent(name)}/models`, body),
+  updateModel: (name: string, id: string, body: FactoryModelEdit) =>
+    call<FactoryModelState>(`/factory/model/providers/${encodeURIComponent(name)}/models/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(body) }),
+  removeModel: (name: string, id: string) =>
+    call<FactoryModelState>(`/factory/model/providers/${encodeURIComponent(name)}/models/${encodeURIComponent(id)}`, { method: "DELETE" }),
   setDefault: (model: string) =>
     call<FactoryModelState>("/factory/model/default", {
       method: "PUT",
@@ -1656,6 +1685,9 @@ export interface FactoryReport {
     human_touches_per_merged_pr: number | null;
     median_time_to_ship: number | null;
     reverted: number;
+    error_rate?: number | null;
+    tool_failure_rate?: number | null;
+    uptime?: number | null;
   };
   bucket?: "day" | "week";
   over_time?: Period[];
@@ -1671,6 +1703,135 @@ export interface FactoryReport {
   pull_requests?: FactoryPull[];
   by?: Record<"source" | "agent" | "model" | "person", Record<string, Slice>>;
 }
+
+export interface FactoryStopState {
+  stopped_by?: string;
+  stopped_at?: number;
+  reason?: string;
+  scope?: "factory" | "installation" | "unknown";
+}
+
+export interface StopView {
+  stopped: FactoryStopState | null;
+  message: string;
+  own: FactoryStopState | null;
+}
+
+export const factoryStop = {
+  get: () => call<StopView>("/factory/stop"),
+  stop: (reason: string) => post<StopView>("/factory/stop", { reason }),
+  resume: (reason: string) => post<StopView>("/factory/resume", { reason }),
+};
+
+export interface GovernanceDecision {
+  id: string;
+  kind: string;
+  summary: string;
+  status: "pending" | "decided" | "declined" | "applied";
+  proposed_by: string | null;
+  proposed_at: number;
+  reason: string;
+  decided_by: string | null;
+  decided_at: number | null;
+  reasoning: string;
+}
+
+export interface FactoryProfile {
+  classification?: string;
+  heightened_risk?: boolean | null;
+  purpose?: string;
+  owner?: string;
+  sponsor?: string;
+  data?: string;
+  affected?: string;
+  decides?: string;
+}
+
+export interface FactoryProfileView {
+  profile: FactoryProfile;
+  classes: string[];
+  strict: boolean;
+  review_forced: boolean;
+  startable: boolean;
+  /** Why the factory may not start or take work, under the strict policy. */
+  blocked: string | null;
+  pending: GovernanceDecision[];
+}
+
+export const factoryProfile = {
+  get: () => call<FactoryProfileView>("/factory/profile"),
+  save: (profile: Omit<FactoryProfile, "heightened_risk"> & { heightened_risk: boolean | null; reason: string }) =>
+    call<Omit<FactoryProfileView, "pending"> & { pending: GovernanceDecision | null }>(
+      "/factory/profile",
+      { method: "PUT", body: JSON.stringify(profile) },
+    ),
+};
+
+export interface GovernanceState {
+  decisions: GovernanceDecision[];
+  owner: boolean;
+  gated: boolean;
+  owners: string[];
+  can_manage_owners: boolean;
+  managed_by_installation: boolean;
+  people: Pick<Person, "id" | "name" | "username" | "admin" | "disabled">[];
+}
+
+export const governance = {
+  get: () => call<GovernanceState>("/governance"),
+  saveOwners: (account_ids: string[]) => call<{ owners: string[] }>("/governance/owners", {
+    method: "PUT", body: JSON.stringify({ account_ids }),
+  }),
+  decide: (id: string, approve: boolean, reasoning: string) =>
+    post<GovernanceDecision>(`/governance/decisions/${id}`, { approve, reasoning }),
+  card: () => call<{ card: unknown; markdown: string }>("/factory/system-card"),
+};
+
+export interface AllowedService {
+  kind: "model" | "integration" | "mcp";
+  name: string;
+  provider: string;
+  endpoint: string;
+  note: string;
+}
+
+export const allowedServices = {
+  get: () =>
+    call<{ services: AllowedService[]; managed_by_installation: boolean }>("/allowed-services"),
+  save: (services: AllowedService[]) =>
+    call<{ services: AllowedService[] }>("/allowed-services", {
+      method: "PUT",
+      body: JSON.stringify({ services }),
+    }),
+};
+
+export const factoryEgress = {
+  get: () =>
+    call<{ enabled: boolean; deployment: string[]; own: string[] | null; effective: string[] | null; managed_by_installation: boolean }>(
+      "/factory/egress",
+    ),
+  save: (allow: string[] | null, reason: string) =>
+    call<{ pending: unknown }>("/factory/egress", { method: "PUT", body: JSON.stringify({ allow, reason }) }),
+  saveDeployment: (allow: string[] | null, reason: string) =>
+    call<{ pending: unknown }>("/deployment/egress", { method: "PUT", body: JSON.stringify({ allow, reason }) }),
+};
+
+export interface PendingApproval {
+  call_id: string;
+  agent: string;
+  session_id: string;
+  tool: string;
+  server: string | null;
+  arguments: string | null;
+  requested_at: number;
+  status: "pending" | "interrupted";
+}
+
+export const factoryApprovals = {
+  list: () => call<{ approvals: PendingApproval[] }>("/factory/approvals"),
+  decide: (callId: string, decision: "approve" | "reject", reason: string) =>
+    post<PendingApproval>(`/factory/approvals/${encodeURIComponent(callId)}`, { decision, reason }),
+};
 
 export const factoryReport = {
   get: (days: number) => call<FactoryReport>(`/factory/report?days=${days}`),
@@ -1721,6 +1882,8 @@ export const factoryBenchmarks = {
     ),
 };
 
+export type RunSkill = { name: string; source: Scope };
+
 export interface FactoryRunCase {
   id: number;
   automation: string;
@@ -1730,6 +1893,8 @@ export interface FactoryRunCase {
   event: string;
   version: string | null;
   pull_requests: { repository: string; number: number; relation: string }[];
+  /** The skills the run's agent was offered and loaded, each with where it came from. */
+  skills?: { offered: RunSkill[]; loaded: RunSkill[] };
   sessions: {
     agent: string;
     session_id: string;

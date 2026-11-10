@@ -210,3 +210,27 @@ def test_resumed_worker_keeps_its_model():
         assert seen["model"] == "codex/gpt-6-luna"
 
     asyncio.run(run())
+
+
+def test_a_workers_own_workers_run_one_level_deeper(monkeypatch):
+    monkeypatch.setattr(
+        wt,
+        "worker_defaults",
+        lambda: SimpleNamespace(default_isolation="none", namer=None),
+    )
+    monkeypatch.setattr(wt, "_workspace_root_from_ctx", lambda ctx: "/parent")
+    monkeypatch.setattr(wt, "session_id_from_ctx", lambda ctx: "sess-1")
+    monkeypatch.setattr(wt, "_WORKER_META", {})
+    depths: list[int] = []
+
+    async def spawn(*, depth, **kwargs):
+        depths.append(depth)
+
+    monkeypatch.setattr(wt, "manager", lambda: SimpleNamespace(spawn=spawn, workers={}))
+    fn = wt.spawn_worker._original_func
+    for service in (None, SimpleNamespace(_worker_depth=1, get_session=lambda s: None)):
+        monkeypatch.setattr(
+            "omniagents.core.agents.service.current_service", lambda: service
+        )
+        asyncio.run(fn(SimpleNamespace(context=None), "task"))
+    assert depths == [1, 2]

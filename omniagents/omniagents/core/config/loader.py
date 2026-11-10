@@ -297,6 +297,18 @@ def _load_instructions(config: Dict[str, Any], base_dir: Path) -> Callable[[], s
         "instructions_file"
     )  # Keep original key name
 
+    recipe = config.get("_instructions_recipe")
+    if recipe:
+        # An agent that extends a base: its files are combined again on each
+        # call, so an edited instructions file reaches the next run.
+        def combine_instructions():
+            try:
+                return _combine_instructions(recipe)
+            except OSError as e:
+                _report(f"Error reading instructions: {e}")
+                return f"Error reading instructions: {e}"
+
+        return combine_instructions
     if instructions_content:
         # Use literal instructions if provided
         return lambda: str(instructions_content)
@@ -443,6 +455,34 @@ def _agent_skill_roots(
     return out
 
 
+def _instructions_source(config: Dict[str, Any], base_dir: Path) -> Dict[str, Any]:
+    """Where an agent definition's own instructions come from: ``{"file"}``
+    or ``{"text"}``, or, for one that extends another, how they combine."""
+    if config.get("_instructions_recipe"):
+        return config["_instructions_recipe"]
+    if config.get("instructions"):
+        return {"text": str(config["instructions"])}
+    rel = config.get("instructions_file")
+    if not rel:
+        return {"text": ""}
+    return {"file": str((base_dir / str(rel)).resolve())}
+
+
+def _combine_instructions(recipe: Dict[str, Any]) -> str:
+    """The instructions ``recipe`` (:func:`_instructions_source`) makes, read now."""
+    if "text" in recipe:
+        return recipe["text"]
+    if "file" in recipe:
+        return Path(recipe["file"]).read_text(encoding="utf-8")
+    base = _combine_instructions(recipe["base"])
+    role = _combine_instructions(recipe["role"])
+    if _ROLE_SLOT.search(base):
+        return _ROLE_SLOT.sub(lambda _m: role, base)
+    if role:
+        return base.rstrip() + "\n\n" + role
+    return base
+
+
 def _instructions_text(config: Dict[str, Any], base_dir: Path, source: Path) -> str:
     """An agent definition's own instructions, read now (for ``extends:`` merging)."""
     if config.get("instructions"):
@@ -531,6 +571,13 @@ def _apply_extends(
         merged["instructions"] = base_instructions.rstrip() + "\n\n" + role_instructions
     elif base_instructions:
         merged["instructions"] = base_instructions
+    if merged.get("instructions"):
+        merged["_instructions_recipe"] = {
+            "base": _instructions_source(base, base_dir),
+            "role": _instructions_source(config, config_file.parent),
+        }
+    else:
+        merged.pop("_instructions_recipe", None)
 
     dirs: List[str] = []
     if config.get("instructions_file"):
@@ -547,6 +594,92 @@ def _apply_extends(
     dirs.append(str(base_dir))
     dirs.extend(base.get("_extends_dirs") or [])
     merged["_extends_dirs"] = list(dict.fromkeys(dirs))
+    return merged
+
+
+# What a worker built from its spawner does not take from it: who the
+# spawner is and how it talks to people. Its own definition supplies those.
+_SPAWNER_IDENTITY = (
+    "name",
+    "label",
+    "description",
+    "agent_slug",
+    "instructions",
+    "instructions_file",
+    "_instructions_recipe",
+    "welcome_text",
+    "tool_description",
+    "handoff_description",
+    "handoffs",
+    "voice_backend",
+)
+
+
+def _apply_spawner(
+    config: Dict[str, Any],
+    spawner_path: Optional[str],
+    depth: int,
+    project_defaults: Optional[Dict[str, Any]],
+    loading_stack: Set[Path],
+) -> Dict[str, Any]:
+    """Build a worker definition for the agent that spawned it.
+
+    A worker definition with ``inherit: spawner`` takes the spawner's
+    capabilities, MCP servers, memory store, skills, approvals and the agent
+    tools it calls, and keeps its own instructions, model settings and
+    limits. Hand-offs to other agents' conversations stay with the spawner.
+    ``max_depth`` (default 1) is how many workers deep spawning goes: a
+    worker at that depth has no ``workers`` capability.
+    """
+    without = list(config.get("without_capabilities") or [])
+    merged = config
+    if config.get("inherit") == "spawner" and spawner_path:
+        spawner_file = Path(spawner_path).resolve()
+        try:
+            spawner = yaml.safe_load(spawner_file.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError) as e:
+            raise ValueError(f"Error reading the spawning agent {spawner_file}: {e}")
+        spawner = _apply_extends(
+            spawner, spawner_file, project_defaults, loading_stack | {spawner_file}
+        )
+        merged = {k: v for k, v in spawner.items() if k not in _SPAWNER_IDENTITY}
+        merged["agent_tools"] = [
+            t
+            for t in spawner.get("agent_tools") or []
+            if not (isinstance(t, dict) and t.get("mode") == "conversation")
+        ]
+        merged["_memory_agent"] = spawner.get("name")
+        for key, value in config.items():
+            if key == "capabilities":
+                names = {
+                    c.get("name") if isinstance(c, dict) else c
+                    for c in merged.get("capabilities") or []
+                }
+                merged["capabilities"] = list(merged.get("capabilities") or []) + [
+                    c
+                    for c in value or []
+                    if (c.get("name") if isinstance(c, dict) else c) not in names
+                ]
+            elif key != "inherit":
+                merged[key] = value
+        without += list(spawner.get("without_capabilities") or [])
+        # Includes and skills resolve from the worker's folder, then the spawner's.
+        merged["_extends_dirs"] = list(
+            dict.fromkeys(
+                list(config.get("_extends_dirs") or [])
+                + [str(spawner_file.parent)]
+                + list(spawner.get("_extends_dirs") or [])
+            )
+        )
+    else:
+        merged = dict(config)
+    max_depth = config.get("max_depth", 1)
+    if not isinstance(max_depth, int) or max_depth < 1:
+        _report(f"'max_depth' must be a positive integer. Got {max_depth!r}. Using 1.")
+        max_depth = 1
+    if depth >= max_depth:
+        without.append("workers")
+    merged["without_capabilities"] = list(dict.fromkeys(without))
     return merged
 
 
@@ -733,6 +866,8 @@ def load_agent_spec_from_yaml(
     capability_registry: Optional[Dict[str, Any]] = None,
     project_defaults: Optional[Dict[str, Any]] = None,
     user_mcp_servers: Optional[List[MCPServerConfig]] = None,
+    spawner_path: Optional[str] = None,
+    worker_depth: int = 0,
 ) -> AgentSpec:
     """
     Loads agent configuration from a YAML file and builds an AgentSpec.
@@ -740,6 +875,11 @@ def load_agent_spec_from_yaml(
     Args:
         config_path: Path to the agent.yml configuration file.
         _loading_stack: Internal parameter for circular reference detection.
+        spawner_path: For a worker, the agent.yml of the agent that spawned
+            it; a worker definition with ``inherit: spawner`` is built from it.
+        worker_depth: For a worker, how many workers deep it runs (1 for an
+            agent's own worker). At its definition's ``max_depth`` (default
+            1) it cannot spawn workers.
 
     Returns:
         An AgentSpec instance configured according to the YAML file.
@@ -819,6 +959,20 @@ def load_agent_spec_from_yaml(
 
     # --- extends: build on another agent definition ---
     config = _apply_extends(config, config_file, project_defaults, _loading_stack)
+    if worker_depth:
+        config = _apply_spawner(
+            config, spawner_path, worker_depth, project_defaults, _loading_stack
+        )
+    without = config.get("without_capabilities") or []
+    if not isinstance(without, list):
+        _report(f"'without_capabilities' in {config_path} must be a list. Ignoring.")
+        without = []
+    if without and isinstance(config.get("capabilities"), list):
+        config["capabilities"] = [
+            c
+            for c in config["capabilities"]
+            if (c.get("name") if isinstance(c, dict) else c) not in without
+        ]
 
     # --- Remote Agent preliminary ---
     remote_ws_url: str | None = None
@@ -1793,6 +1947,12 @@ def load_agent_spec_from_yaml(
                 else resolve_predicate(needs_approval_raw, predicate_registry)
             )
             max_turns_val = at_item.get("max_turns")
+            mode = at_item.get("mode", "call")
+            if mode not in ("call", "conversation"):
+                _report(
+                    f"agent_tool 'mode' must be call or conversation in {config_path}. Skipping."
+                )
+                continue
 
             # `agent: <name>` resolves against the project agent registry
             # (built by core/project/runtime.py from paths.agents). Translates
@@ -1827,6 +1987,7 @@ def load_agent_spec_from_yaml(
                         needs_approval=needs_approval_resolved,
                         max_turns=max_turns_val,
                         observable=bool(at_item.get("observable", True)),
+                        mode=mode,
                     )
                 )
             elif "yaml" in at_item:
@@ -1849,6 +2010,7 @@ def load_agent_spec_from_yaml(
                         needs_approval=needs_approval_resolved,
                         max_turns=max_turns_val,
                         observable=bool(at_item.get("observable", True)),
+                        mode=mode,
                     )
                 )
             elif "inline" in at_item:
@@ -1874,6 +2036,7 @@ def load_agent_spec_from_yaml(
                         needs_approval=needs_approval_resolved,
                         max_turns=max_turns_val,
                         observable=bool(at_item.get("observable", True)),
+                        mode=mode,
                     )
                 )
             else:
@@ -2053,11 +2216,13 @@ def load_agent_spec_from_yaml(
     if project_defaults and isinstance(project_defaults.get("security"), dict):
         sec = project_defaults["security"]
         if sec.get("mcp_require_allowlist"):
-            allowed = set(sec.get("mcp_allowed_servers") or [])
+            from omniagents.core.allowed_services import mcp_server_allowed
+
+            allowed = list(sec.get("mcp_allowed_servers") or [])
             if allowed:
                 filtered = []
                 for srv in mcp_servers:
-                    if srv.name in allowed:
+                    if mcp_server_allowed(srv, allowed):
                         filtered.append(srv)
                     else:
                         logger.warning(
@@ -2382,7 +2547,7 @@ def load_agent_spec_from_yaml(
     #     run_as: "user"
     #     client:
     #       type is one of: unix_local | docker | e2b | modal | runloop |
-    #         daytona | blaxel | vercel | cloudflare
+    #         daytona | vercel | cloudflare
     #     options: { ... }
     #     manifest:
     #       entries: { ... }
@@ -2435,7 +2600,7 @@ def load_agent_spec_from_yaml(
     )
 
     if memory_config is not None:
-        memory_config["agent"] = agent_name
+        memory_config["agent"] = config.get("_memory_agent") or agent_name
 
     # --- Construct AgentSpec ---
     spec = AgentSpec(

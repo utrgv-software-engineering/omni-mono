@@ -27,7 +27,6 @@ from typing import Dict, List, Optional, Tuple
 from fastapi import HTTPException, Request
 
 from .store import Store
-from .security import audit
 
 __all__ = [
     "Account",
@@ -86,6 +85,8 @@ class _Token:
     account_id: str
     created_at: float
     expires_at: float
+    #: When the session was last used (``None``: not tracked).
+    last_seen: Optional[float] = None
 
 
 def _hash_token(token: str) -> str:
@@ -142,8 +143,16 @@ class Accounts:
         *,
         min_password: int = MIN_PASSWORD,
         session_seconds: int = SESSION_SECONDS,
+        idle_seconds: Optional[int] = None,
     ):
+        from .audit import AuditLog
+
         self.store = store
+        self.audit_log = AuditLog(store)
+        #: Seconds without activity that end a session (``None``: no limit).
+        self.idle_seconds = idle_seconds
+        #: Whether passwords sign in (off where Microsoft sign-in is required).
+        self.passwords = True
         self.min_password = min_password
         if not 300 <= session_seconds <= SESSION_SECONDS:
             raise ValueError("Session lifetime must be between 300 and 2592000 seconds")
@@ -198,7 +207,7 @@ class Accounts:
                 self._end_sessions(account.id)
                 self._end_invites(account.id)
             self._save(account)
-            audit(
+            self.audit_log.record(
                 "account.updated",
                 account_id=account.id,
                 admin=account.admin,
@@ -225,14 +234,19 @@ class Accounts:
             self._end_sessions(account.id)
             self._end_invites(account.id)
             self._save(account)
-            audit("password.changed", account_id=account.id)
+            self.audit_log.record("password.changed", account_id=account.id)
 
     # -- signing in ---------------------------------------------------------------
 
+    def require_passwords(self) -> None:
+        if not self.passwords:
+            raise AccountError("Sign in with Microsoft", 403)
+
     @_locked
     def sign_in(self, username: str, password: str) -> Tuple[Account, str]:
+        self.require_passwords()
         account = self.verify_password(username, password)
-        audit("auth.signed_in", account_id=account.id)
+        self.audit_log.record("auth.signed_in", account_id=account.id)
         return account, self.start_session(account)
 
     @_locked
@@ -256,7 +270,7 @@ class Accounts:
             self._failures[key] = recent
             if len(recent) >= MAX_FAILURES:
                 wait = int(recent[0] + FAILURE_WINDOW - now) // 60 + 1
-                audit("auth.account_limited", account_id=key)
+                self.audit_log.record("auth.account_limited", account_id=key)
                 raise AccountError(
                     f"Too many wrong passwords: try again in {wait} minutes", 429
                 )
@@ -270,10 +284,10 @@ class Accounts:
                 self._failures.setdefault(key, []).append(now)
                 self.store.put("account.failures", key, self._failures[key])
             # The same answer whether the account exists or not.
-            audit("auth.failed", account_id=key)
+            self.audit_log.record("auth.failed", account_id=key)
             raise AccountError("Wrong username or password", 401)
         if len(candidate) < self.min_password:
-            audit("auth.password_reset_required", account_id=account.id)
+            self.audit_log.record("auth.password_reset_required", account_id=account.id)
             raise AccountError(
                 "Ask an admin for a password-reset invite before signing in", 403
             )
@@ -285,31 +299,53 @@ class Accounts:
             self.store.delete("account.failures", key)
         return account
 
-    def start_session(self, account: Account) -> str:
+    def start_session(self, account: Account, *, expires_at: Optional[float] = None) -> str:
         token = secrets.token_urlsafe(32)
         now = time.time()
         with self._lock:
             if account.disabled:
                 raise AccountError("Account disabled", 403)
             entry = _Token(
-                _hash_token(token), account.id, now, now + self.session_seconds
+                _hash_token(token), account.id, now, min(expires_at or now + self.session_seconds, now + self.session_seconds)
             )
             self._sessions[entry.id] = entry
             self.store.put("account.session", entry.id, entry)
         return token
 
+    def refresh_session(self, token: str, expires_at: float) -> None:
+        with self._lock:
+            entry = self._sessions.get(_hash_token(token))
+            if entry is None or self.signed_in(token) is None:
+                raise AccountError("Session expired", 401)
+            entry.expires_at = min(expires_at, entry.created_at + self.session_seconds)
+            self.store.put("account.session", entry.id, entry)
+
     def signed_in(self, token: Optional[str]) -> Optional[Account]:
         if not token:
             return None
         entry = self._sessions.get(_hash_token(token))
+        now = time.time()
         if (
             entry is None
-            or entry.expires_at <= time.time()
-            or entry.created_at + self.session_seconds <= time.time()
+            or entry.expires_at <= now
+            or entry.created_at + self.session_seconds <= now
         ):
             return None
+        if self.idle_seconds is not None:
+            last = entry.last_seen or entry.created_at
+            if last + self.idle_seconds <= now:
+                return None
+            if entry.last_seen is None or now - entry.last_seen >= 60:
+                # Activity is kept to the minute, so a request is not a write.
+                with self._lock:
+                    entry.last_seen = now
+                    self.store.put("account.session", entry.id, entry)
         account = self.accounts.get(entry.account_id)
         return account if account is not None and not account.disabled else None
+
+    def username_of(self, account_id: str) -> Optional[str]:
+        account = self.accounts.get(account_id)
+        return account.username if account is not None else None
 
     def sign_out(self, token: Optional[str]) -> None:
         if not token:
@@ -318,7 +354,7 @@ class Accounts:
             key = _hash_token(token)
             entry = self._sessions.pop(key, None)
             if entry is not None:
-                audit("auth.signed_out", account_id=entry.account_id)
+                self.audit_log.record("auth.signed_out", account_id=entry.account_id)
                 self.store.delete("account.session", key)
 
     def _end_sessions(self, account_id: str) -> None:
@@ -341,7 +377,7 @@ class Accounts:
             entry = _Token(_hash_token(token), account.id, now, now + INVITE_SECONDS)
             self._invites[entry.id] = entry
             self.store.put("account.invite", entry.id, entry)
-            audit("invite.created", account_id=account.id)
+            self.audit_log.record("invite.created", account_id=account.id)
         return token
 
     def invited(self, token: str) -> Optional[Account]:
@@ -353,11 +389,12 @@ class Accounts:
 
     @_locked
     def accept_invite(self, token: str, password: str) -> Tuple[Account, str]:
+        self.require_passwords()
         account = self.invited(token)
         if account is None:
             raise AccountError("This invite link has expired or was already used", 404)
         self.set_password(account, password)
-        audit("invite.accepted", account_id=account.id)
+        self.audit_log.record("invite.accepted", account_id=account.id)
         with self._lock:
             key = _hash_token(token)
             self._invites.pop(key, None)

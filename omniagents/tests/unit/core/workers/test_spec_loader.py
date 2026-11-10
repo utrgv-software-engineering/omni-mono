@@ -10,7 +10,7 @@ class _FakeSpec(SimpleNamespace):
 def _patch_build(monkeypatch, calls):
     from omniagents.core.project import runtime
 
-    def fake_build(project, agent_key=None):
+    def fake_build(project, agent_key=None, **_):
         calls.append((project, agent_key))
         return _FakeSpec(
             project_slug="from-project",
@@ -27,7 +27,7 @@ def _patch_build(monkeypatch, calls):
 def test_loader_builds_from_project_and_stamps_model(monkeypatch):
     calls = []
     _patch_build(monkeypatch, calls)
-    project = object()
+    project = SimpleNamespace(agents_map={})
     resolved = {"model": "gpt-worker", "model_settings": {"reasoning": "low"}}
 
     loader = make_project_worker_spec_loader(
@@ -52,7 +52,7 @@ def test_model_request_forwarded_to_resolver(monkeypatch):
     seen = []
 
     loader = make_project_worker_spec_loader(
-        project_provider=lambda: object(),
+        project_provider=lambda: SimpleNamespace(agents_map={}),
         model_resolver=lambda m: seen.append(m) or {"model": "x"},
     )
     loader("fast-model")
@@ -64,7 +64,9 @@ def test_without_resolver_or_slug_spec_left_as_built(monkeypatch):
     calls = []
     _patch_build(monkeypatch, calls)
 
-    loader = make_project_worker_spec_loader(project_provider=lambda: object())
+    loader = make_project_worker_spec_loader(
+        project_provider=lambda: SimpleNamespace(agents_map={})
+    )
     spec, runtime_cfg = loader(None)
 
     assert runtime_cfg is None

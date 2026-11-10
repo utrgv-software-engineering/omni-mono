@@ -271,6 +271,7 @@ export interface QueueStatusParams {
   session_id: string;
   include_snapshot?: boolean;
   submission_id?: string;
+  snapshot_limit?: number;
 }
 export interface EnqueueNotificationParams {
   session_id: string;
@@ -651,6 +652,7 @@ export interface RunStartedParams {
   session_id: string;
   prompt?: string;
   prompt_role?: string;
+  notifications?: unknown[];
   seq?: number;
   stream_id?: string;
 }

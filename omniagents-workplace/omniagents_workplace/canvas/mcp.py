@@ -18,7 +18,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import jsonschema
 from mcp import types
-from mcp.server.lowlevel import Server
+from ..mcp_server import tool_server, current_request
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 from ..wire import Wire
@@ -57,13 +57,13 @@ class CanvasMCP:
         self._definitions: List[Dict[str, Any]] = reference["tools"]
         self._schemas = {d["name"]: d["inputSchema"] for d in self._definitions}
         info = reference.get("serverInfo") or {}
-        self.server = Server(
+        self.server = tool_server(
             info.get("name", "canvas"),
+            list_tools=self._list_tools,
+            call_tool=self._call_tool,
             version=info.get("version"),
             instructions=reference.get("instructions"),
         )
-        self.server.list_tools()(self._list_tools)
-        self.server.call_tool(validate_input=False)(self._call_tool)
         self.manager = StreamableHTTPSessionManager(
             self.server, json_response=False, stateless=True
         )
@@ -100,7 +100,7 @@ class CanvasMCP:
         return self.state.member_for_token(token)
 
     def _me(self) -> Member:
-        request = self.server.request_context.request
+        request = current_request()
         member = (
             self._caller({k.lower(): v for k, v in request.headers.items()})
             if request
@@ -198,6 +198,7 @@ class CanvasMCP:
             "id": c.id,
             "body": c.body,
             "author": author.name if author else None,
+            "guest": bool(author and author.kind == "guest"),
             "createdAt": _iso(c.created_at),
             "version": c.version,
         }

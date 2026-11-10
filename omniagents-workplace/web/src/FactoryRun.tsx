@@ -1,3 +1,4 @@
+import { factoryUrl } from "./factory-scope";
 // One of the factory's runs, as the agents did it: its sessions (its own, and
 // those of the agents it called as tools) through the shared chat UI,
 // read-only, live while it runs. The workplace proxies the factory's agent
@@ -11,7 +12,9 @@ import { ArrowLeft } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import { Popover, PopoverContent, PopoverTrigger } from "@omniagents/ui/popover";
 import { type FactoryRunCase, factoryRun } from "./api";
+import { scopeLabel } from "./definition-api";
 
 const CLIENT_IDENTITY = { name: "omniagents-workplace", version: "workplace" };
 
@@ -30,10 +33,10 @@ const host: ChatHost = {
 };
 
 /** A connection to an agent's runtime on the factory, through the workplace. */
-function AgentRuntime({ agent, children }: { agent: string; children: React.ReactNode }) {
+function AgentRuntime({ agent, runId, children }: { agent: string; runId: number; children: React.ReactNode }) {
   const connection = useMemo(
-    () => ({ baseUrl: `${window.location.origin}/workplace/api/factory/runtime/agents/${agent}/` }),
-    [agent],
+    () => ({ baseUrl: factoryUrl(`${window.location.origin}/workplace/api/factory/runs/${runId}/runtime/agents/${agent}/`) }),
+    [agent, runId],
   );
   return (
     <UiConfigProvider connection={connection}>
@@ -56,7 +59,8 @@ export function FactoryRun({
     factoryRun.get(runId).then(
       (r) => {
         setRun(r);
-        setSessionId((current) => current ?? r.sessions[0]?.session_id ?? null);
+        const requested = new URLSearchParams(window.location.search).get("session");
+        setSessionId((current) => current ?? r.sessions.find(s => s.session_id === requested)?.session_id ?? r.sessions[0]?.session_id ?? null);
       },
       (e: unknown) => setError((e as Error).message),
     );
@@ -82,6 +86,7 @@ export function FactoryRun({
               {new Date(run.started_at * 1000).toLocaleString()}
               {run.version ? ` · factory ${run.version.slice(0, 7)}` : ""}
             </span>
+            {run.skills && run.skills.offered.length + run.skills.loaded.length > 0 && <RunSkills skills={run.skills} />}
             {run.pull_requests.map((p) => (
               <button
                 key={`${p.repository}#${p.number}`}
@@ -124,8 +129,8 @@ export function FactoryRun({
               <ChatHostProvider host={host}>
                 <TooltipProvider delayDuration={300}>
                   {/* Child sessions live with the run's agent: its runtime reads them. */}
-                  <AgentRuntime agent={run.agent}>
-                    <App key={sessionId} sessionId={sessionId} readOnly />
+                  <AgentRuntime agent={run.agent} runId={runId}>
+                    <App key={sessionId} sessionId={sessionId} readOnly allowQuestionResponses />
                   </AgentRuntime>
                 </TooltipProvider>
               </ChatHostProvider>
@@ -134,5 +139,33 @@ export function FactoryRun({
         </div>
       )}
     </div>
+  );
+}
+
+/** The skills a run was offered, which it loaded, and where each came from. */
+function RunSkills({ skills }: { skills: NonNullable<FactoryRunCase["skills"]> }) {
+  const loaded = new Set(skills.loaded.map((s) => s.name));
+  const offered = skills.offered.length ? skills.offered : skills.loaded;
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button type="button" className="text-xs text-sky-700 hover:underline dark:text-sky-300">
+          Skills · {loaded.size} loaded of {offered.length}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-80 p-2" aria-label="Skills">
+        <ul className="flex flex-col gap-1 text-sm">
+          {offered.map((s) => (
+            <li key={s.name} className="flex items-baseline gap-2 px-1">
+              <span className={loaded.has(s.name) ? "font-medium" : "text-muted-foreground"}>{s.name}</span>
+              <span className="ml-auto text-xs text-muted-foreground">
+                {loaded.has(s.name) ? "loaded · " : ""}
+                {scopeLabel(s.source, (key) => key)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </PopoverContent>
+    </Popover>
   );
 }

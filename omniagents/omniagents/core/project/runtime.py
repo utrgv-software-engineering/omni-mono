@@ -85,6 +85,16 @@ class ProjectContext:
     # tracing, and registries scope by `product.slug`.
     product: ProductInfo = DEFAULT_PRODUCT_INFO
 
+    @property
+    def chat_agents(self):
+        return (self.raw.get("agents") or {}).get("chat_agents") or (
+            [self.chat_entrypoint] if self.chat_entrypoint else []
+        )
+
+    @property
+    def chat_entrypoint(self):
+        return (self.raw.get("agents") or {}).get("chat_entrypoint") or self.entrypoint
+
 
 def _validate_agent_name(expected_key: str, yaml_name: Any, path: Path) -> str:
     if not isinstance(yaml_name, str) or not yaml_name.strip():
@@ -302,11 +312,6 @@ def load_project(
 
     agents_section = proj.get("agents") or {}
     entry = agents_section.get("entrypoint")
-    from omniagents.integrations.architecture import factory_architecture
-
-    architecture = factory_architecture()
-    if architecture:
-        entry = "generalist" if architecture == "personal" else "foreman"
     voice_entry = agents_section.get("voice_entrypoint")
     include = agents_section.get("include")
     exclude = agents_section.get("exclude")
@@ -374,6 +379,23 @@ def load_project(
             entry = next(iter(agents_map.keys()))
         else:
             entry = None
+
+    chat_entry = agents_section.get("chat_entrypoint")
+    if chat_entry is not None and (
+        not isinstance(chat_entry, str) or chat_entry not in agents_map
+    ):
+        raise ValueError("agents.chat_entrypoint must name an available agent")
+
+    chat_agents = agents_section.get("chat_agents")
+    if chat_agents is not None and (
+        not isinstance(chat_agents, list)
+        or not chat_agents
+        or any(not isinstance(key, str) or key not in agents_map for key in chat_agents)
+        or (chat_entry or entry) not in chat_agents
+    ):
+        raise ValueError(
+            "agents.chat_agents must list available agents including the chat entrypoint"
+        )
 
     if isinstance(voice_entry, str) and voice_entry:
         if voice_entry not in agents_map:
@@ -642,7 +664,13 @@ def resolve_agent(
 def build_spec_from_project(
     project: ProjectContext,
     agent_key: Optional[str] = None,
+    *,
+    spawner: Optional[str] = None,
+    worker_depth: int = 0,
 ):
+    """The AgentSpec of ``agent_key``. For a worker, ``spawner`` is the key
+    of the agent that spawned it and ``worker_depth`` how many workers deep
+    it runs (see ``load_agent_spec_from_yaml``)."""
     raw_agents_config = (
         project.raw.get("agents") if isinstance(project.raw, dict) else {}
     )
@@ -689,6 +717,12 @@ def build_spec_from_project(
         user_mcp_servers=(
             project.user_mcp_servers if project.allow_user_mcp_servers else None
         ),
+        spawner_path=(
+            str(project.agents_map[spawner])
+            if spawner and spawner in project.agents_map
+            else None
+        ),
+        worker_depth=worker_depth,
     )
     spec.project_slug = project.product.slug
     spec.agent_slug = _slugify(key, key)

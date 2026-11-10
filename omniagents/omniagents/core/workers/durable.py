@@ -21,10 +21,13 @@ class WorkerJournal:
     def __init__(self, store, parent_id: str, user_id: str | None):
         self.store, self.parent_id, self.user_id = store, parent_id, user_id
 
-    def mutate(self, operation):
+    def _check_parent(self):
         thread = self.store.get_thread(self.parent_id)
         if thread is None or thread.user_id != self.user_id:
             raise PermissionError("Worker parent unavailable")
+
+    def mutate(self, operation):
+        self._check_parent()
 
         def update(state, receipt):
             data = state.setdefault(
@@ -36,11 +39,24 @@ class WorkerJournal:
 
         return self.store.mutate_queue(self.parent_id, update)
 
+    def read(self, operation):
+        """What ``operation(data, state)`` returns, without writing anything."""
+        self._check_parent()
+        state = self.store.read_queue(self.parent_id)
+        data = state.get("worker_recovery") or {
+            "version": 1,
+            "workers": {},
+            "groups": {},
+        }
+        if data["version"] != 1:
+            raise ValueError("Unsupported worker journal version")
+        return deepcopy(operation(data, state))
+
     def rows(self):
-        return self.mutate(lambda data, state: list(data["workers"].values()))
+        return self.read(lambda data, state: list(data["workers"].values()))
 
     def get(self, worker_id):
-        return self.mutate(lambda data, state: data["workers"].get(worker_id))
+        return self.read(lambda data, state: data["workers"].get(worker_id))
 
     def admit(self, worker_id, operation_id, task, recipe, environment, owner):
         digest = hashlib.sha256(
@@ -256,7 +272,7 @@ class WorkerJournal:
         return self.mutate(update)
 
     def groups(self):
-        return self.mutate(lambda data, state: data["groups"])
+        return self.read(lambda data, state: data["groups"])
 
     def save_group(self, key, value, revision=0):
         def update(data, state):

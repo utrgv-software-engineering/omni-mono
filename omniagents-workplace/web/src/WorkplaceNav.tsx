@@ -1,3 +1,4 @@
+import { factoryUrl } from "./factory-scope";
 import { OmniRailAvatar } from "@omniagents/chat-ui/components/OmniRailAvatar";
 import { useEffect, useState, type ReactNode } from "react";
 import { MoreHorizontal, type LucideIcon } from "lucide-react";
@@ -16,7 +17,7 @@ import {
 export interface WorkplaceSection {
   name: string;
   to: string;
-  icon: LucideIcon;
+  icon: LucideIcon | ((props: { "aria-hidden"?: boolean }) => ReactNode);
   active: boolean;
 }
 // Hide phone navigation only when an editable field has a shrunken viewport.
@@ -107,7 +108,8 @@ export function WorkplaceNav({
       )}
     >
       <a
-        href={section.to}
+        title={section.name}
+        href={factoryUrl(section.to)}
         aria-current={section.active ? "page" : undefined}
         onClick={(event) => {
           if (
@@ -123,8 +125,8 @@ export function WorkplaceNav({
           navigate(section.to);
         }}
       >
-        <section.icon aria-hidden="true" />
-        <span className={cn("truncate", compact && "text-[11px]")}>
+        <section.icon aria-hidden={true} />
+        <span className={cn("min-w-0 max-w-full truncate", compact && "text-[11px]")}>
           {section.name}
         </span>
       </a>
@@ -143,7 +145,7 @@ export function WorkplaceNav({
           {personal ? (
             !personal.active && (
               <a
-                href="/personal"
+                href={factoryUrl("/personal")}
                 aria-label="Open Omni"
                 title="Open Omni"
                 className="rounded-xl focus-visible:outline-2 focus-visible:outline-ring"

@@ -7,6 +7,7 @@ import time
 from importlib import resources
 
 import httpx
+import httpx2
 import pytest
 import uvicorn
 from fastapi import FastAPI, Request
@@ -18,10 +19,10 @@ from conftest import _free_port, factory_env, signed_in
 
 async def _mcp(base_url, calls, token=None):
     token = token or factory_env(base_url)["LINEAR_MCP_TOKEN"]
-    http = httpx.AsyncClient(headers={"Authorization": f"Bearer {token}"})
+    http = httpx2.AsyncClient(headers={"Authorization": f"Bearer {token}"})
     async with http, streamable_http_client(
         f"{base_url}/linear/mcp", http_client=http
-    ) as (read, write, _):
+    ) as (read, write):
         async with ClientSession(read, write) as session:
             results = [await session.initialize()]
             for name, args in calls:
@@ -38,7 +39,7 @@ def _text(result):
 
 
 def _json(result):
-    assert not result.isError, _text(result)
+    assert not result.is_error, _text(result)
     return json.loads(_text(result))
 
 
@@ -63,7 +64,7 @@ def _real(tool, arguments_like=None):
 async def test_the_tools_are_linears(workplace_server):
     _, base_url = workplace_server
     init, tools = await _mcp(base_url, [("tools/list", None)])
-    assert (init.serverInfo.name, init.serverInfo.version) == ("linear", "1.0.2")
+    assert (init.server_info.name, init.server_info.version) == ("linear", "1.0.2")
     assert len(tools.tools) == 60
     with pytest.raises(Exception):
         await _mcp(base_url, [("tools/list", None)], token="lin_api_nobody")
@@ -160,7 +161,7 @@ async def test_failures_read_as_linears(workplace_server):
         "Input validation error: Invalid arguments for tool get_issue_status: id: Invalid input"
     )
     assert _text(bad_state) == 'Error: Could not find state "Triage"'
-    assert all(r.isError for r in (missing, bad_team, no_parent, no_id, bad_state))
+    assert all(r.is_error for r in (missing, bad_team, no_parent, no_id, bad_state))
 
 
 @pytest.mark.asyncio

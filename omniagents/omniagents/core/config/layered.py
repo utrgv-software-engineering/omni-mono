@@ -177,7 +177,8 @@ CONFIG_FIELDS: Tuple[ConfigField, ...] = (
         key="security.mcp_allowed_servers",
         type="string_list",
         label="Allowed MCP servers",
-        description="MCP server names permitted when the allowlist is required.",
+        description="MCP servers permitted when the allowlist is required: a name, "
+        "or name=<URL prefix or command:executable> to pin its address.",
         default=(),
     ),
     ConfigField(

@@ -5,6 +5,14 @@
 /* The shared chat UI: a run's sessions on the Factory page (FactoryRun.tsx). */
 @import "@omniagents/chat-ui/styles.css";
 
+/* One interface family across navigation, chat, panels, and forms. */
+@theme {
+  --font-sans: 'Plus Jakarta Sans Variable', ui-sans-serif, system-ui, sans-serif;
+}
+:root {
+  --font-display: var(--font-sans);
+}
+
 html,
 body,
 #root {
@@ -40,4 +48,17 @@ body,
   --series-1: #3987e5;
   --series-2: #d95926;
   --series-3: #199e70;
+}
+
+/* Internal management pages share one fluid, centered frame. Viewers and
+ * compact side panels retain their own workspace layouts. */
+@utility workplace-page {
+  width: 100%;
+  max-width: 80rem;
+  min-width: 0;
+  margin-inline: auto;
+  padding: 1rem;
+  @media (min-width: 48rem) {
+    padding: 1.5rem;
+  }
 }

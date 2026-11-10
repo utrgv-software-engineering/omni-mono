@@ -1,3 +1,4 @@
+import { factoryUrl } from "./factory-scope";
 // Slack mrkdwn as React: *bold*, _italic_, ~strike~, `code`, ```blocks```,
 // > quotes, <url|text> links, <@U…> and <#C…|name> mentions, :emoji:.
 import type { ReactNode } from "react";
@@ -166,7 +167,7 @@ function Mention({ children }: { children: ReactNode }) {
 function Link({ href, children }: { href: string; children: ReactNode }) {
   return (
     <a
-      href={href}
+      href={factoryUrl(href)}
       target="_blank"
       rel="noreferrer"
       className="text-sky-600 underline-offset-2 hover:underline dark:text-sky-400"

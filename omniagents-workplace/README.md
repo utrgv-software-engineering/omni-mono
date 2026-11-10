@@ -40,17 +40,31 @@ would in the real services; agents act as apps.
   tool call, a Web API call, a clone or push) as it happens, with its
   request and response, so you can see what a factory did and how.
 
-**Actions** run a repository's workflow files (`.github/workflows/*.yml`)
-on this machine: their steps run here, in a fresh checkout of the commit,
-with this machine's tools. A job's containers and services are not used;
-`actions/checkout`, `setup-python` and `setup-node` have local stand-ins,
-and other actions are skipped (the log says so). `runs-on: self-hosted`
-jobs run on the workplace's self-hosted runner, in the repositories an admin
-allows (the repository's Settings → Runners).
-Triggers, branch and path filters, matrices, `needs`, `if`, outputs,
-re-runs, cancelling and `workflow_dispatch` work as on GitHub.
+**Actions** use pinned `nektos/act` to execute workflows at the run's commit.
+Workplace records triggers, logs and checks; act handles actions, expressions,
+matrices, containers and services. Docker mode uses a private Docker-in-Docker
+controller; QuickSand mode runs act and Docker inside a VM. Factory runtime
+jobs stay outside tool VMs through a restricted bridge. See [workflow execution](docs/actions.md).
 
-## Run it
+
+An optional [Coolify deployment service](docs/coolify.md) runs in Docker or a
+persistent QuickSand VM for local deployment practice.
+
+## Install and run
+
+The published `omniagents-workplace` Python package includes the compiled web UI,
+MCP reference schemas, Canvas support code, and optional example seeds. Users do
+not need Node/npm, a JavaScript build, or the omni-mono checkout to serve it.
+Install from the package index configured for your organization:
+
+```sh
+uv tool install omniagents-workplace
+```
+
+Git is still required for repository operations. The factory runtime is a
+separate `omniagents` installation; installing Workplace alone does not start an
+agent. QuickSand workflow execution is available through the `[quicksand]` extra.
+
 
 ```bash
 omniagents-workplace serve            # http://127.0.0.1:7300
@@ -65,6 +79,12 @@ the organization (its Slack workspace, GitHub organization and Linear
 workspace) and make the first account, an admin. From **People** an admin
 adds people; each gets an invite link to choose a password with (a new link
 resets a password). A person is in all three services under one username.
+
+Azure deployments can optionally enable [Microsoft sign-in through App Service
+Easy Auth](docs/azure-easy-auth.md). Local login remains the default; external
+identities must be explicitly linked to existing accounts.
+The proposed [Azure web/compute deployment plan](docs/azure-web-compute-plan.md)
+describes future App Service, PostgreSQL, and private-VM support.
 
 Password changes revoke all existing browser sessions and outstanding invite
 links, then issue a new session to the person changing the password. Invite
@@ -313,33 +333,49 @@ matches automations with `provider: memory`.
 
 For agent configuration, see [the memory guide](../omniagents/docs/guide/memory.md).
 
-## Personal generalist UI
+## Chat
 
-The **Chat** tab (`/personal`) is available when both services start with
-`FACTORY_ARCHITECTURE=personal`. All authorized administrators share one generalist
-Main Chat per factory, including its questions, approvals, and stop control.
-The chat picker creates additional shared side chats with independent histories,
-text queues, and voice connections. They use the same generalist, tools, memory,
-and Library. Side chats can be renamed, archived/restored, or deleted; Main Chat
-stays pinned. The **+** beside **Side Chats** opens a conversation immediately;
-its first message supplies its initial title. Row menus contain rename, archive,
-and delete. Archived chats appear in a collapsible section only when present.
-The list shows working, needs-input, and unread activity, refreshed every five
-seconds while the page is visible. Wide screens use a persistent in-chat sidebar;
-smaller screens use a drawer. Direct chat links override the last remembered chat.
-Drafts and transcript reading positions survive switching chats.
-Deletion requires an idle chat with an empty queue and preserves
-shared memory and Library content. Archive only hides a chat from the active list;
-it does not stop its work.
-Messages carry their authenticated sender's name. Previous account conversations
-are retained, but are not merged into this shared history.
+The **Chat** tab (`/personal`) lists agents first: the project's
+`agents.chat_entrypoint` (the default), the rest of `agents.chat_agents`, and any
+other agent people have Side Chats with. An agent only automations use is not
+listed; its automation conversations open from Automations ("Open chat"). Each agent row shows whether any
+of its chats needs input, is working, or has unread activity. Selecting an agent
+shows its chats:
 
-`FACTORY_ARCHITECTURE=specialist` disables the Chat tab and its API. The factory
-uses the foreman and the explicit agents in its automation definitions. In personal
-mode, every matched automation—including nightly improvement—routes to Main Chat
-instead. Main Chat and events use the same durable FIFO queue and runtime;
-results appear in Main Chat and retain their originating event/thread for replies.
-The generalist can use generic task workers. No separate dashboard service is needed.
+- **Main Chat**: one per agent, shared by every administrator, pinned (it cannot
+  be renamed, archived or deleted). The default agent's is the original
+  `factory-personal` conversation, so its history carries over. Automations
+  never post into it.
+- **Side Chats**: started with the **+** beside **Side Chats**, shared with every
+  administrator; the first message names one until it is renamed. Rename,
+  archive/restore and delete are in each row's menu.
+- **Automations**: one chat per automation conversation, grouped and collapsed.
+  Routing decides which: each automation runs the agent its route names (an admin
+  override in Factory → Automations, then the automation's `agent:`, then
+  `agents.entrypoint`), in a conversation keyed by its source thread and agent;
+  scheduled and Shared-file events start a new one unless the automation says
+  `conversation: thread`. A chat is titled for its source (`PR #12 · Add
+  pagination`, a Linear issue, a Slack message's text, or the automation's name)
+  and archives itself once its pull request or issue closes (once: an
+  administrator can restore it). Any administrator can reply in one to correct the
+  agent where the work happened.
+- **Archived**: collapsed, when there are any.
+
+Every person's message shows their name and initials, and reaches the agent as
+`[From <name> (@<username>)]` followed by the text, so the agent knows who is
+speaking. A working chat says who it is working for. Unread is per
+administrator, kept by Workplace (`POST …/chats/{id}/seen`). Deletion requires an
+idle chat with an empty queue and preserves shared memory and Library content;
+archive only hides a chat. Wide screens use a persistent sidebar, smaller
+screens a drawer; direct chat links override the last remembered chat.
+
+The gauge beside an agent's name opens its **readiness**
+(`GET /workplace/api/personal/agents/{agent}/readiness`), week by week: messages
+from people, lessons it learned (those attributed to one person in brackets),
+its own automation runs and failures, and the judges' pass rates on every run
+graded for it, including where another agent called it. Lessons that level off
+while people keep working with it, and passing grades, are the evidence for
+adding it to a pipeline; neither is a verdict.
 
 The page embeds the shared `@omniagents/chat-ui` conversation, composer, tool
 activity, questions, and approvals. Its authenticated WebSocket gateway binds
@@ -349,8 +385,8 @@ while busy use the runtime queue. Stop and approval IDs are verified against the
 selected conversation before forwarding them. Policy changes are unavailable.
 
 The runtime owns execution and conversation history. Browser refresh/close does
-not stop work. Pending queued messages are checked when personal mode starts;
-interrupted active runs are not blindly replayed. The resident sandbox lives for
+not stop work. Pending queued messages are recovered when the runtime starts;
+interrupted active runs are not replayed. The resident sandbox lives for
 the server process; save repository work in branches/PRs before restarting.
 
 The browser receives no factory credential and cannot access unregistered sessions or choose an agent,
@@ -359,25 +395,20 @@ conversation's questions or stop its current run. Ordinary members have no acces
 Existing authentication, session revocation, origin checks, and the read-only
 Factory transcript proxy remain enforced. Tools, credentials, and memory are shared.
 
-Architecture changes require restarting both services with the same setting.
-The runtime verifies its mode on Personal connections and refuses mode changes
-with active automation work, live conversation leases, or queued messages. One
-factory runtime holds the architecture lock. Stop intake and let work finish before
-switching; historical conversations are retained and inactive agent endpoints are
-disabled. Factory promotions also wait for Personal work to finish.
+Every agent works on the factory's one shared machine, which survives restarts.
+One factory runtime holds the factory's intake lock. Factory promotions wait for
+chat work to finish.
 
 Verification: `tests/test_personal.py` covers shared identity, admin access,
-mode mismatch, policy injection, pending controls, and WebSocket reconnection.
-Runtime integration tests cover both routing modes, event deduplication, busy
-switch rejection, and chat/event serialization on the real queue without model
-calls. Live model comparisons remain deferred. Projects, artifacts, voice, and
+policy injection, pending controls, and WebSocket reconnection. Runtime
+integration tests cover per-automation routing and event deduplication without
+model calls. Live model comparisons remain deferred. Projects, artifacts, voice, and
 desktop control remain future slices.
 
 
 The Workplace shell uses a 76px app rail from 768px upward, with main tabs
 centered between the brand and bottom controls and scrolling on short screens. Phones use three
-primary destinations plus More; Personal leads in personal mode, Factory in
-specialist mode. Remaining apps and Account are available through More. Connections lives in
+primary destinations plus More; Chat leads for a factory's administrators. Remaining apps and Account are available through More. Connections lives in
 the account menu; admins also have Developer tools → Event log there. Slack and Linear retain their own mobile navigation
 drawers. The phone bar respects safe areas and hides while a soft keyboard
 shrinks the viewport; the shell height follows that viewport to keep the composer
@@ -405,6 +436,69 @@ Picture Frame canvas planet and reflects the conversation's connection, work,
 approval/question and voice states. Microphone and received speaker tracks supply
 WebRTC voice levels; the avatar never starts or controls work. Animation pauses
 when hidden or outside the viewport and respects reduced-motion preferences.
+
+## Editing agents and automations
+
+With review off, everything about an agent and an automation is managed here,
+saved as a version of the factory and live from the next run; nobody needs to
+know the factory is a repository. With review on (Account → Factory changes),
+the same edits become pull requests and go live when merged.
+
+**An agent's page** (the pencil in Chat's header, `/agents/<agent>`;
+administrators) has:
+
+- **Instructions**, and a link to the template it builds on.
+- **Settings** as fields: the name shown, what it does, its model (or the
+  template's), what it can do (capabilities; those its template gives are
+  marked), the agents it can hand work to (a hand-off is a run of that agent's
+  own, in its conversation for where the request came from, so it shows under
+  that agent in Chat; `agent_tools` `mode: conversation`), whether people can chat with it,
+  whether Chat opens with it, and whether automations that name no agent run
+  it. **Edit the settings file** shows its `agent.yml` for anything else (MCP
+  servers, memory). **Delete agent** removes its folder and its place in Chat;
+  it is refused while it is a default or another agent hands work to it.
+- **Skills**: every skill it has, in the order the framework searches them
+  (its own, its template's, the factory's), each saying who has it and which
+  skill of the same name it replaces; edited as fields (when to use it, its
+  steps), added for one agent or every agent, moved between the two, deleted
+  with their folder.
+
+**Add agent** (at the bottom of Chat's agent list, and beside an agent page's
+agent menu) takes a name, what it does, its template
+and whether people can chat with it. A **template** (a base agents extend) has
+its own page under Templates in the agent menu: its instructions, settings
+file and shared skills.
+
+**Automations**: **New automation** on the Automations page, and **Edit** and
+delete on each one's page, as fields: what it does, when (a schedule in words
+or a cron, or an event with its repositories, labels, branches, channels or
+teams; several triggers allowed), which agent does it, and what it's told.
+Settings the form doesn't show are kept; an automation whose file has template
+logic is edited as its file.
+
+Repositories' own skills (`<repo>/.<product>/skills`, a mounted repository's
+`skills/`) belong to those repositories and change by pull request there; a
+run's page lists the skills it was offered and loaded and where each came from.
+A factory never reads the installation's global skills folder, which is outside
+version control.
+
+How it works: the factory lists and checks every edit
+(`GET /integrations/definition`, `POST /integrations/definition/check`); a
+change to an agent's or a template's settings, an agent added or deleted, a
+capability, or project.yml's `agents` section is checked by loading the project
+with it. Saving is a commit on the factory repository's `main` as the person who
+saved, and the Workplace asks the factory to move its checkout to it
+(`POST /integrations/definition/advance`). Instructions, skills and automations
+are read again on each run; settings, agents and the agents section reload the
+running factory's agents (each running agent's next run is built from its new
+settings; MCP servers change for new conversations). Code (`.py`),
+dependencies, sandbox profiles and the rest of project.yml (connections,
+tracing) still change by release. Runs record the commit they ran. A save over
+a file someone else changed since it was opened is refused; **Version history**
+restores old versions. The factory refuses to move while its checkout has
+changes that aren't committed. The repository is the one the factory runs from
+(workplace.yml's `factory.repository`, else the one its checkout came from),
+whichever provider serves the product repositories.
 
 ## Repository connections and self-improvement
 
@@ -487,3 +581,205 @@ Backups retain the encrypted connection data and its key. The `restore` command,
 which is also used for staging replay, removes GitHub connection settings and
 credentials and starts with self-improvement off: reconnect explicitly afterward.
 Do not point a staging runtime directly at an unmodified production backup.
+
+## QuickSand workflow jobs
+
+`--workflows quicksand` runs ordinary CI jobs in disposable VMs with their own
+Docker Engine. Explicit factory runtime actions keep the agent process on the
+host and route its tools into separate QuickSand VMs. The host Docker socket is
+not shared. See [setup, runtime boundaries and tests](docs/quicksand-runner.md).
+
+## Build a distributable package
+
+From the omni-mono checkout, with Node/npm and Python available:
+
+```sh
+uv run --project omniagents-workplace --group dev python omniagents-workplace/scripts/build_package.py
+```
+
+This installs the locked npm dependencies, builds the current UI, replaces the
+packaged assets, and produces a source archive and wheel in
+`omniagents-workplace/dist`. Use `--skip-install` to reuse an existing npm install,
+or `--assets-only` for frontend/backend development. `make build` delegates to
+the same Python command. No publishing or version change happens during a build.
+
+Python distribution builds fail if the UI is absent or its entry assets are
+missing. The source archive includes the compiled UI, so building a wheel from
+that archive does not require Node or sibling npm workspaces. For a release,
+always use the build command above to refresh assets from the current source.
+
+Verify the wheel in a fresh environment outside the checkout:
+
+```sh
+uv venv /tmp/workplace-package-check
+uv pip install --python /tmp/workplace-package-check/bin/python omniagents-workplace/dist/omniagents_workplace-0.1.0-py3-none-any.whl
+/tmp/workplace-package-check/bin/python -I omniagents-workplace/scripts/check_installed.py
+```
+
+On Windows, use a temporary directory and its `Scripts/python.exe` instead.
+The check serves the installed UI and every asset, checks the CLI, and verifies
+bundled schemas and seed workflows without installing the framework.
+
+`make publish` retains the existing clean, synchronized `main` branch guard and
+uploads the built distributions to Gemfury using `FURY_USER` and `FURY_TOKEN`.
+
+## Multiple factories
+
+`manage` runs one Workplace installation with shared sign-in and separate factories:
+
+```sh
+omniagents-workplace manage --data ~/.local/share/omni-factories --port 7300
+```
+
+Open the setup link printed in the terminal. In **Factories**, choose **New factory**,
+enter a name and a project directory containing `project.yml`, and choose Personal
+or Pipelined. Each factory needs its own non-overlapping project directory. Use
+**Start** to launch it, **Open** to enter its Workplace, and **Access** to invite
+people and assign factory roles. **Account → Factories** returns to the picker.
+Two tabs can use different factories simultaneously.
+
+To start agent runtimes, install `omniagents[sandbox-quicksand]` into the same
+Python environment as Workplace. Local runtimes use the project's
+`sandbox_profile_quicksand.yml` (or a QuickSand `sandbox_profile_default.yml`).
+Each gets its own persistent VM, runtime home, provider sign-in, config, logs,
+Library and Workplace database. Configure GitHub and model accounts inside each
+factory. Nothing is imported from an existing single-factory installation.
+Factory processes started through the UI restart with the installation; **Stop**
+disables that factory's automatic startup. Process failures appear in the picker;
+logs are in `DATA/factories/ID/runtime.log`.
+
+Workflow execution is off unless a clean QuickSand runner image is supplied:
+
+```sh
+omniagents-workplace manage --data ~/.local/share/omni-factories \
+  --workflow-quicksand-image /path/to/clean-runner
+```
+
+Use the [QuickSand workflow-runner instructions](../omniagents/docs/guide/quicksand.md)
+to prepare the image. It may be shared; each job gets a disposable writable VM.
+Trusted agent-runtime jobs use the credentials and tool profile of their factory.
+There is no host-shell workflow fallback in managed mode.
+
+For deployment, set `--host` and `--public-url` for your listener and HTTPS reverse
+proxy. `--sandbox-url` defaults to `http://10.0.2.101:7300`; the generated profiles
+forward that guest port to the installation's actual listener port. Run one
+installation process per data directory. The installation lock rejects a second
+process using the same data. Back up the entire data directory together with its
+project directories while the installation is stopped.
+
+See [the isolation design](docs/multiple-factories.md) for the boundaries. Existing
+`serve` and `up` commands keep their single-factory behavior.
+
+### Hosted factories with Docker
+
+The installation host can instead supervise separate Docker runtime containers:
+
+```sh
+omniagents-workplace manage --data /data/installation \
+  --public-url https://your-workplace.example \
+  --internal-url http://workplace:7300 --host 0.0.0.0 \
+  --docker-image your-factory-image --docker-network your-factory-network \
+  --docker-host-data /host/path/to/installation \
+  --workflow-image your-workflow-image --template /factory-template
+```
+
+The host needs the Docker CLI/socket. `--docker-host-data` is the Docker host's
+path corresponding to `--data` inside the installation container. Each runtime
+mounts only its own factory directory and gets its own credentials, runtime home,
+project copy and persistent tool sandbox. Configure a separate sandbox-facing
+port with `--sandbox-port` and `--sandbox-url` to expose only git/upload services
+to tool containers. Workflow shell jobs use disposable Docker containers.
+
+With `--template`, **New factory** creates a clean project copy; users need only
+a name. Provider credentials and installation state are not
+copied from the template.
+
+For an existing deployment, `Installation.adopt` registers its stopped Workplace
+data and Docker runtime without recreating either. It imports identities and
+sessions into the installation registry and preserves factory-local IDs, provider
+credentials, chat, Library and memory. Old machine endpoints remain aliases for
+that original factory only. The registry and new factory directories under
+`DATA/installation` are included in the existing Workplace backup operation.
+Keep the deployment's installation Compose override on subsequent deployments.
+
+Factory provider events pass through a [durable Workplace gateway](docs/event-gateway.md).
+It persists accepted events in each factory's database and retries runtime delivery
+across restarts. Provider stand-ins keep their own delivery semantics; Slack Socket
+Mode ingestion lives in Workplace. This does not queue chat submissions or guarantee
+delivery while Workplace itself is unavailable.
+
+### Guest review links
+
+Canvas and Library owners (and factory admins) can use **Share → Create link**
+to let a stakeholder review an item without a Workplace account. Guests enter a
+self-reported name when they first comment. Canvas supports pinned comments and
+replies; Library pages and documents have comment threads too. Feedback is saved
+with the item, and does **not** enqueue an agent run. Agents can read it on request
+using Canvas `list_comments` or Library `artifact_comments`.
+
+Share links show the current version of one item. **Share → Revoke** disables a
+link, including its file URLs; deleting the item disables all its links. A link
+is a bearer credential: anyone who receives it can read and comment on that item.
+Guest names are attribution, not verified account identities. Guests cannot edit,
+resolve, delete, browse version history, or access the rest of Workplace.
+
+Workplace serves `robots.txt` with `Disallow: /`, sends `X-Robots-Tag: noindex,
+nofollow, noimageindex`, and sets the equivalent HTML metadata. Share credentials
+live in the URL fragment and are required by the review API; an ordinary crawler
+request only receives the generic page shell. File responses are non-cacheable
+and links use `no-referrer`. Robots directives guide cooperative crawlers; they
+are not access control or a guarantee against someone copying shared content.
+
+### Shared files and folder workflows
+
+**Shared** is a file browser for the current factory. Upload files or folders,
+including drag-and-drop; create, rename, move, delete, preview, and download them.
+Folder downloads are ZIPs. **Use in chat** adds the sandbox path and current file
+revision to the chat composer without sending it.
+
+The files live in the factory's persistent `shared/` directory and appear at
+`/workspace/Shared` in both Docker and QuickSand sandboxes. Agent-created files
+appear in the same browser. Files, upload journals, workflow configuration, and
+change records are included in Workplace backups. Each factory has its own data;
+Shared requires a signed-in factory member and is separate from guest review links.
+Managed installations configure the host path automatically. For a standalone
+runtime, configure `SHARED_FILES_HOST_PATH` and make that host directory accessible
+at the same path inside the runtime container, as with `LIBRARY_FILES_HOST_PATH`.
+
+Uploads and sandbox edits record changes without starting agents by default.
+Admins can open **Workflows** to select a folder, filename patterns, change types,
+and instructions, then explicitly enable a workflow. One upload batch produces
+one invocation per matching workflow. Folder creation alone does not run a file
+workflow. Agent-originated changes are excluded unless explicitly enabled; keep
+workflow outputs outside their watched input folders to avoid loops.
+
+Events go through the durable Workplace gateway and normal factory automation
+intake, including retry and delivery deduplication. Personal factories use their
+shared generalist conversation; pipelined factories use the normal automation
+entrypoint. Pending deliveries are cancelled if the workflow is disabled, deleted,
+or edited before delivery. The workflow dialog shows recent changes and delivery
+status; agent execution appears in the existing factory run history.
+
+Events identify paths and revisions, not historical copies of file contents.
+Agents must check the current file revision when acting on an older event. Direct
+sandbox writes are observed after they stabilize; agents should publish completed
+files with an atomic rename. Workflow folder paths are explicit: update a rule if
+you move its watched folder.
+
+Backups check available capacity before starting and retain disk headroom while
+copying. A failed backup removes only its own incomplete output; completed backups
+keep the configured retention policy.
+
+## Model endpoint access
+
+Model connections use the deployment and factory egress allowlists. Private
+destinations must also be reachable under the deployment's network rules.
+Models do not require a second endpoint approval in Allowed services.
+Administrator access and, under strict policy, governance ownership are still
+required to change model configuration.
+
+Allowed services continues to govern integrations and MCP servers for Controlled
+and Confidential factories. Legacy model entries are ignored and are no longer
+shown in its editor. Workplace clears the obsolete model-endpoint restriction in
+the environment it supplies to managed runtimes; running processes must restart
+to receive that change. This does not modify network allowlists or firewall rules.

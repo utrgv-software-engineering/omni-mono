@@ -14,7 +14,7 @@ YAML schema (all fields optional unless marked required)::
       run_as: "1000:1000"            # default user identity for sandbox tools
       client:
         type: unix_local | docker | e2b | modal | runloop |
-              daytona | blaxel | vercel | cloudflare        # required
+              daytona | vercel | cloudflare        # required
         # remaining keys are forwarded as kwargs to the matching
         # ``*SandboxClient`` constructor (provider-specific)
         cap_add: ["NET_ADMIN"]        # docker: extra capabilities
@@ -231,20 +231,6 @@ def _build_daytona_options(options: Dict[str, Any]) -> Any:
     return DaytonaSandboxClientOptions(**options)
 
 
-def _build_blaxel_client(client_kwargs: Dict[str, Any]) -> Any:
-    try:
-        from agents.extensions.sandbox import BlaxelSandboxClient  # type: ignore
-    except Exception as e:
-        raise ImportError(_missing_extra_message("blaxel", "sandbox-blaxel")) from e
-    return BlaxelSandboxClient(**client_kwargs)
-
-
-def _build_blaxel_options(options: Dict[str, Any]) -> Any:
-    from agents.extensions.sandbox import BlaxelSandboxClientOptions  # type: ignore
-
-    return BlaxelSandboxClientOptions(**options)
-
-
 def _build_vercel_client(client_kwargs: Dict[str, Any]) -> Any:
     try:
         from agents.extensions.sandbox import VercelSandboxClient  # type: ignore
@@ -290,6 +276,25 @@ def _build_wasm_options(options: Dict[str, Any]) -> Any:
     return WasmSandboxClientOptions(**options)
 
 
+def _build_quicksand_client(client_kwargs: Dict[str, Any]) -> Any:
+    try:
+        import quicksand
+        import filelock
+    except ImportError as exc:
+        raise ImportError(
+            _missing_extra_message("quicksand", "sandbox-quicksand")
+        ) from exc
+    from .quicksand import QuicksandClient
+
+    return QuicksandClient(**client_kwargs)
+
+
+def _build_quicksand_options(options: Dict[str, Any]) -> Any:
+    from .quicksand import QuicksandOptions
+
+    return QuicksandOptions(**options)
+
+
 # Each entry: (client_factory, options_factory_or_None)
 _CLIENT_BUILDERS: Dict[
     str,
@@ -297,11 +302,11 @@ _CLIENT_BUILDERS: Dict[
 ] = {
     "unix_local": (_build_unix_local_client, _build_unix_local_options),
     "docker": (_build_docker_client, _build_docker_options),
+    "quicksand": (_build_quicksand_client, _build_quicksand_options),
     "e2b": (_build_e2b_client, _build_e2b_options),
     "modal": (_build_modal_client, _build_modal_options),
     "runloop": (_build_runloop_client, _build_runloop_options),
     "daytona": (_build_daytona_client, _build_daytona_options),
-    "blaxel": (_build_blaxel_client, _build_blaxel_options),
     "vercel": (_build_vercel_client, _build_vercel_options),
     "cloudflare": (_build_cloudflare_client, _build_cloudflare_options),
     "wasm": (_build_wasm_client, _build_wasm_options),

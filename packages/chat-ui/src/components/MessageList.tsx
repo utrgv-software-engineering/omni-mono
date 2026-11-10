@@ -1,7 +1,12 @@
+import { WorkerMessage } from './WorkerMessage';
+import { workerMessageParts, type WorkerMessage as WorkerReport } from '@omniagents/client/transcript/worker-messages';
+import { useChatHost } from '../host';
+import { presentationFromArtifact } from '../lib/presentation';
 import { AppRenderer } from '@mcp-ui/client';
 import type { CallToolResult, ReadResourceResult } from '@modelcontextprotocol/sdk/types.js';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { ActivityChain } from '@omniagents/chat-ui/components/ActivityChain';
+import { EarlierHistory } from '@omniagents/chat-ui/components/EarlierHistory';
 import {
   Artifact,
   ArtifactAction,
@@ -35,6 +40,7 @@ import { useRPCClient } from '@omniagents/chat-ui/rpc-context';
 import type { ActivityGroupData } from '@omniagents/client/transcript/activity-group';
 import { formatArgsPreview, groupItems } from '@omniagents/client/transcript/activity-group';
 import { messageKey } from '@omniagents/client/transcript/message-key';
+import { Avatar, AvatarFallback } from '@omniagents/ui/avatar';
 import { Button } from '@omniagents/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@omniagents/ui/collapsible';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@omniagents/ui/input-group';
@@ -116,8 +122,15 @@ export function MessageList({
   onSubmitMessage,
   onStageContext,
   onOpenReview,
+  onOpenWorker,
+  earlierHistory = 'none',
+  onLoadEarlier,
 }: {
   items: MessageItem[];
+  /** Whether older history than ``items`` exists, and is loading. */
+  earlierHistory?: 'none' | 'more' | 'loading';
+  onLoadEarlier?: () => Promise<void>;
+  onOpenWorker?: (worker: WorkerReport) => void;
   greeting?: string;
   statusText?: string;
   thinking?: boolean;
@@ -204,7 +217,7 @@ export function MessageList({
       <div className="flex-1 relative">
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="mx-auto max-w-full sm:max-w-2xl text-center px-6">
-            <div className="text-2xl sm:text-4xl font-normal tracking-tight text-foreground font-serif">{greeting}</div>
+            <div className="text-2xl sm:text-4xl font-normal tracking-tight text-foreground font-sans">{greeting}</div>
             <motion.div
               initial={{ height: 0, opacity: 0 }}
               animate={welcomeText ? { height: 'auto', opacity: 1 } : { height: 0, opacity: 0 }}
@@ -243,6 +256,9 @@ export function MessageList({
   return (
     <ChatContainerRoot className="flex-1">
       <ChatContainerContent data-testid="chat-transcript" className="container-chat px-3 py-3 space-y-3 md:space-y-4">
+        {earlierHistory !== 'none' && onLoadEarlier ? (
+          <EarlierHistory state={earlierHistory} onLoad={onLoadEarlier} itemCount={items.length} />
+        ) : null}
         {(() => {
           const pendingApprovalIds: string[] = [];
           for (const it of displayItems) {
@@ -270,6 +286,14 @@ export function MessageList({
               );
             }
             if (m.type === 'chat') {
+              const parts = workerMessageParts(m);
+              if (parts) return <div key={key} className="flex min-w-0 flex-col gap-2">
+                {parts.map((part, index) => part.worker
+                  ? <WorkerMessage key={part.worker.message_id ?? index}
+                      worker={part.worker}
+                      onOpenTranscript={onOpenWorker ? () => onOpenWorker(part.worker!) : undefined} />
+                  : <MessageBubble key={index} messageKey={key + ':' + index} role="assistant" content={part.content} />)}
+              </div>;
               return (
                 <MessageBubble
                   key={key}
@@ -277,6 +301,7 @@ export function MessageList({
                   role={(m as ChatMessage).role}
                   content={(m as ChatMessage).content}
                   attachments={(m as ChatMessage).attachments}
+                  sender={(m as ChatMessage).sender}
                   stagedContext={(m as ChatMessage).staged_context}
                   reactions={reactions}
                   onReact={handleReaction}
@@ -364,11 +389,17 @@ function StagedContextRibbon({ entries }: { entries: NonNullable<ChatMessage['st
   );
 }
 
+function initials(name: string) {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  return ((words[0]?.[0] ?? '') + (words.length > 1 ? (words[words.length - 1]?.[0] ?? '') : '')).toUpperCase() || '?';
+}
+
 function MessageBubble({
   messageKey: key,
   role,
   content,
   attachments,
+  sender,
   stagedContext,
   reactions,
   onReact,
@@ -380,6 +411,7 @@ function MessageBubble({
   role: ChatMessage['role'];
   content: string;
   attachments?: Attachment[];
+  sender?: ChatMessage['sender'];
   stagedContext?: ChatMessage['staged_context'];
   reactions?: Record<string, 'like' | 'dislike' | undefined>;
   onReact?: (key: string, type: 'like' | 'dislike') => void;
@@ -393,6 +425,14 @@ function MessageBubble({
     return (
       <div className="flex justify-end">
         <div className="flex min-w-0 max-w-5/6 flex-col items-end space-y-2 sm:max-w-2/3">
+          {sender ? (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="truncate">{sender.name}</span>
+              <Avatar size="sm" aria-hidden>
+                <AvatarFallback>{initials(sender.name)}</AvatarFallback>
+              </Avatar>
+            </div>
+          ) : null}
           {attachments && attachments.length > 0 ? (
             <div className="flex flex-wrap gap-2 w-full justify-end">
               {attachments.map((att, i) => (
@@ -542,6 +582,8 @@ function InlineArtifact({
   onSubmitMessage?: (text: string) => void | Promise<void>;
   onStageContext?: (source: string, text: string) => void;
 }) {
+  const host = useChatHost();
+  const presentation = presentationFromArtifact(item);
   const [copied, setCopied] = useState(false);
   const [maximized, setMaximized] = useState(false);
   const portalTarget = useContext(ArtifactPortalContext);
@@ -572,6 +614,14 @@ function InlineArtifact({
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [maximized]);
+
+  if (presentation) return (
+    <div data-artifact-id={item.artifact_id}>
+      <Button variant="outline" onClick={() => host.presentView?.(presentation)} disabled={!host.presentView}>
+        {presentation.title} <span aria-hidden="true">↗</span>
+      </Button>
+    </div>
+  );
 
   const canPortal = maximized && portalTarget !== null;
 

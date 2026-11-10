@@ -1,0 +1,29 @@
+# Workplace's image, as the deployments run it, scanned on every change to it
+# and weekly for newly published vulnerabilities (UTS 165: vulnerability
+# scanning). A critical finding with a fix fails the job.
+name: omniagents-workplace image scan
+
+on:
+  pull_request:
+    paths:
+      - "omniagents-workplace/**"
+      - "omniagents/**"
+      - ".github/workflows/omniagents-workplace-image-scan.yml"
+  schedule:
+    - cron: "0 12 * * 1"
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: docker build -t scan/omni-workplace -f omniagents-workplace/Dockerfile .
+      - name: Scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: scan/omni-workplace
+          severity: CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true

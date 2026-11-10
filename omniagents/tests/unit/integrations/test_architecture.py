@@ -3,28 +3,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from omniagents.integrations.architecture import (
-    factory_architecture,
-    PERSONAL_SESSION,
-    claim_architecture,
-)
+from omniagents.integrations.architecture import PERSONAL_SESSION, claim_intake
 from omniagents.integrations.agent_runtimes import AgentRuntimes
 from omniagents.integrations.intake import EventIntake, RunResult
 from omniagents.integrations.store import EventStore
 from omniagents.integrations.events import IncomingEvent
 
 
-def test_invalid_mode_fails_closed(monkeypatch):
-    monkeypatch.setenv("FACTORY_ARCHITECTURE", "both")
-    with pytest.raises(ValueError):
-        factory_architecture()
-
-
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["personal", "specialist"])
-async def test_only_selected_architecture_receives_every_event(
-    tmp_path, mode, monkeypatch
-):
+async def test_each_automation_routes_to_its_own_agent(tmp_path, monkeypatch):
     from omniagents.integrations import self_improvement
 
     monkeypatch.setattr(
@@ -52,10 +39,9 @@ async def test_only_selected_architecture_receives_every_event(
     store = EventStore(tmp_path / "events.db")
     intake = EventIntake(
         project_root=tmp_path,
-        entrypoint="generalist" if mode == "personal" else "foreman",
+        entrypoint="foreman",
         store=store,
         run=run,
-        shared_session=PERSONAL_SESSION if mode == "personal" else None,
     )
     for provider, event in [
         ("slack", "app_mention"),
@@ -73,38 +59,46 @@ async def test_only_selected_architecture_receives_every_event(
         assert not await intake.accept(incoming)
     await intake.drain()
     assert len(calls) == 3
-    if mode == "personal":
-        assert {(a, s) for a, s, _ in calls} == {("generalist", PERSONAL_SESSION)}
-        assert all("Source:" in prompt for _, _, prompt in calls)
-    else:
-        assert {a for a, _, _ in calls} == {"foreman", "code_reviewer", "improver"}
-        assert len({s for _, s, _ in calls}) == 3
+    assert {a for a, _, _ in calls} == {
+        "foreman",
+        "code_reviewer",
+        "improver",
+    }
+    assert len({sid for _, sid, _ in calls}) == 3
+    assert all("Source:" in prompt for _, _, prompt in calls)
     store.close()
 
 
 @pytest.mark.asyncio
-async def test_inactive_agent_endpoints_are_not_served():
-    project = SimpleNamespace(agents_map={"generalist": object(), "foreman": object()})
-    primary = object()
-    runtime = AgentRuntimes(
-        project, auth_token="t", primary_app=primary, architecture="personal"
+async def test_configured_entrypoint_reuses_primary_runtime():
+    project = SimpleNamespace(
+        agents_map={"coordinator": object()}, entrypoint="coordinator"
     )
-    assert await runtime.app("generalist") is primary
-    assert await runtime.app("foreman") is None
-    runtime = AgentRuntimes(project, auth_token="t", architecture="specialist")
-    assert await runtime.app("generalist") is None
+    primary = object()
+    runtime = AgentRuntimes(project, auth_token="t", primary_app=primary)
+    assert await runtime.app("coordinator") is primary
+    assert await runtime.app("missing") is None
 
 
-def test_switch_refused_with_active_automation(tmp_path, monkeypatch):
+def test_factory_has_one_intake_owner(tmp_path, monkeypatch):
     monkeypatch.setenv("OMNIAGENTS_HOME", str(tmp_path))
-    monkeypatch.setenv("FACTORY_ARCHITECTURE", "personal")
-    project = SimpleNamespace(product=SimpleNamespace(slug="factory"), agents_map={})
-    with pytest.raises(RuntimeError, match="automation work is active"):
-        claim_architecture(project, SimpleNamespace(running=lambda: 1))
-    handle = claim_architecture(project, SimpleNamespace(running=lambda: 0))
+    project = SimpleNamespace(product=SimpleNamespace(slug="factory"))
+    handle = claim_intake(project)
     with pytest.raises(BlockingIOError):
-        claim_architecture(project, SimpleNamespace(running=lambda: 0))
+        claim_intake(project)
     handle.close()
+
+
+def test_workspace_maintenance_refuses_while_the_factory_runs(tmp_path, monkeypatch):
+    from omniagents.integrations.personal_workspace import maintenance_lock
+
+    monkeypatch.setenv("OMNIAGENTS_HOME", str(tmp_path))
+    handle = claim_intake(SimpleNamespace(product=SimpleNamespace(slug="factory")))
+    state = tmp_path / "integrations" / "factory.personal-sandbox.json"
+    with pytest.raises(SystemExit, match="Stop the factory"):
+        maintenance_lock(state)
+    handle.close()
+    maintenance_lock(state).close()
 
 
 @pytest.mark.asyncio
@@ -123,10 +117,9 @@ async def test_personal_alias_uses_primary_runtime_without_second_service():
     app.mount(
         "/agents",
         AgentRuntimes(
-            SimpleNamespace(agents_map={}),
+            SimpleNamespace(agents_map={}, entrypoint="generalist"),
             auth_token=None,
             primary_app=app,
-            architecture="personal",
         ),
     )
     with TestClient(app) as client:
@@ -219,8 +212,8 @@ async def test_automation_uses_real_queue_and_correlates_its_own_answer(
     monkeypatch.setattr(
         store, "list_items", lambda sid, *, turn_id, limit: turn_items.get(turn_id, [])
     )
-    runner = PersonalRunner(service, principal)
-    await runner.resume()
+    runner = PersonalRunner(service, principal, "generalist")
+    await runner.resume(PERSONAL_SESSION)
     # A chat turn ahead of the event must not be mistaken for its result.
     await service.enqueue_message(PERSONAL_SESSION, "chat")
     result = await asyncio.wait_for(runner("generalist", PERSONAL_SESSION, "event"), 5)
@@ -234,62 +227,6 @@ async def test_automation_uses_real_queue_and_correlates_its_own_answer(
     assert session.user_id == "token_user"
     if session.drainer_task:
         await session.drainer_task
-
-
-@pytest.mark.parametrize("busy_kind", ["queue", "lease"])
-def test_switch_refused_with_active_conversation(tmp_path, monkeypatch, busy_kind):
-    import time
-    import omniagents.core.project.runtime as runtime
-    from omniagents.core.conversation.store import get_conversation_store
-    from omniagents.core.conversation.model import Thread
-
-    monkeypatch.setenv("OMNIAGENTS_HOME", str(tmp_path))
-    monkeypatch.setenv("OMNIAGENTS_HISTORY_DB", str(tmp_path / "sessions.db"))
-    monkeypatch.setenv("FACTORY_ARCHITECTURE", "specialist")
-    project = SimpleNamespace(
-        product=SimpleNamespace(slug="factory"), agents_map={"generalist": object()}
-    )
-    monkeypatch.setattr(
-        runtime,
-        "build_spec_from_project",
-        lambda *a: SimpleNamespace(project_slug="factory", agent_slug="generalist"),
-    )
-    path = tmp_path / "integrations" / "factory.architecture"
-    path.parent.mkdir()
-    path.write_text("personal")
-    store = get_conversation_store("factory", "generalist")
-    store.upsert_thread(Thread(thread_id=PERSONAL_SESSION, user_id="token_user"))
-
-    def busy(state, receipt):
-        if busy_kind == "queue":
-            state["items"] = [{"item": {"state": "pending"}, "owner": None}]
-        else:
-            state["runtime_owner"] = {"heartbeat": time.time()}
-        return None, None
-
-    store.mutate_queue(PERSONAL_SESSION, busy)
-    with pytest.raises(RuntimeError, match="conversation work is active or queued"):
-        claim_architecture(project, SimpleNamespace(running=lambda: 0))
-    assert path.read_text() == "personal"
-
-
-@pytest.mark.parametrize(
-    "mode,expected", [("personal", "generalist"), ("specialist", "foreman")]
-)
-def test_mode_selects_entrypoint_even_with_legacy_overlay(
-    tmp_path, monkeypatch, mode, expected
-):
-    from omniagents.core.project.runtime import load_project
-
-    monkeypatch.setenv("FACTORY_ARCHITECTURE", mode)
-    (tmp_path / "project.yml").write_text(
-        "product:\n  name: mode-test\nagents:\n  entrypoint: generalist\n"
-    )
-    for name in ("generalist", "foreman"):
-        directory = tmp_path / "agents" / name
-        directory.mkdir(parents=True)
-        (directory / "agent.yml").write_text(f"name: {name}\n")
-    assert load_project(str(tmp_path / "project.yml")).entrypoint == expected
 
 
 def test_shared_reports_exclude_other_turns(tmp_path):
@@ -331,4 +268,571 @@ def test_shared_reports_exclude_other_turns(tmp_path):
         )
     assert store.run_usage(dispatch)[0]["input_tokens"] == 1
     assert store.run_history(dispatch) == []
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_every_automation_run_is_a_conversation_turn(tmp_path, monkeypatch):
+    from fastapi import FastAPI
+    from omniagents.integrations import personal
+    from omniagents.integrations.server import mount_integrations
+
+    monkeypatch.setenv("OMNIAGENTS_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.delenv("OMNIAGENTS_SANDBOX_PROFILE", raising=False)
+    monkeypatch.delenv("OMNIAGENTS_PROJECT_OVERLAYS", raising=False)
+    root = tmp_path / "factory"
+    (root / "agents" / "coordinator").mkdir(parents=True)
+    (root / "agents" / "coordinator" / "agent.yml").write_text("name: coordinator\n")
+    (root / "automations" / "nightly").mkdir(parents=True)
+    (root / "automations" / "nightly" / "automation.md").write_text(
+        "---\ntriggers:\n  - provider: schedule\n    event: cron_fired\n---\nReview.\n"
+    )
+    # No `runtime:` section: nothing opts into the conversation path.
+    (root / "project.yml").write_text(
+        "product:\n  name: turn-test\nagents:\n  entrypoint: coordinator\n"
+        "memory:\n  url: http://memory.invalid\n"
+    )
+    turns = []
+
+    async def turn(self, agent, session_id, prompt, progress=None):
+        turns.append((self.agent, session_id))
+        return RunResult(output="done")
+
+    monkeypatch.setattr(personal.ConversationRunner, "__call__", turn)
+    app = FastAPI()
+    app.state.agent_service = SimpleNamespace(_release_gate=None)
+    spec = SimpleNamespace(
+        manifest_path=str(root / "project.yml"), agent_slug="coordinator"
+    )
+    intake = mount_integrations(app, spec, SimpleNamespace())
+    assert intake is not None
+    await intake.accept(
+        IncomingEvent(
+            provider="schedule", event="cron_fired", delivery_id="d", payload={}
+        )
+    )
+    await intake.drain()
+    assert [agent for agent, _ in turns] == ["coordinator"]
+    intake.store.close()
+
+
+@pytest.mark.asyncio
+async def test_automation_steps_are_reported_and_only_its_own(tmp_path, monkeypatch):
+    from omniagents.core.agents.specs import AgentSpec
+    from omniagents.core.agents.service import AgentService
+    from omniagents.execution import AgentHostResources
+    from omniagents.integrations.personal import ConversationRunner
+    from omniagents.core.session.submissions import submit_once
+
+    monkeypatch.setenv("OMNIAGENTS_HOME", str(tmp_path))
+    monkeypatch.setenv("OMNIAGENTS_HISTORY_DB", str(tmp_path / "sessions.db"))
+    spec = AgentSpec(
+        name="generalist",
+        welcome_text="",
+        get_agent_instructions=lambda: "",
+        build_agent=None,
+        project_slug="factory",
+        agent_slug="generalist",
+    )
+    service = AgentService(spec, AgentHostResources.create("test-steps"))
+    starts = []
+
+    async def start_run(prompt, session_id, submission_id, **kwargs):
+        session = service._session_manager.get(session_id)
+
+        async def invoke():
+            run_id = f"run-{len(starts)}"
+            starts.append(prompt)
+            session.active_run_id = run_id
+
+            async def finish():
+                await asyncio.sleep(0.01)
+                await service._broadcast_session(
+                    session,
+                    "tool_called",
+                    {
+                        "run_id": run_id,
+                        "session_id": session_id,
+                        "tool": prompt + "_tool",
+                    },
+                )
+                await service._broadcast_session(
+                    session,
+                    "message_output",
+                    {
+                        "run_id": run_id,
+                        "session_id": session_id,
+                        "content": "Did " + prompt,
+                    },
+                )
+                session.active_run_id = None
+                await service._broadcast_session(
+                    session,
+                    "run_end",
+                    {
+                        "run_id": run_id,
+                        "session_id": session_id,
+                        "end_reason": "completed",
+                    },
+                )
+
+            session.current_task = asyncio.create_task(finish())
+            return {"run_id": run_id, "session_id": session_id}
+
+        return await submit_once(
+            session,
+            service._queue_store(session),
+            submission_id,
+            {"prompt": prompt},
+            invoke,
+        )
+
+    async def get_history(session_id):
+        return []
+
+    monkeypatch.setattr(service, "start_run", start_run)
+    monkeypatch.setattr(service, "get_session_history", get_history)
+    store = service._conversation_service().store
+    monkeypatch.setattr(
+        store, "get_turn", lambda *a: SimpleNamespace(created_at=1, completed_at=2)
+    )
+    monkeypatch.setattr(store, "list_items", lambda sid, *, turn_id, limit: [])
+
+    async def principal():
+        return SimpleNamespace(user_id="token_user", roles=[])
+
+    reported = []
+
+    async def progress(step):
+        await asyncio.sleep(0.01)  # a slow report must not reorder or drop steps
+        reported.append((step.kind, step.name or step.text))
+
+    runner = ConversationRunner(service, principal, "generalist")
+    await runner.resume("conversation")
+    await service.enqueue_message("conversation", "chat")
+    result = await asyncio.wait_for(
+        runner("generalist", "conversation", "event", progress), 5
+    )
+    assert starts == ["chat", "event"]
+    assert result.error is None
+    assert reported == [("tool", "event_tool"), ("message", "Did event")]
+    session = service._session_manager.get("conversation")
+    if session.drainer_task:
+        await session.drainer_task
+
+
+@pytest.mark.asyncio
+async def test_automations_view_shows_triggers_runs_and_events_it_skipped(
+    tmp_path, monkeypatch
+):
+    import httpx
+    from fastapi import FastAPI
+    from omniagents.integrations import personal
+    from omniagents.integrations.server import mount_integrations
+
+    monkeypatch.setenv("OMNIAGENTS_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.delenv("OMNIAGENTS_SANDBOX_PROFILE", raising=False)
+    root = tmp_path / "factory"
+    (root / "agents" / "coordinator").mkdir(parents=True)
+    (root / "agents" / "coordinator" / "agent.yml").write_text("name: coordinator\n")
+    for name, front in [
+        ("nightly", "triggers:\n  - provider: schedule\n    event: cron_fired\n"),
+        (
+            "review",
+            "agent: coordinator\ntriggers:\n  - provider: github\n    event: pull_request_opened\n"
+            "    filter:\n      repos: ['*/api-service']\n",
+        ),
+    ]:
+        (root / "automations" / name).mkdir(parents=True)
+        (root / "automations" / name / "automation.md").write_text(
+            f"---\n{front}---\nDo the {name} work.\n"
+        )
+    (root / "project.yml").write_text(
+        "product:\n  name: view-test\nagents:\n  entrypoint: coordinator\n"
+        "memory:\n  url: http://memory.invalid\n"
+    )
+
+    async def turn(self, agent, session_id, prompt, progress=None):
+        return RunResult(output="done")
+
+    monkeypatch.setattr(personal.ConversationRunner, "__call__", turn)
+    from omniagents.rpc.auth import ConnectionAuthenticator
+
+    app = FastAPI()
+    app.state.agent_service = SimpleNamespace(_release_gate=None)
+    app.state.connection_authenticator = ConnectionAuthenticator.from_spec(
+        SimpleNamespace(security_config={}), auth_token="t"
+    )
+    spec = SimpleNamespace(
+        manifest_path=str(root / "project.yml"), agent_slug="coordinator"
+    )
+    intake = mount_integrations(app, spec, SimpleNamespace())
+    await intake.accept(
+        IncomingEvent(
+            provider="schedule", event="cron_fired", delivery_id="s", payload={}
+        )
+    )
+    # A pull request in another repository: the review's filter leaves it out.
+    await intake.accept(
+        IncomingEvent(
+            provider="github",
+            event="pull_request_opened",
+            delivery_id="g",
+            thread_key="acme/webapp#3",
+            payload={},
+            filters={"repos": ["acme/webapp"]},
+        )
+    )
+    await intake.drain()
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://t"
+    ) as client:
+        assert (await client.get("/integrations/automations")).status_code == 401
+        data = (
+            await client.get(
+                "/integrations/automations", headers={"Authorization": "Bearer t"}
+            )
+        ).json()
+    by_name = {a["name"]: a for a in data["automations"]}
+    assert by_name["nightly"]["instruction"] == "Do the nightly work."
+    assert by_name["nightly"]["agent"] == "coordinator"
+    assert [r["status"] for r in by_name["nightly"]["runs"]] == ["completed"]
+    assert by_name["review"]["triggers"][0]["filter"] == {"repos": ["*/api-service"]}
+    assert by_name["review"]["runs"] == []
+    assert [e["thread_key"] for e in by_name["review"]["skipped"]] == ["acme/webapp#3"]
+    assert by_name["nightly"]["skipped"] == []
+    assert by_name["nightly"]["enabled"] is True
+
+    # Turned off, an automation's events start nothing and say why.
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://t"
+    ) as client:
+        auth = {"Authorization": "Bearer t"}
+        off = await client.put(
+            "/integrations/automations/nightly/enabled",
+            json={"enabled": False},
+            headers=auth,
+        )
+        assert off.json() == {"name": "nightly", "enabled": False}
+        assert (
+            await client.put(
+                "/integrations/automations/nope/enabled",
+                json={"enabled": False},
+                headers=auth,
+            )
+        ).status_code == 404
+        assert (
+            await client.put(
+                "/integrations/automations/nightly/enabled",
+                json={"enabled": "no"},
+                headers=auth,
+            )
+        ).status_code == 422
+        await intake.accept(
+            IncomingEvent(
+                provider="schedule", event="cron_fired", delivery_id="s2", payload={}
+            )
+        )
+        await intake.drain()
+        nightly = next(
+            a
+            for a in (
+                await client.get("/integrations/automations", headers=auth)
+            ).json()["automations"]
+            if a["name"] == "nightly"
+        )
+        assert nightly["enabled"] is False and len(nightly["runs"]) == 1
+        assert nightly["skipped"][0]["detail"] == "turned off: nightly"
+        await client.put(
+            "/integrations/automations/nightly/enabled",
+            json={"enabled": True},
+            headers=auth,
+        )
+        await intake.accept(
+            IncomingEvent(
+                provider="schedule", event="cron_fired", delivery_id="s3", payload={}
+            )
+        )
+        await intake.drain()
+        nightly = next(
+            a
+            for a in (
+                await client.get("/integrations/automations", headers=auth)
+            ).json()["automations"]
+            if a["name"] == "nightly"
+        )
+        assert len(nightly["runs"]) == 2
+    intake.store.close()
+
+
+@pytest.mark.asyncio
+async def test_automations_view_counts_only_its_own_timer_and_says_what_stops_it(
+    tmp_path, monkeypatch
+):
+    """Another automation's timer is not an event this one left out, and a
+    self-improvement automation says when self-improvement is off."""
+    import httpx
+    from fastapi import FastAPI
+    from omniagents.integrations import personal, self_improvement
+    from omniagents.integrations.server import mount_integrations
+    from omniagents.rpc.auth import ConnectionAuthenticator
+
+    monkeypatch.setenv("OMNIAGENTS_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.delenv("OMNIAGENTS_SANDBOX_PROFILE", raising=False)
+    root = tmp_path / "factory"
+    (root / "agents" / "coordinator").mkdir(parents=True)
+    (root / "agents" / "coordinator" / "agent.yml").write_text("name: coordinator\n")
+    for name, extra in [("weekly", ""), ("nightly", "self_improvement: true\n")]:
+        (root / "automations" / name).mkdir(parents=True)
+        (root / "automations" / name / "automation.md").write_text(
+            f"---\n{extra}triggers:\n  - provider: schedule\n    event: cron_fired\n"
+            f"    schedule:\n      name: {name}\n      cron: '0 2 * * *'\n---\nDo the {name} work.\n"
+        )
+    (root / "project.yml").write_text(
+        "product:\n  name: view-test\nagents:\n  entrypoint: coordinator\n"
+        "memory:\n  url: http://memory.invalid\n"
+    )
+
+    async def turn(self, agent, session_id, prompt, progress=None):
+        return RunResult(output="done")
+
+    monkeypatch.setattr(personal.ConversationRunner, "__call__", turn)
+    monkeypatch.setattr(self_improvement, "policy", lambda: {"enabled": False})
+    app = FastAPI()
+    app.state.agent_service = SimpleNamespace(_release_gate=None)
+    app.state.connection_authenticator = ConnectionAuthenticator.from_spec(
+        SimpleNamespace(security_config={}), auth_token="t"
+    )
+    spec = SimpleNamespace(
+        manifest_path=str(root / "project.yml"), agent_slug="coordinator"
+    )
+    intake = mount_integrations(app, spec, SimpleNamespace())
+    auth = {"Authorization": "Bearer t"}
+
+    async def view():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://t"
+        ) as client:
+            data = (await client.get("/integrations/automations", headers=auth)).json()
+        return {a["name"]: a for a in data["automations"]}
+
+    def timer(name, delivery):
+        return IncomingEvent(
+            provider="schedule",
+            event="cron_fired",
+            delivery_id=delivery,
+            payload={"schedule": name},
+            filters={"schedules": [name]},
+        )
+
+    await intake.accept(timer("weekly", "w1"))
+    await intake.drain()
+    by_name = await view()
+    assert len(by_name["weekly"]["runs"]) == 1
+    assert by_name["nightly"]["skipped"] == []
+    assert by_name["nightly"]["blocked"] == "Self-improvement is off"
+    assert by_name["weekly"]["blocked"] is None
+
+    # Its own timer, while it is turned off, is one it left out.
+    intake.store.set_automation_enabled("weekly", False)
+    await intake.accept(timer("weekly", "w2"))
+    await intake.drain()
+    assert [e["detail"] for e in (await view())["weekly"]["skipped"]] == [
+        "turned off: weekly"
+    ]
+    intake.store.close()
+
+
+@pytest.mark.asyncio
+async def test_publishing_an_edit_moves_the_factory_and_its_runs(tmp_path, monkeypatch):
+    """The Workplace saves an edit to the factory's repository and asks the
+    factory to run it: the checkout moves, and the next run is recorded with it."""
+    import subprocess
+
+    import httpx
+    from fastapi import FastAPI
+    from omniagents.integrations import personal
+    from omniagents.integrations.server import mount_integrations
+    from omniagents.rpc.auth import ConnectionAuthenticator
+
+    def git(cwd, *args):
+        return subprocess.run(
+            ["git", "-c", "user.name=T", "-c", "user.email=t@example.com", *args],
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    monkeypatch.setenv("OMNIAGENTS_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.delenv("OMNIAGENTS_SANDBOX_PROFILE", raising=False)
+    monkeypatch.delenv("FACTORY_VERSION", raising=False)
+    source = tmp_path / "source"
+    (source / "agents" / "coordinator").mkdir(parents=True)
+    (source / "agents" / "coordinator" / "agent.yml").write_text(
+        "name: coordinator\ninstructions_file: instructions.md\n"
+    )
+    (source / "agents" / "coordinator" / "instructions.md").write_text("Before.\n")
+    (source / "automations" / "nightly").mkdir(parents=True)
+    (source / "automations" / "nightly" / "automation.md").write_text(
+        "---\ntriggers:\n  - provider: schedule\n    event: cron_fired\n---\nWork.\n"
+    )
+    (source / "project.yml").write_text(
+        "product:\n  name: edit-test\nagents:\n  entrypoint: coordinator\n"
+        "memory:\n  url: http://memory.invalid\n"
+    )
+    git(source, "init", "-q", "-b", "main")
+    git(source, "add", "-A")
+    git(source, "commit", "-qm", "Start")
+    git(tmp_path, "clone", "-q", "--bare", str(source), str(tmp_path / "origin.git"))
+    root = tmp_path / "live"
+    git(tmp_path, "clone", "-q", str(tmp_path / "origin.git"), str(root))
+    (source / "agents" / "coordinator" / "instructions.md").write_text("After.\n")
+    git(source, "commit", "-qam", "Edit coordinator instructions")
+    git(source, "push", "-q", str(tmp_path / "origin.git"), "main")
+    edit = git(source, "rev-parse", "HEAD")
+
+    async def turn(self, agent, session_id, prompt, progress=None):
+        return RunResult(output="done")
+
+    monkeypatch.setattr(personal.ConversationRunner, "__call__", turn)
+    app = FastAPI()
+    app.state.agent_service = SimpleNamespace(
+        _release_gate=None,
+        active_run_ids=lambda: [],
+        active_sessions=lambda: [],
+        spec=SimpleNamespace(project_slug="edit-test", agent_slug="coordinator"),
+    )
+    app.state.connection_authenticator = ConnectionAuthenticator.from_spec(
+        SimpleNamespace(security_config={}), auth_token="t"
+    )
+    spec = SimpleNamespace(
+        manifest_path=str(root / "project.yml"), agent_slug="coordinator"
+    )
+    intake = mount_integrations(app, spec, SimpleNamespace())
+    auth = {"Authorization": "Bearer t"}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://t"
+    ) as client:
+        assert (await client.get("/integrations/definition")).status_code == 401
+        tree = (await client.get("/integrations/definition", headers=auth)).json()
+        assert tree["agents"][0]["instructions"] == "agents/coordinator/instructions.md"
+        assert tree["uncommitted"] == []
+        checked = await client.post(
+            "/integrations/definition/check",
+            json={"changes": [{"path": "project.yml", "content": "x"}]},
+            headers=auth,
+        )
+        assert list(checked.json()["problems"]) == ["project.yml"]
+        moved = await client.post(
+            "/integrations/definition/advance", json={"commit": edit}, headers=auth
+        )
+        assert moved.json() == {"commit": edit, "reloaded": False}
+        # A new agent in Chat: the running factory has it once it moves.
+        added = (
+            await client.post(
+                "/integrations/definition/new-agent",
+                json={"key": "designer", "description": "Designs.", "chat": True},
+                headers=auth,
+            )
+        ).json()["changes"]
+        for change in added:
+            target = source / change["path"]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(change["content"])
+        git(source, "add", "-A")
+        git(source, "commit", "-qm", "Add agent Designer")
+        git(source, "push", "-q", str(tmp_path / "origin.git"), "main")
+        agent = git(source, "rev-parse", "HEAD")
+        status = (await client.get("/integrations/architecture", headers=auth)).json()
+        assert "designer" not in status["agents"]
+        moved = await client.post(
+            "/integrations/definition/advance", json={"commit": agent}, headers=auth
+        )
+        assert moved.json() == {"commit": agent, "reloaded": True}
+        status = (await client.get("/integrations/architecture", headers=auth)).json()
+        assert "designer" in status["agents"] and "designer" in status["chat_agents"]
+        # The running agent's next run is built from the reloaded definitions.
+        spec = app.state.agent_service.spec
+        assert spec.name == "coordinator" and spec.agent_slug == "coordinator"
+        assert {
+            "id": "designer",
+            "name": "Designer",
+            "description": "Designs.",
+        } in status["agent_details"]
+        edit = agent
+        refused = await client.post(
+            "/integrations/definition/advance", json={"commit": "nope"}, headers=auth
+        )
+        assert refused.status_code == 422
+    assert (
+        root / "agents" / "coordinator" / "instructions.md"
+    ).read_text() == "After.\n"
+    await intake.accept(
+        IncomingEvent(
+            provider="schedule", event="cron_fired", delivery_id="s", payload={}
+        )
+    )
+    await intake.drain()
+    (run,) = intake.store.runs_since(0)
+    assert run["version"] == edit
+
+
+@pytest.mark.asyncio
+async def test_a_hand_off_runs_in_the_agents_own_conversation_for_its_origin(
+    tmp_path,
+):
+    """The dispatcher hands a Slack request to the developer: a run of the
+    developer's own, in its conversation for that thread, which a later
+    hand-off from the same thread continues."""
+    directory = tmp_path / "automations" / "slack-app-mentions"
+    directory.mkdir(parents=True)
+    (directory / "automation.md").write_text(
+        "---\ntriggers:\n  - provider: slack\n    event: app_mention\n---\nTake it on.\n"
+    )
+    calls = []
+
+    async def run(agent, session, prompt, progress):
+        calls.append((agent, session, prompt))
+        return RunResult(output="done")
+
+    store = EventStore(tmp_path / "events.db")
+    intake = EventIntake(
+        project_root=tmp_path, entrypoint="foreman", store=store, run=run
+    )
+    for n in (1, 2):
+        await intake.accept(
+            IncomingEvent(
+                provider="slack",
+                event="app_mention",
+                delivery_id=f"m{n}",
+                thread_key="C1:100",
+                payload={"text": f"@factory fix the login page ({n})"},
+            )
+        )
+        await intake.drain()
+        dispatcher_session = calls[-1][1]
+        assert calls[-1][0] == "foreman"
+        result = await intake.hand_off(
+            dispatcher_session, "foreman", "generalist", f"Fix the login page ({n})."
+        )
+        assert result == {"handed_to": "generalist", "status": "started"}
+        await intake.drain()
+    developer = [c for c in calls if c[0] == "generalist"]
+    assert len(developer) == 2
+    assert developer[0][1] == developer[1][1]  # one conversation for the thread
+    assert "The foreman handed this to you" in developer[0][2]
+    assert "Its note: Fix the login page (1)." in developer[0][2]
+    assert "fix the login page (1)" in developer[0][2]  # the original event
+    # The developer's conversation is listed, so Chat shows it under the developer.
+    listed = {(c["agent"], c["id"]) for c in store.conversations()}
+    assert ("generalist", developer[0][1]) in listed
+    # Asked directly, with no origin: a thread of its own.
+    await intake.hand_off("chat-session", "foreman", "gym", "Who missed a payment?")
+    await intake.drain()
+    assert calls[-1][0] == "gym" and "Who missed a payment?" in calls[-1][2]
     store.close()

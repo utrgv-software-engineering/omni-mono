@@ -97,7 +97,7 @@ def _is_ui_resource_block(content_item: Any) -> bool:
         resource = content_item.get("resource")
     if resource is None:
         return False
-    mime = getattr(resource, "mimeType", None) or (
+    mime = getattr(resource, "mime_type", getattr(resource, "mimeType", None)) or (
         resource.get("mimeType") if isinstance(resource, dict) else None
     )
     uri = getattr(resource, "uri", None) or (

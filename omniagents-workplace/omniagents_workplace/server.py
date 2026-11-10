@@ -27,7 +27,7 @@ import re
 import secrets
 import time
 import uuid
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 from importlib import resources
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -128,9 +128,12 @@ class Workplace:
         resume: bool = True,
         run_workflows: bool = True,
         workflow_container: Optional["ContainerSettings"] = None,
+        workflow_quicksand=None,
+        workflow_agent_profile=None,
         self_hosted_runner: Optional["ContainerSettings"] = None,
         internal_url: Optional[str] = None,
         environment: str = "development",
+        environ: Optional[Dict[str, str]] = None,
     ):
         """``sandbox_url`` is where a factory's sandboxes reach the workplace
         (default: ``host.docker.internal`` on ``base_url``'s port); paths in
@@ -139,12 +142,13 @@ class Workplace:
         interrupted stay as they are). ``run_workflows`` runs repositories' workflow files on
         this machine (``github/actions.py``)."""
         # Absolute: git runs from other directories (a clone, an import) with paths under it.
+        self.environ = os.environ if environ is None else dict(environ)
         self.data_dir = Path(data_dir).resolve()
         self.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.base_url = base_url
         self.additional_origins = tuple(
             value.strip()
-            for value in os.environ.get("WORKPLACE_ALLOWED_ORIGINS", "").split(",")
+            for value in self.environ.get("WORKPLACE_ALLOWED_ORIGINS", "").split(",")
             if value.strip()
         )
         #: Where a factory beside the workplace reaches it (its apps' environment); else ``base_url``.
@@ -178,6 +182,8 @@ class Workplace:
                 workflow_container,
                 self_hosted_runner,
                 instance=self.instance,
+                quicksand=workflow_quicksand,
+                agent_profile=workflow_agent_profile,
             )
         self.github_json = Serializer(self.github, lambda: self.base_url)
         self.webhooks = WebhookDelivery(self.github, self.github_json, self.wire)
@@ -219,26 +225,85 @@ class Workplace:
             LinearPersistence(self.linear, self.store),
             CanvasPersistence(self.canvas, self.store),
         ]
+        from .audit import AuditLog
+        from .policy import Policy
+
+        #: What the deployment requires (``WORKPLACE_POLICY``).
+        self.policy = Policy(self.environ)
+        self.audit_log = AuditLog(self.store)
+        from .notifications import Notifier
+
+        #: Approval requests and alerts, to a Teams channel when one is set.
+        self.notifier = Notifier(self.environ)
+        self.audit_log.notifier = self.notifier
+        session_seconds = int(
+            self.environ.get(
+                "WORKPLACE_SESSION_SECONDS",
+                (
+                    12 * 3600
+                    if environment in ("production", "staging")
+                    else SESSION_SECONDS
+                ),
+            )
+        )
+        limits = self.policy.session_limits()
         self.accounts = Accounts(
             self.store,
             min_password=(
                 15 if environment in ("production", "staging") else MIN_PASSWORD
             ),
-            session_seconds=int(
-                os.environ.get(
-                    "WORKPLACE_SESSION_SECONDS",
-                    (
-                        12 * 3600
-                        if environment in ("production", "staging")
-                        else SESSION_SECONDS
-                    ),
-                )
+            session_seconds=min(
+                session_seconds, limits.get("session_seconds", session_seconds)
             ),
+            idle_seconds=limits.get("idle_seconds"),
         )
+        # One audit log for the workplace: account events alert like the rest.
+        self.accounts.audit_log = self.audit_log
         self.apps = AppRegistry(self, self.store)
+        from .event_gateway import EventGateway
+
+        self.event_gateway = EventGateway(self)
+        from .kill_switch import KillSwitch
+
+        self.kill_switch = KillSwitch(self)
+        from .governance import Governance
+
+        self.governance = Governance(self)
+        from .egress import Egress
+
+        self.egress = Egress(self)
+        self.notifier.proxy_url = lambda: self.egress.runtime_environment([]).get(
+            "HTTPS_PROXY"
+        )
+        from .teams_notifications import TeamsNotifications
+
+        self.teams_notifications = TeamsNotifications(self)
+        from .approval_inbox import ApprovalInbox
+
+        self.approvals = ApprovalInbox(self)
+
+        def apply_egress(change):
+            self.store.set_meta("factory.egress", change["after"])
+            self.audit_log.record(
+                "egress.factory_changed", before=change["before"], after=change["after"]
+            )
+            self.egress.changed()
+
+        self.governance.decisions.appliers["egress"] = apply_egress
+        from .shared.state import Shared
+
+        self.shared = Shared(self)
         from .repository_settings import RepositorySettings
 
         self.repository_settings = RepositorySettings(self)
+        from .azure_devops.connections import AzureDevOpsConnections
+        from .azure_devops.mcp import AzureDevOpsMCP
+
+        self.azure_devops = AzureDevOpsConnections(self)
+        self.azure_devops_mcp = AzureDevOpsMCP(self.azure_devops)
+        from .factory_secrets import FactorySecrets
+
+        self.factory_secrets = FactorySecrets(self)
         self.memory.remove_legacy_admin_grants(
             set(self.accounts.accounts),
             owned_stores={(a.owner_id, f"agent:{a.id}") for a in self.apps.active()},
@@ -498,6 +563,25 @@ class Workplace:
                 self.accounts.set_password(account, str(password))
             self.canvas.add_member(account.id, account.name, "person")
 
+    def runtime_policy_environment(self, app: Any, directory: Path) -> Dict[str, str]:
+        """What a factory runtime is given to hold it to the deployment's policy:
+        the managed overlay and allowed services (``governance``), the egress
+        proxy, and the AI name its commits carry."""
+        from urllib.parse import urlsplit
+
+        env = {
+            # Its commits say they are AI's (omniagents' sandbox git identity).
+            "FACTORY_AI_NAME": app.name if "(AI)" in app.name else f"{app.name} (AI)",
+        }
+        env.update(self.governance.runtime_environment(directory))
+        # What factories run reaches the internet only through the egress proxy.
+        env.update(
+            self.egress.runtime_environment(
+                [h for h in {urlsplit(self.internal_url).hostname} if h]
+            )
+        )
+        return env
+
     def close(self) -> None:
         if self.github.actions is not None:
             self.github.actions.stop()
@@ -627,7 +711,7 @@ class Workplace:
             )
         else:
             raise AccountError(f"No service {service}")
-        audit("token.created", account_id=account.id, service=service)
+        self.audit_log.record("token.created", account_id=account.id, service=service)
         return token
 
     def revoke_personal_token(self, account: Account, service: str) -> None:
@@ -648,7 +732,7 @@ class Workplace:
         else:
             raise AccountError(f"No service {service}")
 
-        audit("token.revoked", account_id=account.id, service=service)
+        self.audit_log.record("token.revoked", account_id=account.id, service=service)
 
     def _personal_slack_app(self, account: Account) -> Optional[SlackApp]:
         return next(
@@ -664,6 +748,12 @@ class Workplace:
 class PersonalChatCreate(BaseModel):
     model_config = {"extra": "forbid"}
     title: str = Field(default="New chat", min_length=1, max_length=100)
+    agent: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]*$")
+
+
+class PersonalSeen(BaseModel):
+    model_config = {"extra": "forbid"}
+    revision: str = Field(max_length=128)
 
 
 class PersonalChatUpdate(BaseModel):
@@ -863,11 +953,20 @@ class SignedIn:
     clients without browser provenance headers may use their session cookie.
     """
 
-    def __init__(self, app, accounts: Accounts, base_url: str, additional_origins=()):
+    def __init__(
+        self,
+        app,
+        accounts: Accounts,
+        base_url: str,
+        additional_origins=(),
+        identity=None,
+    ):
         self.app = app
         self.accounts = accounts
         self.base_url = base_url
         self.additional_origins = additional_origins
+        #: Easy Auth: the Microsoft identity each request must still carry.
+        self.identity = identity
 
     async def __call__(self, scope, receive, send):
         path = scope.get("path", "")
@@ -918,16 +1017,30 @@ class SignedIn:
                     return
             kind = headers.get("content-type", "")
             if method not in ("GET", "HEAD", "OPTIONS") and not (
-                kind.startswith("application/json")
+                (
+                    method == "PUT"
+                    and re.fullmatch(
+                        r"/workplace/api/shared/uploads/[a-f0-9]{32}/[0-9]+", path
+                    )
+                    and kind.startswith("application/octet-stream")
+                )
+                or kind.startswith("application/json")
                 or kind.startswith("multipart/form-data")
                 or headers.get("content-length", "0") == "0"
             ):
                 await _answer(send, 415, {"detail": "Send JSON"})
                 return
             if not _OPEN_API.match(path):
-                account = self.accounts.signed_in(
-                    _cookie(headers.get("cookie", ""), SESSION_COOKIE)
-                )
+                token = _cookie(headers.get("cookie", ""), SESSION_COOKIE)
+                account = self.accounts.signed_in(token)
+                if (
+                    account is not None
+                    and self.identity is not None
+                    and not self.identity.matches(headers, account, self.accounts)
+                ):
+                    # Signed out of Microsoft, or removed there: the session ends now.
+                    self.accounts.sign_out(token)
+                    account = None
                 if account is None:
                     await _answer(send, 401, {"detail": "Sign in"})
                     return
@@ -977,6 +1090,7 @@ def person_json(account: Account, *, private: bool = False) -> Dict[str, Any]:
 # is for this machine.
 _SANDBOX_PATHS = re.compile(
     r"^/github/[^/]+/[^/]+\.git/(info/refs|git-upload-pack|git-receive-pack)$"
+    r"|^/azure-devops/git/[^/]+/[^/]+/[^/]+/(info/refs|git-upload-pack|git-receive-pack)$"
     r"|^/slack/upload/[^/]+$"
     r"|^/linear/uploads/put/[^/]+$"
 )
@@ -1027,6 +1141,13 @@ def create_app(
     """The workplace's app. ``sandbox_addresses`` are the local addresses
     sandboxes reach it on (Docker's bridge), and ``sandbox_ports`` the ports
     (a deployment's sandbox-only listener): those serve only git and uploads."""
+    from .extensions.api import WorkplaceApps
+    from .extensions.sandbox import AppSandboxOrigin
+
+    static_dir = static_dir or Path(
+        str(resources.files("omniagents_workplace").joinpath("static"))
+    )
+    extension_apps = WorkplaceApps(workplace, static_dir)
     ws = workplace.slack
     from .personal import PersonalConversations
 
@@ -1039,38 +1160,122 @@ def create_app(
         workplace.webhooks.bind(loop)
         workplace.linear_hooks.bind(loop)
         workplace.memory_hooks.bind(loop)
+        workplace.event_gateway.configure_destinations()
+        workplace.event_gateway.start()
+        workplace.shared.start()
+        workplace.azure_devops.task = asyncio.create_task(
+            workplace.azure_devops.maintain()
+        )
         scheduler = asyncio.create_task(_post_scheduled(ws))
         repository_refresh = asyncio.create_task(
             workplace.repository_settings.maintain()
         )
-        async with workplace.mcp.run(), workplace.github_mcp.run(), workplace.linear_mcp.run(), workplace.canvas_mcp.run(), workplace.memory_mcp.run():
+        kill_switch = asyncio.create_task(workplace.kill_switch.maintain())
+        settings_refresh = asyncio.create_task(operational_settings.maintain())
+        approvals = asyncio.create_task(workplace.approvals.maintain())
+        from .attention import AttentionNotifications
+
+        attention = asyncio.create_task(AttentionNotifications(workplace).maintain())
+        async with workplace.mcp.run(), workplace.github_mcp.run(), workplace.linear_mcp.run(), workplace.canvas_mcp.run(), workplace.memory_mcp.run(), workplace.azure_devops_mcp.run(), extension_apps.run():
             try:
                 yield
             finally:
+                attention.cancel()
                 scheduler.cancel()
                 repository_refresh.cancel()
+                kill_switch.cancel()
+                settings_refresh.cancel()
+                approvals.cancel()
                 with workplace.repository_settings.lock:
                     workplace.repository_settings.device.close()
-                await asyncio.gather(repository_refresh, return_exceptions=True)
+                await asyncio.gather(
+                    repository_refresh,
+                    kill_switch,
+                    approvals,
+                    settings_refresh,
+                    return_exceptions=True,
+                )
+                await workplace.shared.close()
+                await workplace.azure_devops.close()
+                await workplace.event_gateway.close()
                 await workplace.memory_hooks.close()
                 await personal.close()
 
     app = FastAPI(title="OmniAgents Workplace", lifespan=lifespan)
+    from .crawl import NoIndex
+
     app.state.workplace = workplace
+    app.state.extension_apps = extension_apps
+    app.include_router(extension_apps.router())
+    app.router.routes.append(
+        Route(
+            "/workplace/api/extensions/mcp",
+            endpoint=extension_apps,
+            methods=["GET", "POST", "DELETE"],
+        )
+    )
     from .repository_settings import repository_router, RepositoryProviderBoundary
 
     app.include_router(repository_router(workplace))
+    from .azure_devops.api import router as azure_devops_router
+
+    app.include_router(azure_devops_router(workplace.azure_devops))
+    from .azure_devops.git import router as azure_devops_git_router
+
+    app.include_router(azure_devops_git_router(workplace.azure_devops))
+    app.router.routes.append(
+        Route(
+            "/azure-devops/mcp",
+            endpoint=workplace.azure_devops_mcp,
+            methods=["GET", "POST", "DELETE"],
+        )
+    )
+    app.include_router(workplace.factory_secrets.router())
+    app.include_router(workplace.teams_notifications.router())
+    app.include_router(workplace.event_gateway.router())
+    app.include_router(workplace.kill_switch.router())
+    app.include_router(workplace.governance.router())
+    app.include_router(workplace.egress.router())
+    app.include_router(workplace.approvals.router())
+    if workplace.github.actions is not None:
+        # Jobs reach the internet through the factory's egress proxy, on the
+        # network it is reachable on (WORKPLACE_EGRESS_NETWORK).
+        workplace.github.actions.proxy_environment = lambda: (
+            workplace.egress.runtime_environment([])
+        )
+        workplace.github.actions.proxy_network = (
+            workplace.environ.get("WORKPLACE_EGRESS_NETWORK")
+            or os.environ.get("WORKPLACE_EGRESS_NETWORK")
+            or None
+        )
     app.add_middleware(RepositoryProviderBoundary, workplace=workplace)
     app.add_middleware(RequestLimits)
+    from .easy_auth import EasyAuth
+
+    azure_auth = EasyAuth(workplace.base_url)
+    from .teams_auth import ANCESTORS, TeamsAuth, TeamsMiddleware
+
+    teams_auth = TeamsAuth(azure_auth, workplace.accounts)
+    teams_auth.install(app)
     app.add_middleware(
         SignedIn,
         accounts=workplace.accounts,
         base_url=workplace.base_url,
         additional_origins=workplace.additional_origins,
+        identity=azure_auth if azure_auth.enabled else None,
     )
+    app.add_middleware(TeamsMiddleware, teams=teams_auth)
     # Added last, so it runs first: a sandbox never reaches the UI's API.
     app.add_middleware(
         SandboxBoundary, addresses=list(sandbox_addresses), ports=list(sandbox_ports)
+    )
+    app.add_middleware(NoIndex)
+    app.add_middleware(
+        AppSandboxOrigin,
+        static_dir=static_dir,
+        base_url=workplace.base_url,
+        configured=workplace.environ.get("WORKPLACE_APP_ORIGIN", ""),
+        frame_ancestors=ANCESTORS if teams_auth.enabled else "",
     )
 
     @app.get("/up")
@@ -1109,8 +1314,14 @@ def create_app(
             methods=["GET", "POST", "DELETE"],
         )
     )
-    app.include_router(memory_router(workplace))
+    app.include_router(memory_router(workplace, conversations=personal))
     app.include_router(library_router(workplace))
+    from .shared.api import shared_router
+
+    app.include_router(shared_router(workplace))
+    from .sharing import sharing_router
+
+    app.include_router(sharing_router(workplace))
     app.include_router(
         canvas_router(
             workplace.canvas, lambda: workplace.base_url, lambda account: account.id
@@ -1127,6 +1338,9 @@ def create_app(
             ),
         )
     )
+    from .github.release_evidence import release_evidence_router
+
+    app.include_router(release_evidence_router(workplace.github))
     app.include_router(git_router(workplace.github, workplace.wire))
     app.include_router(
         github_ui_router(workplace.github, workplace.github_json, workplace.webhooks)
@@ -1177,6 +1391,9 @@ def create_app(
     def _invite_url(token: str) -> str:
         return f"{workplace.base_url.rstrip('/')}/invite/{token}"
 
+    azure_auth.install(app, workplace.accounts)
+    azure_auth.require(workplace.policy, workplace.accounts)
+
     # -- signing in --------------------------------------------------------------
 
     @app.get("/workplace/api/session")
@@ -1184,6 +1401,7 @@ def create_app(
         account = workplace.accounts.signed_in(request.cookies.get(SESSION_COOKIE))
         return {
             "account": person_json(account, private=True) if account else None,
+            "azure_auth": azure_auth.metadata(),
             "setup": workplace.accounts.needs_setup(),
             "organization": ws.name or None,
             # On this machine, a new workplace is set up without the printed link.
@@ -1191,11 +1409,11 @@ def create_app(
             and _on_this_machine(request),
             "environment": workplace.environment,
             # Development, as Jumpstart's /jumpstart: the factory's workplace.yml is edited here.
-            "configurable": workplace.environment == "development"
+            "configurable": not hasattr(workplace, "installation_factory_id")
+            and workplace.environment == "development"
             and workplace.factory_config is not None,
             # Served with a factory's workplace.yml: its model is configured here (admins).
             "factory": workplace.factory_config is not None,
-            "architecture": personal.architecture,
             # A workplace `up` made: its admin chooses a password on this machine.
             "claim_here": _claim(request),
         }
@@ -1334,6 +1552,28 @@ def create_app(
         return {"ok": True}
 
     # -- people (admins) ----------------------------------------------------------
+
+    @app.get("/workplace/api/access-review")
+    def access_review(request: Request):
+        """Everyone with access, for the annual access review (UTS 165)."""
+        import time
+
+        account = admin(request)
+        people = [
+            {
+                "username": p.username,
+                "name": p.name,
+                "role": "admin" if p.admin else "member",
+                "disabled": p.disabled,
+            }
+            for p in workplace.accounts.people()
+        ]
+        workplace.audit_log.record("access_review.exported", actor=account.username)
+        return {
+            "generated_at": time.time(),
+            "generated_by": account.username,
+            "people": people,
+        }
 
     @app.get("/workplace/api/people")
     def people(request: Request):
@@ -1819,7 +2059,11 @@ def create_app(
 
     def _configurable(request: Request):
         admin(request)
-        if workplace.environment != "development" or workplace.factory_config is None:
+        if (
+            hasattr(workplace, "installation_factory_id")
+            or workplace.environment != "development"
+            or workplace.factory_config is None
+        ):
             raise HTTPException(
                 status_code=404,
                 detail="The configuration page is development's (bin/dev, "
@@ -1975,7 +2219,12 @@ def create_app(
         from .factory_models import resolve_model_choices, validate_provider
 
         _factory(request)
-        result = validate_provider(body.kind, body.api_key, body.base_url)
+        result = validate_provider(
+            body.kind,
+            body.api_key,
+            body.base_url,
+            proxy=workplace.egress.runtime_environment([]).get("HTTPS_PROXY"),
+        )
         if result.get("ok"):
             result["choices"] = resolve_model_choices(
                 body.kind, result.get("models") or []
@@ -1987,6 +2236,9 @@ def create_app(
         from .factory_models import ModelsError
 
         models, _ = _factory(request)
+        workplace.governance.require_model_owner(
+            me(request), f"Added the {body.kind} model {body.model.get('id', '')}"
+        )
         try:
             ref = models.add_provider(
                 body.kind,
@@ -2000,12 +2252,127 @@ def create_app(
         return {"ref": ref, **models.summary()}
 
     @app.delete("/workplace/api/factory/model/providers/{name}")
-    def remove_model_provider(name: str, request: Request):
+    async def remove_model_provider(name: str, request: Request):
+        from .factory_models import ModelsError
+
+        models, rpc = _factory(request)
+        workplace.governance.require_model_owner(
+            me(request), f"Removed the model provider {name}"
+        )
+        try:
+            models.check_removal(name)
+            await _check_model_references(rpc, name)
+            models.remove_provider(name)
+        except ModelsError as exc:
+            _models_error(exc)
+        return models.summary()
+
+    async def _check_model_references(rpc, name: str, ident: Optional[str] = None):
+        from .factory_models import FactoryRpcError, ModelsError
+
+        if rpc is None:
+            raise ModelsError(
+                "Cannot safely remove settings while agent model references are unavailable. Start the factory and try again."
+            )
+        try:
+            tree = await rpc.http("GET", "/integrations/definition")
+            if not isinstance(tree.get("agents"), list):
+                raise ModelsError(
+                    "Cannot verify agent model references; removal was not saved"
+                )
+            for agent in tree["agents"]:
+                key = str(agent.get("key") or "")
+                if not re.fullmatch(r"[a-z][a-z0-9_]*", key):
+                    raise ModelsError(
+                        "Cannot verify agent model references; removal was not saved"
+                    )
+                settings = await rpc.http(
+                    "GET", f"/integrations/definition/agents/{key}"
+                )
+                if "model" not in settings or not isinstance(
+                    settings.get("inherited"), dict
+                ):
+                    raise ModelsError(
+                        "Cannot verify agent model references; removal was not saved"
+                    )
+                ref = settings.get("model") or settings["inherited"].get("model")
+                if ref is not None and not isinstance(ref, str):
+                    raise ModelsError(
+                        "Cannot verify agent model references; removal was not saved"
+                    )
+                if ref and (
+                    ref.startswith(f"{name}/")
+                    if ident is None
+                    else ref in (f"{name}/{ident}", ident)
+                ):
+                    raise ModelsError(
+                        f"Agent {key} uses {ref}. Choose another model for that agent before removing it."
+                    )
+                if ref and ident is None and "/" not in ref:
+                    raise ModelsError(
+                        f"Agent {key} uses an unqualified model reference. Choose a provider-qualified model before removing a provider."
+                    )
+        except FactoryRpcError:
+            raise ModelsError(
+                "Cannot verify agent model references. Start the factory and try again; removal was not saved."
+            ) from None
+
+    @app.patch("/workplace/api/factory/model/providers/{name}")
+    def edit_model_provider(name: str, body: Dict[str, Any], request: Request):
         from .factory_models import ModelsError
 
         models, _ = _factory(request)
+        workplace.governance.require_model_owner(
+            me(request), f"Edited the model provider {name}"
+        )
         try:
-            models.remove_provider(name)
+            models.update_provider(name, body)
+        except ModelsError as exc:
+            _models_error(exc)
+        return models.summary()
+
+    @app.post("/workplace/api/factory/model/providers/{name}/models")
+    def add_provider_model(name: str, body: Dict[str, Any], request: Request):
+        from .factory_models import ModelsError
+
+        models, _ = _factory(request)
+        workplace.governance.require_model_owner(
+            me(request), f"Added a model to {name}"
+        )
+        try:
+            models.add_model(name, body)
+        except ModelsError as exc:
+            _models_error(exc)
+        return models.summary()
+
+    @app.patch("/workplace/api/factory/model/providers/{name}/models/{ident:path}")
+    def edit_provider_model(
+        name: str, ident: str, body: Dict[str, Any], request: Request
+    ):
+        from .factory_models import ModelsError
+
+        models, _ = _factory(request)
+        workplace.governance.require_model_owner(
+            me(request), f"Edited model {name}/{ident}"
+        )
+        try:
+            models.update_model(name, ident, body)
+        except ModelsError as exc:
+            _models_error(exc)
+        return models.summary()
+
+    @app.delete("/workplace/api/factory/model/providers/{name}/models/{ident:path}")
+    async def remove_provider_model(name: str, ident: str, request: Request):
+        from .factory_models import ModelsError
+
+        models, rpc = _factory(request)
+        workplace.governance.require_model_owner(
+            me(request), f"Removed model {name}/{ident}"
+        )
+        try:
+            models.check_removal(name, ident)
+            await _check_model_references(rpc, name, ident)
+            models.remove_model(name, ident)
         except ModelsError as exc:
             _models_error(exc)
         return models.summary()
@@ -2015,6 +2382,9 @@ def create_app(
         from .factory_models import FactoryRpcError, ModelsError
 
         models, rpc = _factory(request)
+        workplace.governance.require_model_owner(
+            me(request), f"Made {body.model} the default model"
+        )
         try:
             models.set_default(body.model)
         except ModelsError as exc:
@@ -2032,6 +2402,9 @@ def create_app(
         from .factory_models import CHATGPT_PROVIDER_ID, FactoryRpcError
 
         _, rpc = _factory(request)
+        workplace.governance.require_model_owner(
+            me(request), "Signed the factory in to ChatGPT"
+        )
         if rpc is None:
             raise HTTPException(
                 status_code=422, detail="workplace.yml's factory: has no url"
@@ -2127,6 +2500,89 @@ def create_app(
         org = workplace.github.organization()
         return f"{org.login}/{name}" if name and org else None
 
+    @app.get("/workplace/api/factory/automations")
+    async def factory_automations(request: Request, days: float = 7):
+        """Every automation with its triggers, routing, recent runs and the
+        events of its kinds it did not run for; each run says whether its chat
+        can be opened in Chat."""
+        admin(request)
+        data = await personal_result(
+            _factory_rpc(request).http(
+                "GET", f"/integrations/automations?days={float(days)}"
+            )
+        )
+        await personal_result(sync_automation_chats())
+        for automation in data.get("automations", []):
+            for run in automation.get("runs", []):
+                run["chat"] = personal.exists(run.get("session_id") or "")
+        from .personal import chat_configuration
+
+        # Agents in Chat's order, with their names, for one section each.
+        config = await personal_result(chat_configuration(_factory_rpc(request)))
+        return {
+            **data,
+            "chat_agent": config.get("chat_agent"),
+            "chat_agents": config.get("chat_agents", config.get("agents", [])),
+            "agent_details": config.get("agent_details", []),
+        }
+
+    @app.put("/workplace/api/factory/automations/{name}/enabled")
+    async def factory_automation_enabled(name: str, request: Request):
+        """Turn an automation on or off (``PUT {"enabled": bool}``)."""
+        admin(request)
+        from urllib.parse import quote
+        import httpx
+
+        url, token = _factory_endpoint()
+        if not url:
+            raise HTTPException(503, "Factory is unavailable")
+        async with httpx.AsyncClient(timeout=30) as client:
+            result = await client.put(
+                url.rstrip("/")
+                + "/integrations/automations/"
+                + quote(name, safe="")
+                + "/enabled",
+                json=await request.json(),
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        if not result.is_success:
+            raise HTTPException(
+                result.status_code,
+                (result.json() if result.content else {}).get("detail")
+                or "Unable to change the automation",
+            )
+        return result.json()
+
+    @app.api_route("/workplace/api/factory/automation-routes", methods=["GET"])
+    async def automation_routes(request: Request):
+        admin(request)
+        return await personal_result(
+            _factory_rpc(request).http("GET", "/integrations/automation-routes")
+        )
+
+    @app.put("/workplace/api/factory/automation-routes/{name}")
+    async def automation_route_update(name: str, request: Request):
+        admin(request)
+        from urllib.parse import quote
+        import httpx
+
+        url, token = _factory_endpoint()
+        if not url:
+            raise HTTPException(503, "Factory is unavailable")
+        async with httpx.AsyncClient(timeout=30) as client:
+            result = await client.put(
+                url.rstrip("/")
+                + "/integrations/automation-routes/"
+                + quote(name, safe=""),
+                json=await request.json(),
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        if not result.is_success:
+            raise HTTPException(
+                result.status_code, "Unable to update automation routing"
+            )
+        return result.json()
+
     @app.get("/workplace/api/factory/benchmarks")
     def factory_benchmarks(request: Request):
         """The factory's benchmark suites (its repository's main) and their results
@@ -2150,7 +2606,7 @@ def create_app(
                         }
                     )
         results = []
-        archive = _os.environ.get("EVALUATIONS_ARCHIVE")
+        archive = workplace.environ.get("EVALUATIONS_ARCHIVE")
         folder = Path(archive) / "benchmarks" if archive else None
         if folder is not None and folder.is_dir():
             for file in sorted(
@@ -2217,11 +2673,39 @@ def create_app(
             str(factory.get("auth_token") or "") or None,
         )
 
+    from .desktop import mount_desktop
+
+    mount_desktop(app, workplace, admin, _factory_endpoint, _cookie, SESSION_COOKIE)
+    from .factory_definition import FactoryDefinition, definition_router
+
+    definition = FactoryDefinition(workplace, _factory_repository, _factory_endpoint)
+    from .factory_settings import FactorySettings, settings_router
+
+    def _factory_settings_endpoint():
+        try:
+            factory = workplace.factory_config.load().get("factory") or {}
+        except (ConfigError, AttributeError):
+            return None, None
+        return factory.get("url"), factory.get("admin_auth_token")
+
+    operational_settings = FactorySettings(workplace, _factory_settings_endpoint)
+    app.include_router(settings_router(operational_settings, admin))
+    workplace.github.subscribe(definition.on_github)
+    from .governance import install_repository_rules
+
+    def factory_repositories() -> set:
+        names = {definition.known_name()}
+        names.add(workplace.repository_settings.settings().get("factory_repository"))
+        return {n for n in names if n}
+
+    install_repository_rules(workplace, factory_repositories)
+    app.include_router(definition_router(definition))
+
     async def personal_connection(request: Request):
         account = admin(request)
         url, token = _factory_endpoint()
         return await personal.for_account(
-            account, url, token, request.path_params.get("chat_id", "factory-personal")
+            account, url, token, request.path_params["chat_id"]
         )
 
     async def personal_result(operation):
@@ -2232,19 +2716,156 @@ def create_app(
         except FactoryRpcError as exc:
             raise HTTPException(503, str(exc)) from exc
 
+    async def panel_workers(connection):
+        workers = await personal_result(connection.workers())
+        return [
+            w for w in workers if w.get("parent_session_id") == connection.session_id
+        ]
+
+    @app.get("/workplace/api/personal/chats/{chat_id}/agents")
+    async def personal_agents(request: Request):
+        connection = await personal_connection(request)
+        return {"agents": await panel_workers(connection)}
+
+    @app.get("/workplace/api/personal/chats/{chat_id}/activity")
+    async def personal_activity(request: Request, worker: str = "", cursor: str = ""):
+        connection = await personal_connection(request)
+        thread = connection.session_id
+        if worker:
+            workers = await panel_workers(connection)
+            match = next((w for w in workers if w.get("worker_id") == worker), None)
+            if match is None or not match.get("session_id"):
+                raise HTTPException(404, "Agent not found in this chat")
+            thread = match["session_id"]
+        params = {
+            "thread_id": thread,
+            "kinds": ["tool_call"],
+            "limit": 50,
+            "order": "desc",
+        }
+        if cursor:
+            params["cursor"] = cursor
+        result = await personal_result(connection.items(params))
+        # Pending decisions remain actionable, without exposing the runtime transcript.
+        attention = (
+            []
+            if worker
+            else (await personal_result(connection.snapshot()))["attention"]
+        )
+        return {**result, "attention": attention}
+
+    async def sync_automation_chats(session_id=None):
+        from .factory_models import FactoryRpc
+
+        url, token = _factory_endpoint()
+        rpc = FactoryRpc(url, token)
+        data = await rpc.http(
+            "GET",
+            "/integrations/conversations"
+            + ("?session_id=" + quote(session_id, safe="") if session_id else ""),
+        )
+        for chat in data.get("conversations", []):
+            personal.register_automation(chat)
+
+    def _names():
+        return {a.username: a.name or a.username for a in workplace.accounts.people()}
+
     @app.get("/workplace/api/personal/chats")
     async def personal_chats(request: Request):
-        await personal_connection(request)
+        """Each chat agent, its Main Chat and Side Chats, and its automations' chats."""
+        account = admin(request)
         url, token = _factory_endpoint()
-        return {"chats": await personal.summaries(admin(request), url, token)}
+        from .factory_models import FactoryRpcError
+
+        try:
+            from .personal import chat_configuration
+
+            config = await chat_configuration(_factory_rpc(request))
+            await sync_automation_chats()
+        except FactoryRpcError:
+            return {
+                "chats": personal.chats(),
+                "agents": [],
+                "chat_agent": None,
+                "offline": True,
+            }
+        chat_agents = list(config.get("chat_agents", config.get("agents", [])))
+        personal.ensure_mains(chat_agents, config.get("chat_agent"))
+        chats = await personal.summaries(account, url, token, _names())
+        # An agent not offered for chat still shows while people have Side
+        # Chats with it. Its automation conversations alone do not keep it (they
+        # open from Automations), nor does a leftover Main Chat.
+        agents = chat_agents + sorted(
+            {
+                c["agent"]
+                for c in chats
+                if c.get("agent") and c.get("kind") == "side" and not c.get("archived")
+            }
+            - set(chat_agents)
+        )
+        return {
+            "chats": chats,
+            "agents": agents,
+            "chat_agents": chat_agents,
+            "chat_agent": config.get("chat_agent"),
+            "agent_details": config.get("agent_details", []),
+        }
+
+    @app.get("/workplace/api/personal/agents/{agent}/readiness")
+    async def personal_agent_readiness(agent: str, request: Request, weeks: int = 8):
+        """How an agent is doing, week by week: people's messages to it, the
+        lessons it learned, and its runs and grades (``agent_readiness``)."""
+        from .factory_models import FactoryRpcError
+        from .factory_report import agent_readiness
+
+        rpc = _factory_rpc(request)
+        if not re.fullmatch(r"[a-z][a-z0-9_]*", agent):
+            raise HTTPException(422, "Unknown agent")
+        since = time.time() - max(1, min(weeks, 26)) * 7 * 86400
+        factory_error = None
+        try:
+            runs = (await rpc.http("GET", f"/integrations/runs?since={since}")).get(
+                "runs"
+            ) or []
+        except FactoryRpcError as exc:
+            runs, factory_error = [], str(exc)
+        apps = workplace.apps.active()
+        store = f"agent:{apps[0].id}/{agent}" if apps else None
+        lessons = [
+            m for _, m in workplace.store.docs("memory.item") if m["store"] == store
+        ]
+        chats = [c["id"] for c in personal.chats() if c.get("agent") == agent]
+        return {
+            **agent_readiness(
+                runs,
+                lessons,
+                personal.messages.sent_at(chats),
+                agent,
+                since=since,
+            ),
+            "factory_error": factory_error,
+        }
+
+    @app.post("/workplace/api/personal/chats/{chat_id}/seen")
+    async def personal_chat_seen(chat_id: str, body: PersonalSeen, request: Request):
+        personal.mark_seen(admin(request), chat_id, body.revision)
+        return {"ok": True}
 
     @app.post("/workplace/api/personal/chats")
     async def personal_chat_create(body: PersonalChatCreate, request: Request):
-        await personal_connection(request)
+        admin(request)
+        from .personal import chat_configuration
+
+        config = await personal_result(chat_configuration(_factory_rpc(request)))
+        agent = body.agent or config.get("chat_agent")
+        if not agent or agent not in config.get("agents", []):
+            raise HTTPException(422, "Choose an agent available in this factory")
         if not body.title.strip():
             raise HTTPException(422, "Enter a chat title.")
         return personal.create(
-            body.title.strip(), auto_title="title" not in body.model_fields_set
+            body.title.strip(),
+            auto_title="title" not in body.model_fields_set,
+            agent=agent,
         )
 
     @app.delete("/workplace/api/personal/chats/{chat_id}")
@@ -2265,32 +2886,109 @@ def create_app(
         return personal.update(chat_id, changes)
 
     @app.get("/workplace/api/personal/chats/{chat_id}")
-    @app.get("/workplace/api/personal")
     async def personal_snapshot(request: Request):
         connection = await personal_connection(request)
         return await personal_result(connection.snapshot())
 
+    @app.get("/workplace/api/personal/chats/{chat_id}/feed")
+    async def personal_feed(
+        chat_id: str,
+        request: Request,
+        after: int = 0,
+        before: int | None = None,
+        latest: bool = False,
+    ):
+        """Messages after ``after``; or, with ``latest``, the newest page, and
+        with ``before``, the page before that seq (both say where to go on)."""
+        # Reading public messages never requires a live agent or starts work.
+        account = admin(request)
+        if not personal.exists(chat_id):
+            raise HTTPException(404, "Chat not found")
+        workplace.governance.record_access(account, "conversation", chat_id)
+        if after < 0 or (before is not None and before < 1):
+            raise HTTPException(422, "Invalid cursor")
+        page = (
+            personal.messages.earlier(chat_id, before)
+            if latest or before is not None
+            else personal.messages.page(chat_id, after)
+        )
+        names = _names()
+        for message in page["messages"]:
+            if message["role"] == "user":
+                message["author_name"] = names.get(message["author"], message["author"])
+        return page
+
+    def chat_publisher(request):
+        scheme, _, token = request.headers.get("authorization", "").partition(" ")
+        member = (
+            workplace.canvas.member_for_token(token)
+            if scheme.lower() == "bearer"
+            else None
+        )
+        if member is None or member.kind != "app":
+            raise HTTPException(401, "A factory app token is required")
+        return member
+
+    @app.post("/library/api/chat/messages")
+    async def publish_chat_message(request: Request):
+        member = chat_publisher(request)
+        body = await request.json()
+        if not isinstance(body, dict) or set(body) != {
+            "conversation",
+            "text",
+            "message_id",
+        }:
+            raise HTTPException(422, "Expected conversation, text and message_id")
+        chat = body["conversation"]
+        if isinstance(chat, str) and not personal.exists(chat):
+            await personal_result(sync_automation_chats(chat))
+        if not isinstance(chat, str) or not personal.exists(chat):
+            raise HTTPException(404, "Chat not found")
+        mid = body["message_id"]
+        if not isinstance(mid, str) or not mid or len(mid) > 200:
+            raise HTTPException(422, "Invalid message ID")
+        seq = personal.messages.publish(chat, mid, "assistant", member.id, body["text"])
+        return {"published": True, "conversation": chat, "message_id": mid, "seq": seq}
+
+    @app.get("/library/api/chat/conversations")
+    async def list_public_chats(request: Request):
+        chat_publisher(request)
+        return {"conversations": personal.chats()}
+
+    @app.get("/library/api/chat/messages")
+    async def read_chat_messages(request: Request, conversation: str, after: int = 0):
+        chat_publisher(request)
+        if not personal.exists(conversation):
+            raise HTTPException(404, "Chat not found")
+        if after < 0:
+            raise HTTPException(422, "Invalid cursor")
+        return personal.messages.page(conversation, after)
+
     @app.post("/workplace/api/personal/chats/{chat_id}/messages")
-    @app.post("/workplace/api/personal/messages")
     async def personal_send(body: PersonalMessage, request: Request):
+        workplace.kill_switch.check()
+        blocked = workplace.governance.startable()
+        if blocked:
+            raise HTTPException(409, blocked)
         connection = await personal_connection(request)
         if not body.text.strip():
             raise HTTPException(422, "Write a message first.")
+        account = admin(request)
         return await personal_result(
             connection.send(
-                f"[{admin(request).username}]\n{body.text.strip()}",
+                body.text.strip(),
                 str(body.submission_id),
+                author=account.username,
+                author_name=account.name,
             )
         )
 
     @app.post("/workplace/api/personal/chats/{chat_id}/stop")
-    @app.post("/workplace/api/personal/stop")
     async def personal_stop(body: PersonalStop, request: Request):
         connection = await personal_connection(request)
         return await personal_result(connection.stop(body.run_id))
 
     @app.post("/workplace/api/personal/chats/{chat_id}/decisions")
-    @app.post("/workplace/api/personal/decisions")
     async def personal_decision(body: PersonalDecision, request: Request):
         connection = await personal_connection(request)
         return await personal_result(
@@ -2298,7 +2996,6 @@ def create_app(
         )
 
     @app.websocket("/workplace/api/personal/chats/{chat_id}/runtime/ws")
-    @app.websocket("/workplace/api/personal/runtime/ws")
     async def personal_runtime_ws(websocket: WebSocket):
         from .factory_runtime import relay, trusted_origin
         from .personal_runtime import PersonalRpcPolicy
@@ -2312,10 +3009,7 @@ def create_app(
                 account
                 and account.admin
                 and not account.disabled
-                and personal.architecture == "personal"
-                and personal.exists(
-                    websocket.path_params.get("chat_id", "factory-personal")
-                )
+                and personal.exists(websocket.path_params["chat_id"])
             )
 
         if not authorized() or not trusted_origin(
@@ -2326,13 +3020,16 @@ def create_app(
             await websocket.close(code=1008)
             return
         account = workplace.accounts.signed_in(cookie)
+        workplace.governance.record_access(
+            account, "conversation", websocket.path_params["chat_id"]
+        )
         url, token = _factory_endpoint()
         try:
             connection = await personal.for_account(
                 account,
                 url,
                 token,
-                websocket.path_params.get("chat_id", "factory-personal"),
+                websocket.path_params["chat_id"],
             )
             await connection.connect()
         except (HTTPException, FactoryRpcError):
@@ -2344,11 +3041,10 @@ def create_app(
             connection.url,
             token,
             authorized=authorized,
-            policy=PersonalRpcPolicy(connection, account.username),
+            policy=PersonalRpcPolicy(connection, account.username, account.name),
         )
 
     @app.websocket("/workplace/api/personal/chats/{chat_id}/runtime/ws/realtime")
-    @app.websocket("/workplace/api/personal/runtime/ws/realtime")
     async def personal_voice_ws(websocket: WebSocket):
         from .factory_runtime import relay, trusted_origin
         from .personal_runtime import PersonalVoicePolicy
@@ -2362,10 +3058,7 @@ def create_app(
                 account
                 and account.admin
                 and not account.disabled
-                and personal.architecture == "personal"
-                and personal.exists(
-                    websocket.path_params.get("chat_id", "factory-personal")
-                )
+                and personal.exists(websocket.path_params["chat_id"])
             )
 
         if not authorized() or not trusted_origin(
@@ -2382,7 +3075,7 @@ def create_app(
                 account,
                 url,
                 token,
-                websocket.path_params.get("chat_id", "factory-personal"),
+                websocket.path_params["chat_id"],
             )
             await connection.connect()
         except (HTTPException, FactoryRpcError):
@@ -2394,7 +3087,7 @@ def create_app(
             connection.url + "/realtime",
             token,
             authorized=authorized,
-            policy=PersonalVoicePolicy(connection, account.username),
+            policy=PersonalVoicePolicy(connection, account.username, account.name),
         )
 
     @app.get("/workplace/api/factory/runs/{run_id}")
@@ -2409,8 +3102,10 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(exc))
 
     @app.websocket("/workplace/api/factory/runtime/agents/{key}/ws")
-    async def factory_runtime_ws(websocket: WebSocket, key: str):
+    @app.websocket("/workplace/api/factory/runs/{run_id}/runtime/agents/{key}/ws")
+    async def factory_runtime_ws(websocket: WebSocket, key: str, run_id: int = 0):
         from .factory_runtime import relay, trusted_origin
+        from .attention import QuestionResponsePolicy
 
         account = workplace.accounts.signed_in(
             _cookie(websocket.headers.get("cookie", ""), SESSION_COOKIE)
@@ -2430,6 +3125,8 @@ def create_app(
         if not url or not re.fullmatch(r"[a-z][a-z0-9_]*", key):
             await websocket.close(code=1008)
             return
+        # The run viewer reads agents' sessions: who opened which agent's.
+        workplace.governance.record_access(account, "transcripts", key)
         await websocket.accept()
         await relay(
             websocket,
@@ -2440,9 +3137,11 @@ def create_app(
                 _cookie(websocket.headers.get("cookie", ""), SESSION_COOKIE)
             )
             is not None,
+            policy=QuestionResponsePolicy(workplace, account, key, run_id),
         )
 
     @app.get("/workplace/api/factory/runtime/agents/{key}/{path:path}")
+    @app.get("/workplace/api/factory/runs/{run_id}/runtime/agents/{key}/{path:path}")
     async def factory_runtime_get(key: str, path: str, request: Request):
         import httpx
 
@@ -2525,11 +3224,21 @@ def create_app(
 
     @app.patch("/workplace/api/team")
     def edit_team(body: EditTeam, request: Request):
-        admin(request)
+        account = admin(request)
         name = (body.name if body.name is not None else ws.name).strip()
         tz = body.tz if body.tz is not None else ws.tz
         if not name:
             raise HTTPException(status_code=422, detail="The workspace has a name")
+        if name != ws.name and workplace.store.meta("factory.operational_settings"):
+            settings = operational_settings.get()
+            operational_settings.save(
+                {
+                    "revision": settings["revision"],
+                    "display_name": name,
+                    "sources": settings["sources"],
+                },
+                account.username,
+            )
         _slack(lambda: ws.set_team(name, ws.domain, tz))
         workplace.linear.set_organization(name, workplace.linear.url_key)
         return {"team": {"name": ws.name, "domain": ws.domain, "tz": ws.tz}}
@@ -2809,7 +3518,8 @@ def _serve_ui(app: FastAPI, static_dir: Path) -> None:
                         "public, max-age=31536000, immutable"
                         if immutable
                         else "no-cache"
-                    )
+                    ),
+                    **({"Access-Control-Allow-Origin": "*"} if immutable else {}),
                 },
             )
         if index.is_file():

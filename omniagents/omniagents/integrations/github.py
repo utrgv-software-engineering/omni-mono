@@ -18,7 +18,7 @@ one its agents' GitHub MCP server acts with. Webhooks become
 - ``pull_request_opened`` (drafts too), ``pull_request_ready`` (a draft
   marked ready for review), ``pull_request_synchronized`` (a push to its
   branch), ``pull_request_review_requested``, ``pull_request_closed``
-  (without merging), ``pull_request_merged``.
+  (without merging), ``pull_request_merged``, ``issue_closed``.
 - ``push``, ``workflow_run_completed``.
 
 Filters: ``repos``, ``labels`` (the item's labels; the added one for a
@@ -191,6 +191,8 @@ def normalize_github_event(
             add(f"{kind}_labeled", {"labels": [payload["label"].get("name")]})
         elif action == "closed" and event_name == "pull_request":
             add("pull_request_merged" if pr.get("merged") else "pull_request_closed")
+        elif action == "closed":
+            add("issue_closed")
         elif action == "ready_for_review" and event_name == "pull_request":
             add("pull_request_ready")
         elif action == "synchronize" and event_name == "pull_request":

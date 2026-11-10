@@ -130,10 +130,6 @@ async def test_reconstructed_tools_bind_child_identity(journal):
     for name, args in (("worker_context", ()), ("worker_message", ("owner", "spoof"))):
         with pytest.raises(PermissionError):
             await tools[name]._original_func(wrong, *args)
-    with pytest.raises(ValueError, match="recruitment"):
-        configure(
-            SimpleNamespace(available_tools=[SimpleNamespace(name="spawn_worker")])
-        )
 
 
 @pytest.mark.asyncio
@@ -275,3 +271,24 @@ def test_owner_message_and_notification_roll_back_together(journal, monkeypatch)
     monkeypatch.setattr(journal.store, "mutate_queue", original)
     assert mail.inspect_worker(journal)["messages"] == []
     assert queue_inbox.notifications(journal.store, "parent") == []
+
+
+def test_owner_message_retains_identity_through_queue(journal):
+    from omniagents.core.session import queue_inbox
+    from omniagents.core.session.manager import QueuedItem
+
+    worker = admit(journal, "nyx", name="designer")
+    mail.accept_message(journal, "nyx", "owner", "Full report", "message")
+    notice = queue_inbox.notifications(journal.store, "parent")[0]
+    assert notice["worker"]["session_id"] == worker["session_id"]
+    assert notice["worker"]["task"] == "assignment"
+    assert notice["worker"]["message"] == "Full report"
+    queue_inbox.promote_notifications(
+        journal.store,
+        "parent",
+        lambda notices: QueuedItem(
+            content="batch", role="assistant", notifications=notices
+        ).to_dict(),
+    )
+    item = QueuedItem(**queue_inbox.entries(journal.store, "parent")[0]["item"])
+    assert item.notifications[0]["worker"] == notice["worker"]

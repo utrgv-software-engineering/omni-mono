@@ -414,6 +414,18 @@ class SandboxWorkspace(Workspace):
         except Exception as error:
             raise _translate_session_error(error, absolute) from error
 
+    async def write_stream(self, path: str, stream) -> None:
+        absolute = self.resolve_confined(path)
+        _refuse_provided(absolute)
+        if await self.exists(absolute):
+            raise FileExistsError(absolute)
+        try:
+            await self._session.write(
+                PurePosixPath(absolute), stream, user=self._default_user
+            )
+        except Exception as error:
+            raise _translate_session_error(error, absolute) from error
+
     async def _test(self, flag: str, path: str) -> bool:
         """``test -<flag>`` on *path*, refused when it leaves the root.
 

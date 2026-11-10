@@ -33,12 +33,13 @@ ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 # The uv workspace: every member's pyproject, the workplace's sources.
 COPY pyproject.toml uv.lock ./
-COPY omniagents/pyproject.toml omniagents/README.md omniagents/
+COPY omniagents omniagents
 COPY omni-code/pyproject.toml omni-code/
 COPY omniagents-studio/pyproject.toml omniagents-studio/
 COPY omniagents-workplace omniagents-workplace
 COPY --from=web /src/omniagents-workplace/web/dist omniagents-workplace/omniagents_workplace/static
-RUN uv sync --frozen --no-dev --package omniagents-workplace --no-editable
+RUN uv sync --frozen --no-dev --package omniagents-workplace --package omniagents --no-editable
+RUN .venv/bin/python omniagents-workplace/tests/model_image_smoke.py
 ENV PATH=/app/.venv/bin:$PATH
 EXPOSE 7300 7301
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \

@@ -37,6 +37,21 @@ def _isolated_omniagents_home(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Pytest fixture: a factory's skill-roots provider must not leak across tests
+# ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def _reset_skill_roots_provider():
+    """Mounting a factory's integrations installs a process-wide skill-roots
+    provider (no global root); later tests get the default back."""
+    yield
+    from omniagents.core.agents.handoffs import set_handler
+    from omniagents.core.skills import set_skill_roots_provider
+
+    set_skill_roots_provider(None)
+    set_handler(None)
+
+
+# ---------------------------------------------------------------------------
 # Pytest fixture: process-global product identity must not leak across tests
 # ---------------------------------------------------------------------------
 @pytest.fixture(autouse=True)

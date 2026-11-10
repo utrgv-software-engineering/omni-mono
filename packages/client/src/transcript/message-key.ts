@@ -36,7 +36,11 @@ export function messageKey(item: DisplayItem, index: number): string {
 
   switch (item.type) {
     case 'chat':
-      return item.item_id ? `chat:${item.item_id}` : positional(item.type, index);
+      if (item.item_id) {
+        return `chat:${item.item_id}`;
+      }
+      // Live output and its persisted twin merge by this id, so it is unique.
+      return item.message_id ? `message:${JSON.stringify([item.role, item.message_id])}` : positional(item.type, index);
     case 'tool':
       return item.call_id
         ? item.runId

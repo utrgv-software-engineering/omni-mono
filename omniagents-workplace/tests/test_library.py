@@ -64,9 +64,11 @@ def test_file_isolation(tmp_path):
 
 def test_library_auth_preview_and_ownership(workplace_server):
     workplace, url = workplace_server
-    with httpx.Client(base_url=url) as anonymous, signed_in(
-        workplace, url
-    ) as admin, signed_in(workplace, url, "priya") as member:
+    with (
+        httpx.Client(base_url=url) as anonymous,
+        signed_in(workplace, url) as admin,
+        signed_in(workplace, url, "priya") as member,
+    ):
         assert anonymous.get("/workplace/api/library/artifacts").status_code == 401
         assert anonymous.get("/library/api/artifacts").status_code == 401
         made = admin.post(
@@ -127,7 +129,15 @@ def test_agent_tools_use_existing_token_and_revocation(workplace_server):
             == "# Saved notes\n"
         )
         assert len(client.get("/library/api/artifacts").json()["artifacts"]) == 1
+        canvas = workplace.canvas.create(
+            workplace.canvas.member_for_token(token).id, "Design"
+        )
+        result = client.get("/library/api/canvases/" + canvas.id)
+        assert result.status_code == 200 and result.json()["title"] == "Design"
+        assert client.get("/library/api/canvases/missing").status_code == 404
+        assert httpx.get(url + "/library/api/canvases/" + canvas.id).status_code == 401
         workplace.canvas.update_member(
             workplace.canvas.member_for_token(token), token=None
         )
         assert client.get("/library/api/artifacts").status_code == 401
+        assert client.get("/library/api/canvases/" + canvas.id).status_code == 401

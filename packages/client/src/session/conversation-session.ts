@@ -32,6 +32,8 @@ import { wireSessionTranscript } from './session-transcript';
 
 /** How long a lost-reply receipt lookup waits for the socket to come back. */
 const RECEIPT_LOOKUP_TIMEOUT_MS = 15_000;
+/** Items a transcript opens with, and reads per page further back. */
+export const HISTORY_PAGE = 200;
 
 type Listener = (payload: any) => void;
 export type SessionToolHandler = (
@@ -79,6 +81,11 @@ export class ConversationSession {
   private panelsInitialized = false;
   private snapshotEvents: Array<{ method: string; payload: any }> | undefined;
   private snapshotCursor?: { stream: string; seq: number };
+  /** Where older history continues (``null``: the transcript has it all). */
+  private earlierCursor: string | null = null;
+  private failed: ConversationTurn[] = [];
+  /** Counts loads, so a page read for an older transcript is discarded. */
+  private historyGeneration = 0;
 
   constructor(
     readonly id: string,
@@ -335,12 +342,18 @@ export class ConversationSession {
         }
         await prepareConversation(this.client, this.id);
         this.snapshotEvents = [];
-        const result = await this.client.getSessionSnapshot(this.id);
+        const generation = ++this.historyGeneration;
+        const result = await this.client.getSessionSnapshot(this.id, { limit: HISTORY_PAGE });
         if (this.disposed) {
           throw new Error('Conversation connection was closed');
         }
         const snapshot = result.snapshot;
-        const items = withRunFailureNotices(adaptCanonicalConversationItems(snapshot.items), await this.failedTurns());
+        this.failed = await this.failedTurns();
+        const items = withRunFailureNotices(adaptCanonicalConversationItems(snapshot.items), this.failed);
+        if (generation === this.historyGeneration) {
+          this.earlierCursor = snapshot.earlier_cursor ?? null;
+          this.panels.set('earlierHistory', this.earlierCursor ? 'more' : 'none');
+        }
         this.panels.set('queuedMessages', snapshot.queue);
         this.panels.set('escalation', null);
         this.snapshotCursor = { stream: snapshot.stream_id, seq: snapshot.last_seq };
@@ -385,6 +398,45 @@ export class ConversationSession {
       }
     })();
     return this.loading;
+  }
+
+  /** Read the page of history before the transcript's oldest item and put it
+   * first. Does nothing when there is none or a read is already under way. */
+  async loadEarlier(): Promise<void> {
+    const cursor = this.earlierCursor;
+    if (!cursor || this.disposed || this.panels.state.get().earlierHistory === 'loading') {
+      return;
+    }
+    const generation = this.historyGeneration;
+    this.panels.set('earlierHistory', 'loading');
+    try {
+      const page = await new ConversationClient(this.client).listItems(this.id, {
+        limit: HISTORY_PAGE,
+        cursor,
+        order: 'desc',
+      });
+      if (this.disposed || generation !== this.historyGeneration) {
+        return; // A reload replaced the transcript this page belonged to.
+      }
+      const older = [...page.items].reverse();
+      // A run that continues into the transcript has its notice there already.
+      const shown = new Set(
+        this.actor
+          .getSnapshot()
+          .context.items.map((item) => item.canonical?.turn_id)
+          .filter(Boolean)
+      );
+      const items = withRunFailureNotices(
+        adaptCanonicalConversationItems(older),
+        this.failed.filter((turn) => !shown.has(turn.turn_id))
+      );
+      this.earlierCursor = page.has_more ? page.next_cursor : null;
+      this.actor.send({ type: 'HISTORY_PREPENDED', items });
+    } finally {
+      if (!this.disposed && generation === this.historyGeneration) {
+        this.panels.set('earlierHistory', this.earlierCursor ? 'more' : 'none');
+      }
+    }
   }
 
   /** Turns of this conversation that ended in error; none when unreadable. */

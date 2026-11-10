@@ -89,7 +89,7 @@ export type ChatSessionEvent =
   | { type: 'STOP_FAILED'; run_id: string }
   | { type: 'APPROVAL_DECIDED'; request_id: string; value: 'yes' | 'always' | 'no' }
   // Server events
-  | { type: 'RUN_STARTED'; run_id: string; session_id?: string; prompt?: string; prompt_role?: string }
+  | { type: 'RUN_STARTED'; run_id: string; session_id?: string; prompt?: string; prompt_role?: string; notifications?: import('../transcript/worker-messages').Notification[] }
   | { type: 'RUN_END'; session_id?: string; run_id?: string }
   | { type: 'MESSAGE_OUTPUT'; content: string; session_id?: string; message_id?: string; run_id?: string }
   | {
@@ -161,6 +161,8 @@ export type ChatSessionEvent =
   | { type: 'SET_STATUS'; text?: string; showSpinner?: boolean; session_id?: string }
   // History loading
   | { type: 'HISTORY_LOADED'; items: MessageItem[]; active_run_id?: string }
+  // Older history, read after the transcript: it goes before every item.
+  | { type: 'HISTORY_PREPENDED'; items: MessageItem[] }
   | { type: 'HISTORY_ERROR'; error: string }
   | { type: 'CANONICAL_ITEM_UPDATED'; item: MessageItem; session_id?: string }
   // Errors
@@ -308,7 +310,7 @@ export const chatSessionMachine = setup({
       if (dup) {
         return { items: context.items };
       }
-      const msg: ChatMessage = { type: 'chat', role, content: text };
+      const msg: ChatMessage = { type: 'chat', role, content: text, notifications: e.notifications };
       if (role === 'assistant') {
         // Assistant-role wakeup prompts are recorded canonically as
         // agent_message items with a turn_id, so after reload they fold
@@ -498,6 +500,15 @@ export const chatSessionMachine = setup({
       },
     }),
 
+    prependHistoryItems: assign({
+      items: ({ context, event }) => {
+        const e = event as Extract<ChatSessionEvent, { type: 'HISTORY_PREPENDED' }>;
+        const present = new Set(context.items.map((item) => item.canonical?.item_id).filter(Boolean));
+        const older = e.items.filter((item) => !item.canonical || !present.has(item.canonical.item_id));
+        return older.length ? [...older, ...context.items] : context.items;
+      },
+    }),
+
     upsertCanonicalItem: assign({
       items: ({ context, event }) => {
         const e = event as Extract<ChatSessionEvent, { type: 'CANONICAL_ITEM_UPDATED' }>;
@@ -656,6 +667,7 @@ export const chatSessionMachine = setup({
   on: {
     SET_SESSION_ID: { actions: 'setSessionIdOnly' },
     HISTORY_LOADED: { actions: 'setHistoryItems' },
+    HISTORY_PREPENDED: { actions: 'prependHistoryItems' },
     CANONICAL_ITEM_UPDATED: { guard: 'acceptLoose', actions: 'upsertCanonicalItem' },
     APPEND_RESPONSE: { actions: 'appendResponse' },
     RUN_FAILED: { actions: 'appendRunFailure' },

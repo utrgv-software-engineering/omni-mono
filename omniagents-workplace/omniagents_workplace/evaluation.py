@@ -223,11 +223,14 @@ class WorkplaceEnvironment(EvalEnvironment):
 
         # In a container (the self-hosted runner's jobs), the sandboxes it starts
         # are its siblings on its network, and reach it at its name.
-        host = os.environ.get("OMNIAGENTS_WORKPLACE_HOST")
+        quicksand = (yaml.safe_load(self.profile.read_text()).get("client") or {}).get(
+            "type"
+        ) == "quicksand"
+        host = None if quicksand else os.environ.get("OMNIAGENTS_WORKPLACE_HOST")
         if host:
             bridge = [socket.gethostbyname(host)]
         else:
-            bridge = [a for a in [docker_bridge_gateway()] if a]
+            bridge = [] if quicksand else [a for a in [docker_bridge_gateway()] if a]
         addresses = ["127.0.0.1"] + bridge
         for port in _ports():
             sockets = _listen(port, addresses)
@@ -241,7 +244,11 @@ class WorkplaceEnvironment(EvalEnvironment):
                 base_url=f"http://127.0.0.1:{port}",
                 seed=seed,
                 seed_dir=self.seed_path.parent,
-                sandbox_url=f"http://{host}:{port}" if host else None,
+                sandbox_url=(
+                    "http://10.0.2.101:7300"
+                    if quicksand
+                    else (f"http://{host}:{port}" if host else None)
+                ),
             )
             return _Server(workplace, sockets, bridge)
         raise RuntimeError(f"no free port for the scenario's workplace in {_ports()}")
@@ -269,6 +276,7 @@ class WorkplaceEnvironment(EvalEnvironment):
                     f"environment (type: workplace): the seed has no app {self.app or ''}".rstrip()
                 )
             settings = workplace.apps.env(app)
+            settings["LIBRARY_FILES_HOST_PATH"] = str(workplace.library.root.resolve())
             # A small memory fixture for tool-use scenarios. IDs remain dynamic;
             # measures read them from context rather than embedding them in prompts.
             memory_fixture = {}
@@ -283,13 +291,29 @@ class WorkplaceEnvironment(EvalEnvironment):
             repositories = tuple(
                 r["name"] for r in (seed.get("github") or {}).get("repositories") or []
             )
+            profile_path = self.profile
+            raw_profile = yaml.safe_load(self.profile.read_text())
+            is_vm = (raw_profile.get("client") or {}).get("type") == "quicksand"
+            if is_vm:
+                from urllib.parse import urlparse
+
+                options = raw_profile.setdefault("options", {})
+                options["host_services"] = {7300: urlparse(workplace.base_url).port}
+                # Each scenario is disposable. No fixed preview-port collision
+                # with another scenario or the resident personal workspace.
+                options["exposed_ports"] = []
+                options["port_forwards"] = {}
+                profile_path = workplace.data_dir / "sandbox.yml"
+                profile_path.write_text(yaml.safe_dump(raw_profile))
             environments = RunEnvironments(
-                self.profile,
+                profile_path,
                 GitHubConfig(
                     repositories=repositories,
                     git_url=f"{workplace.sandbox_url}/github",
                     token=settings["GITHUB_MCP_TOKEN"],
                 ),
+                explicit_profile=is_vm,
+                library_root=settings["LIBRARY_FILES_HOST_PATH"],
             )
             live["sandbox"] = await stack.enter_async_context(
                 environments.sandbox("evaluation")
@@ -313,6 +337,8 @@ class WorkplaceEnvironment(EvalEnvironment):
                 "MEMORY_MCP_URL",
                 "MEMORY_MCP_TOKEN",
                 "MEMORY_AGENT_STORE",
+                "LIBRARY_API_URL",
+                "LIBRARY_FILES_HOST_PATH",
             )
         }
         return EnvironmentContext(

@@ -330,13 +330,14 @@ def install_output_budget(agent, scope):
                             _execute_tool_output_guardrails,
                         )
 
-                        value = await _execute_tool_output_guardrails(
+                        guarded = await _execute_tool_output_guardrails(
                             func_tool=original_tool,
                             tool_context=ctx,
                             agent=self,
                             real_result=value,
                             tool_output_guardrail_results=[],
                         )
+                        value = guarded.output
                     try:
                         envelope = await asyncio.to_thread(
                             retain,

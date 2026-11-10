@@ -4,6 +4,7 @@ import json
 import time
 
 import httpx
+import httpx2
 import pytest
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
@@ -89,18 +90,18 @@ async def test_memory_mcp_access_and_revocation(workplace_server):
     workplace, base_url = workplace_server
     env = factory_env(base_url)
     token = env["MEMORY_MCP_TOKEN"]
-    async with httpx.AsyncClient(headers={"Authorization": f"Bearer {token}"}) as http:
+    async with httpx2.AsyncClient(headers={"Authorization": f"Bearer {token}"}) as http:
         async with streamable_http_client(
             f"{base_url}/memory/mcp", http_client=http
-        ) as (read, write, _):
+        ) as (read, write):
             async with ClientSession(read, write) as session:
                 init = await session.initialize()
-                assert init.serverInfo.name == "memory"
+                assert init.server_info.name == "memory"
                 result = await session.call_tool(
                     "remember",
                     {"store": env["MEMORY_AGENT_STORE"], "text": "Check pagination"},
                 )
-                assert not result.isError, result
+                assert not result.is_error, result
                 result = await session.call_tool("search", {"query": "pagination"})
                 assert (
                     json.loads(result.content[0].text)[0]["text"] == "Check pagination"
@@ -108,7 +109,7 @@ async def test_memory_mcp_access_and_revocation(workplace_server):
                 refused = await session.call_tool(
                     "remember", {"store": "team", "text": "not allowed"}
                 )
-                assert refused.isError
+                assert refused.is_error
     async with httpx.AsyncClient() as http:
         assert (await http.post(f"{base_url}/memory/mcp", json={})).status_code == 401
 

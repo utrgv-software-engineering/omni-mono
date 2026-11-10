@@ -34,22 +34,45 @@ class AgentRuntimes:
         *,
         auth_token: Optional[str],
         primary_app=None,
-        architecture=None,
+        primary_agent=None,
         host_resources=None,
     ) -> None:
         self.host_resources = host_resources
         self.project = project
         self.primary_app = primary_app
-        self.architecture = architecture
+        self.primary_agent = primary_agent or getattr(project, "entrypoint", None)
         self.auth_token = auth_token
         self._apps: Dict[str, Any] = {}
         self._lock = asyncio.Lock()
 
+    def services(self):
+        apps = ([self.primary_app] if self.primary_app is not None else []) + list(
+            self._apps.values()
+        )
+        return [app.state.agent_service for app in apps]
+
+    def keyed_services(self):
+        """``(agent key, service)`` for each running agent."""
+        out = []
+        if self.primary_app is not None:
+            out.append((self.primary_agent, self.primary_app.state.agent_service))
+        out += [(key, app.state.agent_service) for key, app in self._apps.items()]
+        return out
+
+    def busy(self):
+        return sum(
+            len(service.active_run_ids())
+            + sum(
+                item.state == "pending"
+                for session in service.active_sessions()
+                for item in session.message_queue
+            )
+            for service in self.services()
+        )
+
     async def app(self, key: str) -> Optional[Any]:
-        if self.architecture == "personal":
-            return self.primary_app if key == "generalist" else None
-        if self.architecture == "specialist" and key == "generalist":
-            return None
+        if self.primary_app is not None and key == self.primary_agent:
+            return self.primary_app
         if key not in self.project.agents_map:
             return None
         async with self._lock:
@@ -66,7 +89,16 @@ class AgentRuntimes:
                 self._apps[key] = build_app(
                     spec=spec, auth_token=self.auth_token, integrations=False, **options
                 )
-            return self._apps[key]
+            result = self._apps[key]
+            if self.primary_app is not None:
+                result.state.agent_service._release_gate = getattr(
+                    self.primary_app.state.agent_service, "_release_gate", None
+                )
+                result.state.agent_service._power_automate = getattr(
+                    self.primary_app.state.agent_service, "_power_automate", None
+                )
+                result.state.agent_service._power_automate_agent = key
+            return result
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "lifespan":

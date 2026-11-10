@@ -29,10 +29,20 @@ from typing import Any, Dict, List
 
 # Exported name -> the module in this package that defines it
 _EXPORTS: Dict[str, str] = {
+    "chat_send_message": "chat_messages",
+    "chat_read_messages": "chat_messages",
+    "chat_list_conversations": "chat_messages",
+    "desktop_screenshot": "desktop",
+    "desktop_click": "desktop",
+    "desktop_move": "desktop",
+    "desktop_type": "desktop",
+    "desktop_press_key": "desktop",
+    "desktop_scroll": "desktop",
     "display_artifact": "artifacts",
     "artifact_create": "library_artifacts",
     "artifact_list": "library_artifacts",
     "artifact_show": "library_artifacts",
+    "artifact_comments": "library_artifacts",
     "execute_bash": "bash_tool",
     "bash_status": "bash_tool",
     "bash_logs": "bash_tool",
@@ -103,6 +113,7 @@ __all__ = [
     "artifact_create",
     "artifact_list",
     "artifact_show",
+    "artifact_comments",
     "execute_bash",
     "bash_status",
     "bash_logs",

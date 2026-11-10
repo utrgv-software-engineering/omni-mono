@@ -187,6 +187,11 @@ def test_assignments_labels_and_pull_requests():
     assert set(merged) == {"pull_request_merged"} and set(closed) == {
         "pull_request_closed"
     }
+    issue_closed = _events(
+        "issues", {"action": "closed", "issue": _issue(), "sender": _user("priya")}
+    )
+    assert set(issue_closed) == {"issue_closed"}
+    assert issue_closed["issue_closed"].thread_key == "acme/api-service#12"
     ready = _events(
         "pull_request",
         {

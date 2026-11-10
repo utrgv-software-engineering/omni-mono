@@ -1,3 +1,4 @@
+import type { Presentation } from './lib/presentation';
 import type { RunOverrides } from '@omniagents/client/rpc/execution';
 import type { ComponentType, ReactNode } from 'react';
 import { createContext, useContext } from 'react';
@@ -8,6 +9,7 @@ import { createContext, useContext } from 'react';
  * does itself, against the agent runtime.
  */
 export type ChatHost = {
+  presentView?(value: Presentation): void;
   /** Shows a transient error notice. */
   notifyError(title: string, description?: string): void;
   /**

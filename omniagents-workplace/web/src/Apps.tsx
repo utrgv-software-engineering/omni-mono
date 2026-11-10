@@ -102,7 +102,7 @@ export function AppsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>Connections</DialogTitle>
+          <DialogTitle>Agent connections</DialogTitle>
           <DialogDescription>
             An app is what an agent acts as: an account in Slack, GitHub and
             Linear, with its own tokens. A factory reaches the workplace exactly
