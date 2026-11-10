@@ -1260,3 +1260,75 @@ async def test_start_session_with_tools_handoffs_and_guardrails(settings_with_ke
         assert "output_guardrails" in call_kwargs
         assert len(call_kwargs["output_guardrails"]) == 1
         assert call_kwargs["output_guardrails"][0] == mock_output_guardrail
+
+
+# --- Instructions from a Python-built agent ---
+
+
+async def _started_agent_kwargs(spec, settings):
+    with (
+        patch("agents.realtime.RealtimeAgent", create=True) as MockAgent,
+        patch("agents.realtime.RealtimeRunner", create=True),
+        patch("omniagents.rpc.realtime_session.history_db.register_session"),
+    ):
+        session = RealtimeSession(spec, settings=settings)
+        await session.start()
+        return MockAgent.call_args[1]
+
+
+@pytest.mark.asyncio
+async def test_start_session_from_agent_string_instructions(settings_with_key):
+    """A ``Runner.from_agent`` agent starts a voice session with its instructions."""
+    from agents import Agent
+    from omniagents import Runner
+
+    runner = Runner.from_agent(
+        Agent(name="Interviewer", instructions="You are Sarah Chen.")
+    )
+    runner.spec.realtime_mode = True
+    runner.spec.realtime_settings = RealtimeSettings()
+
+    kwargs = await _started_agent_kwargs(runner.spec, settings_with_key)
+
+    assert kwargs["instructions"] == "You are Sarah Chen."
+
+
+@pytest.mark.asyncio
+async def test_start_session_passes_dynamic_instructions_through(settings_with_key):
+    """Function instructions reach the SDK agent and still resolve to text."""
+    from agents import Agent
+    from omniagents import Runner
+
+    def dynamic(run_context, agent):
+        return "You are dynamic."
+
+    runner = Runner.from_agent(Agent(name="Dyn", instructions=dynamic))
+    runner.spec.realtime_mode = True
+    runner.spec.realtime_settings = RealtimeSettings()
+
+    kwargs = await _started_agent_kwargs(runner.spec, settings_with_key)
+
+    resolved = kwargs["instructions"](SimpleNamespace(context={}), None)
+    assert await resolved == "You are dynamic."
+
+
+@pytest.mark.asyncio
+async def test_dynamic_instructions_get_the_history_tail(settings_with_key):
+    """Joining an ongoing conversation appends its history to dynamic text too."""
+    from agents import Agent
+    from omniagents import Runner
+
+    runner = Runner.from_agent(
+        Agent(name="Dyn", instructions=lambda ctx, agent: "You are dynamic.")
+    )
+    runner.spec.realtime_mode = True
+    runner.spec.realtime_settings = RealtimeSettings()
+
+    with patch.object(
+        RealtimeSession, "_render_history_tail", return_value="user: hello"
+    ):
+        kwargs = await _started_agent_kwargs(runner.spec, settings_with_key)
+
+    text = await kwargs["instructions"](SimpleNamespace(context={}), None)
+    assert text.startswith("You are dynamic.")
+    assert text.endswith("user: hello")

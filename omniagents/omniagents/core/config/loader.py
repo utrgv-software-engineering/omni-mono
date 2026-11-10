@@ -56,6 +56,7 @@ from omniagents.core.agents.specs import (
     AgentToolConfig,
     MCPServerConfig,
     SettingField,
+    DEFAULT_REALTIME_MODEL,
     RealtimeSettings,
 )
 from omniagents.core.tools.discovery import discover_functions_in_dir
@@ -1131,7 +1132,7 @@ def load_agent_spec_from_yaml(
         # Extract and validate realtime settings
         try:
             realtime_settings = RealtimeSettings(
-                model_name=realtime_config.get("model_name", "gpt-realtime"),
+                model_name=realtime_config.get("model_name", DEFAULT_REALTIME_MODEL),
                 voice=realtime_config.get("voice", "alloy"),
                 modalities=realtime_config.get("modalities", ["audio"]),
                 input_audio_format=realtime_config.get("input_audio_format", "pcm16"),

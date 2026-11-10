@@ -6,6 +6,7 @@ lifecycle management.
 """
 
 import asyncio
+import inspect
 import uuid
 import base64
 import logging
@@ -15,7 +16,7 @@ from typing import Optional, Dict, Any, AsyncIterator, Tuple
 from contextlib import asynccontextmanager
 from contextlib import AsyncExitStack
 
-from omniagents.core.agents.specs import AgentSpec
+from omniagents.core.agents.specs import DEFAULT_REALTIME_MODEL, AgentSpec
 from omniagents.core.session.audio_storage import (
     AudioStorageBackend,
     build_audio_storage,
@@ -129,6 +130,22 @@ async def resolve_realtime_credential(
     return None, "ChatGPT sign-in became unavailable while opening the session"
 
 
+def _with_instruction_suffix(instructions: Any, suffix: str) -> Any:
+    """Append ``suffix`` to whatever a dynamic instructions function returns."""
+
+    async def _resolve(run_context: Any, agent: Any) -> Any:
+        result = instructions(run_context, agent)
+        if inspect.isawaitable(result):
+            result = await result
+        if result is None:
+            return suffix.lstrip()
+        if not isinstance(result, str):
+            return result
+        return result.rstrip() + suffix
+
+    return _resolve
+
+
 def _collect_headers(settings: Dict[str, Any]) -> Dict[str, Any]:
     merged: Dict[str, Any] = {}
     for key in ("headers", "extra_headers", "openai_headers", "openai_extra_headers"):
@@ -193,8 +210,8 @@ def _resolve_realtime_deployment_name(
     for value in candidates:
         if isinstance(value, str) and value.strip():
             return value.strip()
-    # Default to gpt-realtime if nothing specified
-    return "gpt-realtime"
+    # Fall back to the default realtime model if nothing specified
+    return DEFAULT_REALTIME_MODEL
 
 
 def _resolve_realtime_model_name(
@@ -665,11 +682,17 @@ class RealtimeSession:
         # context keep the historical pass-through behavior.
         import re as _re
 
+        # Instructions may also be a function (an agent built in Python with
+        # dynamic instructions). The SDK's realtime agent resolves those
+        # itself, so they pass through; only strings are templates here.
+        dynamic_instructions = callable(raw_instructions)
         has_include = bool(
-            raw_instructions
+            isinstance(raw_instructions, str)
             and _re.search(r"\{%-?\s*(include|import|from)\b", raw_instructions)
         )
-        if raw_instructions and (context_dict or (search_paths and has_include)):
+        if dynamic_instructions:
+            instructions = raw_instructions
+        elif raw_instructions and (context_dict or (search_paths and has_include)):
             from omniagents.core.utils.jinja_instructions import render_template
 
             try:
@@ -690,14 +713,21 @@ class RealtimeSession:
         # discussed (text runs get this for free from the SDK session; the
         # realtime model starts from instructions alone).
         tail = self._render_history_tail()
+        suffix = ""
+        if dynamic_instructions and cap_instructions_parts:
+            # Strings had these appended before rendering, above.
+            suffix += "\n\n" + "\n\n".join(cap_instructions_parts)
         if tail:
-            instructions = (
-                (instructions or "").rstrip()
-                + "\n\n# Conversation so far\n"
+            suffix += (
+                "\n\n# Conversation so far\n"
                 + "You are joining this user's ongoing conversation; earlier "
                 + "turns may have happened in text. Recent history:\n\n"
                 + tail
             )
+        if suffix and dynamic_instructions:
+            instructions = _with_instruction_suffix(instructions, suffix)
+        elif suffix:
+            instructions = (instructions or "").rstrip() + suffix
 
         # Create agent with realtime configuration
         # RealtimeAgent only takes: name, instructions, tools, handoffs, output_guardrails, hooks

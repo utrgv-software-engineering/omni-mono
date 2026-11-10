@@ -12,6 +12,10 @@ from omniagents.core.config.loader import (
 from omniagents.core.runtime.loader import load_backend
 from omniagents.core.debug import Debug
 
+# Where ``Runner.from_agent`` keeps an agent's original instruction text on
+# the renderer that replaces it.
+_INSTRUCTIONS_TEXT_ATTR = "__omni_instructions_text__"
+
 
 class Runner:
     """Run agents in different modes."""
@@ -129,7 +133,33 @@ class Runner:
 
         def _build_spec(agent_obj: Any) -> AgentSpec:
             local_agent = agent_obj
-            local_agent.instructions = process_instructions(local_agent.instructions)
+            # The text agent gets a Jinja renderer in place of its
+            # instruction string. The spec keeps the original text, because
+            # ``get_agent_instructions`` is contracted to return a string and
+            # voice sessions read it as one. The text rides along on the
+            # renderer so a second ``from_agent`` on the same agent still
+            # finds it, and does not wrap the renderer again.
+            original = local_agent.instructions
+            instructions_text = (
+                original
+                if isinstance(original, str)
+                else getattr(original, _INSTRUCTIONS_TEXT_ATTR, None)
+            )
+            if isinstance(original, str) or instructions_text is None:
+                processed = process_instructions(original)
+                if isinstance(instructions_text, str) and processed is not None:
+                    try:
+                        setattr(processed, _INSTRUCTIONS_TEXT_ATTR, instructions_text)
+                    except (AttributeError, TypeError):
+                        # A renderer that cannot carry it; the spec still can.
+                        pass
+                local_agent.instructions = processed
+
+            def _get_instructions() -> Any:
+                if isinstance(instructions_text, str):
+                    return instructions_text
+                return local_agent.instructions
+
             name = getattr(local_agent, "name", "agent")
             agent_slug_value = name.lower().replace(" ", "_").replace("-", "_")
 
@@ -156,7 +186,7 @@ class Runner:
             spec_obj = AgentSpec(
                 name=name,
                 welcome_text=welcome_text,
-                get_agent_instructions=lambda: local_agent.instructions,
+                get_agent_instructions=_get_instructions,
                 build_agent=_builder,
                 available_tools=getattr(local_agent, "tools", []),
                 model_name=getattr(local_agent, "model", None),
@@ -456,7 +486,10 @@ class Runner:
             )
 
         try:
-            from omniagents.core.agents.specs import RealtimeSettings
+            from omniagents.core.agents.specs import (
+                DEFAULT_REALTIME_MODEL,
+                RealtimeSettings,
+            )
 
             realtime_spec = getattr(self.spec, "voice_spec", None) or self.spec
             voice_backend = getattr(realtime_spec, "voice_backend", "realtime")
@@ -469,7 +502,7 @@ class Runner:
                 if not rs.modalities or ("audio" not in rs.modalities):
                     rs.modalities = ["audio"]
                 if not rs.model_name:
-                    rs.model_name = "gpt-realtime"
+                    rs.model_name = DEFAULT_REALTIME_MODEL
                 if not rs.voice:
                     rs.voice = "alloy"
                 if not rs.input_audio_format:

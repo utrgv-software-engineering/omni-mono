@@ -15,6 +15,10 @@ if TYPE_CHECKING:
     from agents.mcp import MCPServerSse  # Add the import here
 
 
+DEFAULT_REALTIME_MODEL = "gpt-realtime-2.1"
+"""Realtime (voice) model used when an agent does not name one."""
+
+
 # --- Add SettingField definition here ---
 @dataclass
 class SettingField:
@@ -123,8 +127,8 @@ class RealtimeSettings:
     See: https://platform.openai.com/docs/guides/realtime
     """
 
-    model_name: str = "gpt-realtime"
-    """The realtime model to use (default: 'gpt-realtime')."""
+    model_name: str = DEFAULT_REALTIME_MODEL
+    """The realtime model to use (default: 'gpt-realtime-2.1')."""
 
     voice: Optional[str] = "alloy"
     """Voice to use for audio output. Options: 'alloy', 'echo', 'shimmer', 'ash', 'ballad', 'coral', 'sage', 'verse'."""

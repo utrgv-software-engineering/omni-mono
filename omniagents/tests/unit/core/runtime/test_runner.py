@@ -652,3 +652,33 @@ def test_runner_main_handles_generic_exception(monkeypatch, capsys):
     assert exc.value.code == 1
     output = capsys.readouterr().out
     assert "Error: boom" in output
+
+
+def test_from_agent_spec_returns_instruction_text():
+    """The spec hands out the instruction string, not the text agent's renderer.
+
+    Voice sessions read ``get_agent_instructions()`` as a string; returning
+    the Jinja renderer crashed every ``from_agent`` voice session on start.
+    """
+    agent = types.SimpleNamespace(
+        name="Interviewer", instructions="You are Sarah.", tools=[]
+    )
+
+    runner = Runner.from_agent(agent)
+
+    assert runner.spec.get_agent_instructions() == "You are Sarah."
+    assert callable(agent.instructions)
+
+
+def test_from_agent_twice_keeps_instruction_text_and_renderer():
+    """Notebooks build several runners from one agent; none may lose the text."""
+    agent = types.SimpleNamespace(
+        name="Jarvis", instructions="You are Jarvis.", tools=[]
+    )
+
+    Runner.from_agent(agent)
+    renderer = agent.instructions
+    second = Runner.from_agent(agent)
+
+    assert second.spec.get_agent_instructions() == "You are Jarvis."
+    assert agent.instructions is renderer

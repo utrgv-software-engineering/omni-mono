@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-10
+
+### Changed
+- The default realtime (voice) model is `gpt-realtime-2.1` (`omniagents.core.agents.specs.DEFAULT_REALTIME_MODEL`). An agent that sets `realtime_settings.model_name`, or an `OPENAI_REALTIME_MODEL` override, is unaffected.
+
+### Fixed
+- Voice sessions for agents built with `Runner.from_agent` no longer fail on start with `TypeError: expected string or bytes-like object, got 'function'`. The spec now returns the agent's instruction text, building several runners from one agent keeps it, and function-based instructions pass through to the realtime agent.
+
 ## [0.8.0] - 2026-10-27
 
 ### Added

@@ -10,7 +10,7 @@ from typing import Optional
 
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.runtime.overrides import apply_cli_overrides
-from omniagents.core.agents.specs import RealtimeSettings
+from omniagents.core.agents.specs import DEFAULT_REALTIME_MODEL, RealtimeSettings
 
 
 class WebBackend:
@@ -79,7 +79,7 @@ class WebBackend:
                 if not rs.modalities or ("audio" not in rs.modalities):
                     rs.modalities = ["audio"]
                 if not rs.model_name:
-                    rs.model_name = "gpt-realtime"
+                    rs.model_name = DEFAULT_REALTIME_MODEL
                 if not rs.voice:
                     rs.voice = "alloy"
                 if not rs.input_audio_format:

@@ -17,7 +17,7 @@ def test_realtime_settings_defaults():
     """Test that RealtimeSettings has correct default values."""
     settings = RealtimeSettings()
 
-    assert settings.model_name == "gpt-realtime"
+    assert settings.model_name == "gpt-realtime-2.1"
     assert settings.voice == "alloy"
     assert settings.modalities == ["audio"]
     assert settings.input_audio_format == "pcm16"
@@ -81,6 +81,6 @@ def test_realtime_settings_partial_config():
     assert settings.turn_detection == {"type": "semantic_vad"}
 
     # Defaults
-    assert settings.model_name == "gpt-realtime"
+    assert settings.model_name == "gpt-realtime-2.1"
     assert settings.modalities == ["audio"]
     assert settings.input_audio_format == "pcm16"
