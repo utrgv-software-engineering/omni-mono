@@ -16,6 +16,22 @@ if TYPE_CHECKING:
 
 
 DEFAULT_REALTIME_MODEL = "gpt-realtime-2.1"
+
+# A turn ends after a full second of silence, so people can pause mid-sentence
+# (to think, or to find a word in a new language) without being cut off.
+DEFAULT_TURN_DETECTION: Dict[str, Any] = {
+    "type": "server_vad",
+    "threshold": 0.5,
+    "prefix_padding_ms": 300,
+    "silence_duration_ms": 1000,
+}
+
+
+def default_turn_detection() -> Dict[str, Any]:
+    """A fresh copy of :data:`DEFAULT_TURN_DETECTION` that callers may modify."""
+    return dict(DEFAULT_TURN_DETECTION)
+
+
 """Realtime (voice) model used when an agent does not name one."""
 
 
@@ -143,12 +159,7 @@ class RealtimeSettings:
     """Output audio format. Options: 'pcm16', 'g711_ulaw', 'g711_alaw'."""
 
     turn_detection: Optional[Dict[str, Any]] = field(
-        default_factory=lambda: {
-            "type": "server_vad",
-            "threshold": 0.3,
-            "silence_duration_ms": 200,
-            "prefix_padding_ms": 100,
-        }
+        default_factory=default_turn_detection
     )
     """Turn detection configuration for voice activity detection (VAD).
 

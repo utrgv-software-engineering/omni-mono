@@ -489,6 +489,7 @@ class Runner:
             from omniagents.core.agents.specs import (
                 DEFAULT_REALTIME_MODEL,
                 RealtimeSettings,
+                default_turn_detection,
             )
 
             realtime_spec = getattr(self.spec, "voice_spec", None) or self.spec
@@ -510,12 +511,7 @@ class Runner:
                 if not rs.output_audio_format:
                     rs.output_audio_format = "pcm16"
                 if not rs.turn_detection:
-                    rs.turn_detection = {
-                        "type": "server_vad",
-                        "threshold": 0.3,
-                        "prefix_padding_ms": 100,
-                        "silence_duration_ms": 200,
-                    }
+                    rs.turn_detection = default_turn_detection()
                 if rs.temperature is None:
                     rs.temperature = 0.8
                 if rs.max_output_tokens is None:

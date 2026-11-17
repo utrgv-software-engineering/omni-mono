@@ -756,6 +756,7 @@ def test_realtime_config_with_defaults(tmp_path):
     assert spec.realtime_settings.modalities == ["audio"]
     assert spec.realtime_settings.input_audio_format == "pcm16"
     assert spec.realtime_settings.output_audio_format == "pcm16"
+    assert spec.realtime_settings.turn_detection["silence_duration_ms"] == 1000
 
 
 def test_realtime_mode_false_no_settings(tmp_path):

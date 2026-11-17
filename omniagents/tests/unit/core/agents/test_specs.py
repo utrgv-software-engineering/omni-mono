@@ -1,6 +1,10 @@
 import pytest
 
-from omniagents.core.agents.specs import HandoffConfig, RealtimeSettings
+from omniagents.core.agents.specs import (
+    DEFAULT_TURN_DETECTION,
+    HandoffConfig,
+    RealtimeSettings,
+)
 
 
 def test_handoff_config_requires_single_source_inline():
@@ -24,9 +28,9 @@ def test_realtime_settings_defaults():
     assert settings.output_audio_format == "pcm16"
     assert settings.turn_detection == {
         "type": "server_vad",
-        "threshold": 0.3,
-        "silence_duration_ms": 200,
-        "prefix_padding_ms": 100,
+        "threshold": 0.5,
+        "prefix_padding_ms": 300,
+        "silence_duration_ms": 1000,
     }
     assert settings.input_audio_transcription == {"model": "whisper-1"}
     assert settings.temperature == 0.8
@@ -84,3 +88,18 @@ def test_realtime_settings_partial_config():
     assert settings.model_name == "gpt-realtime-2.1"
     assert settings.modalities == ["audio"]
     assert settings.input_audio_format == "pcm16"
+
+
+def test_turn_detection_default_waits_for_mid_sentence_pauses():
+    """A short pause must not end the turn (it split learners' sentences)."""
+    settings = RealtimeSettings()
+    assert settings.turn_detection["type"] == "server_vad"
+    assert settings.turn_detection["silence_duration_ms"] >= 1000
+
+
+def test_turn_detection_default_is_a_fresh_copy():
+    """Changing one agent's turn detection must not change the shared default."""
+    first = RealtimeSettings()
+    first.turn_detection["silence_duration_ms"] = 5
+    assert RealtimeSettings().turn_detection["silence_duration_ms"] == 1000
+    assert DEFAULT_TURN_DETECTION["silence_duration_ms"] == 1000

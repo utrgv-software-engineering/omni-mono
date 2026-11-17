@@ -57,6 +57,7 @@ from omniagents.core.agents.specs import (
     MCPServerConfig,
     SettingField,
     DEFAULT_REALTIME_MODEL,
+    default_turn_detection,
     RealtimeSettings,
 )
 from omniagents.core.tools.discovery import discover_functions_in_dir
@@ -1138,13 +1139,7 @@ def load_agent_spec_from_yaml(
                 input_audio_format=realtime_config.get("input_audio_format", "pcm16"),
                 output_audio_format=realtime_config.get("output_audio_format", "pcm16"),
                 turn_detection=realtime_config.get(
-                    "turn_detection",
-                    {
-                        "type": "server_vad",
-                        "threshold": 0.3,
-                        "prefix_padding_ms": 100,
-                        "silence_duration_ms": 200,
-                    },
+                    "turn_detection", default_turn_detection()
                 ),
                 input_audio_transcription=realtime_config.get(
                     "input_audio_transcription", {"model": "whisper-1"}

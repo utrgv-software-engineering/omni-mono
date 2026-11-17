@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-11-17
+
+### Fixed
+- Voice turns no longer end on short pauses. The default turn detection waited only 200 ms of silence (at a 0.3 sensitivity threshold), so a pause mid-sentence split one sentence into several turns and the agent answered each fragment. The default (`omniagents.core.agents.specs.DEFAULT_TURN_DETECTION`) is now server VAD with a 1000 ms silence, 0.5 threshold and 300 ms prefix padding, the same in Python specs, YAML agents, `run_notebook` and the web launcher. Agents that set `realtime_settings.turn_detection` are unaffected.
+
 ## [0.8.1] - 2026-11-10
 
 ### Changed
