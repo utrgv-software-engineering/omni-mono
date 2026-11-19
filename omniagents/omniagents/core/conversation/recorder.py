@@ -47,6 +47,7 @@ from .model import (
     derive_title,
     provider_item_id,
     terminal_status_for_end_reason,
+    VOICE_TRANSCRIPT_SOURCES,
 )
 from .store import ConversationStore, get_conversation_store
 
@@ -213,7 +214,7 @@ class ConversationRecorder:
         if kind == "voice_transcript":
             metadata = message.get("omniagents") or {}
             valid = valid and message.get("role") in ("user", "assistant")
-            valid = valid and metadata.get("source") == "voice:codex-live"
+            valid = valid and metadata.get("source") in VOICE_TRANSCRIPT_SOURCES
             valid = valid and all(
                 isinstance(metadata.get(key), str) and metadata[key]
                 for key in ("live_call", "voice_id")

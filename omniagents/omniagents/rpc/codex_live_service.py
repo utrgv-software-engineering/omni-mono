@@ -360,7 +360,27 @@ class CodexLiveService(RealtimeService):
         async with live.admission:
             return await self._delegate(live, session_id, delegation_id, text)
 
-    async def _delegate(self, live, session_id, delegation_id, text):
+    async def _delegate(
+        self,
+        live,
+        session_id,
+        delegation_id,
+        text,
+        *,
+        owner=None,
+        principal=None,
+        source="voice:codex-live",
+    ):
+        """Queue ``text`` as a run of the agent and report back through ``live``.
+
+        ``owner`` and ``principal`` default to the calling RPC channel's; a
+        caller outside an RPC request (a server-side Live reader) passes the
+        ones it captured when the call started.
+        """
+        if owner is None:
+            owner = self._current_owner_user_id()
+        if principal is None:
+            principal = getattr(self.channel, "principal", None)
         if not live._active:
             raise ValueError("Voice session has ended")
         if delegation_id in live.delegations:
@@ -374,11 +394,9 @@ class CodexLiveService(RealtimeService):
             + text.strip()
         )
         paired = self._agent_service._session_manager.get_or_create(
-            session_id, user_id=self._current_owner_user_id()
+            session_id, user_id=owner
         )
-        bridge = DelegateChannel(
-            live, prompt, delegation_id, getattr(self.channel, "principal", None)
-        )
+        bridge = DelegateChannel(live, prompt, delegation_id, principal)
         bridge.paired = paired
         paired.channels.append(bridge)
         live.bridges.append(bridge)
@@ -387,7 +405,7 @@ class CodexLiveService(RealtimeService):
                 session_id=session_id,
                 content=prompt,
                 role="user",
-                source="voice:codex-live",
+                source=source,
                 submission_id=f"live:{live._run_id}:{delegation_id}",
             )
             if result.get("accepted") is False or result.get("ok") is False:

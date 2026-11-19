@@ -84,6 +84,10 @@ __all__ = [
 ITEM_SCHEMA_VERSION = 1
 
 
+# Sources whose saved speech is projected as voice captions.
+VOICE_TRANSCRIPT_SOURCES = frozenset({"voice:codex-live", "voice:live"})
+
+
 class ItemKind(str, Enum):
     """What an item *is*. Closed set — clients switch on it exhaustively."""
 

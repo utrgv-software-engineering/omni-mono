@@ -32,10 +32,12 @@ When `--mode web` runs without `--agent`, the voice entrypoint is used.
 
 ### Voice Backends
 
-`/ws/realtime` supports two server-side implementations:
+`/ws/realtime` supports these server-side implementations:
 
 - `voice_backend: realtime` (default) uses OpenAI realtime sessions (`agents.realtime.*`).
 - `voice_backend: pipeline` uses the voice pipeline (`agents.voice.VoicePipeline`) with STT → agent run → TTS.
+- `voice_backend: live` uses GPT Live (`gpt-live-1`) with an API key; the agent's tools run through delegation. See [GPT Live voice](live-voice.md).
+- `voice_backend: codex-live` uses GPT Live through a ChatGPT subscription sign-in. See [Codex Live voice](codex-live.md).
 
 Pipeline voice requires extra dependencies:
 

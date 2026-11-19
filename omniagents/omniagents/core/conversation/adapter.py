@@ -41,6 +41,7 @@ from .model import (
     ThreadStatus,
     Turn,
     TurnStatus,
+    VOICE_TRANSCRIPT_SOURCES,
     classify_tool,
     derive_item_id,
     derive_legacy_turn_id,
@@ -271,7 +272,7 @@ def project_thread(
                     }
                     if kind in (ItemKind.USER_MESSAGE, ItemKind.AGENT_MESSAGE)
                     and (raw.get("omniagents") or {}).get("source")
-                    == "voice:codex-live"
+                    in VOICE_TRANSCRIPT_SOURCES
                     and (raw.get("omniagents") or {}).get("live_call")
                     and (raw.get("omniagents") or {}).get("voice_id")
                     else {}

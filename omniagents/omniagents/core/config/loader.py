@@ -1116,7 +1116,7 @@ def load_agent_spec_from_yaml(
         )
         voice_backend = "realtime"
     voice_backend = voice_backend.strip().lower() or "realtime"
-    if voice_backend not in {"realtime", "pipeline", "codex-live"}:
+    if voice_backend not in {"realtime", "pipeline", "codex-live", "live"}:
         _report(f"Invalid voice_backend '{voice_backend}'. Using 'realtime'.")
         voice_backend = "realtime"
 

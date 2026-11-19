@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-19
+
+### Added
+- GPT Live voice with an API key: `voice_backend: live` (or `Runner.from_agent(agent, voice_backend="live")`) serves `gpt-live-1` through `OPENAI_BASE_URL`'s Live sessions endpoint (`omniagents.rpc.live_voice_service`). The server holds the session, so the key stays off the browser and OpenAI-compatible gateways work. The existing voice UI is unchanged: the backend speaks the `/ws/realtime` realtime contract. The Live model speaks for the agent and delegates tool work to queued runs of the agent, whose results it speaks; spoken turns are saved to the conversation as voice captions. `OPENAI_LIVE_MODEL` overrides the model. See `docs/guide/live-voice.md`.
+
+### Changed
+- Voice transcripts saved with source `voice:live` are projected as voice captions, like `voice:codex-live` (`omniagents.core.conversation.model.VOICE_TRANSCRIPT_SOURCES`).
+
 ## [0.8.2] - 2026-11-17
 
 ### Fixed

@@ -42,6 +42,7 @@ class Runner:
         agent: Any,  # AgentLike
         *,
         voice_agent: Optional[Any] = None,
+        voice_backend: Optional[str] = None,
         welcome_text: Optional[str] = None,
         safe: bool = False,
         skip_approvals: bool = False,
@@ -213,6 +214,10 @@ class Runner:
         spec = _build_spec(agent)
         if voice_agent:
             spec.voice_spec = _build_spec(voice_agent)
+        if voice_backend:
+            # "live" serves GPT Live (gpt-live-1) through OPENAI_BASE_URL with
+            # the API key; the default "realtime" uses the Realtime API.
+            spec.voice_backend = voice_backend.strip().lower()
 
         return cls(spec=spec)
 

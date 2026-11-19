@@ -1823,6 +1823,24 @@ def test_voice_projection_is_tagged_deduplicated_and_not_a_task_turn(recorder, s
     assert store.count_items(THREAD) == 1
 
 
+def test_gpt_live_voice_projection_is_a_voice_caption(recorder, store):
+    spoken = {
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": "Hola", "annotations": []}],
+        "omniagents": {"source": "voice:live", "live_call": "call", "voice_id": "2"},
+    }
+    saved = store.get_item(
+        THREAD, recorder.record_voice_transcript(THREAD, spoken).item_id
+    )
+    assert saved.source_ref["voice_caption"] is True
+    assert saved.content["text"] == "Hola"
+    with pytest.raises(RuntimeError):
+        recorder.record_voice_transcript(
+            THREAD,
+            {**spoken, "omniagents": {**spoken["omniagents"], "source": "voice:other"}},
+        )
+
+
 def test_legacy_voice_projection_retains_caption_identity():
     from omniagents.core.conversation.adapter import project_thread
 

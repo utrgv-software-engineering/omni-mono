@@ -604,7 +604,7 @@ def build_app(
     realtime_spec = getattr(spec, "voice_spec", None)
     spec_voice_backend = getattr(spec, "voice_backend", "realtime")
     if realtime_spec is None and (
-        spec.realtime_mode or spec_voice_backend in {"pipeline", "codex-live"}
+        spec.realtime_mode or spec_voice_backend in {"pipeline", "codex-live", "live"}
     ):
         realtime_spec = spec
 
@@ -658,6 +658,17 @@ def build_app(
             realtime_service = CodexLiveService(
                 realtime_spec, realtime_settings, agent_service=service
             )
+        elif voice_backend == "live":
+            from omniagents.rpc.live_voice_service import LiveVoiceService
+
+            realtime_service = LiveVoiceService(
+                realtime_spec,
+                realtime_settings,
+                settings_resolver=(
+                    settings_resolver if callable(settings_resolver) else None
+                ),
+                agent_service=service,
+            )
         elif voice_backend == "pipeline":
             from omniagents.rpc.voice_pipeline_service import VoicePipelineService
 
@@ -696,7 +707,18 @@ def build_app(
                     "sync_context",
                 }
                 if voice_backend == "codex-live"
-                else None
+                else (
+                    {
+                        "capabilities",
+                        "start_session",
+                        "stop_session",
+                        "send_audio",
+                        "send_text",
+                        "interrupt",
+                    }
+                    if voice_backend == "live"
+                    else None
+                )
             ),
         )
         realtime_endpoint.register_route(app, "/ws/realtime", dependencies=[auth_dep])
